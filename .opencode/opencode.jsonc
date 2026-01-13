@@ -1,0 +1,22 @@
+{
+	"$schema": "https://opencode.ai/config.json",
+	"model": "anthropic/claude-opus-4-5",
+	"small_model": "anthropic/claude-haiku-4-5",
+	"experimental": { "chatMaxRetries": 1, "batch_tool": true },
+	"username": "{env:USER}",
+	"formatter": {
+		"dprint": {
+			"command": ["dprint", "fmt", "$FILE"],
+			"extensions": [".sh", ".bash", ".toml", ".svg", ".json", ".rs", ".md", ".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".yml", ".yaml"],
+		},
+	},
+	"lsp": {
+		"gh-actions": {
+			"command": ["bunx", "gh-actions-language-server", "--stdio"],
+			"extensions": [".yaml", ".yml"],
+			"disabled": true,
+			"initialization": { "sessionToken": "${env:GITHUB_TOKEN}" },
+		},
+	},
+	"mcp": { "serena": { "enabled": false } },
+}
