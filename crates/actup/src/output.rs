@@ -256,3 +256,190 @@ pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
         i32::from(has_outdated && strict)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use actup_core::Version;
+
+    fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
+        ActionRef {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            ref_str: ref_str.to_string(),
+            host: None,
+            subpath: None,
+        }
+    }
+
+    fn make_version_info(version: &str, sha: &str) -> VersionInfo {
+        VersionInfo {
+            version: Version::parse(version),
+            sha: sha.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_determine_exit_code_success() {
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::UpToDate,
+        }];
+
+        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, true), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_outdated_non_strict() {
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "v3"),
+            status: FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: make_version_info("v4.0.0", "abc123"),
+            },
+        }];
+
+        assert_eq!(determine_exit_code(&findings, false), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_outdated_strict() {
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "v3"),
+            status: FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: make_version_info("v4.0.0", "abc123"),
+            },
+        }];
+
+        assert_eq!(determine_exit_code(&findings, true), 1);
+    }
+
+    #[test]
+    fn test_determine_exit_code_user_error() {
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "nonexistent", "v1"),
+            status: FindingStatus::Unresolvable {
+                reason: "not found".to_string(),
+                is_environment_error: false,
+            },
+        }];
+
+        assert_eq!(determine_exit_code(&findings, false), 2);
+        assert_eq!(determine_exit_code(&findings, true), 2);
+    }
+
+    #[test]
+    fn test_determine_exit_code_env_error() {
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::Unresolvable {
+                reason: "network timeout".to_string(),
+                is_environment_error: true,
+            },
+        }];
+
+        assert_eq!(determine_exit_code(&findings, false), 3);
+        assert_eq!(determine_exit_code(&findings, true), 3);
+    }
+
+    #[test]
+    fn test_determine_exit_code_priority() {
+        // Env error takes priority over user error and outdated
+        let findings = vec![
+            Finding {
+                file: "test.yml".to_string(),
+                line: 1,
+                action_ref: make_action_ref("actions", "checkout", "v3"),
+                status: FindingStatus::Outdated {
+                    current: "v3".to_string(),
+                    latest: make_version_info("v4.0.0", "abc123"),
+                },
+            },
+            Finding {
+                file: "test.yml".to_string(),
+                line: 2,
+                action_ref: make_action_ref("actions", "bad", "v1"),
+                status: FindingStatus::Unresolvable {
+                    reason: "not found".to_string(),
+                    is_environment_error: false,
+                },
+            },
+            Finding {
+                file: "test.yml".to_string(),
+                line: 3,
+                action_ref: make_action_ref("actions", "other", "v1"),
+                status: FindingStatus::Unresolvable {
+                    reason: "rate limited".to_string(),
+                    is_environment_error: true,
+                },
+            },
+        ];
+
+        // Env error (3) takes priority
+        assert_eq!(determine_exit_code(&findings, true), 3);
+    }
+
+    #[test]
+    fn test_determine_exit_code_user_over_outdated() {
+        let findings = vec![
+            Finding {
+                file: "test.yml".to_string(),
+                line: 1,
+                action_ref: make_action_ref("actions", "checkout", "v3"),
+                status: FindingStatus::Outdated {
+                    current: "v3".to_string(),
+                    latest: make_version_info("v4.0.0", "abc123"),
+                },
+            },
+            Finding {
+                file: "test.yml".to_string(),
+                line: 2,
+                action_ref: make_action_ref("actions", "bad", "v1"),
+                status: FindingStatus::Unresolvable {
+                    reason: "not found".to_string(),
+                    is_environment_error: false,
+                },
+            },
+        ];
+
+        // User error (2) takes priority over outdated (1)
+        assert_eq!(determine_exit_code(&findings, true), 2);
+    }
+
+    #[test]
+    fn test_determine_exit_code_empty() {
+        let findings: Vec<Finding> = vec![];
+        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, true), 0);
+    }
+
+    #[test]
+    fn test_determine_exit_code_pinned() {
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "abc123def456"),
+            status: FindingStatus::Pinned {
+                sha: "abc123def456".to_string(),
+                tag: Some("v4.0.0".to_string()),
+            },
+        }];
+
+        // Pinned is not an error
+        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, true), 0);
+    }
+}

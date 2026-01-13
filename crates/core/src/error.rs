@@ -206,3 +206,182 @@ impl fmt::Display for Error {
 }
 
 impl std::error::Error for Error {}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_user_error() {
+        let user_errors = [
+            Error::InvalidRef {
+                input: "bad".into(),
+                reason: "malformed".into(),
+            },
+            Error::NotFound {
+                owner: "foo".into(),
+                repo: "bar".into(),
+                host: None,
+            },
+            Error::RefNotFound {
+                owner: "foo".into(),
+                repo: "bar".into(),
+                ref_name: "v99".into(),
+                host: None,
+            },
+            Error::InvalidConfig {
+                path: "config.toml".into(),
+                reason: "syntax error".into(),
+            },
+            Error::YamlParse {
+                path: "test.yml".into(),
+                reason: "invalid".into(),
+            },
+        ];
+
+        for err in &user_errors {
+            assert!(err.is_user_error(), "{err:?} should be user error");
+            assert!(
+                !err.is_environment_error(),
+                "{err:?} should not be env error"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_environment_error() {
+        let env_errors = [
+            Error::Network {
+                operation: "fetch".into(),
+                message: "timeout".into(),
+            },
+            Error::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            },
+            Error::Auth {
+                provider: "github".into(),
+                reason: "invalid token".into(),
+            },
+            Error::Cache {
+                operation: "read".into(),
+                reason: "corrupted".into(),
+            },
+            Error::ProviderNotFound {
+                host: "unknown.com".into(),
+            },
+        ];
+
+        for err in &env_errors {
+            assert!(err.is_environment_error(), "{err:?} should be env error");
+            assert!(!err.is_user_error(), "{err:?} should not be user error");
+        }
+    }
+
+    #[test]
+    fn test_is_unknown_status() {
+        // These errors mean we couldn't verify - status is unknown
+        assert!(
+            Error::Network {
+                operation: "fetch".into(),
+                message: "timeout".into(),
+            }
+            .is_unknown_status()
+        );
+
+        assert!(
+            Error::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            }
+            .is_unknown_status()
+        );
+
+        assert!(
+            Error::Cache {
+                operation: "read".into(),
+                reason: "corrupted".into(),
+            }
+            .is_unknown_status()
+        );
+
+        // Auth failure is environment but not unknown - we know it failed
+        assert!(
+            !Error::Auth {
+                provider: "github".into(),
+                reason: "bad token".into(),
+            }
+            .is_unknown_status()
+        );
+
+        // User errors are not unknown status
+        assert!(
+            !Error::NotFound {
+                owner: "foo".into(),
+                repo: "bar".into(),
+                host: None,
+            }
+            .is_unknown_status()
+        );
+    }
+
+    #[test]
+    fn test_display() {
+        let err = Error::InvalidRef {
+            input: "bad@ref".into(),
+            reason: "missing owner".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "invalid action reference 'bad@ref': missing owner"
+        );
+
+        let err = Error::NotFound {
+            owner: "foo".into(),
+            repo: "bar".into(),
+            host: None,
+        };
+        assert_eq!(err.to_string(), "action not found: foo/bar");
+
+        let err = Error::NotFound {
+            owner: "foo".into(),
+            repo: "bar".into(),
+            host: Some("ghe.corp.com".into()),
+        };
+        assert_eq!(err.to_string(), "action not found: ghe.corp.com/foo/bar");
+
+        let err = Error::RateLimited {
+            provider: "github".into(),
+            retry_after: Some(std::time::Duration::from_secs(60)),
+        };
+        assert!(err.to_string().contains("rate limited by github"));
+        assert!(err.to_string().contains("60"));
+
+        let err = Error::ProviderNotFound {
+            host: "unknown.com".into(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "no provider configured for host: unknown.com"
+        );
+    }
+
+    #[test]
+    fn test_internal_error() {
+        let err = Error::Internal {
+            context: "version resolution".into(),
+            message: "unexpected state".into(),
+        };
+
+        // Internal is neither user nor environment (edge case)
+        assert!(!err.is_user_error());
+        assert!(!err.is_environment_error());
+        assert!(!err.is_unknown_status());
+
+        assert_eq!(
+            err.to_string(),
+            "internal error in version resolution: unexpected state"
+        );
+    }
+}

@@ -422,3 +422,261 @@ impl EditResult {
         CliExitCode::Success.into()
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // ========================================================================
+    // ErrorTally tests
+    // ========================================================================
+
+    #[test]
+    fn test_error_tally_default() {
+        let tally = ErrorTally::default();
+        assert_eq!(tally.total(), 0);
+        assert_eq!(tally.exit_code(), CliExitCode::Success);
+        assert!(tally.summary().is_none());
+    }
+
+    #[test]
+    fn test_error_tally_user_errors() {
+        let mut tally = ErrorTally::default();
+        tally.record_user();
+        tally.record_user();
+
+        assert_eq!(tally.total(), 2);
+        assert_eq!(tally.exit_code(), CliExitCode::Unresolvable);
+        assert_eq!(tally.summary(), Some("2 user error(s)".to_string()));
+    }
+
+    #[test]
+    fn test_error_tally_env_errors() {
+        let mut tally = ErrorTally::default();
+        tally.record_env();
+
+        assert_eq!(tally.total(), 1);
+        assert_eq!(tally.exit_code(), CliExitCode::EnvironmentError);
+        assert_eq!(tally.summary(), Some("1 environment error(s)".to_string()));
+    }
+
+    #[test]
+    fn test_error_tally_mixed_errors() {
+        let mut tally = ErrorTally::default();
+        tally.record_user();
+        tally.record_env();
+
+        assert_eq!(tally.total(), 2);
+        // Env errors take priority
+        assert_eq!(tally.exit_code(), CliExitCode::EnvironmentError);
+        assert_eq!(
+            tally.summary(),
+            Some("1 user error(s), 1 environment error(s)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_error_tally_record_core_error() {
+        let mut tally = ErrorTally::default();
+
+        // Network error is environment error
+        let net_err = CoreError::Network {
+            operation: "fetch".into(),
+            message: "timeout".into(),
+        };
+        tally.record(&net_err);
+        assert_eq!(tally.exit_code(), CliExitCode::EnvironmentError);
+
+        // NotFound is user error
+        let mut tally2 = ErrorTally::default();
+        let not_found = CoreError::NotFound {
+            owner: "foo".into(),
+            repo: "bar".into(),
+            host: None,
+        };
+        tally2.record(&not_found);
+        assert_eq!(tally2.exit_code(), CliExitCode::Unresolvable);
+    }
+
+    // ========================================================================
+    // PendingEdit tests
+    // ========================================================================
+
+    #[test]
+    fn test_pending_edit_replace_range() {
+        let edit = PendingEdit::replace_range(1, 10..14, "v2.0.0".to_string());
+        let line = "  - uses: actions/checkout@v1.0.0";
+        let result = edit.apply(line).unwrap();
+        assert_eq!(result, "  - uses: v2.0.0ons/checkout@v1.0.0");
+    }
+
+    #[test]
+    fn test_pending_edit_replace_range_exact() {
+        // Replace just the ref portion
+        let line = "  - uses: actions/checkout@v1";
+        let edit = PendingEdit::replace_range(1, 27..29, "v2".to_string());
+        let result = edit.apply(line).unwrap();
+        assert_eq!(result, "  - uses: actions/checkout@v2");
+    }
+
+    #[test]
+    fn test_pending_edit_replace_range_out_of_bounds() {
+        let edit = PendingEdit::replace_range(1, 100..110, "new".to_string());
+        let line = "short";
+        assert!(edit.apply(line).is_none());
+    }
+
+    #[test]
+    fn test_pending_edit_replace_ref() {
+        let edit = PendingEdit::replace_ref(1, "v1".to_string(), "v2".to_string());
+        let line = "  - uses: actions/checkout@v1";
+        let result = edit.apply(line).unwrap();
+        assert_eq!(result, "  - uses: actions/checkout@v2");
+    }
+
+    #[test]
+    fn test_pending_edit_replace_ref_not_found() {
+        let edit = PendingEdit::replace_ref(1, "v3".to_string(), "v4".to_string());
+        let line = "  - uses: actions/checkout@v1";
+        assert!(edit.apply(line).is_none());
+    }
+
+    #[test]
+    fn test_pending_edit_with_comment() {
+        let edit = PendingEdit::replace_ref(1, "v1".to_string(), "abc123".to_string())
+            .with_comment(" # v1".to_string());
+        let line = "  - uses: actions/checkout@v1";
+        let result = edit.apply(line).unwrap();
+        assert_eq!(result, "  - uses: actions/checkout@abc123 # v1");
+    }
+
+    #[test]
+    fn test_pending_edit_comment_not_added_if_exists() {
+        let edit = PendingEdit::replace_ref(1, "v1".to_string(), "v2".to_string())
+            .with_comment(" # pinned".to_string());
+        let line = "  - uses: actions/checkout@v1 # existing comment";
+        let result = edit.apply(line).unwrap();
+        // Comment not added because line already has one
+        assert_eq!(result, "  - uses: actions/checkout@v2 # existing comment");
+    }
+
+    // ========================================================================
+    // FileEdits tests
+    // ========================================================================
+
+    #[test]
+    fn test_file_edits_empty() {
+        let fe = FileEdits::new(PathBuf::from("/test"), "content".to_string());
+        assert!(fe.is_empty());
+    }
+
+    #[test]
+    fn test_file_edits_add_and_apply() {
+        let content = "line1\nuses: foo@v1\nline3\n";
+        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+
+        let edit = PendingEdit::replace_ref(2, "v1".to_string(), "v2".to_string());
+        assert!(fe.add(edit));
+        assert!(!fe.is_empty());
+
+        let result = fe.apply().unwrap();
+        assert_eq!(result, "line1\nuses: foo@v2\nline3\n");
+    }
+
+    #[test]
+    fn test_file_edits_collision() {
+        let mut fe = FileEdits::new(PathBuf::from("/test"), "line1\nline2\n".to_string());
+
+        let edit1 = PendingEdit::replace_ref(1, "1".to_string(), "ONE".to_string());
+        let edit2 = PendingEdit::replace_ref(1, "1".to_string(), "UNO".to_string());
+
+        assert!(fe.add(edit1));
+        assert!(!fe.add(edit2)); // Collision
+    }
+
+    #[test]
+    fn test_file_edits_preserves_trailing_newline() {
+        let with_newline = "line1\nline2\n";
+        let fe = FileEdits::new(PathBuf::from("/test"), with_newline.to_string());
+        let result = fe.apply().unwrap();
+        assert!(result.ends_with('\n'));
+
+        let without_newline = "line1\nline2";
+        let fe2 = FileEdits::new(PathBuf::from("/test"), without_newline.to_string());
+        let result2 = fe2.apply().unwrap();
+        assert!(!result2.ends_with('\n'));
+    }
+
+    #[test]
+    fn test_file_edits_apply_failure() {
+        let content = "short\n";
+        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+
+        // Edit that will fail (range out of bounds)
+        let edit = PendingEdit::replace_range(1, 100..110, "x".to_string());
+        fe.add(edit);
+
+        let result = fe.apply();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), 1); // Failed at line 1
+    }
+
+    #[test]
+    fn test_file_edits_multiple_lines() {
+        let content = "  - uses: actions/checkout@v1\n  - uses: actions/setup-node@v2\n";
+        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+
+        fe.add(PendingEdit::replace_ref(
+            1,
+            "v1".to_string(),
+            "v4".to_string(),
+        ));
+        fe.add(PendingEdit::replace_ref(
+            2,
+            "v2".to_string(),
+            "v5".to_string(),
+        ));
+
+        let result = fe.apply().unwrap();
+        assert_eq!(
+            result,
+            "  - uses: actions/checkout@v4\n  - uses: actions/setup-node@v5\n"
+        );
+    }
+
+    // ========================================================================
+    // EditResult tests
+    // ========================================================================
+
+    #[test]
+    fn test_edit_result_exit_code_success() {
+        let result = EditResult {
+            count: 0,
+            errors: ErrorTally::default(),
+        };
+        assert_eq!(result.exit_code(false), 0);
+        assert_eq!(result.exit_code(true), 0);
+    }
+
+    #[test]
+    fn test_edit_result_exit_code_dry_run_with_changes() {
+        let result = EditResult {
+            count: 5,
+            errors: ErrorTally::default(),
+        };
+        assert_eq!(result.exit_code(false), 0); // Not dry run
+        assert_eq!(result.exit_code(true), 1); // Dry run = outdated
+    }
+
+    #[test]
+    fn test_edit_result_exit_code_errors_priority() {
+        let mut errors = ErrorTally::default();
+        errors.record_env();
+
+        let result = EditResult { count: 5, errors };
+        // Env error takes priority over changes
+        assert_eq!(result.exit_code(true), 3);
+    }
+}
