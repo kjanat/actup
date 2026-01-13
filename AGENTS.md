@@ -200,15 +200,15 @@ kind = "github"
 host = "github.com"
 
 [[providers.instances]]
-kind = "github"
-host = "ghe.mycorp.internal"
-api_base = "https://ghe.mycorp.internal/api/v3"
+kind      = "github"
+host      = "ghe.mycorp.internal"
+api_base  = "https://ghe.mycorp.internal/api/v3"
 token_env = "GHE_TOKEN"
 
 [[providers.instances]]
-kind = "gitlab"
-host = "gitlab.com"
-api_base = "https://gitlab.com/api/v4"
+kind      = "gitlab"
+host      = "gitlab.com"
+api_base  = "https://gitlab.com/api/v4"
 token_env = "GITLAB_TOKEN"
 ```
 

@@ -1,0 +1,5 @@
+[toolchain]
+channel    = "stable"
+profile    = "complete"
+components = ["rustfmt", "clippy", "llvm-tools", "cargo", "rust-analyzer"]
+# targets    = ["wasm32-unknown-unknown"]

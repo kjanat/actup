@@ -1,10 +1,21 @@
 [package]
-name = "actup-core"
+name              = "actup-core"
 version.workspace = true
 edition.workspace = true
+description       = "Provider-neutral core engine for GitHub Actions version management"
 license.workspace = true
 
 [dependencies]
+# For config discovery
+dirs    = { workspace = true }
+# Configuration parsing
+figment = { workspace = true }
+# For file discovery (glob patterns)
+glob    = { workspace = true }
+# Serialization
+serde   = { workspace = true }
+
+[dev-dependencies]
 
 [lints]
 workspace = true

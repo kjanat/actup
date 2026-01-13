@@ -14,7 +14,7 @@
 	"exec": {
 		"cwd": "${configDir}",
 		"commands": [
-			{ "exts": ["rs"], "command": "rustfmt" /*, "cacheKeyFiles": ["rustfmt.toml", "rust-toolchain.toml"]*/ }, // Formats Rust files
+			{ "exts": ["rs"], "command": "rustfmt", "cacheKeyFiles": ["rustfmt.toml", "rust-toolchain.toml"] }, // Formats Rust files
 			{ "fileNames": ["package.json"], "command": "bunx sort-package-json --stdin" }, // Sorts package.json files
 			{ "exts": ["svg"], "command": "bunx svgo --multipass --pretty -q --input - --output -" }, // Prettifies and minifies SVG files
 			{ "exts": ["toml"], "command": "bunx tombi format --stdin-filename {{file_path}} -" }, // Formats toml files

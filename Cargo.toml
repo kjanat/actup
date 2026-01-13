@@ -1,56 +1,107 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members  = ["crates/*"]
 
 [workspace.package]
-version = "0.0.0"
-# Track the edition for all workspace crates in one place. Individual
-# crates can still override this value, but keeping it here means new
-# crates created with `cargo new -w ...` automatically inherit the 2024
-# edition.
-edition = "2024"
-license = "Apache-2.0"
+version    = "0.1.0"
+edition    = "2024"
+repository = "https://github.com/yourname/actup"
+license    = "MIT OR Apache-2.0"
+keywords   = ["cli", "github-actions", "lsp", "version"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+# Base64 encoding/decoding
+base64             = "0.22"
+# CLI
+clap               = { version = "4.5", features = ["derive", "env", "wrap_help"] }
+clap_complete      = "4.5"
+console            = "0.16"
+dashmap            = "6.1"
+directories        = "6.0"
+dirs               = "6"
+# Configuration
+figment            = { version = "0.10", features = ["env", "toml", "yaml"] }
+glob               = "0.3"
+human-panic        = "2.0"
+indicatif          = "0.18"
+# Testing
+insta              = { version = "1.42", features = ["yaml"] }
+miette             = { version = "7.6", features = ["fancy"] }
+node-semver        = "2.1"
+octocrab           = "0.49"
+owo-colors         = "4.1"
+# HTTP/API
+reqwest            = { version = "0.13", default-features = false, features = [
+  "json",
+  "rustls",
+] }
+# Schema
+schemars           = "1.2"
+schemars_derive    = "1.2"
+# Versioning
+semver             = "1.0"
+serde              = { version = "1.0", features = ["derive"] }
+serde_json         = "1.0"
+# Error handling
+thiserror          = "2.0"
+# Core
+tokio              = { version = "1.49", features = ["full"] }
+toml               = "0.9"
+# LSP
+tower-lsp-server   = "0.23"
+# Utilities
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url                = "2.5"
+walkdir            = "2.5"
 
 [workspace.lints.clippy]
-expect_used = "deny"
-identity_op = "deny"
-manual_clamp = "deny"
-manual_filter = "deny"
-manual_find = "deny"
-manual_flatten = "deny"
-manual_map = "deny"
-manual_memcpy = "deny"
-manual_non_exhaustive = "deny"
-manual_ok_or = "deny"
-manual_range_contains = "deny"
-manual_retain = "deny"
-manual_strip = "deny"
-manual_try_fold = "deny"
-manual_unwrap_or = "deny"
-needless_borrow = "deny"
-needless_borrowed_reference = "deny"
-needless_collect = "deny"
-needless_late_init = "deny"
-needless_option_as_deref = "deny"
-needless_question_mark = "deny"
-needless_update = "deny"
-redundant_clone = "deny"
-redundant_closure = "deny"
+all                                = { level = "warn", priority = -1 }
+expect_used                        = "deny"
+identity_op                        = "deny"
+manual_clamp                       = "deny"
+manual_filter                      = "deny"
+manual_find                        = "deny"
+manual_flatten                     = "deny"
+manual_map                         = "deny"
+manual_memcpy                      = "deny"
+manual_non_exhaustive              = "deny"
+manual_ok_or                       = "deny"
+manual_range_contains              = "deny"
+manual_retain                      = "deny"
+manual_strip                       = "deny"
+manual_try_fold                    = "deny"
+manual_unwrap_or                   = "deny"
+module_name_repetitions            = "allow"
+must_use_candidate                 = "allow"
+needless_borrow                    = "deny"
+needless_borrowed_reference        = "deny"
+needless_collect                   = "deny"
+needless_late_init                 = "deny"
+needless_option_as_deref           = "deny"
+needless_question_mark             = "deny"
+needless_update                    = "deny"
+nursery                            = { level = "warn", priority = -1 }
+pedantic                           = { level = "warn", priority = -1 }
+redundant_clone                    = "deny"
+redundant_closure                  = "deny"
 redundant_closure_for_method_calls = "deny"
-redundant_static_lifetimes = "deny"
-trivially_copy_pass_by_ref = "deny"
-uninlined_format_args = "deny"
-unnecessary_filter_map = "deny"
-unnecessary_lazy_evaluations = "deny"
-unnecessary_sort_by = "deny"
-unnecessary_to_owned = "deny"
-unwrap_used = "deny"
+redundant_static_lifetimes         = "deny"
+trivially_copy_pass_by_ref         = "deny"
+uninlined_format_args              = "deny"
+unnecessary_filter_map             = "deny"
+unnecessary_lazy_evaluations       = "deny"
+unnecessary_sort_by                = "deny"
+unnecessary_to_owned               = "deny"
+unwrap_used                        = "deny"
 
 [workspace.lints.rust]
+unsafe_code = "forbid"
 
 [workspace.lints.rustdoc]
 
 [profile.ci-test]
-inherits = "test"
+inherits  = "test"
 opt-level = 0
-debug = 1  # Reduce debug symbol size
+debug     = 1
