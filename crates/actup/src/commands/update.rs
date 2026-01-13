@@ -4,10 +4,23 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-use actup_core::{discover_files, extract_uses_from_yaml, parse_uses, Config, ProviderRegistry};
+use actup_core::{
+    Config, ProviderRegistry, UsesLocation, Version, discover_files, extract_uses_from_yaml,
+    parse_uses,
+};
 use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
+
+/// Information about an update to apply
+struct UpdateInfo {
+    /// The UsesLocation for targeted replacement
+    loc: UsesLocation,
+    /// Old ref string
+    old_ref: String,
+    /// New ref string
+    new_ref: String,
+}
 
 pub async fn run(
     path: &Path,
@@ -35,27 +48,27 @@ pub async fn run(
         let content = match fs::read_to_string(&file.path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!(
-                    "{}: {} - {}",
-                    "Warning".yellow(),
-                    file.path.display(),
-                    e
-                );
+                eprintln!("{}: {} - {}", "Warning".yellow(), file.path.display(), e);
                 continue;
             }
         };
 
         let uses_locations = extract_uses_from_yaml(&content);
 
-        // Collect updates needed for this file: line -> (old_ref, new_ref)
-        let mut updates: HashMap<usize, (String, String)> = HashMap::new();
+        // Collect updates needed for this file: line -> UpdateInfo
+        let mut updates: HashMap<usize, UpdateInfo> = HashMap::new();
 
-        for loc in &uses_locations {
+        for loc in uses_locations {
             let action_ref = match parse_uses(&loc.value) {
                 Ok(Some(r)) => r,
                 Ok(None) => continue,
                 Err(_) => continue,
             };
+
+            // Skip ignored actions
+            if config.should_ignore(&action_ref.owner, &action_ref.repo) {
+                continue;
+            }
 
             // Skip SHAs
             if action_ref.is_sha() {
@@ -77,11 +90,37 @@ pub async fn run(
                 }
             };
 
-            if let Some(latest) = versions.latest.as_ref() {
-                if latest.version.to_string() != action_ref.ref_str {
+            // Get effective policy for this action
+            let policy = config.policy_for(&action_ref.owner, &action_ref.repo);
+            let current_version = Version::parse(&action_ref.ref_str);
+
+            // Find target version based on policy
+            let target = versions.find_latest_for(
+                &current_version,
+                policy.allows_major(),
+                config.allow_prerelease,
+            );
+
+            if let Some(latest) = target {
+                // Check if update is needed (handles v4 == v4.1.7 case)
+                let needs_update = match &current_version {
+                    Version::Semver {
+                        major,
+                        minor: None,
+                        patch: None,
+                        ..
+                    } => latest.version.major() != Some(*major),
+                    _ => latest.version.to_string() != action_ref.ref_str,
+                };
+
+                if needs_update {
                     updates.insert(
                         loc.line,
-                        (action_ref.ref_str.clone(), latest.version.to_string()),
+                        UpdateInfo {
+                            loc,
+                            old_ref: action_ref.ref_str.clone(),
+                            new_ref: latest.version.to_string(),
+                        },
                     );
                 }
             }
@@ -91,14 +130,27 @@ pub async fn run(
             continue;
         }
 
-        // Read file and apply updates
+        // Apply updates using targeted byte ranges to avoid corrupting comments
         let lines: Vec<&str> = content.lines().collect();
         let mut new_lines: Vec<String> = Vec::with_capacity(lines.len());
 
         for (i, line) in lines.iter().enumerate() {
             let line_num = i + 1; // 1-indexed
-            if let Some((old_ref, new_ref)) = updates.get(&line_num) {
-                let new_line = line.replace(old_ref, new_ref);
+            if let Some(update) = updates.get(&line_num) {
+                // Use ref_range for targeted replacement (only replaces the @ref portion)
+                let new_line = if let Some(range) = update.loc.ref_range() {
+                    // Replace only the ref portion using byte range
+                    let mut result = String::with_capacity(line.len());
+                    result.push_str(&line[..range.start]);
+                    result.push_str(&update.new_ref);
+                    result.push_str(&line[range.end..]);
+                    result
+                } else {
+                    // Fallback: replace first occurrence of old ref after @
+                    let at_pattern = format!("@{}", update.old_ref);
+                    let new_pattern = format!("@{}", update.new_ref);
+                    line.replacen(&at_pattern, &new_pattern, 1)
+                };
                 new_lines.push(new_line);
 
                 let file_str = file.path.strip_prefix(path).unwrap_or(&file.path).display();
@@ -108,8 +160,8 @@ pub async fn run(
                         "{}:{}: {} -> {}",
                         file_str,
                         line_num,
-                        old_ref.red(),
-                        new_ref.green()
+                        update.old_ref.red(),
+                        update.new_ref.green()
                     );
                 }
                 total_updates += 1;

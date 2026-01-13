@@ -3,11 +3,13 @@
 use std::fs;
 use std::path::Path;
 
-use actup_core::{discover_files, extract_uses_from_yaml, parse_uses, Config, ProviderRegistry};
+use actup_core::{
+    Config, ProviderRegistry, Version, discover_files, extract_uses_from_yaml, parse_uses,
+};
 use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
-use crate::output::{determine_exit_code, print_findings, print_summary, Finding, FindingStatus};
+use crate::output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary};
 
 pub async fn run(
     path: &Path,
@@ -34,12 +36,7 @@ pub async fn run(
         let content = match fs::read_to_string(&file.path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!(
-                    "{}: {} - {}",
-                    "Warning".yellow(),
-                    file.path.display(),
-                    e
-                );
+                eprintln!("{}: {} - {}", "Warning".yellow(), file.path.display(), e);
                 continue;
             }
         };
@@ -68,6 +65,11 @@ pub async fn run(
                 .unwrap_or(&file.path)
                 .display()
                 .to_string();
+
+            // Check if action should be ignored (per-action override or ignore list)
+            if config.should_ignore(&action_ref.owner, &action_ref.repo) {
+                continue;
+            }
 
             // Check if it's already a SHA (40 hex chars)
             if action_ref.is_sha() {
@@ -118,15 +120,38 @@ pub async fn run(
                 }
             };
 
-            // Find if current ref matches latest
-            let current_version = versions
-                .semver_tags
-                .iter()
-                .find(|v| v.version.to_string() == action_ref.ref_str);
-            let latest = versions.latest.as_ref();
+            // Get effective policy for this action (respects per-action overrides)
+            let policy = config.policy_for(&action_ref.owner, &action_ref.repo);
 
-            match (current_version, latest) {
-                (Some(_), Some(latest_v)) if latest_v.version.to_string() == action_ref.ref_str => {
+            // Parse current ref as Version for proper comparison
+            let current_version = Version::parse(&action_ref.ref_str);
+
+            // Find the appropriate latest version based on policy
+            let target = versions.find_latest_for(
+                &current_version,
+                policy.allows_major(),
+                config.allow_prerelease,
+            );
+
+            // Check if current matches target (handles v4 == v4.1.7 via major comparison)
+            let is_up_to_date = match (&current_version, target) {
+                // For major-only refs (v4), compare major versions
+                (
+                    Version::Semver {
+                        major,
+                        minor: None,
+                        patch: None,
+                        ..
+                    },
+                    Some(t),
+                ) => t.version.major() == Some(*major),
+                // For full semver, exact match
+                (_, Some(t)) => t.version.to_string() == action_ref.ref_str,
+                (_, None) => false,
+            };
+
+            match (is_up_to_date, target) {
+                (true, _) => {
                     findings.push(Finding {
                         file: file_str,
                         line: loc.line,
@@ -134,7 +159,7 @@ pub async fn run(
                         status: FindingStatus::UpToDate,
                     });
                 }
-                (_, Some(latest_v)) => {
+                (false, Some(latest_v)) => {
                     findings.push(Finding {
                         file: file_str,
                         line: loc.line,
@@ -145,15 +170,44 @@ pub async fn run(
                         },
                     });
                 }
-                (_, None) => {
-                    findings.push(Finding {
-                        file: file_str,
-                        line: loc.line,
-                        action_ref: action_ref.clone(),
-                        status: FindingStatus::Unresolvable {
-                            reason: "no versions found".to_string(),
-                        },
-                    });
+                (false, None) => {
+                    // No semver tags - could be branch ref or no tags at all
+                    // Check branch_policy before marking as unresolvable
+                    if current_version.is_branch() || !current_version.is_semver() {
+                        match config.branch_policy {
+                            actup_core::BranchPolicy::Ignore => continue,
+                            actup_core::BranchPolicy::Warn => {
+                                findings.push(Finding {
+                                    file: file_str,
+                                    line: loc.line,
+                                    action_ref: action_ref.clone(),
+                                    status: FindingStatus::Unresolvable {
+                                        reason: "non-semver ref (branch or tag)".to_string(),
+                                    },
+                                });
+                            }
+                            actup_core::BranchPolicy::Update => {
+                                findings.push(Finding {
+                                    file: file_str,
+                                    line: loc.line,
+                                    action_ref: action_ref.clone(),
+                                    status: FindingStatus::Unresolvable {
+                                        reason: "non-semver ref should be pinned to SHA"
+                                            .to_string(),
+                                    },
+                                });
+                            }
+                        }
+                    } else {
+                        findings.push(Finding {
+                            file: file_str,
+                            line: loc.line,
+                            action_ref: action_ref.clone(),
+                            status: FindingStatus::Unresolvable {
+                                reason: "no versions found".to_string(),
+                            },
+                        });
+                    }
                 }
             }
         }

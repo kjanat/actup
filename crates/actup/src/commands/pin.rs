@@ -5,7 +5,8 @@ use std::fs;
 use std::path::Path;
 
 use actup_core::{
-    discover_files, extract_uses_from_yaml, parse_uses, ActionRef, Config, ProviderRegistry,
+    ActionRef, Config, ProviderRegistry, UsesLocation, discover_files, extract_uses_from_yaml,
+    parse_uses,
 };
 use owo_colors::OwoColorize;
 
@@ -26,6 +27,18 @@ fn action_prefix(action: &ActionRef) -> String {
         s.push_str(p);
     }
     s
+}
+
+/// Information about a pin to apply
+struct PinInfo {
+    /// The UsesLocation for targeted replacement
+    loc: UsesLocation,
+    /// Old uses value
+    old_uses: String,
+    /// New uses value (with SHA)
+    new_uses: String,
+    /// Comment with original ref
+    comment: String,
 }
 
 pub async fn run(
@@ -54,27 +67,27 @@ pub async fn run(
         let content = match fs::read_to_string(&file.path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!(
-                    "{}: {} - {}",
-                    "Warning".yellow(),
-                    file.path.display(),
-                    e
-                );
+                eprintln!("{}: {} - {}", "Warning".yellow(), file.path.display(), e);
                 continue;
             }
         };
 
         let uses_locations = extract_uses_from_yaml(&content);
 
-        // Collect pins needed: line -> (old_uses, new_uses, comment)
-        let mut pins: HashMap<usize, (String, String, String)> = HashMap::new();
+        // Collect pins needed: line -> PinInfo
+        let mut pins: HashMap<usize, PinInfo> = HashMap::new();
 
-        for loc in &uses_locations {
+        for loc in uses_locations {
             let action_ref = match parse_uses(&loc.value) {
                 Ok(Some(r)) => r,
                 Ok(None) => continue,
                 Err(_) => continue,
             };
+
+            // Skip ignored actions
+            if config.should_ignore(&action_ref.owner, &action_ref.repo) {
+                continue;
+            }
 
             // Skip already pinned (SHA)
             if action_ref.is_sha() {
@@ -108,7 +121,10 @@ pub async fn run(
                 v.sha.clone()
             } else {
                 // Try to resolve the ref directly (might be a branch)
-                match provider.resolve_ref_to_sha(&repo_id, &action_ref.ref_str).await {
+                match provider
+                    .resolve_ref_to_sha(&repo_id, &action_ref.ref_str)
+                    .await
+                {
                     Ok(sha40) => sha40.as_str().to_string(),
                     Err(e) => {
                         eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
@@ -123,26 +139,48 @@ pub async fn run(
             let new_uses = format!("{}@{}", prefix, sha);
             let comment = format!(" # {}", action_ref.ref_str);
 
-            pins.insert(loc.line, (old_uses, new_uses, comment));
+            pins.insert(
+                loc.line,
+                PinInfo {
+                    loc,
+                    old_uses,
+                    new_uses,
+                    comment,
+                },
+            );
         }
 
         if pins.is_empty() {
             continue;
         }
 
-        // Read file and apply pins
+        // Read file and apply pins using targeted replacement
         let lines: Vec<&str> = content.lines().collect();
         let mut new_lines: Vec<String> = Vec::with_capacity(lines.len());
 
         for (i, line) in lines.iter().enumerate() {
             let line_num = i + 1;
-            if let Some((old_uses, new_uses, comment)) = pins.get(&line_num) {
-                // Replace uses value and add comment with original tag
-                let mut new_line = line.replace(old_uses, new_uses);
+            if let Some(pin) = pins.get(&line_num) {
+                // Use value_range for targeted replacement of the entire uses value
+                let range = pin.loc.value_range();
+                let mut new_line = String::with_capacity(line.len() + 60);
+                new_line.push_str(&line[..range.start]);
+                new_line.push_str(&pin.new_uses.split('@').skip(1).next().map_or_else(
+                    || pin.new_uses.clone(),
+                    |sha| {
+                        // Reconstruct with prefix from original value
+                        format!(
+                            "{}@{}",
+                            pin.loc.value.split('@').next().unwrap_or(&pin.loc.value),
+                            sha
+                        )
+                    },
+                ));
+                new_line.push_str(&line[range.end..]);
 
                 // Add comment if not already present
                 if !new_line.contains('#') {
-                    new_line.push_str(comment);
+                    new_line.push_str(&pin.comment);
                 }
 
                 new_lines.push(new_line);
@@ -154,8 +192,8 @@ pub async fn run(
                         "{}:{}: {} -> {}",
                         file_str,
                         line_num,
-                        old_uses.yellow(),
-                        format!("{}{}", new_uses, comment).cyan()
+                        pin.old_uses.yellow(),
+                        format!("{}{}", pin.new_uses, pin.comment).cyan()
                     );
                 }
                 total_pins += 1;
@@ -203,9 +241,9 @@ pub async fn run(
 
     if errors > 0 {
         3
-    } else if total_pins > 0 && dry_run {
-        1
     } else {
+        // Exit 0 for pin command (unlike check/update which exit 1 on dry-run changes)
+        // Pin is a deliberate action, not a check for compliance
         0
     }
 }
