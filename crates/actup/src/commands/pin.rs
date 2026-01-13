@@ -176,3 +176,61 @@ pub async fn run(
         0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_action_ref(
+        host: Option<&str>,
+        owner: &str,
+        repo: &str,
+        subpath: Option<&str>,
+        ref_str: &str,
+    ) -> ActionRef {
+        ActionRef {
+            host: host.map(String::from),
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            subpath: subpath.map(String::from),
+            ref_str: ref_str.to_string(),
+        }
+    }
+
+    // ========================================================================
+    // action_prefix tests
+    // ========================================================================
+
+    #[test]
+    fn test_action_prefix_simple() {
+        let action = make_action_ref(None, "actions", "checkout", None, "v4");
+        assert_eq!(action_prefix(&action), "actions/checkout");
+    }
+
+    #[test]
+    fn test_action_prefix_with_host() {
+        let action = make_action_ref(Some("github.com"), "actions", "checkout", None, "v4");
+        assert_eq!(action_prefix(&action), "github.com/actions/checkout");
+    }
+
+    #[test]
+    fn test_action_prefix_with_subpath() {
+        let action = make_action_ref(None, "actions", "cache", Some("restore"), "v4");
+        assert_eq!(action_prefix(&action), "actions/cache/restore");
+    }
+
+    #[test]
+    fn test_action_prefix_with_host_and_subpath() {
+        let action = make_action_ref(
+            Some("ghe.corp.com"),
+            "org",
+            "monorepo",
+            Some(".github/actions/build"),
+            "main",
+        );
+        assert_eq!(
+            action_prefix(&action),
+            "ghe.corp.com/org/monorepo/.github/actions/build"
+        );
+    }
+}

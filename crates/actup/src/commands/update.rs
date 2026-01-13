@@ -150,3 +150,98 @@ pub async fn run(
     result.print_summary(dry_run, "Updated", "Would update", format);
     result.exit_code(dry_run)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+
+    fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
+        ActionRef {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            ref_str: ref_str.to_string(),
+            host: None,
+            subpath: None,
+        }
+    }
+
+    fn make_version_info(ver: &str, sha: &str) -> VersionInfo {
+        VersionInfo {
+            version: Version::parse(ver),
+            sha: sha.to_string(),
+        }
+    }
+
+    // ========================================================================
+    // needs_update tests
+    // ========================================================================
+
+    #[test]
+    fn test_needs_update_same_version() {
+        let action_ref = make_action_ref("actions", "checkout", "v4.2.0");
+        let latest = make_version_info("v4.2.0", "aaa");
+        assert!(needs_update(&action_ref, &latest).is_none());
+    }
+
+    #[test]
+    fn test_needs_update_outdated() {
+        let action_ref = make_action_ref("actions", "checkout", "v4.0.0");
+        let latest = make_version_info("v4.2.0", "aaa");
+        let result = needs_update(&action_ref, &latest);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "v4.2.0");
+    }
+
+    #[test]
+    fn test_needs_update_major_only_same() {
+        let action_ref = make_action_ref("actions", "checkout", "v4");
+        let latest = make_version_info("v4.2.0", "aaa");
+        // v4 -> v4.x.x, major is same so no update needed
+        assert!(needs_update(&action_ref, &latest).is_none());
+    }
+
+    #[test]
+    fn test_needs_update_major_only_different() {
+        let action_ref = make_action_ref("actions", "checkout", "v3");
+        let latest = make_version_info("v4.0.0", "aaa");
+        // v3 -> v4.x.x, major differs so needs update
+        let result = needs_update(&action_ref, &latest);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap(), "v4.0.0");
+    }
+
+    // ========================================================================
+    // create_edit tests
+    // ========================================================================
+
+    #[test]
+    fn test_create_edit_with_ref_range() {
+        let loc = UsesLocation {
+            line: 10,
+            column: 15,
+            value: "actions/checkout@v4".to_string(),
+            raw_line: "      - uses: actions/checkout@v4".to_string(),
+        };
+        let action_ref = make_action_ref("actions", "checkout", "v4");
+        let edit = create_edit(&loc, &action_ref, "v5");
+
+        // Should use replace_range when ref_range is available
+        assert_eq!(edit.line, 10);
+    }
+
+    #[test]
+    fn test_create_edit_fallback_replace_ref() {
+        // When ref_range returns None (no @), falls back to replace_ref
+        let loc = UsesLocation {
+            line: 5,
+            column: 15,
+            value: "./local-action".to_string(),
+            raw_line: "      - uses: ./local-action".to_string(),
+        };
+        let action_ref = make_action_ref(".", "local-action", "");
+        let edit = create_edit(&loc, &action_ref, "v1.0.0");
+
+        assert_eq!(edit.line, 5);
+    }
+}

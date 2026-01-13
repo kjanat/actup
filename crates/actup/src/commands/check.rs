@@ -176,3 +176,202 @@ pub async fn run(
 
     determine_exit_code(&findings, strict)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use actup_core::UpdatePolicy;
+    use std::collections::HashMap;
+
+    fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
+        ActionRef {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            ref_str: ref_str.to_string(),
+            host: None,
+            subpath: None,
+        }
+    }
+
+    fn make_version_info(ver: &str, sha: &str) -> VersionInfo {
+        VersionInfo {
+            version: Version::parse(ver),
+            sha: sha.to_string(),
+        }
+    }
+
+    fn make_version_set(
+        tags: Vec<VersionInfo>,
+        latest: Option<VersionInfo>,
+        latest_per_major: HashMap<u32, VersionInfo>,
+    ) -> VersionSet {
+        VersionSet {
+            semver_tags: tags,
+            latest_per_major,
+            latest,
+            default_branch: None,
+            fetched_at: None,
+        }
+    }
+
+    // ========================================================================
+    // is_version_current tests
+    // ========================================================================
+
+    #[test]
+    fn test_is_version_current_exact_match() {
+        let current = Version::parse("v1.2.3");
+        let target = make_version_info("v1.2.3", "aaa");
+        assert!(is_version_current(&current, Some(&target), "v1.2.3"));
+    }
+
+    #[test]
+    fn test_is_version_current_not_match() {
+        let current = Version::parse("v1.0.0");
+        let target = make_version_info("v1.2.3", "aaa");
+        assert!(!is_version_current(&current, Some(&target), "v1.0.0"));
+    }
+
+    #[test]
+    fn test_is_version_current_major_only() {
+        let current = Version::parse("v4");
+        let target = make_version_info("v4.2.1", "aaa");
+        // v4 is up-to-date if latest in major 4 is v4.x.x
+        assert!(is_version_current(&current, Some(&target), "v4"));
+    }
+
+    #[test]
+    fn test_is_version_current_major_mismatch() {
+        let current = Version::parse("v3");
+        let target = make_version_info("v4.0.0", "aaa");
+        assert!(!is_version_current(&current, Some(&target), "v3"));
+    }
+
+    #[test]
+    fn test_is_version_current_no_target() {
+        let current = Version::parse("v1.0.0");
+        assert!(!is_version_current(&current, None, "v1.0.0"));
+    }
+
+    // ========================================================================
+    // status_for_no_target tests
+    // ========================================================================
+
+    #[test]
+    fn test_status_for_no_target_semver_no_versions() {
+        let current = Version::parse("v1.0.0");
+        let status = status_for_no_target(&current, BranchPolicy::Ignore);
+        match status {
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => {
+                assert_eq!(reason, "no versions found");
+                assert!(!is_environment_error);
+            }
+            _ => panic!("expected Unresolvable"),
+        }
+    }
+
+    #[test]
+    fn test_status_for_no_target_branch_ignore() {
+        let current = Version::parse("main");
+        let status = status_for_no_target(&current, BranchPolicy::Ignore);
+        assert!(matches!(status, FindingStatus::UpToDate));
+    }
+
+    #[test]
+    fn test_status_for_no_target_branch_warn() {
+        let current = Version::parse("main");
+        let status = status_for_no_target(&current, BranchPolicy::Warn);
+        match status {
+            FindingStatus::Unresolvable { reason, .. } => {
+                assert!(reason.contains("non-semver"));
+            }
+            _ => panic!("expected Unresolvable"),
+        }
+    }
+
+    #[test]
+    fn test_status_for_no_target_branch_update() {
+        let current = Version::parse("main");
+        let status = status_for_no_target(&current, BranchPolicy::Update);
+        match status {
+            FindingStatus::Unresolvable { reason, .. } => {
+                assert!(reason.contains("pinned to SHA"));
+            }
+            _ => panic!("expected Unresolvable"),
+        }
+    }
+
+    // ========================================================================
+    // determine_status tests
+    // ========================================================================
+
+    #[test]
+    fn test_determine_status_up_to_date() {
+        let action_ref = make_action_ref("actions", "checkout", "v4.2.0");
+        let v4_2 = make_version_info("v4.2.0", "aaa");
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(4, v4_2.clone());
+        let versions = make_version_set(vec![v4_2.clone()], Some(v4_2), latest_per_major);
+        let config = Config::default();
+
+        let status = determine_status(&action_ref, &versions, &config);
+        assert!(matches!(status, FindingStatus::UpToDate));
+    }
+
+    #[test]
+    fn test_determine_status_outdated() {
+        let action_ref = make_action_ref("actions", "checkout", "v4.0.0");
+        let v4_0 = make_version_info("v4.0.0", "aaa");
+        let v4_2 = make_version_info("v4.2.0", "bbb");
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(4, v4_2.clone());
+        let versions = make_version_set(vec![v4_0, v4_2.clone()], Some(v4_2), latest_per_major);
+        let config = Config::default();
+
+        let status = determine_status(&action_ref, &versions, &config);
+        match status {
+            FindingStatus::Outdated { current, latest } => {
+                assert_eq!(current, "v4.0.0");
+                assert_eq!(latest.version.to_string(), "v4.2.0");
+            }
+            _ => panic!("expected Outdated, got {status:?}"),
+        }
+    }
+
+    #[test]
+    fn test_determine_status_major_tag_up_to_date() {
+        let action_ref = make_action_ref("actions", "checkout", "v4");
+        let v4_2 = make_version_info("v4.2.0", "aaa");
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(4, v4_2.clone());
+        let versions = make_version_set(vec![v4_2.clone()], Some(v4_2), latest_per_major);
+        let config = Config::default();
+
+        let status = determine_status(&action_ref, &versions, &config);
+        assert!(matches!(status, FindingStatus::UpToDate));
+    }
+
+    #[test]
+    fn test_determine_status_with_policy_override() {
+        let action_ref = make_action_ref("actions", "checkout", "v3.0.0");
+        let v3 = make_version_info("v3.0.0", "aaa");
+        let v4 = make_version_info("v4.0.0", "bbb");
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(3, v3.clone());
+        latest_per_major.insert(4, v4.clone());
+        let versions = make_version_set(vec![v3, v4.clone()], Some(v4), latest_per_major);
+
+        // With minor policy, v3.0.0 is up-to-date (latest v3.x)
+        let config = Config {
+            update_policy: UpdatePolicy::Minor,
+            ..Default::default()
+        };
+
+        let status = determine_status(&action_ref, &versions, &config);
+        assert!(matches!(status, FindingStatus::UpToDate));
+    }
+}
