@@ -197,6 +197,40 @@ impl fmt::Display for ActionRepoId {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // ActionRef construction tests
+    // ========================================================================
+
+    #[test]
+    fn test_action_ref_new() {
+        let action = ActionRef::new(
+            Some("github.com".to_string()),
+            "actions",
+            "checkout",
+            Some("v4".to_string()),
+            "v4.1.0",
+        );
+        assert_eq!(action.host, Some("github.com".to_string()));
+        assert_eq!(action.owner, "actions");
+        assert_eq!(action.repo, "checkout");
+        assert_eq!(action.subpath, Some("v4".to_string()));
+        assert_eq!(action.ref_str, "v4.1.0");
+    }
+
+    #[test]
+    fn test_action_ref_simple() {
+        let action = ActionRef::simple("actions", "checkout", "v4");
+        assert!(action.host.is_none());
+        assert_eq!(action.owner, "actions");
+        assert_eq!(action.repo, "checkout");
+        assert!(action.subpath.is_none());
+        assert_eq!(action.ref_str, "v4");
+    }
+
+    // ========================================================================
+    // ActionRef::is_sha tests
+    // ========================================================================
+
     #[test]
     fn test_is_sha() {
         let sha_ref = ActionRef::simple("owner", "repo", "a".repeat(40));
@@ -205,6 +239,22 @@ mod tests {
         let tag_ref = ActionRef::simple("owner", "repo", "v1.2.3");
         assert!(!tag_ref.is_sha());
     }
+
+    #[test]
+    fn test_is_sha_mixed_case() {
+        let sha = ActionRef::simple("owner", "repo", "aAbBcCdDeEfF0123456789aAbBcCdDeEfF012345");
+        assert!(sha.is_sha());
+    }
+
+    #[test]
+    fn test_is_sha_invalid_chars() {
+        let invalid = ActionRef::simple("owner", "repo", "g".repeat(40)); // g is not hex
+        assert!(!invalid.is_sha());
+    }
+
+    // ========================================================================
+    // ActionRef::is_short_sha tests
+    // ========================================================================
 
     #[test]
     fn test_is_short_sha() {
@@ -216,6 +266,25 @@ mod tests {
     }
 
     #[test]
+    fn test_is_short_sha_too_short() {
+        let too_short = ActionRef::simple("owner", "repo", "abc123"); // 6 chars
+        assert!(!too_short.is_short_sha());
+    }
+
+    #[test]
+    fn test_is_short_sha_boundary() {
+        let seven = ActionRef::simple("owner", "repo", "a".repeat(7));
+        assert!(seven.is_short_sha());
+
+        let thirty_nine = ActionRef::simple("owner", "repo", "a".repeat(39));
+        assert!(thirty_nine.is_short_sha());
+    }
+
+    // ========================================================================
+    // ActionRef::looks_like_semver tests
+    // ========================================================================
+
+    #[test]
     fn test_looks_like_semver() {
         assert!(ActionRef::simple("o", "r", "v1").looks_like_semver());
         assert!(ActionRef::simple("o", "r", "v1.2").looks_like_semver());
@@ -224,6 +293,37 @@ mod tests {
         assert!(!ActionRef::simple("o", "r", "main").looks_like_semver());
         assert!(!ActionRef::simple("o", "r", "release/v1").looks_like_semver());
     }
+
+    #[test]
+    fn test_looks_like_semver_prerelease() {
+        // Current impl doesn't recognize prereleases as semver due to '-'
+        assert!(!ActionRef::simple("o", "r", "v1.0.0-beta").looks_like_semver());
+    }
+
+    // ========================================================================
+    // ActionRef::to_repo_id tests
+    // ========================================================================
+
+    #[test]
+    fn test_to_repo_id() {
+        let action = ActionRef::new(
+            Some("ghe.corp.com".to_string()),
+            "org",
+            "repo",
+            Some("path/to/action".to_string()),
+            "v1.0.0",
+        );
+        let id = action.to_repo_id();
+
+        assert_eq!(id.host, Some("ghe.corp.com".to_string()));
+        assert_eq!(id.owner, "org");
+        assert_eq!(id.repo, "repo");
+        assert_eq!(id.subpath, Some("path/to/action".to_string()));
+    }
+
+    // ========================================================================
+    // ActionRef::to_uses_string tests
+    // ========================================================================
 
     #[test]
     fn test_to_uses_string() {
@@ -247,6 +347,50 @@ mod tests {
     }
 
     #[test]
+    fn test_to_uses_string_full() {
+        let full = ActionRef::new(
+            Some("ghe.corp.com".to_string()),
+            "org",
+            "monorepo",
+            Some("actions/deploy".to_string()),
+            "v2.0.0",
+        );
+        assert_eq!(
+            full.to_uses_string(),
+            "ghe.corp.com/org/monorepo/actions/deploy@v2.0.0"
+        );
+    }
+
+    // ========================================================================
+    // ActionRef Display tests
+    // ========================================================================
+
+    #[test]
+    fn test_action_ref_display() {
+        let action = ActionRef::simple("actions", "checkout", "v4");
+        assert_eq!(format!("{action}"), "actions/checkout@v4");
+    }
+
+    // ========================================================================
+    // ActionRepoId tests
+    // ========================================================================
+
+    #[test]
+    fn test_action_repo_id_new() {
+        let id = ActionRepoId::new(Some("github.com".to_string()), "actions", "checkout", None);
+        assert_eq!(id.host, Some("github.com".to_string()));
+        assert_eq!(id.owner, "actions");
+        assert_eq!(id.repo, "checkout");
+    }
+
+    #[test]
+    fn test_action_repo_id_simple() {
+        let id = ActionRepoId::simple("actions", "checkout");
+        assert!(id.host.is_none());
+        assert!(id.subpath.is_none());
+    }
+
+    #[test]
     fn test_cache_key() {
         let id = ActionRepoId::simple("actions", "checkout");
         assert_eq!(
@@ -259,5 +403,21 @@ mod tests {
             with_host.cache_key("github", "github.com"),
             "github::ghe.corp.com/org/action"
         );
+    }
+
+    #[test]
+    fn test_cache_key_with_subpath() {
+        let id = ActionRepoId::new(None, "org", "monorepo", Some("actions/build".to_string()));
+        let key = id.cache_key("github", "github.com");
+        assert!(key.contains("actions/build"));
+    }
+
+    #[test]
+    fn test_action_repo_id_display() {
+        let id = ActionRepoId::simple("actions", "checkout");
+        assert_eq!(format!("{id}"), "actions/checkout");
+
+        let with_host = ActionRepoId::new(Some("ghe.corp.com".to_string()), "org", "action", None);
+        assert_eq!(format!("{with_host}"), "ghe.corp.com/org/action");
     }
 }

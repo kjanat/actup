@@ -72,25 +72,19 @@ impl Version {
     fn try_parse_semver(s: &str) -> Option<Self> {
         let version_str = s.strip_prefix('v').unwrap_or(s);
 
+        // First, split off prerelease suffix (everything after first '-')
+        let (version_part, prerelease) = version_str
+            .split_once('-')
+            .map_or((version_str, None), |(v, p)| (v, Some(p.to_string())));
+
         // Split by '.' and parse numbers
-        let mut parts = version_str.split('.');
+        let mut parts = version_part.split('.');
 
         let major_str = parts.next()?;
-        // Check for prerelease in major (shouldn't happen but handle it)
-        let (major_str, _) = major_str.split_once('-').unwrap_or((major_str, ""));
         let major: u32 = major_str.parse().ok()?;
 
-        let minor = parts.next().and_then(|s| {
-            let (num, _) = s.split_once('-').unwrap_or((s, ""));
-            num.parse().ok()
-        });
-
-        let (patch, prerelease) = parts.next().map_or((None, None), |s| {
-            s.split_once('-').map_or_else(
-                || (s.parse().ok(), None),
-                |(num, pre)| (num.parse().ok(), Some(pre.to_string())),
-            )
-        });
+        let minor = parts.next().and_then(|s| s.parse().ok());
+        let patch = parts.next().and_then(|s| s.parse().ok());
 
         Some(Self::Semver {
             major,
@@ -340,11 +334,17 @@ impl VersionSet {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    // ========================================================================
+    // Version::parse tests
+    // ========================================================================
 
     #[test]
-    fn test_parse_semver() {
+    fn test_parse_semver_major_only() {
         let v = Version::parse("v1");
         assert!(matches!(
             v,
@@ -355,7 +355,10 @@ mod tests {
                 ..
             }
         ));
+    }
 
+    #[test]
+    fn test_parse_semver_major_minor() {
         let v = Version::parse("v1.2");
         assert!(matches!(
             v,
@@ -366,7 +369,10 @@ mod tests {
                 ..
             }
         ));
+    }
 
+    #[test]
+    fn test_parse_semver_full() {
         let v = Version::parse("v1.2.3");
         assert!(matches!(
             v,
@@ -377,7 +383,10 @@ mod tests {
                 ..
             }
         ));
+    }
 
+    #[test]
+    fn test_parse_semver_without_v_prefix() {
         let v = Version::parse("1.2.3");
         assert!(matches!(
             v,
@@ -391,10 +400,38 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_semver_with_prerelease() {
+        let v = Version::parse("v1.0.0-beta.1");
+        match v {
+            Version::Semver { prerelease, .. } => {
+                assert_eq!(prerelease, Some("beta.1".to_string()));
+            }
+            _ => panic!("expected Semver"),
+        }
+
+        // Also test simple prerelease
+        let v = Version::parse("v2.0.0-rc");
+        match v {
+            Version::Semver { prerelease, .. } => {
+                assert_eq!(prerelease, Some("rc".to_string()));
+            }
+            _ => panic!("expected Semver"),
+        }
+    }
+
+    #[test]
     fn test_parse_sha() {
         let sha = "a".repeat(40);
         let v = Version::parse(&sha);
         assert!(matches!(v, Version::Sha { .. }));
+        assert!(v.is_sha());
+    }
+
+    #[test]
+    fn test_parse_sha_mixed_case() {
+        let sha = "aAbBcCdDeEfF0123456789aAbBcCdDeEfF012345";
+        let v = Version::parse(sha);
+        assert!(v.is_sha());
     }
 
     #[test]
@@ -404,23 +441,275 @@ mod tests {
     }
 
     #[test]
-    fn test_semver_ordering() {
+    fn test_parse_short_sha_is_other() {
+        // Short SHAs should be treated as Other, not Sha
+        let v = Version::parse("abc123");
+        assert!(matches!(v, Version::Other { .. }));
+    }
+
+    // ========================================================================
+    // Version accessor tests
+    // ========================================================================
+
+    #[test]
+    fn test_version_is_semver() {
+        assert!(Version::parse("v1.0.0").is_semver());
+        assert!(!Version::parse("main").is_semver());
+        assert!(!Version::parse(&"a".repeat(40)).is_semver());
+    }
+
+    #[test]
+    fn test_version_is_sha() {
+        assert!(Version::parse(&"a".repeat(40)).is_sha());
+        assert!(!Version::parse("v1.0.0").is_sha());
+    }
+
+    #[test]
+    fn test_version_is_branch() {
+        let branch = Version::Branch {
+            name: "main".to_string(),
+        };
+        assert!(branch.is_branch());
+        assert!(!Version::parse("v1.0.0").is_branch());
+    }
+
+    #[test]
+    fn test_version_is_prerelease() {
+        assert!(Version::parse("v1.0.0-beta").is_prerelease());
+        assert!(Version::parse("v1.0.0-rc.1").is_prerelease());
+        assert!(!Version::parse("v1.0.0").is_prerelease());
+    }
+
+    #[test]
+    fn test_version_major() {
+        assert_eq!(Version::parse("v4.1.2").major(), Some(4));
+        assert_eq!(Version::parse("v1").major(), Some(1));
+        assert_eq!(Version::parse("main").major(), None);
+    }
+
+    #[test]
+    fn test_version_minor() {
+        assert_eq!(Version::parse("v4.1.2").minor(), Some(1));
+        assert_eq!(Version::parse("v4").minor(), None);
+    }
+
+    #[test]
+    fn test_version_patch() {
+        assert_eq!(Version::parse("v4.1.2").patch(), Some(2));
+        assert_eq!(Version::parse("v4.1").patch(), None);
+    }
+
+    #[test]
+    fn test_version_as_str() {
+        assert_eq!(Version::parse("v1.2.3").as_str(), "v1.2.3");
+        let sha = "a".repeat(40);
+        assert_eq!(Version::parse(&sha).as_str(), sha);
+    }
+
+    #[test]
+    fn test_version_display() {
+        assert_eq!(Version::parse("v1.2.3").to_string(), "v1.2.3");
+    }
+
+    // ========================================================================
+    // Version ordering tests
+    // ========================================================================
+
+    #[test]
+    fn test_semver_ordering_major() {
         let v1 = Version::parse("v1.0.0");
         let v2 = Version::parse("v2.0.0");
-        let v1_1 = Version::parse("v1.1.0");
-        let v1_0_1 = Version::parse("v1.0.1");
-
         assert!(v2 > v1);
-        assert!(v1_1 > v1);
-        assert!(v1_0_1 > v1);
-        assert!(v2 > v1_1);
+    }
+
+    #[test]
+    fn test_semver_ordering_minor() {
+        let v1_1 = Version::parse("v1.1.0");
+        let v1_2 = Version::parse("v1.2.0");
+        assert!(v1_2 > v1_1);
+    }
+
+    #[test]
+    fn test_semver_ordering_patch() {
+        let v1_0_1 = Version::parse("v1.0.1");
+        let v1_0_2 = Version::parse("v1.0.2");
+        assert!(v1_0_2 > v1_0_1);
     }
 
     #[test]
     fn test_prerelease_ordering() {
         let release = Version::parse("v1.0.0");
         let beta = Version::parse("v1.0.0-beta");
-
         assert!(release > beta); // release > prerelease
+    }
+
+    #[test]
+    fn test_prerelease_alphabetic_ordering() {
+        let alpha = Version::parse("v1.0.0-alpha");
+        let beta = Version::parse("v1.0.0-beta");
+        assert!(beta > alpha);
+    }
+
+    #[test]
+    fn test_sha_ordering() {
+        let sha1 = Version::Sha {
+            sha: "a".repeat(40),
+        };
+        let sha2 = Version::Sha {
+            sha: "b".repeat(40),
+        };
+        assert!(sha2 > sha1);
+    }
+
+    #[test]
+    fn test_cross_type_ordering() {
+        let semver = Version::parse("v1.0.0");
+        let sha = Version::Sha {
+            sha: "a".repeat(40),
+        };
+        let branch = Version::Branch {
+            name: "main".to_string(),
+        };
+        let other = Version::Other {
+            tag: "latest".to_string(),
+        };
+
+        // Semver > Sha > Branch > Other
+        assert!(semver > sha);
+        assert!(sha > branch);
+        assert!(branch > other);
+    }
+
+    // ========================================================================
+    // VersionInfo tests
+    // ========================================================================
+
+    #[test]
+    fn test_version_info_new() {
+        let info = VersionInfo::new(Version::parse("v1.0.0"), "abc123");
+        assert_eq!(info.version.to_string(), "v1.0.0");
+        assert_eq!(info.sha, "abc123");
+    }
+
+    // ========================================================================
+    // BranchInfo tests
+    // ========================================================================
+
+    #[test]
+    fn test_branch_info() {
+        let info = BranchInfo {
+            name: "main".to_string(),
+            sha: "abc123".to_string(),
+        };
+        assert_eq!(info.name, "main");
+        assert_eq!(info.sha, "abc123");
+    }
+
+    // ========================================================================
+    // VersionSet tests
+    // ========================================================================
+
+    #[test]
+    fn test_version_set_new() {
+        let vs = VersionSet::new();
+        assert!(vs.semver_tags.is_empty());
+        assert!(vs.latest.is_none());
+        assert!(vs.default_branch.is_none());
+    }
+
+    #[test]
+    fn test_find_latest_for_major_allowed() {
+        let v3 = VersionInfo::new(Version::parse("v3.0.0"), "aaa");
+        let v4 = VersionInfo::new(Version::parse("v4.0.0"), "bbb");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(3, v3);
+        latest_per_major.insert(4, v4.clone());
+
+        let vs = VersionSet {
+            semver_tags: vec![],
+            latest_per_major,
+            latest: Some(v4),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        let current = Version::parse("v3.0.0");
+        let result = vs.find_latest_for(&current, true, false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().version.to_string(), "v4.0.0");
+    }
+
+    #[test]
+    fn test_find_latest_for_major_not_allowed() {
+        let v3_1 = VersionInfo::new(Version::parse("v3.1.0"), "aaa");
+        let v4 = VersionInfo::new(Version::parse("v4.0.0"), "bbb");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(3, v3_1);
+        latest_per_major.insert(4, v4.clone());
+
+        let vs = VersionSet {
+            semver_tags: vec![],
+            latest_per_major,
+            latest: Some(v4),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        let current = Version::parse("v3.0.0");
+        let result = vs.find_latest_for(&current, false, false);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().version.to_string(), "v3.1.0");
+    }
+
+    #[test]
+    fn test_find_latest_for_non_semver() {
+        let v4 = VersionInfo::new(Version::parse("v4.0.0"), "bbb");
+
+        let vs = VersionSet {
+            semver_tags: vec![],
+            latest_per_major: HashMap::new(),
+            latest: Some(v4),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        // Non-semver current version
+        let current = Version::parse("main");
+
+        // With allow_major, returns latest
+        let result = vs.find_latest_for(&current, true, false);
+        assert!(result.is_some());
+
+        // Without allow_major, returns None
+        let result = vs.find_latest_for(&current, false, false);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_find_latest_for_filters_prerelease() {
+        let beta = VersionInfo::new(Version::parse("v4.0.0-beta"), "aaa");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(4, beta.clone());
+
+        let vs = VersionSet {
+            semver_tags: vec![],
+            latest_per_major,
+            latest: Some(beta),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        let current = Version::parse("v4.0.0");
+
+        // Without allow_prerelease, filters out beta
+        let result = vs.find_latest_for(&current, false, false);
+        assert!(result.is_none());
+
+        // With allow_prerelease, includes beta
+        let result = vs.find_latest_for(&current, false, true);
+        assert!(result.is_some());
     }
 }
