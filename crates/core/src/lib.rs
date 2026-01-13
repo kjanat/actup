@@ -23,7 +23,9 @@ pub mod version;
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};
 pub use config::Config;
+pub use discovery::{DiscoveredFile, FileKind, discover_files};
 pub use error::{Error, Result};
+pub use parser::{UsesLocation, extract_uses_from_yaml, parse_uses};
 pub use policy::{RefStyle, UpdatePolicy};
 pub use provider::{Provider, ProviderKind, ProviderRegistry};
-pub use version::{Version, VersionSet};
+pub use version::{BranchInfo, Version, VersionInfo, VersionSet};

@@ -7,21 +7,69 @@ use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-/// Update policy determines what version bumps are allowed
+/// Update policy determines what version bumps are allowed.
+///
+/// # Workflow Examples
+///
+/// ```yaml
+/// # With update_policy: patch (1.2.3 -> 1.2.4 only)
+/// - uses: actions/checkout@v4.1.0  # stays at v4.1.x
+///
+/// # With update_policy: minor (1.2.x -> 1.3.x)
+/// - uses: actions/checkout@v4.1.0  # can update to v4.2.0
+///
+/// # With update_policy: major (1.x -> 2.x)
+/// - uses: actions/checkout@v3      # can update to v4
+///
+/// # With update_policy: latest (always newest)
+/// - uses: actions/checkout@v2      # updates to v4
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdatePolicy {
-    /// Only patch updates within same major.minor (1.2.3 -> 1.2.4)
+    /// Only patch updates within same major.minor (1.2.3 -> 1.2.4).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@v4.1.0
+    ///
+    /// # After (update_policy: patch):
+    /// - uses: actions/checkout@v4.1.1
+    /// ```
     Patch,
 
-    /// Minor updates within same major (1.2.x -> 1.3.x)
+    /// Minor updates within same major (1.2.x -> 1.3.x).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@v4.1.0
+    ///
+    /// # After (update_policy: minor):
+    /// - uses: actions/checkout@v4.2.0
+    /// ```
     #[default]
     Minor,
 
-    /// Major updates allowed (1.x -> 2.x)
+    /// Major updates allowed (1.x -> 2.x).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@v3
+    ///
+    /// # After (update_policy: major):
+    /// - uses: actions/checkout@v4
+    /// ```
     Major,
 
-    /// Always update to absolute latest, regardless of major version
+    /// Always update to absolute latest, regardless of major version.
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@v2
+    ///
+    /// # After (update_policy: latest):
+    /// - uses: actions/checkout@v4
+    /// ```
     Latest,
 }
 
@@ -89,18 +137,59 @@ impl<'de> Deserialize<'de> for UpdatePolicy {
     }
 }
 
-/// How to format version references when updating
+/// How to format version references when updating.
+///
+/// # Workflow Examples
+///
+/// ```yaml
+/// # With ref_style: preserve - keeps original format
+/// - uses: actions/checkout@v4      # stays as tag
+/// - uses: actions/checkout@abc123  # stays as SHA
+///
+/// # With ref_style: tag - converts to version tags
+/// - uses: actions/checkout@v4.1.1  # always a tag
+///
+/// # With ref_style: sha - pins to commit SHA (most secure)
+/// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum RefStyle {
-    /// Keep the original style (tag stays tag, SHA stays SHA)
+    /// Keep the original style (tag stays tag, SHA stays SHA).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@v4
+    ///
+    /// # After (ref_style: preserve):
+    /// - uses: actions/checkout@v4.2.0
+    /// # Tag format preserved
+    /// ```
     #[default]
     Preserve,
 
-    /// Always use version tags (v1.2.3)
+    /// Always use version tags (v1.2.3).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@abc1234...
+    ///
+    /// # After (ref_style: tag):
+    /// - uses: actions/checkout@v4.2.0
+    /// # SHA converted to tag
+    /// ```
     Tag,
 
-    /// Always pin to full commit SHA (most secure)
+    /// Always pin to full commit SHA (most secure).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@v4
+    ///
+    /// # After (ref_style: sha):
+    /// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+    /// # Tag pinned to full SHA with comment
+    /// ```
     Sha,
 }
 
@@ -154,18 +243,52 @@ impl<'de> Deserialize<'de> for RefStyle {
     }
 }
 
-/// Branch handling policy
+/// Branch handling policy.
+///
+/// # Workflow Examples
+///
+/// ```yaml
+/// # With branch_policy: ignore - branch refs skipped silently
+/// - uses: actions/checkout@main  # no warning, no update
+///
+/// # With branch_policy: warn - warns but doesn't change
+/// - uses: actions/checkout@main  # warning: consider pinning to a tag
+///
+/// # With branch_policy: update - pins branch to current HEAD SHA
+/// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BranchPolicy {
-    /// Ignore branch refs (don't flag as outdated, but maybe warn)
+    /// Ignore branch refs (don't flag as outdated).
+    ///
+    /// ```yaml
+    /// # With branch_policy: ignore
+    /// - uses: actions/checkout@main
+    /// # No warning, no update - branch refs skipped
+    /// ```
     #[default]
     Ignore,
 
-    /// Warn about branch refs (not stable, recommend pinning)
+    /// Warn about branch refs (recommend pinning to tag or SHA).
+    ///
+    /// ```yaml
+    /// # With branch_policy: warn
+    /// - uses: actions/checkout@main
+    /// # Warning: 'main' is a branch ref, consider pinning to a tag
+    /// ```
     Warn,
 
-    /// Treat branch refs as updatable (pin to latest commit)
+    /// Treat branch refs as updatable (pin to latest commit SHA).
+    ///
+    /// ```yaml
+    /// # Before:
+    /// - uses: actions/checkout@main
+    ///
+    /// # After (branch_policy: update):
+    /// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main
+    /// # Branch pinned to current HEAD SHA
+    /// ```
     Update,
 }
 

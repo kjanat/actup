@@ -17,7 +17,35 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// Main configuration struct
+/// Main configuration struct.
+///
+/// # Example Configuration
+///
+/// ```yaml
+/// # .actup.toml - Conservative security-focused config
+/// update_policy = "patch"
+/// ref_style = "sha"
+/// branch_policy = "warn"
+///
+/// # Result in workflow:
+/// # Before:
+/// # - uses: actions/checkout@v4
+/// # After:
+/// # - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+/// ```
+///
+/// ```yaml
+/// # .actup.toml - Permissive always-latest config
+/// update_policy = "major"
+/// ref_style = "tag"
+/// allow_prerelease = true
+///
+/// # Result in workflow:
+/// # Before:
+/// # - uses: actions/checkout@v3
+/// # After:
+/// # - uses: actions/checkout@v4.2.0
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
@@ -71,7 +99,28 @@ impl Default for Config {
     }
 }
 
-/// Per-action override configuration
+/// Per-action override configuration.
+///
+/// # Example
+///
+/// ```toml
+/// # .actup.toml - Per-action overrides
+/// [actions."actions/checkout"]
+/// update_policy = "major"
+///
+/// [actions."actions/cache"]
+/// ignore = true
+///
+/// [actions."internal/action"]
+/// ref_style = "sha"
+/// ```
+///
+/// ```yaml
+/// # Result in workflow:
+/// # actions/checkout@v3 -> actions/checkout@v4 (major allowed)
+/// # actions/cache@v3 -> unchanged (ignored)
+/// # internal/action@v1 -> internal/action@abc123... # v1.2.0 (pinned to SHA)
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ActionOverride {
@@ -90,7 +139,11 @@ pub struct ActionOverride {
 #[serde(default)]
 pub struct CacheConfig {
     /// Cache time-to-live in seconds
-    #[serde(deserialize_with = "deserialize_duration_secs")]
+    #[serde(
+        serialize_with = "serialize_duration_secs",
+        deserialize_with = "deserialize_duration_secs"
+    )]
+    #[schemars(with = "u64")]
     pub ttl: Duration,
 
     /// Custom cache directory (None = use OS default)
@@ -108,6 +161,14 @@ impl Default for CacheConfig {
             enabled: true,
         }
     }
+}
+
+/// Serialize Duration as seconds (u64)
+fn serialize_duration_secs<S>(duration: &Duration, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_u64(duration.as_secs())
 }
 
 /// Deserialize Duration from seconds (u64)

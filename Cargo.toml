@@ -42,6 +42,8 @@ reqwest            = { version = "0.13", default-features = false, features = [
   "json",
   "rustls",
 ] }
+# MCP
+rust-mcp-sdk       = "0.8"
 # Schema
 schemars           = "1.2"
 schemars_derive    = "1.2"
