@@ -148,8 +148,22 @@ pub fn build_cache_key(provider_namespace: &str, host: &str, repo: &ActionRepoId
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    // ========================================================================
+    // CacheEntry tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_entry_new() {
+        let entry = CacheEntry::new(VersionSet::default());
+        assert!(entry.etag.is_none());
+        assert!(entry.last_modified.is_none());
+        // stored_at should be recent
+        assert!(entry.age().unwrap() < Duration::from_secs(1));
+    }
 
     #[test]
     fn test_cache_entry_expiry() {
@@ -160,5 +174,113 @@ mod tests {
 
         // Should be expired with 0 TTL
         assert!(entry.is_expired(Duration::ZERO));
+    }
+
+    #[test]
+    fn test_cache_entry_age() {
+        let entry = CacheEntry::new(VersionSet::default());
+        let age = entry.age();
+        assert!(age.is_some());
+        // Age should be very small for a just-created entry
+        assert!(age.unwrap() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn test_cache_entry_with_metadata() {
+        let mut entry = CacheEntry::new(VersionSet::default());
+        entry.etag = Some("W/\"abc123\"".to_string());
+        entry.last_modified = Some("Mon, 01 Jan 2024 00:00:00 GMT".to_string());
+
+        assert_eq!(entry.etag.as_deref(), Some("W/\"abc123\""));
+        assert!(entry.last_modified.is_some());
+    }
+
+    // ========================================================================
+    // CacheError tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_error_display() {
+        assert_eq!(CacheError::NotFound.to_string(), "cache entry not found");
+        assert_eq!(
+            CacheError::Io("disk full".to_string()).to_string(),
+            "cache IO error: disk full"
+        );
+        assert_eq!(
+            CacheError::Serde("invalid JSON".to_string()).to_string(),
+            "cache serialization error: invalid JSON"
+        );
+        assert_eq!(CacheError::Disabled.to_string(), "cache is disabled");
+    }
+
+    // ========================================================================
+    // NoopCache tests
+    // ========================================================================
+
+    #[tokio::test]
+    async fn test_noop_cache_get_returns_not_found() {
+        let cache = NoopCache;
+        let result = cache.get("any_key").await;
+        assert!(matches!(result, Err(CacheError::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn test_noop_cache_set_succeeds() {
+        let cache = NoopCache;
+        let entry = CacheEntry::new(VersionSet::default());
+        let result = cache.set("any_key", entry).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_noop_cache_remove_succeeds() {
+        let cache = NoopCache;
+        let result = cache.remove("any_key").await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_noop_cache_clear_succeeds() {
+        let cache = NoopCache;
+        let result = cache.clear().await;
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_noop_cache_is_disabled() {
+        let cache = NoopCache;
+        assert!(!cache.is_enabled());
+    }
+
+    // ========================================================================
+    // build_cache_key tests
+    // ========================================================================
+
+    #[test]
+    fn test_build_cache_key() {
+        let repo = ActionRepoId {
+            host: None,
+            owner: "actions".to_string(),
+            repo: "checkout".to_string(),
+            subpath: None,
+        };
+        let key = build_cache_key("github", "github.com", &repo);
+        assert!(key.contains("github"));
+        assert!(key.contains("github.com"));
+        assert!(key.contains("actions"));
+        assert!(key.contains("checkout"));
+    }
+
+    #[test]
+    fn test_build_cache_key_with_subpath() {
+        let repo = ActionRepoId {
+            host: Some("ghe.corp.com".to_string()),
+            owner: "org".to_string(),
+            repo: "monorepo".to_string(),
+            subpath: Some("actions/build".to_string()),
+        };
+        let key = build_cache_key("github", "ghe.corp.com", &repo);
+        assert!(key.contains("ghe.corp.com"));
+        assert!(key.contains("actions/build"));
     }
 }

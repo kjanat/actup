@@ -343,8 +343,13 @@ impl<'de> Deserialize<'de> for BranchPolicy {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    // ========================================================================
+    // UpdatePolicy tests
+    // ========================================================================
 
     #[test]
     fn test_update_policy_allows() {
@@ -362,10 +367,22 @@ mod tests {
     }
 
     #[test]
-    fn test_policy_from_str() {
+    fn test_update_policy_from_str() {
         assert_eq!(
             UpdatePolicy::from_str_loose("PATCH"),
             Some(UpdatePolicy::Patch)
+        );
+        assert_eq!(
+            UpdatePolicy::from_str_loose("minor"),
+            Some(UpdatePolicy::Minor)
+        );
+        assert_eq!(
+            UpdatePolicy::from_str_loose("MAJOR"),
+            Some(UpdatePolicy::Major)
+        );
+        assert_eq!(
+            UpdatePolicy::from_str_loose("latest"),
+            Some(UpdatePolicy::Latest)
         );
         assert_eq!(
             UpdatePolicy::from_str_loose("all"),
@@ -379,9 +396,146 @@ mod tests {
     }
 
     #[test]
+    fn test_update_policy_display() {
+        assert_eq!(UpdatePolicy::Patch.to_string(), "patch");
+        assert_eq!(UpdatePolicy::Minor.to_string(), "minor");
+        assert_eq!(UpdatePolicy::Major.to_string(), "major");
+        assert_eq!(UpdatePolicy::Latest.to_string(), "latest");
+    }
+
+    #[test]
+    fn test_update_policy_default() {
+        assert_eq!(UpdatePolicy::default(), UpdatePolicy::Minor);
+    }
+
+    // ========================================================================
+    // RefStyle tests
+    // ========================================================================
+
+    #[test]
     fn test_ref_style_from_str() {
+        assert_eq!(
+            RefStyle::from_str_loose("preserve"),
+            Some(RefStyle::Preserve)
+        );
+        assert_eq!(RefStyle::from_str_loose("KEEP"), Some(RefStyle::Preserve));
+        assert_eq!(
+            RefStyle::from_str_loose("original"),
+            Some(RefStyle::Preserve)
+        );
+
+        assert_eq!(RefStyle::from_str_loose("tag"), Some(RefStyle::Tag));
+        assert_eq!(RefStyle::from_str_loose("TAGS"), Some(RefStyle::Tag));
+        assert_eq!(RefStyle::from_str_loose("version"), Some(RefStyle::Tag));
+
         assert_eq!(RefStyle::from_str_loose("SHA"), Some(RefStyle::Sha));
         assert_eq!(RefStyle::from_str_loose("commit"), Some(RefStyle::Sha));
         assert_eq!(RefStyle::from_str_loose("pin"), Some(RefStyle::Sha));
+
+        assert_eq!(RefStyle::from_str_loose("invalid"), None);
+    }
+
+    #[test]
+    fn test_ref_style_display() {
+        assert_eq!(RefStyle::Preserve.to_string(), "preserve");
+        assert_eq!(RefStyle::Tag.to_string(), "tag");
+        assert_eq!(RefStyle::Sha.to_string(), "sha");
+    }
+
+    #[test]
+    fn test_ref_style_default() {
+        assert_eq!(RefStyle::default(), RefStyle::Preserve);
+    }
+
+    // ========================================================================
+    // BranchPolicy tests
+    // ========================================================================
+
+    #[test]
+    fn test_branch_policy_from_str() {
+        assert_eq!(
+            BranchPolicy::from_str_loose("ignore"),
+            Some(BranchPolicy::Ignore)
+        );
+        assert_eq!(
+            BranchPolicy::from_str_loose("SKIP"),
+            Some(BranchPolicy::Ignore)
+        );
+
+        assert_eq!(
+            BranchPolicy::from_str_loose("warn"),
+            Some(BranchPolicy::Warn)
+        );
+        assert_eq!(
+            BranchPolicy::from_str_loose("WARNING"),
+            Some(BranchPolicy::Warn)
+        );
+
+        assert_eq!(
+            BranchPolicy::from_str_loose("update"),
+            Some(BranchPolicy::Update)
+        );
+        assert_eq!(
+            BranchPolicy::from_str_loose("PIN"),
+            Some(BranchPolicy::Update)
+        );
+
+        assert_eq!(BranchPolicy::from_str_loose("invalid"), None);
+    }
+
+    #[test]
+    fn test_branch_policy_display() {
+        assert_eq!(BranchPolicy::Ignore.to_string(), "ignore");
+        assert_eq!(BranchPolicy::Warn.to_string(), "warn");
+        assert_eq!(BranchPolicy::Update.to_string(), "update");
+    }
+
+    // ========================================================================
+    // Deserialization tests
+    // ========================================================================
+
+    #[test]
+    fn test_update_policy_deserialize() {
+        let json = r#""patch""#;
+        let policy: UpdatePolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, UpdatePolicy::Patch);
+
+        let json = r#""LATEST""#;
+        let policy: UpdatePolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, UpdatePolicy::Latest);
+    }
+
+    #[test]
+    fn test_ref_style_deserialize() {
+        let json = r#""sha""#;
+        let style: RefStyle = serde_json::from_str(json).unwrap();
+        assert_eq!(style, RefStyle::Sha);
+
+        let json = r#""TAG""#;
+        let style: RefStyle = serde_json::from_str(json).unwrap();
+        assert_eq!(style, RefStyle::Tag);
+    }
+
+    #[test]
+    fn test_branch_policy_deserialize() {
+        let json = r#""warn""#;
+        let policy: BranchPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, BranchPolicy::Warn);
+
+        let json = r#""UPDATE""#;
+        let policy: BranchPolicy = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, BranchPolicy::Update);
+    }
+
+    #[test]
+    fn test_deserialize_invalid_values() {
+        let result: Result<UpdatePolicy, _> = serde_json::from_str(r#""invalid""#);
+        assert!(result.is_err());
+
+        let result: Result<RefStyle, _> = serde_json::from_str(r#""invalid""#);
+        assert!(result.is_err());
+
+        let result: Result<BranchPolicy, _> = serde_json::from_str(r#""invalid""#);
+        assert!(result.is_err());
     }
 }
