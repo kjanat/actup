@@ -280,3 +280,269 @@ impl fmt::Debug for ProviderRegistry {
             .finish()
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use std::pin::Pin;
+
+    /// Mock provider for testing
+    struct MockProvider {
+        kind: ProviderKind,
+        host: String,
+    }
+
+    impl MockProvider {
+        fn new(kind: ProviderKind, host: &str) -> Self {
+            Self {
+                kind,
+                host: host.to_string(),
+            }
+        }
+    }
+
+    impl Provider for MockProvider {
+        fn kind(&self) -> ProviderKind {
+            self.kind
+        }
+
+        fn host(&self) -> &str {
+            &self.host
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> Pin<Box<dyn Future<Output = Result<VersionSet>> + Send + '_>> {
+            Box::pin(async { Ok(VersionSet::default()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
+            Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    // ========================================================================
+    // ProviderKind tests
+    // ========================================================================
+
+    #[test]
+    fn test_provider_kind_display() {
+        assert_eq!(ProviderKind::GitHub.to_string(), "github");
+        assert_eq!(ProviderKind::GitLab.to_string(), "gitlab");
+        assert_eq!(ProviderKind::Gitea.to_string(), "gitea");
+        assert_eq!(ProviderKind::Bitbucket.to_string(), "bitbucket");
+        assert_eq!(ProviderKind::Local.to_string(), "local");
+    }
+
+    #[test]
+    fn test_provider_kind_cache_namespace() {
+        assert_eq!(ProviderKind::GitHub.cache_namespace(), "github");
+        assert_eq!(ProviderKind::GitLab.cache_namespace(), "gitlab");
+        assert_eq!(ProviderKind::Gitea.cache_namespace(), "gitea");
+        assert_eq!(ProviderKind::Bitbucket.cache_namespace(), "bitbucket");
+        assert_eq!(ProviderKind::Local.cache_namespace(), "local");
+    }
+
+    // ========================================================================
+    // Sha40 tests
+    // ========================================================================
+
+    #[test]
+    fn test_sha40_valid() {
+        let sha = Sha40::new("abc123def456abc123def456abc123def456abc1");
+        assert!(sha.is_some());
+        assert_eq!(
+            sha.unwrap().as_str(),
+            "abc123def456abc123def456abc123def456abc1"
+        );
+    }
+
+    #[test]
+    fn test_sha40_normalizes_to_lowercase() {
+        let sha = Sha40::new("ABC123DEF456ABC123DEF456ABC123DEF456ABC1");
+        assert!(sha.is_some());
+        assert_eq!(
+            sha.unwrap().as_str(),
+            "abc123def456abc123def456abc123def456abc1"
+        );
+    }
+
+    #[test]
+    fn test_sha40_invalid_length() {
+        assert!(Sha40::new("abc123").is_none());
+        assert!(Sha40::new("abc123def456abc123def456abc123def456abc1extra").is_none());
+    }
+
+    #[test]
+    fn test_sha40_invalid_chars() {
+        assert!(Sha40::new("xyz123def456abc123def456abc123def456abc1").is_none()); // 'x', 'y', 'z'
+        assert!(Sha40::new("!@#$%^def456abc123def456abc123def456abc1").is_none());
+    }
+
+    #[test]
+    fn test_sha40_display() {
+        let sha = Sha40::new("abc123def456abc123def456abc123def456abc1").unwrap();
+        assert_eq!(format!("{sha}"), "abc123def456abc123def456abc123def456abc1");
+    }
+
+    // ========================================================================
+    // ProviderRegistry tests
+    // ========================================================================
+
+    #[test]
+    fn test_registry_new_empty() {
+        let registry = ProviderRegistry::new();
+        assert!(registry.providers().is_empty());
+        assert!(registry.default_host().is_none());
+    }
+
+    #[test]
+    fn test_registry_set_default_host() {
+        let mut registry = ProviderRegistry::new();
+        registry.set_default_host("github.com");
+        assert_eq!(registry.default_host(), Some("github.com"));
+    }
+
+    #[test]
+    fn test_registry_register_and_find() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "github.com",
+        )));
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitLab,
+            "gitlab.com",
+        )));
+
+        assert_eq!(registry.providers().len(), 2);
+
+        let github = registry.find(Some("github.com"));
+        assert!(github.is_some());
+        assert_eq!(github.unwrap().host(), "github.com");
+
+        let gitlab = registry.find(Some("gitlab.com"));
+        assert!(gitlab.is_some());
+        assert_eq!(gitlab.unwrap().host(), "gitlab.com");
+    }
+
+    #[test]
+    fn test_registry_find_uses_default() {
+        let mut registry = ProviderRegistry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "github.com",
+        )));
+
+        // host=None should use default
+        let provider = registry.find(None);
+        assert!(provider.is_some());
+        assert_eq!(provider.unwrap().host(), "github.com");
+    }
+
+    #[test]
+    fn test_registry_find_returns_none_for_unknown_host() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "github.com",
+        )));
+
+        assert!(registry.find(Some("unknown.com")).is_none());
+    }
+
+    #[test]
+    fn test_registry_find_for_repo() {
+        let mut registry = ProviderRegistry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "github.com",
+        )));
+
+        let repo = ActionRepoId {
+            host: None,
+            owner: "actions".to_string(),
+            repo: "checkout".to_string(),
+            subpath: None,
+        };
+
+        let provider = registry.find_for_repo(&repo);
+        assert!(provider.is_some());
+        assert_eq!(provider.unwrap().host(), "github.com");
+    }
+
+    #[test]
+    fn test_registry_find_by_kind() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "github.com",
+        )));
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "ghe.corp.com",
+        )));
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitLab,
+            "gitlab.com",
+        )));
+
+        // find_by_kind returns first match
+        let github = registry.find_by_kind(ProviderKind::GitHub);
+        assert!(github.is_some());
+        assert_eq!(github.unwrap().host(), "github.com");
+
+        let gitlab = registry.find_by_kind(ProviderKind::GitLab);
+        assert!(gitlab.is_some());
+        assert_eq!(gitlab.unwrap().host(), "gitlab.com");
+
+        let gitea = registry.find_by_kind(ProviderKind::Gitea);
+        assert!(gitea.is_none());
+    }
+
+    #[test]
+    fn test_registry_debug_format() {
+        let mut registry = ProviderRegistry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(MockProvider::new(
+            ProviderKind::GitHub,
+            "github.com",
+        )));
+
+        let debug = format!("{registry:?}");
+        assert!(debug.contains("ProviderRegistry"));
+        assert!(debug.contains("github.com"));
+        assert!(debug.contains("provider_count: 1"));
+    }
+}

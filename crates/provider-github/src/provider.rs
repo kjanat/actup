@@ -356,6 +356,7 @@ struct RawStep {
 }
 
 /// Parse action.yml content into `ActionYml` struct
+#[allow(clippy::cognitive_complexity)]
 fn parse_action_yml(raw: &str) -> Result<ActionYml> {
     let parsed: RawActionYml =
         serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {
@@ -422,4 +423,265 @@ fn parse_action_yml(raw: &str) -> Result<ActionYml> {
         outputs,
         runs,
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::types::{GitHubTag, TagCommit};
+
+    // Helper to create a GitHubTag for testing
+    fn make_tag(name: &str, sha: &str) -> GitHubTag {
+        GitHubTag {
+            name: name.to_string(),
+            commit: TagCommit {
+                sha: sha.to_string(),
+            },
+        }
+    }
+
+    // ========================================================================
+    // process_tags tests
+    // ========================================================================
+
+    #[test]
+    fn test_process_tags_empty() {
+        let result = GitHubProvider::process_tags(vec![]);
+        assert!(result.semver_tags.is_empty());
+        assert!(result.latest.is_none());
+        assert!(result.latest_per_major.is_empty());
+    }
+
+    #[test]
+    fn test_process_tags_single_version() {
+        let tags = vec![make_tag("v1.0.0", "aaa111")];
+        let result = GitHubProvider::process_tags(tags);
+
+        assert_eq!(result.semver_tags.len(), 1);
+        assert!(result.latest.is_some());
+        assert_eq!(
+            result.latest.as_ref().unwrap().version.to_string(),
+            "v1.0.0"
+        );
+        assert_eq!(result.latest_per_major.len(), 1);
+        assert!(result.latest_per_major.contains_key(&1));
+    }
+
+    #[test]
+    fn test_process_tags_multiple_versions_sorted() {
+        let tags = vec![
+            make_tag("v1.0.0", "aaa"),
+            make_tag("v2.0.0", "bbb"),
+            make_tag("v1.5.0", "ccc"),
+        ];
+        let result = GitHubProvider::process_tags(tags);
+
+        // Should be sorted descending
+        assert_eq!(result.semver_tags.len(), 3);
+        assert_eq!(result.semver_tags[0].version.to_string(), "v2.0.0");
+        assert_eq!(result.semver_tags[1].version.to_string(), "v1.5.0");
+        assert_eq!(result.semver_tags[2].version.to_string(), "v1.0.0");
+    }
+
+    #[test]
+    fn test_process_tags_latest_tracking() {
+        let tags = vec![
+            make_tag("v1.0.0", "aaa"),
+            make_tag("v2.0.0", "bbb"),
+            make_tag("v3.0.0", "ccc"),
+        ];
+        let result = GitHubProvider::process_tags(tags);
+
+        assert!(result.latest.is_some());
+        assert_eq!(result.latest.unwrap().version.to_string(), "v3.0.0");
+    }
+
+    #[test]
+    fn test_process_tags_latest_per_major() {
+        let tags = vec![
+            make_tag("v1.0.0", "a"),
+            make_tag("v1.1.0", "b"),
+            make_tag("v1.2.0", "c"),
+            make_tag("v2.0.0", "d"),
+            make_tag("v2.1.0", "e"),
+        ];
+        let result = GitHubProvider::process_tags(tags);
+
+        assert_eq!(result.latest_per_major.len(), 2);
+        assert_eq!(
+            result.latest_per_major.get(&1).unwrap().version.to_string(),
+            "v1.2.0"
+        );
+        assert_eq!(
+            result.latest_per_major.get(&2).unwrap().version.to_string(),
+            "v2.1.0"
+        );
+    }
+
+    #[test]
+    fn test_process_tags_skips_prereleases() {
+        let tags = vec![
+            make_tag("v1.0.0", "aaa"),
+            make_tag("v2.0.0-beta.1", "bbb"),
+            make_tag("v2.0.0-rc.1", "ccc"),
+        ];
+        let result = GitHubProvider::process_tags(tags);
+
+        // Prereleases should be skipped
+        assert_eq!(result.semver_tags.len(), 1);
+        assert_eq!(result.latest.unwrap().version.to_string(), "v1.0.0");
+    }
+
+    #[test]
+    fn test_process_tags_non_semver_ignored() {
+        let tags = vec![
+            make_tag("v1.0.0", "aaa"),
+            make_tag("latest", "bbb"),
+            make_tag("main", "ccc"),
+        ];
+        let result = GitHubProvider::process_tags(tags);
+
+        // Non-semver should be ignored
+        assert_eq!(result.semver_tags.len(), 1);
+        assert_eq!(result.latest.unwrap().version.to_string(), "v1.0.0");
+    }
+
+    // ========================================================================
+    // parse_action_yml tests
+    // ========================================================================
+
+    #[test]
+    fn test_parse_action_yml_minimal() {
+        let yaml = r"
+name: Test Action
+description: A test action
+";
+        let result = parse_action_yml(yaml).unwrap();
+        assert_eq!(result.name, Some("Test Action".to_string()));
+        assert_eq!(result.description, Some("A test action".to_string()));
+        assert!(result.author.is_none());
+    }
+
+    #[test]
+    fn test_parse_action_yml_with_inputs() {
+        let yaml = r#"
+name: Test
+description: Test
+inputs:
+  token:
+    description: The GitHub token
+    required: true
+  timeout:
+    description: Timeout in seconds
+    required: false
+    default: "30"
+"#;
+        let result = parse_action_yml(yaml).unwrap();
+        assert_eq!(result.inputs.len(), 2);
+
+        let token = result.inputs.get("token").unwrap();
+        assert_eq!(token.description, Some("The GitHub token".to_string()));
+        assert!(token.required);
+        assert!(token.default.is_none());
+
+        let timeout = result.inputs.get("timeout").unwrap();
+        assert!(!timeout.required);
+        assert_eq!(timeout.default, Some("30".to_string()));
+    }
+
+    #[test]
+    fn test_parse_action_yml_with_outputs() {
+        let yaml = r"
+name: Test
+description: Test
+outputs:
+  result:
+    description: The result value
+    value: ${{ steps.run.outputs.result }}
+";
+        let result = parse_action_yml(yaml).unwrap();
+        assert_eq!(result.outputs.len(), 1);
+
+        let output = result.outputs.get("result").unwrap();
+        assert_eq!(output.description, Some("The result value".to_string()));
+        assert!(output.value.is_some());
+    }
+
+    #[test]
+    fn test_parse_action_yml_node_action() {
+        let yaml = r"
+name: Node Action
+description: A Node.js action
+runs:
+  using: node20
+  main: dist/index.js
+";
+        let result = parse_action_yml(yaml).unwrap();
+        assert!(result.runs.is_some());
+
+        let runs = result.runs.unwrap();
+        assert_eq!(runs.using, "node20");
+        assert_eq!(runs.main, Some("dist/index.js".to_string()));
+    }
+
+    #[test]
+    fn test_parse_action_yml_composite_action() {
+        let yaml = r#"
+name: Composite Action
+description: A composite action
+runs:
+  using: composite
+  steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+    - name: Run script
+      run: echo "Hello"
+      shell: bash
+"#;
+        let result = parse_action_yml(yaml).unwrap();
+        assert!(result.runs.is_some());
+
+        let runs = result.runs.unwrap();
+        assert_eq!(runs.using, "composite");
+        assert_eq!(runs.steps.len(), 2);
+
+        assert_eq!(runs.steps[0].name, Some("Checkout".to_string()));
+        assert_eq!(runs.steps[0].uses, Some("actions/checkout@v4".to_string()));
+
+        assert_eq!(runs.steps[1].name, Some("Run script".to_string()));
+        assert_eq!(runs.steps[1].run, Some("echo \"Hello\"".to_string()));
+        assert_eq!(runs.steps[1].shell, Some("bash".to_string()));
+    }
+
+    #[test]
+    fn test_parse_action_yml_docker_action() {
+        let yaml = r"
+name: Docker Action
+description: A Docker action
+runs:
+  using: docker
+  image: Dockerfile
+";
+        let result = parse_action_yml(yaml).unwrap();
+        assert!(result.runs.is_some());
+
+        let runs = result.runs.unwrap();
+        assert_eq!(runs.using, "docker");
+        assert_eq!(runs.image, Some("Dockerfile".to_string()));
+    }
+
+    #[test]
+    fn test_parse_action_yml_invalid_yaml() {
+        let yaml = "name: [invalid";
+        let result = parse_action_yml(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_action_yml_preserves_raw() {
+        let yaml = "name: Test\ndescription: Test";
+        let result = parse_action_yml(yaml).unwrap();
+        assert_eq!(result.raw, yaml);
+    }
 }
