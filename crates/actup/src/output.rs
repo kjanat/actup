@@ -442,4 +442,182 @@ mod tests {
         assert_eq!(determine_exit_code(&findings, false), 0);
         assert_eq!(determine_exit_code(&findings, true), 0);
     }
+
+    // ========================================================================
+    // Finding construction tests
+    // ========================================================================
+
+    #[test]
+    fn test_finding_up_to_date() {
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 10,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::UpToDate,
+        };
+
+        assert_eq!(finding.file, "workflow.yml");
+        assert_eq!(finding.line, 10);
+        assert!(matches!(finding.status, FindingStatus::UpToDate));
+    }
+
+    #[test]
+    fn test_finding_outdated() {
+        let finding = Finding {
+            file: "ci.yml".to_string(),
+            line: 15,
+            action_ref: make_action_ref("actions", "setup-node", "v3"),
+            status: FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: make_version_info("v4.0.0", "abc123"),
+            },
+        };
+
+        match &finding.status {
+            FindingStatus::Outdated { current, latest } => {
+                assert_eq!(current, "v3");
+                assert_eq!(latest.version.to_string(), "v4.0.0");
+                assert_eq!(latest.sha, "abc123");
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    #[test]
+    fn test_finding_pinned_with_tag() {
+        let finding = Finding {
+            file: "deploy.yml".to_string(),
+            line: 20,
+            action_ref: make_action_ref(
+                "actions",
+                "checkout",
+                "b4ffde65f46336ab88eb53be808477a3936bae11",
+            ),
+            status: FindingStatus::Pinned {
+                sha: "b4ffde65f46336ab88eb53be808477a3936bae11".to_string(),
+                tag: Some("v4.1.1".to_string()),
+            },
+        };
+
+        match &finding.status {
+            FindingStatus::Pinned { sha, tag } => {
+                assert_eq!(sha, "b4ffde65f46336ab88eb53be808477a3936bae11");
+                assert_eq!(tag.as_deref(), Some("v4.1.1"));
+            }
+            _ => panic!("expected Pinned status"),
+        }
+    }
+
+    #[test]
+    fn test_finding_pinned_without_tag() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 5,
+            action_ref: make_action_ref("owner", "repo", "abc123"),
+            status: FindingStatus::Pinned {
+                sha: "abc123def456abc123def456abc123def456abc1".to_string(),
+                tag: None,
+            },
+        };
+
+        match &finding.status {
+            FindingStatus::Pinned { sha, tag } => {
+                assert!(tag.is_none());
+                assert!(!sha.is_empty());
+            }
+            _ => panic!("expected Pinned status"),
+        }
+    }
+
+    #[test]
+    fn test_finding_unresolvable_user_error() {
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 30,
+            action_ref: make_action_ref("unknown", "action", "v1"),
+            status: FindingStatus::Unresolvable {
+                reason: "repository not found".to_string(),
+                is_environment_error: false,
+            },
+        };
+
+        match &finding.status {
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => {
+                assert_eq!(reason, "repository not found");
+                assert!(!is_environment_error);
+            }
+            _ => panic!("expected Unresolvable status"),
+        }
+    }
+
+    #[test]
+    fn test_finding_unresolvable_env_error() {
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 25,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::Unresolvable {
+                reason: "rate limit exceeded".to_string(),
+                is_environment_error: true,
+            },
+        };
+
+        match &finding.status {
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => {
+                assert!(reason.contains("rate limit"));
+                assert!(is_environment_error);
+            }
+            _ => panic!("expected Unresolvable status"),
+        }
+    }
+
+    // ========================================================================
+    // Action ref with host tests
+    // ========================================================================
+
+    #[test]
+    fn test_finding_with_custom_host() {
+        let action_ref = ActionRef {
+            owner: "org".to_string(),
+            repo: "action".to_string(),
+            ref_str: "v1.0.0".to_string(),
+            host: Some("ghe.corp.com".to_string()),
+            subpath: None,
+        };
+
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 1,
+            action_ref,
+            status: FindingStatus::UpToDate,
+        };
+
+        assert_eq!(finding.action_ref.host.as_deref(), Some("ghe.corp.com"));
+    }
+
+    #[test]
+    fn test_finding_with_subpath() {
+        let action_ref = ActionRef {
+            owner: "actions".to_string(),
+            repo: "cache".to_string(),
+            ref_str: "v4".to_string(),
+            host: None,
+            subpath: Some("restore".to_string()),
+        };
+
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 1,
+            action_ref,
+            status: FindingStatus::UpToDate,
+        };
+
+        assert_eq!(finding.action_ref.subpath.as_deref(), Some("restore"));
+    }
 }

@@ -349,6 +349,27 @@ impl Config {
 mod tests {
     use super::*;
 
+    // ========================================================================
+    // Config defaults tests
+    // ========================================================================
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+        assert_eq!(config.update_policy, UpdatePolicy::Minor);
+        assert_eq!(config.ref_style, RefStyle::Preserve);
+        assert_eq!(config.branch_policy, BranchPolicy::Ignore);
+        assert!(!config.allow_prerelease);
+        assert!(config.ignore.is_empty());
+        assert!(config.action_overrides.is_empty());
+        assert!(config.extra_paths.is_empty());
+        assert!(config.loaded_from.is_none());
+    }
+
+    // ========================================================================
+    // should_ignore tests
+    // ========================================================================
+
     #[test]
     fn test_should_ignore() {
         let config = Config {
@@ -360,6 +381,39 @@ mod tests {
         assert!(config.should_ignore("my-org", "anything"));
         assert!(!config.should_ignore("other", "repo"));
     }
+
+    #[test]
+    fn test_should_ignore_empty() {
+        let config = Config::default();
+        assert!(!config.should_ignore("any", "repo"));
+    }
+
+    #[test]
+    fn test_should_ignore_wildcard_only() {
+        let config = Config {
+            ignore: vec!["org/*".to_string()],
+            ..Default::default()
+        };
+
+        assert!(config.should_ignore("org", "repo1"));
+        assert!(config.should_ignore("org", "repo2"));
+        assert!(!config.should_ignore("other-org", "repo1"));
+    }
+
+    #[test]
+    fn test_should_ignore_exact_match() {
+        let config = Config {
+            ignore: vec!["owner/exact-repo".to_string()],
+            ..Default::default()
+        };
+
+        assert!(config.should_ignore("owner", "exact-repo"));
+        assert!(!config.should_ignore("owner", "other-repo"));
+    }
+
+    // ========================================================================
+    // policy_for tests
+    // ========================================================================
 
     #[test]
     fn test_policy_override() {
@@ -377,5 +431,90 @@ mod tests {
 
         assert_eq!(config.policy_for("normal", "action"), UpdatePolicy::Minor);
         assert_eq!(config.policy_for("special", "action"), UpdatePolicy::Patch);
+    }
+
+    #[test]
+    fn test_policy_for_uses_default_when_no_override() {
+        let config = Config {
+            update_policy: UpdatePolicy::Major,
+            ..Default::default()
+        };
+
+        assert_eq!(config.policy_for("any", "action"), UpdatePolicy::Major);
+    }
+
+    #[test]
+    fn test_policy_for_override_none_uses_default() {
+        let config = Config {
+            update_policy: UpdatePolicy::Minor,
+            action_overrides: std::collections::HashMap::from([(
+                "special/action".to_string(),
+                ActionOverride {
+                    update_policy: None, // No override specified
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        // Should use default since override is None
+        assert_eq!(config.policy_for("special", "action"), UpdatePolicy::Minor);
+    }
+
+    // ========================================================================
+    // CacheConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_cache_config_default() {
+        let cache = CacheConfig::default();
+        assert!(cache.enabled);
+        assert_eq!(cache.ttl, Duration::from_secs(24 * 60 * 60));
+        assert!(cache.path.is_none());
+    }
+
+    #[test]
+    fn test_cache_config_custom_ttl() {
+        let cache = CacheConfig {
+            ttl: Duration::from_secs(12 * 3600),
+            ..Default::default()
+        };
+        assert_eq!(cache.ttl, Duration::from_secs(12 * 3600));
+    }
+
+    // ========================================================================
+    // ActionOverride tests
+    // ========================================================================
+
+    #[test]
+    fn test_action_override_default() {
+        let override_cfg = ActionOverride::default();
+        assert!(override_cfg.update_policy.is_none());
+        assert!(override_cfg.ref_style.is_none());
+        assert!(!override_cfg.ignore);
+    }
+
+    #[test]
+    fn test_action_override_full() {
+        let override_cfg = ActionOverride {
+            update_policy: Some(UpdatePolicy::Patch),
+            ref_style: Some(RefStyle::Sha),
+            ignore: true,
+        };
+        assert_eq!(override_cfg.update_policy, Some(UpdatePolicy::Patch));
+        assert_eq!(override_cfg.ref_style, Some(RefStyle::Sha));
+        assert!(override_cfg.ignore);
+    }
+
+    // ========================================================================
+    // ProvidersConfig tests
+    // ========================================================================
+
+    #[test]
+    fn test_providers_config_default() {
+        let providers = ProvidersConfig::default();
+        // Default is empty strings per AGENTS.md - CLI layer sets actual defaults
+        assert!(providers.default_host.is_empty());
+        assert!(providers.instances.is_empty());
     }
 }
