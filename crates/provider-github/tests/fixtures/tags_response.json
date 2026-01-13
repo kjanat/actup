@@ -1,0 +1,52 @@
+[
+  {
+    "name": "v6.0.2",
+    "zipball_url": "https://api.github.com/repos/actions/checkout/zipball/refs/tags/v6.0.2",
+    "tarball_url": "https://api.github.com/repos/actions/checkout/tarball/refs/tags/v6.0.2",
+    "commit": {
+      "sha": "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+      "url": "https://api.github.com/repos/actions/checkout/commits/de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+    },
+    "node_id": "MDM6UmVmMTk3ODE0NjI5OnJlZnMvdGFncy92Ni4wLjI="
+  },
+  {
+    "name": "v6.0.1",
+    "zipball_url": "https://api.github.com/repos/actions/checkout/zipball/refs/tags/v6.0.1",
+    "tarball_url": "https://api.github.com/repos/actions/checkout/tarball/refs/tags/v6.0.1",
+    "commit": {
+      "sha": "8e8c483db84b4bee98b60c0593521ed34d9990e8",
+      "url": "https://api.github.com/repos/actions/checkout/commits/8e8c483db84b4bee98b60c0593521ed34d9990e8"
+    },
+    "node_id": "MDM6UmVmMTk3ODE0NjI5OnJlZnMvdGFncy92Ni4wLjE="
+  },
+  {
+    "name": "v6.0.0",
+    "zipball_url": "https://api.github.com/repos/actions/checkout/zipball/refs/tags/v6.0.0",
+    "tarball_url": "https://api.github.com/repos/actions/checkout/tarball/refs/tags/v6.0.0",
+    "commit": {
+      "sha": "1af3b93b6815bc44a9784bd300feb67ff0d1eeb3",
+      "url": "https://api.github.com/repos/actions/checkout/commits/1af3b93b6815bc44a9784bd300feb67ff0d1eeb3"
+    },
+    "node_id": "MDM6UmVmMTk3ODE0NjI5OnJlZnMvdGFncy92Ni4wLjA="
+  },
+  {
+    "name": "v6",
+    "zipball_url": "https://api.github.com/repos/actions/checkout/zipball/refs/tags/v6",
+    "tarball_url": "https://api.github.com/repos/actions/checkout/tarball/refs/tags/v6",
+    "commit": {
+      "sha": "8e8c483db84b4bee98b60c0593521ed34d9990e8",
+      "url": "https://api.github.com/repos/actions/checkout/commits/8e8c483db84b4bee98b60c0593521ed34d9990e8"
+    },
+    "node_id": "MDM6UmVmMTk3ODE0NjI5OnJlZnMvdGFncy92Ng=="
+  },
+  {
+    "name": "v6-beta",
+    "zipball_url": "https://api.github.com/repos/actions/checkout/zipball/refs/tags/v6-beta",
+    "tarball_url": "https://api.github.com/repos/actions/checkout/tarball/refs/tags/v6-beta",
+    "commit": {
+      "sha": "71cf2267d89c5cb81562390fa70a37fa40b1305e",
+      "url": "https://api.github.com/repos/actions/checkout/commits/71cf2267d89c5cb81562390fa70a37fa40b1305e"
+    },
+    "node_id": "MDM6UmVmMTk3ODE0NjI5OnJlZnMvdGFncy92Ni1iZXRh"
+  }
+]

@@ -11,13 +11,14 @@ use crate::Error;
 use crate::policy::{BranchPolicy, RefStyle, UpdatePolicy};
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml, Yaml};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 /// Main configuration struct
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
     /// Global update policy
@@ -71,7 +72,7 @@ impl Default for Config {
 }
 
 /// Per-action override configuration
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ActionOverride {
     /// Override update policy for this action
@@ -85,7 +86,7 @@ pub struct ActionOverride {
 }
 
 /// Cache configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct CacheConfig {
     /// Cache time-to-live in seconds
@@ -119,7 +120,7 @@ where
 }
 
 /// Provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ProvidersConfig {
     /// Default provider kind
@@ -143,7 +144,7 @@ impl Default for ProvidersConfig {
 }
 
 /// A configured provider instance
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderInstance {
     /// Provider kind (github, gitlab, gitea, etc.)
     pub kind: String,

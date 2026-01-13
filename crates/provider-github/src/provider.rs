@@ -1,15 +1,18 @@
 //! GitHub provider implementation
 
 use crate::client::GitHubClient;
-use actup_core::provider::{ActionYml, Provider, ProviderKind, Sha40};
+use actup_core::provider::{
+    ActionInput, ActionOutput, ActionRuns, ActionStep, ActionYml, Provider, ProviderKind, Sha40,
+};
 use actup_core::version::{BranchInfo, Version, VersionInfo, VersionSet};
 use actup_core::{ActionRepoId, Result};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::SystemTime;
-use tracing::debug;
+use tracing::{debug, warn};
 
 /// GitHub provider for resolving action versions
 pub struct GitHubProvider {
@@ -286,16 +289,136 @@ impl Provider for GitHubProvider {
                     message: format!("action.yml is not valid UTF-8: {e}"),
                 })?
             } else {
+                warn!(
+                    owner = %owner,
+                    repo = %repo_name,
+                    "GitHub returned content without base64 encoding"
+                );
                 String::new()
             };
 
-            // Basic parsing (would need yaml parser for full implementation)
-            Ok(ActionYml {
-                raw,
-                name: None,
-                description: None,
-                author: None,
-            })
+            // Parse the YAML content
+            parse_action_yml(&raw)
         })
     }
+}
+
+/// Raw deserialization types for action.yml
+#[derive(Debug, Deserialize, Default)]
+struct RawActionYml {
+    name: Option<String>,
+    description: Option<String>,
+    author: Option<String>,
+    #[serde(default)]
+    inputs: HashMap<String, RawInput>,
+    #[serde(default)]
+    outputs: HashMap<String, RawOutput>,
+    runs: Option<RawRuns>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawInput {
+    description: Option<String>,
+    #[serde(default)]
+    required: bool,
+    default: Option<String>,
+    #[serde(rename = "deprecationMessage")]
+    deprecation_message: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawOutput {
+    description: Option<String>,
+    value: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRuns {
+    using: String,
+    main: Option<String>,
+    pre: Option<String>,
+    post: Option<String>,
+    image: Option<String>,
+    #[serde(default)]
+    steps: Vec<RawStep>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct RawStep {
+    name: Option<String>,
+    id: Option<String>,
+    uses: Option<String>,
+    run: Option<String>,
+    shell: Option<String>,
+    #[serde(rename = "working-directory")]
+    working_directory: Option<String>,
+}
+
+/// Parse action.yml content into ActionYml struct
+fn parse_action_yml(raw: &str) -> Result<ActionYml> {
+    let parsed: RawActionYml =
+        serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {
+            path: "action.yml".into(),
+            reason: e.to_string(),
+        })?;
+
+    let inputs = parsed
+        .inputs
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                ActionInput {
+                    description: v.description,
+                    required: v.required,
+                    default: v.default,
+                    deprecation_message: v.deprecation_message,
+                },
+            )
+        })
+        .collect();
+
+    let outputs = parsed
+        .outputs
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k,
+                ActionOutput {
+                    description: v.description,
+                    value: v.value,
+                },
+            )
+        })
+        .collect();
+
+    let runs = parsed.runs.map(|r| ActionRuns {
+        using: r.using,
+        main: r.main,
+        pre: r.pre,
+        post: r.post,
+        image: r.image,
+        steps: r
+            .steps
+            .into_iter()
+            .map(|s| ActionStep {
+                name: s.name,
+                id: s.id,
+                uses: s.uses,
+                run: s.run,
+                shell: s.shell,
+                working_directory: s.working_directory,
+            })
+            .collect(),
+    });
+
+    Ok(ActionYml {
+        raw: raw.to_string(),
+        name: parsed.name,
+        description: parsed.description,
+        author: parsed.author,
+        inputs,
+        outputs,
+        runs,
+    })
 }

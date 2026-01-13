@@ -1,0 +1,103 @@
+{
+  "name": "main",
+  "commit": {
+    "sha": "0c366fd6a839edf440554fa01a7085ccba70ac98",
+    "node_id": "C_kwDOC8ppZdoAKDBjMzY2ZmQ2YTgzOWVkZjQ0MDU1NGZhMDFhNzA4NWNjYmE3MGFjOTg",
+    "commit": {
+      "author": {
+        "name": "eric sciple",
+        "email": "ericsciple@users.noreply.github.com",
+        "date": "2026-01-09T20:09:42Z"
+      },
+      "committer": {
+        "name": "GitHub",
+        "email": "noreply@github.com",
+        "date": "2026-01-09T20:09:42Z"
+      },
+      "message": "Update changelog (#2357)",
+      "tree": {
+        "sha": "eeb4d10457b38980a14be22f35a7215170b14544",
+        "url": "https://api.github.com/repos/actions/checkout/git/trees/eeb4d10457b38980a14be22f35a7215170b14544"
+      },
+      "url": "https://api.github.com/repos/actions/checkout/git/commits/0c366fd6a839edf440554fa01a7085ccba70ac98",
+      "comment_count": 0,
+      "verification": {
+        "verified": true,
+        "reason": "valid",
+        "signature": "-----BEGIN PGP SIGNATURE-----\n\nwsFcBAABCAAQBQJpYWCGCRC1aQ7uu5UhlAAA5ncQALCrREjEzrL6xVBkHLiH98te\n1kF+K2QJrAbngyoMOtdZT1cZjEOJESL0je7xGgZEiWK1taQXfo7XJAety2AuKajx\n8OGnyUpWlOFElZjQKLXGbtR6Vj5wl3+wRIBjJRVp9R5GGqwDfm0QSdpqmUFqcTE9\nei85Ujya56u7towLJOtIU9FK0tQR++o6AUlZDBvPTS6L4Shysy4Mfcpy1q26UbbF\nXG0QEatmTIStyIOvEYG4pH4mhQh8/EDnCBjHrhgAxuOzb85fzOVcNtT7+3JuZGFF\nOdbmsieUTZsOUVDB8QwEASe4/XmvdKPbUUeXhOLef3MOPrnHhwn+vVkZdjCD963j\nsxVkQFYLR8ir6Ed83yBjfAFys/I5SW+aYVOIKOVsJ4f/Cg86UmZ1mXh5cvX45j7Y\nxC+1yH8NWGdmzY1X8WR/ojQhabU50uwvPc0H+ETQ6TMFK6wxOQHe2JMlyojf7RYY\n0HVs/mdDVLpyA55jvt8B4O216la9T+UmqDTQYZeoOilF4VkfNW4o45VbUHZIeigY\n512INKvbJm+a51zp9MgD8G7ycPQH9mqZN5emlPZxNsYHdT6EcXBSh8aiZt/1Ami+\nRdhQwG/feOKL49Qo1Za/+QHHrnvS7Kja6uBPkoIynIm4UWiFhkmKEpbJI/u47TTa\n5/MR6680dbvlscM5Oq+m\n=CQ1a\n-----END PGP SIGNATURE-----\n",
+        "payload": "tree eeb4d10457b38980a14be22f35a7215170b14544\nparent de0fac2e4500dabe0009e67214ff5f5447ce83dd\nauthor eric sciple <ericsciple@users.noreply.github.com> 1767989382 -0600\ncommitter GitHub <noreply@github.com> 1767989382 -0600\n\nUpdate changelog (#2357)\n\n",
+        "verified_at": "2026-01-09T20:09:43Z"
+      }
+    },
+    "url": "https://api.github.com/repos/actions/checkout/commits/0c366fd6a839edf440554fa01a7085ccba70ac98",
+    "html_url": "https://github.com/actions/checkout/commit/0c366fd6a839edf440554fa01a7085ccba70ac98",
+    "comments_url": "https://api.github.com/repos/actions/checkout/commits/0c366fd6a839edf440554fa01a7085ccba70ac98/comments",
+    "author": {
+      "login": "ericsciple",
+      "id": 12102068,
+      "node_id": "MDQ6VXNlcjEyMTAyMDY4",
+      "avatar_url": "https://avatars.githubusercontent.com/u/12102068?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/ericsciple",
+      "html_url": "https://github.com/ericsciple",
+      "followers_url": "https://api.github.com/users/ericsciple/followers",
+      "following_url": "https://api.github.com/users/ericsciple/following{/other_user}",
+      "gists_url": "https://api.github.com/users/ericsciple/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/ericsciple/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/ericsciple/subscriptions",
+      "organizations_url": "https://api.github.com/users/ericsciple/orgs",
+      "repos_url": "https://api.github.com/users/ericsciple/repos",
+      "events_url": "https://api.github.com/users/ericsciple/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/ericsciple/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": true
+    },
+    "committer": {
+      "login": "web-flow",
+      "id": 19864447,
+      "node_id": "MDQ6VXNlcjE5ODY0NDQ3",
+      "avatar_url": "https://avatars.githubusercontent.com/u/19864447?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/web-flow",
+      "html_url": "https://github.com/web-flow",
+      "followers_url": "https://api.github.com/users/web-flow/followers",
+      "following_url": "https://api.github.com/users/web-flow/following{/other_user}",
+      "gists_url": "https://api.github.com/users/web-flow/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/web-flow/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/web-flow/subscriptions",
+      "organizations_url": "https://api.github.com/users/web-flow/orgs",
+      "repos_url": "https://api.github.com/users/web-flow/repos",
+      "events_url": "https://api.github.com/users/web-flow/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/web-flow/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "parents": [
+      {
+        "sha": "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "url": "https://api.github.com/repos/actions/checkout/commits/de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+        "html_url": "https://github.com/actions/checkout/commit/de0fac2e4500dabe0009e67214ff5f5447ce83dd"
+      }
+    ]
+  },
+  "_links": {
+    "self": "https://api.github.com/repos/actions/checkout/branches/main",
+    "html": "https://github.com/actions/checkout/tree/main"
+  },
+  "protected": true,
+  "protection": {
+    "enabled": true,
+    "required_status_checks": {
+      "enforcement_level": "everyone",
+      "contexts": [
+
+      ],
+      "checks": [
+
+      ]
+    }
+  },
+  "protection_url": "https://api.github.com/repos/actions/checkout/branches/main/protection"
+}

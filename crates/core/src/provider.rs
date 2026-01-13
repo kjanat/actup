@@ -88,6 +88,68 @@ pub struct ActionYml {
     pub description: Option<String>,
     /// Author if specified
     pub author: Option<String>,
+    /// Input parameters
+    pub inputs: std::collections::HashMap<String, ActionInput>,
+    /// Output values
+    pub outputs: std::collections::HashMap<String, ActionOutput>,
+    /// How the action runs
+    pub runs: Option<ActionRuns>,
+}
+
+/// An input parameter for an action
+#[derive(Debug, Clone, Default)]
+pub struct ActionInput {
+    /// Description of the input
+    pub description: Option<String>,
+    /// Whether this input is required
+    pub required: bool,
+    /// Default value if not provided
+    pub default: Option<String>,
+    /// Deprecation message if deprecated
+    pub deprecation_message: Option<String>,
+}
+
+/// An output value from an action
+#[derive(Debug, Clone, Default)]
+pub struct ActionOutput {
+    /// Description of the output
+    pub description: Option<String>,
+    /// Value expression (for composite actions)
+    pub value: Option<String>,
+}
+
+/// How the action executes
+#[derive(Debug, Clone)]
+pub struct ActionRuns {
+    /// Runtime: "composite", "node20", "node16", "docker"
+    pub using: String,
+    /// Main entry point (for node/docker)
+    pub main: Option<String>,
+    /// Pre-run script
+    pub pre: Option<String>,
+    /// Post-run script
+    pub post: Option<String>,
+    /// Docker image (for docker actions)
+    pub image: Option<String>,
+    /// Steps (for composite actions)
+    pub steps: Vec<ActionStep>,
+}
+
+/// A step in a composite action
+#[derive(Debug, Clone)]
+pub struct ActionStep {
+    /// Step name
+    pub name: Option<String>,
+    /// Step ID for outputs
+    pub id: Option<String>,
+    /// Action to run (uses:)
+    pub uses: Option<String>,
+    /// Shell command (run:)
+    pub run: Option<String>,
+    /// Shell to use
+    pub shell: Option<String>,
+    /// Working directory
+    pub working_directory: Option<String>,
 }
 
 /// Trait for action providers (GitHub, GitLab, etc.)

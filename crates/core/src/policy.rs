@@ -2,12 +2,13 @@
 //!
 //! Controls how aggressively to update and what format to use for refs.
 
+use schemars::JsonSchema;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Update policy determines what version bumps are allowed
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum UpdatePolicy {
     /// Only patch updates within same major.minor (1.2.3 -> 1.2.4)
@@ -89,7 +90,7 @@ impl<'de> Deserialize<'de> for UpdatePolicy {
 }
 
 /// How to format version references when updating
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum RefStyle {
     /// Keep the original style (tag stays tag, SHA stays SHA)
@@ -154,7 +155,7 @@ impl<'de> Deserialize<'de> for RefStyle {
 }
 
 /// Branch handling policy
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum BranchPolicy {
     /// Ignore branch refs (don't flag as outdated, but maybe warn)
