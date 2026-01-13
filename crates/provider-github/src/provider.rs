@@ -61,7 +61,11 @@ impl GitHubProvider {
                 major, prerelease, ..
             } = &version
             {
-                // Skip prereleases for "latest" calculations
+                // Always add to semver_tags (prereleases are filtered at query time)
+                semver_tags.push(info.clone());
+
+                // Only update "latest" trackers for non-prerelease versions
+                // (prereleases are filtered at query time via allow_prerelease flag)
                 if prerelease.is_none() {
                     // Determine destinations first to minimize clones
                     let dominated_by_latest = latest.as_ref().is_some_and(|l| l.version >= version);
@@ -73,16 +77,14 @@ impl GitHubProvider {
                     if !dominated_by_latest && !dominated_by_major {
                         // New latest AND new latest for major
                         latest_per_major.insert(*major, info.clone());
-                        latest = Some(info.clone());
+                        latest = Some(info);
                     } else if !dominated_by_major {
                         // New latest for this major only
                         latest_per_major.insert(*major, info.clone());
                     } else if !dominated_by_latest {
                         // New overall latest only
-                        latest = Some(info.clone());
+                        latest = Some(info);
                     }
-                    // Always add to semver_tags
-                    semver_tags.push(info);
                 }
             }
         }
@@ -520,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_tags_skips_prereleases() {
+    fn test_process_tags_includes_prereleases_in_tags() {
         let tags = vec![
             make_tag("v1.0.0", "aaa"),
             make_tag("v2.0.0-beta.1", "bbb"),
@@ -528,8 +530,9 @@ mod tests {
         ];
         let result = GitHubProvider::process_tags(tags);
 
-        // Prereleases should be skipped
-        assert_eq!(result.semver_tags.len(), 1);
+        // Prereleases are included in semver_tags (filtered at query time)
+        assert_eq!(result.semver_tags.len(), 3);
+        // But "latest" only tracks stable releases
         assert_eq!(result.latest.unwrap().version.to_string(), "v1.0.0");
     }
 

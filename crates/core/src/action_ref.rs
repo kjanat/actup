@@ -74,13 +74,20 @@ impl ActionRef {
         (7..40).contains(&len) && self.ref_str.chars().all(|c| c.is_ascii_hexdigit())
     }
 
-    /// Returns true if this looks like a semver tag (v1, v1.2, v1.2.3, etc.)
+    /// Returns true if this looks like a semver tag (v1, v1.2, v1.2.3, v1.0.0-beta, etc.)
     #[must_use]
     pub fn looks_like_semver(&self) -> bool {
         let s = self.ref_str.strip_prefix('v').unwrap_or(&self.ref_str);
-        // Check if it starts with a digit and contains only digits and dots
-        s.chars().next().is_some_and(|c| c.is_ascii_digit())
-            && s.chars().all(|c| c.is_ascii_digit() || c == '.')
+
+        // Split off prerelease suffix if present
+        let version_part = s.split('-').next().unwrap_or(s);
+
+        // Check if version part starts with a digit and contains only digits and dots
+        version_part
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+            && version_part.chars().all(|c| c.is_ascii_digit() || c == '.')
     }
 
     /// Convert to `ActionRepoId` (drops the ref portion)
@@ -296,8 +303,9 @@ mod tests {
 
     #[test]
     fn test_looks_like_semver_prerelease() {
-        // Current impl doesn't recognize prereleases as semver due to '-'
-        assert!(!ActionRef::simple("o", "r", "v1.0.0-beta").looks_like_semver());
+        assert!(ActionRef::simple("o", "r", "v1.0.0-beta").looks_like_semver());
+        assert!(ActionRef::simple("o", "r", "v1.0.0-rc.1").looks_like_semver());
+        assert!(ActionRef::simple("o", "r", "v2.0.0-alpha.2").looks_like_semver());
     }
 
     // ========================================================================
