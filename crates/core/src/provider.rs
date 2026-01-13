@@ -38,7 +38,7 @@ impl fmt::Display for ProviderKind {
 impl ProviderKind {
     /// Get the cache namespace for this provider kind
     #[must_use]
-    pub fn cache_namespace(&self) -> &'static str {
+    pub const fn cache_namespace(&self) -> &'static str {
         match self {
             Self::GitHub => "github",
             Self::GitLab => "gitlab",
@@ -247,7 +247,7 @@ impl ProviderRegistry {
             .map(std::convert::AsRef::as_ref)
     }
 
-    /// Find a provider for an ActionRepoId
+    /// Find a provider for an `ActionRepoId`
     #[must_use]
     pub fn find_for_repo(&self, repo: &ActionRepoId) -> Option<&dyn Provider> {
         self.find(repo.host.as_deref())

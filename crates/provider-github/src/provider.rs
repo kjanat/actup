@@ -22,6 +22,10 @@ pub struct GitHubProvider {
 
 impl GitHubProvider {
     /// Create a new GitHub provider for github.com
+    ///
+    /// # Errors
+    ///
+    /// Returns error if HTTP client cannot be created.
     pub fn new(token: Option<&str>) -> Result<Self> {
         let client = GitHubClient::new(token)?;
         Ok(Self {
@@ -31,6 +35,10 @@ impl GitHubProvider {
     }
 
     /// Create a GitHub provider for a custom host (e.g., GitHub Enterprise)
+    ///
+    /// # Errors
+    ///
+    /// Returns error if HTTP client cannot be created or token is invalid.
     pub fn with_host(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
         let client = GitHubClient::with_api_base(api_base, host, token)?;
         Ok(Self {
@@ -39,8 +47,8 @@ impl GitHubProvider {
         })
     }
 
-    /// Parse tags into VersionInfo, filtering and sorting
-    fn process_tags(&self, tags: Vec<crate::types::GitHubTag>) -> VersionSet {
+    /// Parse tags into `VersionInfo`, filtering and sorting
+    fn process_tags(tags: Vec<crate::types::GitHubTag>) -> VersionSet {
         let mut semver_tags = Vec::new();
         let mut latest_per_major: HashMap<u32, VersionInfo> = HashMap::new();
         let mut latest: Option<VersionInfo> = None;
@@ -61,24 +69,20 @@ impl GitHubProvider {
                         .get(major)
                         .is_some_and(|c| c.version >= version);
 
-                    // Always goes in semver_tags - clone only if also needed elsewhere
+                    // Update latest trackers, clone only when needed
                     if !dominated_by_latest && !dominated_by_major {
                         // New latest AND new latest for major
                         latest_per_major.insert(*major, info.clone());
                         latest = Some(info.clone());
-                        semver_tags.push(info);
                     } else if !dominated_by_major {
                         // New latest for this major only
                         latest_per_major.insert(*major, info.clone());
-                        semver_tags.push(info);
                     } else if !dominated_by_latest {
                         // New overall latest only
                         latest = Some(info.clone());
-                        semver_tags.push(info);
-                    } else {
-                        // Just add to tags, no cloning needed
-                        semver_tags.push(info);
                     }
+                    // Always add to semver_tags
+                    semver_tags.push(info);
                 }
             }
         }
@@ -119,7 +123,7 @@ impl Provider for GitHubProvider {
             let tags = self.client.list_tags(&owner, &repo_name, None).await?;
 
             // Process into VersionSet
-            let mut version_set = self.process_tags(tags);
+            let mut version_set = Self::process_tags(tags);
 
             // Get default branch info
             let repo_info = self.client.get_repo(&owner, &repo_name).await?;
@@ -160,28 +164,25 @@ impl Provider for GitHubProvider {
                 .get_ref(&owner, &repo_name, &format!("tags/{ref_name}"))
                 .await;
 
-            let sha = match git_ref {
-                Ok(r) => {
-                    if r.object.object_type == "tag" {
-                        // Annotated tag - need to dereference to get commit SHA
-                        let tag_obj = self
-                            .client
-                            .get_tag_object(&owner, &repo_name, &r.object.sha)
-                            .await?;
-                        tag_obj.object.sha
-                    } else {
-                        // Lightweight tag or commit - SHA is already the commit
-                        r.object.sha
-                    }
-                }
-                Err(_) => {
-                    // Try as a branch
-                    let branch = self
+            let sha = if let Ok(r) = git_ref {
+                if r.object.object_type == "tag" {
+                    // Annotated tag - need to dereference to get commit SHA
+                    let tag_obj = self
                         .client
-                        .get_branch(&owner, &repo_name, &ref_name)
+                        .get_tag_object(&owner, &repo_name, &r.object.sha)
                         .await?;
-                    branch.commit.sha
+                    tag_obj.object.sha
+                } else {
+                    // Lightweight tag or commit - SHA is already the commit
+                    r.object.sha
                 }
+            } else {
+                // Try as a branch
+                let branch = self
+                    .client
+                    .get_branch(&owner, &repo_name, &ref_name)
+                    .await?;
+                branch.commit.sha
             };
 
             Sha40::new(&sha).ok_or_else(|| actup_core::Error::Internal {
@@ -354,7 +355,7 @@ struct RawStep {
     working_directory: Option<String>,
 }
 
-/// Parse action.yml content into ActionYml struct
+/// Parse action.yml content into `ActionYml` struct
 fn parse_action_yml(raw: &str) -> Result<ActionYml> {
     let parsed: RawActionYml =
         serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {

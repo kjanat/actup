@@ -2,6 +2,7 @@
 
 mod cli;
 mod commands;
+mod common;
 mod output;
 
 use std::process::ExitCode;
@@ -11,7 +12,7 @@ use actup_provider_github::GitHubProvider;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, CliExitCode, Command};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -31,6 +32,8 @@ async fn main() -> ExitCode {
         .init();
 
     let exit_code = run(cli).await;
+    // Exit codes 0-3 are safe to convert to u8
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     ExitCode::from(exit_code as u8)
 }
 
@@ -54,11 +57,11 @@ async fn run(cli: Cli) -> i32 {
     };
 
     // Build provider registry
-    let registry = match build_registry() {
+    let registry = match build_registry(&config) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Error initializing providers: {}", e);
-            return 3;
+            eprintln!("Error initializing providers: {e}");
+            return CliExitCode::EnvironmentError.into();
         }
     };
 
@@ -77,8 +80,17 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
-fn build_registry() -> actup_core::Result<ProviderRegistry> {
+fn build_registry(config: &Config) -> actup_core::Result<ProviderRegistry> {
     let mut registry = ProviderRegistry::new();
+
+    // Set default host from config or fallback to github.com
+    // (Core defaults are empty to remain provider-neutral)
+    let default_host = if config.providers.default_host.is_empty() {
+        "github.com"
+    } else {
+        &config.providers.default_host
+    };
+    registry.set_default_host(default_host);
 
     // Add GitHub provider
     let github_token = std::env::var("GITHUB_TOKEN").ok();

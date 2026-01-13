@@ -1,15 +1,105 @@
 //! Check command - scan workflows and report outdated actions
 
-use std::fs;
 use std::path::Path;
 
 use actup_core::{
-    Config, ProviderRegistry, Version, discover_files, extract_uses_from_yaml, parse_uses,
+    ActionRef, BranchPolicy, Config, Provider, ProviderRegistry, Version, VersionInfo, VersionSet,
 };
-use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
+use crate::common::{ErrorTally, WorkflowScanner};
 use crate::output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary};
+
+/// Determine the finding status for an action given its versions.
+fn determine_status(
+    action_ref: &ActionRef,
+    versions: &VersionSet,
+    config: &Config,
+) -> FindingStatus {
+    let policy = config.policy_for(&action_ref.owner, &action_ref.repo);
+    let current = Version::parse(&action_ref.ref_str);
+
+    let target = versions.find_latest_for(&current, policy.allows_major(), config.allow_prerelease);
+
+    // Check if current matches target (handles v4 == v4.1.7 via major comparison)
+    let is_up_to_date = is_version_current(&current, target, &action_ref.ref_str);
+
+    match (is_up_to_date, target) {
+        (true, _) => FindingStatus::UpToDate,
+        (false, Some(latest)) => FindingStatus::Outdated {
+            current: action_ref.ref_str.clone(),
+            latest: latest.clone(),
+        },
+        (false, None) => status_for_no_target(&current, config.branch_policy),
+    }
+}
+
+/// Check if current version is up-to-date with target.
+fn is_version_current(current: &Version, target: Option<&VersionInfo>, ref_str: &str) -> bool {
+    match (current, target) {
+        // For major-only refs (v4), compare major versions
+        (
+            Version::Semver {
+                major,
+                minor: None,
+                patch: None,
+                ..
+            },
+            Some(t),
+        ) => t.version.major() == Some(*major),
+        // For full semver, exact match
+        (_, Some(t)) => t.version.to_string() == ref_str,
+        (_, None) => false,
+    }
+}
+
+/// Determine status when no target version is found.
+fn status_for_no_target(current: &Version, branch_policy: BranchPolicy) -> FindingStatus {
+    if !current.is_branch() && current.is_semver() {
+        return FindingStatus::Unresolvable {
+            reason: "no versions found".to_string(),
+            is_environment_error: false,
+        };
+    }
+
+    match branch_policy {
+        BranchPolicy::Ignore => FindingStatus::UpToDate, // Treat as OK when ignoring
+        BranchPolicy::Warn => FindingStatus::Unresolvable {
+            reason: "non-semver ref (branch or tag)".to_string(),
+            is_environment_error: false,
+        },
+        BranchPolicy::Update => FindingStatus::Unresolvable {
+            reason: "non-semver ref should be pinned to SHA".to_string(),
+            is_environment_error: false,
+        },
+    }
+}
+
+/// Check a single action and return a finding.
+async fn check_action(
+    action_ref: &ActionRef,
+    file: &str,
+    line: usize,
+    provider: &dyn Provider,
+    config: &Config,
+) -> Finding {
+    let repo_id = action_ref.to_repo_id();
+
+    let status = match provider.get_versions(&repo_id).await {
+        Ok(versions) => determine_status(action_ref, &versions, config),
+        Err(e) => FindingStatus::Unresolvable {
+            reason: e.to_string(),
+            is_environment_error: e.is_environment_error(),
+        },
+    };
+
+    Finding {
+        file: file.to_string(),
+        line,
+        action_ref: action_ref.clone(),
+        status,
+    }
+}
 
 pub async fn run(
     path: &Path,
@@ -18,63 +108,29 @@ pub async fn run(
     config: &Config,
     registry: &ProviderRegistry,
 ) -> i32 {
-    let discovered = discover_files(path, &config.extra_paths);
+    let scanner = WorkflowScanner::new(path, config, registry, format);
+    let discovered = scanner.discover();
 
     if discovered.is_empty() {
-        if matches!(format, OutputFormat::Human) {
-            println!(
-                "{}",
-                "No workflow files found in .github/workflows/".dimmed()
-            );
-        }
+        scanner.print_empty_message();
         return 0;
     }
 
     let mut findings = Vec::new();
+    let mut io_errors = ErrorTally::default();
 
     for file in &discovered {
-        let content = match fs::read_to_string(&file.path) {
-            Ok(c) => c,
-            Err(e) => {
-                eprintln!("{}: {} - {}", "Warning".yellow(), file.path.display(), e);
-                continue;
-            }
+        let Some(content) = scanner.read_file(file, &mut io_errors) else {
+            continue;
         };
 
-        let uses_locations = extract_uses_from_yaml(&content);
+        let relative = scanner.relative_path(file);
 
-        for loc in uses_locations {
-            let action_ref = match parse_uses(&loc.value) {
-                Ok(Some(r)) => r,
-                Ok(None) => continue, // Local action like ./path
-                Err(e) => {
-                    eprintln!(
-                        "{}: {}:{} - {}",
-                        "Warning".yellow(),
-                        file.path.display(),
-                        loc.line,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            let file_str = file
-                .path
-                .strip_prefix(path)
-                .unwrap_or(&file.path)
-                .display()
-                .to_string();
-
-            // Check if action should be ignored (per-action override or ignore list)
-            if config.should_ignore(&action_ref.owner, &action_ref.repo) {
-                continue;
-            }
-
-            // Check if it's already a SHA (40 hex chars)
+        for (loc, action_ref) in scanner.extract_actions(&content) {
+            // Already pinned to SHA
             if action_ref.is_sha() {
                 findings.push(Finding {
-                    file: file_str,
+                    file: relative.clone(),
                     line: loc.line,
                     action_ref: action_ref.clone(),
                     status: FindingStatus::Pinned {
@@ -85,131 +141,24 @@ pub async fn run(
                 continue;
             }
 
-            // Try to resolve versions
-            let provider = match registry.find(action_ref.host.as_deref()) {
-                Some(p) => p,
-                None => {
-                    findings.push(Finding {
-                        file: file_str,
-                        line: loc.line,
-                        action_ref: action_ref.clone(),
-                        status: FindingStatus::Unresolvable {
-                            reason: format!(
-                                "no provider for host: {}",
-                                action_ref.host.as_deref().unwrap_or("github.com")
-                            ),
-                        },
-                    });
-                    continue;
-                }
-            };
-
-            let repo_id = action_ref.to_repo_id();
-            let versions = match provider.get_versions(&repo_id).await {
-                Ok(v) => v,
-                Err(e) => {
-                    findings.push(Finding {
-                        file: file_str,
-                        line: loc.line,
-                        action_ref: action_ref.clone(),
-                        status: FindingStatus::Unresolvable {
-                            reason: e.to_string(),
-                        },
-                    });
-                    continue;
-                }
-            };
-
-            // Get effective policy for this action (respects per-action overrides)
-            let policy = config.policy_for(&action_ref.owner, &action_ref.repo);
-
-            // Parse current ref as Version for proper comparison
-            let current_version = Version::parse(&action_ref.ref_str);
-
-            // Find the appropriate latest version based on policy
-            let target = versions.find_latest_for(
-                &current_version,
-                policy.allows_major(),
-                config.allow_prerelease,
-            );
-
-            // Check if current matches target (handles v4 == v4.1.7 via major comparison)
-            let is_up_to_date = match (&current_version, target) {
-                // For major-only refs (v4), compare major versions
-                (
-                    Version::Semver {
-                        major,
-                        minor: None,
-                        patch: None,
-                        ..
+            // No provider for host
+            let Some(provider) = scanner.provider_for(&action_ref) else {
+                findings.push(Finding {
+                    file: relative.clone(),
+                    line: loc.line,
+                    action_ref: action_ref.clone(),
+                    status: FindingStatus::Unresolvable {
+                        reason: format!(
+                            "no provider for host: {}",
+                            action_ref.host.as_deref().unwrap_or("github.com")
+                        ),
+                        is_environment_error: false,
                     },
-                    Some(t),
-                ) => t.version.major() == Some(*major),
-                // For full semver, exact match
-                (_, Some(t)) => t.version.to_string() == action_ref.ref_str,
-                (_, None) => false,
+                });
+                continue;
             };
 
-            match (is_up_to_date, target) {
-                (true, _) => {
-                    findings.push(Finding {
-                        file: file_str,
-                        line: loc.line,
-                        action_ref: action_ref.clone(),
-                        status: FindingStatus::UpToDate,
-                    });
-                }
-                (false, Some(latest_v)) => {
-                    findings.push(Finding {
-                        file: file_str,
-                        line: loc.line,
-                        action_ref: action_ref.clone(),
-                        status: FindingStatus::Outdated {
-                            current: action_ref.ref_str.clone(),
-                            latest: latest_v.clone(),
-                        },
-                    });
-                }
-                (false, None) => {
-                    // No semver tags - could be branch ref or no tags at all
-                    // Check branch_policy before marking as unresolvable
-                    if current_version.is_branch() || !current_version.is_semver() {
-                        match config.branch_policy {
-                            actup_core::BranchPolicy::Ignore => continue,
-                            actup_core::BranchPolicy::Warn => {
-                                findings.push(Finding {
-                                    file: file_str,
-                                    line: loc.line,
-                                    action_ref: action_ref.clone(),
-                                    status: FindingStatus::Unresolvable {
-                                        reason: "non-semver ref (branch or tag)".to_string(),
-                                    },
-                                });
-                            }
-                            actup_core::BranchPolicy::Update => {
-                                findings.push(Finding {
-                                    file: file_str,
-                                    line: loc.line,
-                                    action_ref: action_ref.clone(),
-                                    status: FindingStatus::Unresolvable {
-                                        reason: "non-semver ref should be pinned to SHA"
-                                            .to_string(),
-                                    },
-                                });
-                            }
-                        }
-                    } else {
-                        findings.push(Finding {
-                            file: file_str,
-                            line: loc.line,
-                            action_ref: action_ref.clone(),
-                            status: FindingStatus::Unresolvable {
-                                reason: "no versions found".to_string(),
-                            },
-                        });
-                    }
-                }
-            }
+            findings.push(check_action(&action_ref, &relative, loc.line, provider, config).await);
         }
     }
 
@@ -217,6 +166,12 @@ pub async fn run(
 
     if matches!(format, OutputFormat::Human) {
         print_summary(&findings);
+    }
+
+    // I/O errors take priority (env error = exit 3)
+    let io_exit = io_errors.exit_code();
+    if io_exit != crate::cli::CliExitCode::Success {
+        return io_exit.into();
     }
 
     determine_exit_code(&findings, strict)

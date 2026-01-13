@@ -28,6 +28,9 @@ pub enum FindingStatus {
     },
     Unresolvable {
         reason: String,
+        /// True if this was an environment error (network/auth/rate-limit)
+        /// vs a user error (bad ref, not found)
+        is_environment_error: bool,
     },
 }
 
@@ -52,7 +55,7 @@ fn print_human(findings: &[Finding]) {
                 println!();
             }
             println!("{}", finding.file.bold());
-            current_file = finding.file.clone();
+            current_file.clone_from(&finding.file);
         }
 
         let line_prefix = format!("  L{}: ", finding.line);
@@ -77,10 +80,7 @@ fn print_human(findings: &[Finding]) {
                 );
             }
             FindingStatus::Pinned { sha, tag } => {
-                let tag_info = tag
-                    .as_ref()
-                    .map(|t| format!(" ({})", t))
-                    .unwrap_or_default();
+                let tag_info = tag.as_ref().map(|t| format!(" ({t})")).unwrap_or_default();
                 println!(
                     "{}{}  {}{}",
                     line_prefix.dimmed(),
@@ -89,12 +89,20 @@ fn print_human(findings: &[Finding]) {
                     tag_info.dimmed()
                 );
             }
-            FindingStatus::Unresolvable { reason } => {
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => {
+                let label = if *is_environment_error {
+                    "error"
+                } else {
+                    "unresolvable"
+                };
                 println!(
                     "{}{}  {}",
                     line_prefix.dimmed(),
                     action_str.red(),
-                    format!("unresolvable: {}", reason).red()
+                    format!("{label}: {reason}").red()
                 );
             }
         }
@@ -109,6 +117,11 @@ fn print_json(findings: &[Finding]) {
         action: String,
         owner: String,
         repo: String,
+        /// Host (e.g., "github.com", "ghe.corp.internal") - required by spec
+        #[serde(skip_serializing_if = "Option::is_none")]
+        host: Option<String>,
+        /// Provider kind (e.g., "github", "gitlab") - required by spec
+        provider: String,
         reference: String,
         status: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -136,8 +149,15 @@ fn print_json(findings: &[Finding]) {
                 FindingStatus::Pinned { sha, tag: _ } => {
                     ("pinned".into(), None, None, Some(sha.clone()), None)
                 }
-                FindingStatus::Unresolvable { reason } => (
-                    "unresolvable".into(),
+                FindingStatus::Unresolvable {
+                    reason,
+                    is_environment_error,
+                } => (
+                    if *is_environment_error {
+                        "error".into()
+                    } else {
+                        "unresolvable".into()
+                    },
                     None,
                     None,
                     None,
@@ -151,6 +171,8 @@ fn print_json(findings: &[Finding]) {
                 action: f.action_ref.to_string(),
                 owner: f.action_ref.owner.clone(),
                 repo: f.action_ref.repo.clone(),
+                host: f.action_ref.host.clone(),
+                provider: "github".to_string(), // TODO: get from registry when multi-provider
                 reference: f.action_ref.ref_str.clone(),
                 status,
                 current_version,
@@ -161,10 +183,10 @@ fn print_json(findings: &[Finding]) {
         })
         .collect();
 
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&json_findings).expect("failed to serialize findings")
-    );
+    match serde_json::to_string_pretty(&json_findings) {
+        Ok(json) => println!("{json}"),
+        Err(e) => eprintln!("Error serializing findings: {e}"),
+    }
 }
 
 pub fn print_summary(findings: &[Finding]) {
@@ -206,15 +228,31 @@ pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
     let has_outdated = findings
         .iter()
         .any(|f| matches!(f.status, FindingStatus::Outdated { .. }));
-    let has_unresolvable = findings
-        .iter()
-        .any(|f| matches!(f.status, FindingStatus::Unresolvable { .. }));
+    let has_env_error = findings.iter().any(|f| {
+        matches!(
+            f.status,
+            FindingStatus::Unresolvable {
+                is_environment_error: true,
+                ..
+            }
+        )
+    });
+    let has_user_error = findings.iter().any(|f| {
+        matches!(
+            f.status,
+            FindingStatus::Unresolvable {
+                is_environment_error: false,
+                ..
+            }
+        )
+    });
 
-    if has_unresolvable {
+    // Priority: env errors (3) > user errors (2) > outdated with strict (1) > success (0)
+    if has_env_error {
+        3
+    } else if has_user_error {
         2
-    } else if has_outdated && strict {
-        1
     } else {
-        0
+        i32::from(has_outdated && strict)
     }
 }

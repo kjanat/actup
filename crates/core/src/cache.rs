@@ -17,7 +17,7 @@ pub struct CacheEntry {
     /// When this entry was stored
     pub stored_at: SystemTime,
 
-    /// ETag from the provider (for conditional requests)
+    /// `ETag` from the provider (for conditional requests)
     pub etag: Option<String>,
 
     /// Last-Modified header value
@@ -84,7 +84,7 @@ impl std::error::Error for CacheError {}
 /// Trait for cache implementations
 ///
 /// This is provider-neutral - cache keys are constructed from
-/// ActionRepoId + provider namespace.
+/// `ActionRepoId` + provider namespace.
 pub trait Cache: Send + Sync {
     /// Get a cached entry by key
     fn get(&self, key: &str) -> Pin<Box<dyn Future<Output = CacheResult<CacheEntry>> + Send + '_>>;

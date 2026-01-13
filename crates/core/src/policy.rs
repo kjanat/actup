@@ -76,13 +76,13 @@ pub enum UpdatePolicy {
 impl UpdatePolicy {
     /// Returns true if this policy allows major version bumps
     #[must_use]
-    pub fn allows_major(&self) -> bool {
+    pub const fn allows_major(&self) -> bool {
         matches!(self, Self::Major | Self::Latest)
     }
 
     /// Returns true if this policy allows minor version bumps
     #[must_use]
-    pub fn allows_minor(&self) -> bool {
+    pub const fn allows_minor(&self) -> bool {
         !matches!(self, Self::Patch)
     }
 

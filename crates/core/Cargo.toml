@@ -7,15 +7,16 @@ license.workspace = true
 
 [dependencies]
 # For config discovery
-dirs     = { workspace = true }
+dirs          = { workspace = true }
 # Configuration parsing
-figment  = { workspace = true }
+figment       = { workspace = true }
 # For file discovery (glob patterns)
-glob     = { workspace = true }
+glob          = { workspace = true }
+json_comments = { workspace = true }
 # Schema generation
-schemars = { workspace = true }
+schemars      = { workspace = true }
 # Serialization
-serde    = { workspace = true }
+serde         = { workspace = true }
 
 [dev-dependencies]
 

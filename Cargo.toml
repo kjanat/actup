@@ -27,12 +27,13 @@ dashmap            = "6.1"
 directories        = "6.0"
 dirs               = "6"
 # Configuration
-figment            = { version = "0.10", features = ["env", "toml", "yaml"] }
+figment            = { version = "0.10", features = ["env", "json", "toml", "yaml"] }
 glob               = "0.3"
 human-panic        = "2.0"
 indicatif          = "0.18"
 # Testing
 insta              = { version = "1.42", features = ["yaml"] }
+json_comments      = "0.2"
 miette             = { version = "7.6", features = ["fancy"] }
 node-semver        = "2.1"
 octocrab           = "0.49"

@@ -83,3 +83,23 @@ pub enum OutputFormat {
     Human,
     Json,
 }
+
+/// Exit codes per AGENTS.md specification
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i32)]
+pub enum CliExitCode {
+    /// Success
+    Success = 0,
+    /// Outdated found (in check with --strict, or dry-run with changes)
+    Outdated = 1,
+    /// Confirmed unresolvable refs (user error - bad ref, not found, etc.)
+    Unresolvable = 2,
+    /// Network/auth/rate-limit prevented verification (environment error)
+    EnvironmentError = 3,
+}
+
+impl From<CliExitCode> for i32 {
+    fn from(code: CliExitCode) -> Self {
+        code as Self
+    }
+}

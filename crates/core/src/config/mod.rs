@@ -1,21 +1,28 @@
-//! Configuration types and discovery
+//! Configuration types and loading
 //!
 //! Configuration is loaded from multiple sources with precedence:
 //! 1. Environment variables (ACTUP_*) - highest
 //! 2. Explicit --config path
-//! 3. Repo configs (actup.toml, .actup.toml, .config/actup.toml)
+//! 3. Repo configs (actup.toml, .actup.toml, .config/actup.toml, etc.)
 //! 4. User/global config (~/.config/actup/config.toml) - fills gaps only
 //! 5. Defaults (lowest)
+
+pub mod discovery;
 
 use crate::Error;
 use crate::policy::{BranchPolicy, RefStyle, UpdatePolicy};
 use figment::Figment;
-use figment::providers::{Env, Format, Serialized, Toml, Yaml};
+use figment::providers::{Env, Format, Json, Serialized, Toml, Yaml};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+pub use discovery::{
+    CONFIG_EXTENSIONS, find_repo_config, iter_config_candidates, user_config_path,
+};
 
 /// Main configuration struct.
 ///
@@ -46,7 +53,7 @@ use std::time::Duration;
 /// # After:
 /// # - uses: actions/checkout@v4.2.0
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
     /// Global update policy
@@ -80,23 +87,6 @@ pub struct Config {
     /// Path this config was loaded from (if any)
     #[serde(skip)]
     pub loaded_from: Option<PathBuf>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            update_policy: UpdatePolicy::default(),
-            ref_style: RefStyle::default(),
-            branch_policy: BranchPolicy::default(),
-            allow_prerelease: false,
-            ignore: Vec::new(),
-            action_overrides: HashMap::new(),
-            cache: CacheConfig::default(),
-            providers: ProvidersConfig::default(),
-            extra_paths: Vec::new(),
-            loaded_from: None,
-        }
-    }
 }
 
 /// Per-action override configuration.
@@ -181,7 +171,10 @@ where
 }
 
 /// Provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+///
+/// NOTE: Default uses empty strings. The CLI layer sets actual defaults.
+/// Core must remain provider-neutral per `AGENTS.md` spec.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ProvidersConfig {
     /// Default provider kind
@@ -192,16 +185,6 @@ pub struct ProvidersConfig {
 
     /// Additional provider instances
     pub instances: Vec<ProviderInstance>,
-}
-
-impl Default for ProvidersConfig {
-    fn default() -> Self {
-        Self {
-            default_kind: "github".to_string(),
-            default_host: "github.com".to_string(),
-            instances: Vec::new(),
-        }
-    }
 }
 
 /// A configured provider instance
@@ -220,15 +203,6 @@ pub struct ProviderInstance {
     pub token_env: Option<String>,
 }
 
-/// Config file names to search for (in order)
-const CONFIG_FILE_NAMES: &[&str] = &[
-    "actup.toml",
-    ".actup.toml",
-    ".config/actup.toml",
-    "actup.yaml",
-    "actup.yml",
-];
-
 impl Config {
     /// Create a new config with defaults
     #[must_use]
@@ -240,48 +214,44 @@ impl Config {
     ///
     /// Precedence (highest to lowest):
     /// 1. Environment variables (ACTUP_*)
-    /// 2. Explicit config_path (if provided)
-    /// 3. Repo config (searched upward from start_dir)
+    /// 2. Explicit `config_path` (if provided)
+    /// 3. Repo config (searched upward from `start_dir`)
     /// 4. User config (~/.config/actup/config.toml) - fills gaps only
     /// 5. Defaults
     ///
     /// # Errors
     /// Returns error if config file exists but is invalid.
+    #[allow(clippy::option_if_let_else)] // Readability: mutating figment in if-let is clearer
     pub fn load(config_path: Option<&Path>, start_dir: &Path) -> Result<Self, Error> {
-        let mut figment = Figment::new().merge(Serialized::defaults(Config::default()));
+        let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
 
         // User config fills gaps (lowest precedence file)
-        if let Some(user_config) = Self::user_config_path() {
-            if user_config.exists() {
-                figment = figment.join(Toml::file(&user_config));
-            }
+        if let Some(user_config) = user_config_path()
+            && user_config.exists()
+        {
+            figment = figment.join(Toml::file(&user_config));
         }
 
-        // Repo config (searched upward from start_dir)
-        let mut loaded_from = None;
-        if let Some(repo_config) = Self::find_repo_config_path(start_dir) {
-            figment = match repo_config.extension().and_then(|e| e.to_str()) {
-                Some("toml") => figment.merge(Toml::file(&repo_config)),
-                Some("yaml" | "yml") => figment.merge(Yaml::file(&repo_config)),
-                _ => figment,
-            };
-            loaded_from = Some(repo_config);
-        }
+        // Repo config (searched upward from `start_dir`)
+        let loaded_from = if let Some(repo_config) = find_repo_config(start_dir) {
+            figment = Self::merge_config_file(figment, &repo_config)?;
+            Some(repo_config)
+        } else {
+            None
+        };
 
         // Explicit --config path (high precedence)
-        if let Some(path) = config_path {
-            figment = match path.extension().and_then(|e| e.to_str()) {
-                Some("toml") => figment.merge(Toml::file(path)),
-                Some("yaml" | "yml") => figment.merge(Yaml::file(path)),
-                _ => figment.merge(Toml::file(path)), // Default to TOML
-            };
-            loaded_from = Some(path.to_path_buf());
-        }
+        let loaded_from = if let Some(path) = config_path {
+            figment = Self::merge_config_file(figment, path)?;
+            Some(path.to_path_buf())
+        } else {
+            loaded_from
+        };
 
         // Environment variables (highest precedence)
         figment = figment.merge(Env::prefixed("ACTUP_").split("_"));
 
-        let mut config: Config = figment.extract().map_err(|e| Error::InvalidConfig {
+        let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
             path: loaded_from
                 .as_ref()
                 .map_or_else(|| "config".into(), |p| p.display().to_string()),
@@ -292,39 +262,41 @@ impl Config {
         Ok(config)
     }
 
+    /// Merge a config file into figment based on extension
+    fn merge_config_file(figment: Figment, path: &Path) -> Result<Figment, Error> {
+        let ext = path.extension().and_then(|e| e.to_str());
+
+        Ok(match ext {
+            Some("yaml" | "yml") => figment.merge(Yaml::file(path)),
+            Some("json") => figment.merge(Json::file(path)),
+            Some("jsonc") => {
+                // Read file, strip comments, parse as JSON
+                let content = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
+                    path: path.display().to_string(),
+                    reason: e.to_string(),
+                })?;
+
+                let mut stripped = String::new();
+                json_comments::StripComments::new(content.as_bytes())
+                    .read_to_string(&mut stripped)
+                    .map_err(|e| Error::InvalidConfig {
+                        path: path.display().to_string(),
+                        reason: format!("failed to strip comments: {e}"),
+                    })?;
+
+                figment.merge(Json::string(&stripped))
+            }
+            // Default to TOML for .toml or unknown extensions
+            _ => figment.merge(Toml::file(path)),
+        })
+    }
+
     /// Discover and load config from standard locations (convenience method)
     ///
     /// Equivalent to `Config::load(None, start_dir)` but returns defaults on error.
     #[must_use]
     pub fn discover(start_dir: &Path) -> Self {
         Self::load(None, start_dir).unwrap_or_default()
-    }
-
-    /// Find repo config path, searching upward from start_dir
-    fn find_repo_config_path(start_dir: &Path) -> Option<PathBuf> {
-        let mut dir = start_dir.to_path_buf();
-
-        loop {
-            for name in CONFIG_FILE_NAMES {
-                let path = dir.join(name);
-                if path.exists() {
-                    return Some(path);
-                }
-            }
-
-            // Move up one directory
-            if !dir.pop() {
-                break;
-            }
-        }
-
-        None
-    }
-
-    /// Get user config path
-    fn user_config_path() -> Option<PathBuf> {
-        let config_dir = dirs::config_dir()?;
-        Some(config_dir.join("actup").join("config.toml"))
     }
 
     /// Get the effective update policy for an action
@@ -353,10 +325,10 @@ impl Config {
         let full = format!("{owner}/{repo}");
 
         // Check explicit override
-        if let Some(ovr) = self.action_overrides.get(&full) {
-            if ovr.ignore {
-                return true;
-            }
+        if let Some(ovr) = self.action_overrides.get(&full)
+            && ovr.ignore
+        {
+            return true;
         }
 
         // Check ignore list
@@ -379,8 +351,10 @@ mod tests {
 
     #[test]
     fn test_should_ignore() {
-        let mut config = Config::default();
-        config.ignore = vec!["actions/checkout".to_string(), "my-org/*".to_string()];
+        let config = Config {
+            ignore: vec!["actions/checkout".to_string(), "my-org/*".to_string()],
+            ..Default::default()
+        };
 
         assert!(config.should_ignore("actions", "checkout"));
         assert!(config.should_ignore("my-org", "anything"));
@@ -389,15 +363,17 @@ mod tests {
 
     #[test]
     fn test_policy_override() {
-        let mut config = Config::default();
-        config.update_policy = UpdatePolicy::Minor;
-        config.action_overrides.insert(
-            "special/action".to_string(),
-            ActionOverride {
-                update_policy: Some(UpdatePolicy::Patch),
-                ..Default::default()
-            },
-        );
+        let config = Config {
+            update_policy: UpdatePolicy::Minor,
+            action_overrides: std::collections::HashMap::from([(
+                "special/action".to_string(),
+                ActionOverride {
+                    update_policy: Some(UpdatePolicy::Patch),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
 
         assert_eq!(config.policy_for("normal", "action"), UpdatePolicy::Minor);
         assert_eq!(config.policy_for("special", "action"), UpdatePolicy::Patch);

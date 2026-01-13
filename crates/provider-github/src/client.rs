@@ -1,6 +1,13 @@
 //! HTTP client for GitHub API
+//!
+//! All async methods in this module can return errors for network failures,
+//! rate limiting, authentication issues, or resource not found.
 
-use crate::types::*;
+#![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
+
+use crate::types::{
+    GitHubBranch, GitHubContent, GitHubRef, GitHubRepo, GitHubTag, GitHubTagObject,
+};
 
 /// Maximum items per page allowed by GitHub API
 pub const MAX_PER_PAGE: u8 = 100;
@@ -33,11 +40,19 @@ pub struct GitHubClient {
 
 impl GitHubClient {
     /// Create a new client for github.com
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created.
     pub fn new(token: Option<&str>) -> Result<Self> {
         Self::with_api_base(crate::GITHUB_API_HOST, crate::GITHUB_HOST, token)
     }
 
     /// Create a client for a custom API endpoint (e.g., GitHub Enterprise)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created or token is invalid.
     pub fn with_api_base(api_host: &str, host: &str, token: Option<&str>) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
@@ -87,14 +102,14 @@ impl GitHubClient {
 
     /// Set maximum retry attempts for transient errors (0 = no retries)
     #[must_use]
-    pub fn max_retries(mut self, n: u32) -> Self {
+    pub const fn max_retries(mut self, n: u32) -> Self {
         self.max_retries = n;
         self
     }
 
     /// Set base delay in milliseconds for exponential backoff (doubles each retry)
     #[must_use]
-    pub fn retry_base_delay_ms(mut self, ms: u64) -> Self {
+    pub const fn retry_base_delay_ms(mut self, ms: u64) -> Self {
         self.retry_base_delay_ms = ms;
         self
     }
@@ -111,6 +126,10 @@ impl GitHubClient {
     /// * `owner` - Repository owner
     /// * `repo` - Repository name
     /// * `per_page` - Items per page (clamped to 1..=100)
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn list_tags(
         &self,
         owner: &str,
@@ -158,6 +177,10 @@ impl GitHubClient {
     }
 
     /// Get repository info
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo(&self, owner: &str, repo: &str) -> Result<GitHubRepo> {
         let url = format!("{}/repos/{owner}/{repo}", self.api_base);
         debug!(url = %url, "fetching repo info");
@@ -167,6 +190,10 @@ impl GitHubClient {
     }
 
     /// Get a specific git ref
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or ref not found.
     pub async fn get_ref(&self, owner: &str, repo: &str, ref_name: &str) -> Result<GitHubRef> {
         // GitHub API wants refs without the leading "refs/"
         let ref_path = ref_name.strip_prefix("refs/").unwrap_or(ref_name);
@@ -179,6 +206,10 @@ impl GitHubClient {
     }
 
     /// Get file content from repository
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or path not found.
     pub async fn get_content(
         &self,
         owner: &str,
@@ -189,7 +220,8 @@ impl GitHubClient {
         let mut url = format!("{}/repos/{owner}/{repo}/contents/{path}", self.api_base);
 
         if let Some(r) = ref_name {
-            url.push_str(&format!("?ref={r}"));
+            use std::fmt::Write;
+            let _ = write!(url, "?ref={r}"); // infallible for String
         }
 
         debug!(url = %url, "fetching content");
@@ -199,6 +231,10 @@ impl GitHubClient {
     }
 
     /// Get branch info
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or branch not found.
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GitHubBranch> {
         let url = format!("{}/repos/{owner}/{repo}/branches/{branch}", self.api_base);
         debug!(url = %url, "fetching branch");
@@ -208,6 +244,10 @@ impl GitHubClient {
     }
 
     /// Get an annotated tag object (for dereferencing to commit SHA)
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or tag not found.
     pub async fn get_tag_object(
         &self,
         owner: &str,
@@ -269,8 +309,7 @@ impl GitHubClient {
         Err(Error::Network {
             operation: "GET request".to_string(),
             message: last_error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "max retries exceeded".to_string()),
+                .map_or_else(|| "max retries exceeded".to_string(), |e| e.to_string()),
         })
     }
 
@@ -284,14 +323,12 @@ impl GitHubClient {
         let status = response.status();
 
         // Check rate limit headers
-        if let Some(remaining) = response.headers().get("x-ratelimit-remaining") {
-            if let Ok(remaining_str) = remaining.to_str() {
-                if let Ok(remaining_num) = remaining_str.parse::<u32>() {
-                    if remaining_num < 10 {
-                        warn!(remaining = remaining_num, "GitHub API rate limit low");
-                    }
-                }
-            }
+        if let Some(remaining) = response.headers().get("x-ratelimit-remaining")
+            && let Ok(remaining_str) = remaining.to_str()
+            && let Ok(remaining_num) = remaining_str.parse::<u32>()
+            && remaining_num < 10
+        {
+            warn!(remaining = remaining_num, "GitHub API rate limit low");
         }
 
         match status {

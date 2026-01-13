@@ -2,50 +2,55 @@
 
 use std::path::Path;
 
-use actup_core::Config;
+use actup_core::{Config, iter_config_candidates};
 use owo_colors::OwoColorize;
 
-use crate::cli::OutputFormat;
+use crate::cli::{CliExitCode, OutputFormat};
 
 pub fn run(path: &Path, format: OutputFormat, config: &Config) -> i32 {
+    let json = match serde_json::to_string_pretty(config) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("Error serializing config: {e}");
+            return CliExitCode::EnvironmentError.into();
+        }
+    };
+
     match format {
         OutputFormat::Human => {
             println!("{}", "Effective configuration:".bold());
             println!();
-            println!(
-                "{}",
-                serde_json::to_string_pretty(config).expect("failed to serialize config")
-            );
+            println!("{json}");
         }
         OutputFormat::Json => {
-            println!(
-                "{}",
-                serde_json::to_string_pretty(config).expect("failed to serialize config")
-            );
+            println!("{json}");
         }
     }
 
     // Show where config was loaded from
     if matches!(format, OutputFormat::Human) {
         println!();
-        let config_paths = [
-            path.join(".actup.toml"),
-            path.join(".actup.yaml"),
-            path.join(".actup.yml"),
-            path.join(".actup.json"),
-        ];
 
-        let found: Vec<_> = config_paths.iter().filter(|p| p.exists()).collect();
-
-        if found.is_empty() {
-            println!("{}", "No config file found, using defaults.".dimmed());
-        } else {
+        // Use loaded_from if available, otherwise check standard paths
+        if let Some(loaded_from) = &config.loaded_from {
             println!("{}", "Config loaded from:".dimmed());
-            for p in found {
-                println!("  {}", p.display());
+            println!("  {}", loaded_from.display());
+        } else {
+            // Use shared discovery to find existing configs
+            let found: Vec<_> = iter_config_candidates(path)
+                .filter(|p| p.exists())
+                .collect();
+
+            if found.is_empty() {
+                println!("{}", "No config file found, using defaults.".dimmed());
+            } else {
+                println!("{}", "Config file(s) found:".dimmed());
+                for p in found {
+                    println!("  {}", p.display());
+                }
             }
         }
     }
 
-    0
+    CliExitCode::Success.into()
 }

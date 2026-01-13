@@ -1,5 +1,7 @@
 //! Integration tests for GitHub provider with mocked HTTP responses
 
+#![allow(clippy::expect_used, clippy::unwrap_used)]
+
 use actup_provider_github::GitHubClient;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};

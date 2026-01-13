@@ -44,7 +44,7 @@ pub enum FileKind {
 impl FileKind {
     /// Human-readable name
     #[must_use]
-    pub fn as_str(&self) -> &'static str {
+    pub const fn as_str(&self) -> &'static str {
         match self {
             Self::Workflow => "workflow",
             Self::CompositeAction => "composite action",
@@ -58,7 +58,7 @@ impl FileKind {
 /// Searches for:
 /// - .github/workflows/*.yml and .yaml
 /// - .github/actions/*/action.yml and .yaml
-/// - Any extra_paths from config
+/// - Any `extra_paths` from config
 pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredFile> {
     let mut files = Vec::new();
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
@@ -146,8 +146,7 @@ pub fn is_actions_file(path: &Path) -> bool {
 #[must_use]
 pub fn relative_path(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root)
-        .map(std::path::Path::to_path_buf)
-        .unwrap_or_else(|_| path.to_path_buf())
+        .map_or_else(|_| path.to_path_buf(), std::path::Path::to_path_buf)
 }
 
 #[cfg(test)]

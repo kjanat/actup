@@ -85,16 +85,12 @@ impl Version {
             num.parse().ok()
         });
 
-        let (patch, prerelease) = match parts.next() {
-            Some(s) => {
-                if let Some((num, pre)) = s.split_once('-') {
-                    (num.parse().ok(), Some(pre.to_string()))
-                } else {
-                    (s.parse().ok(), None)
-                }
-            }
-            None => (None, None),
-        };
+        let (patch, prerelease) = parts.next().map_or((None, None), |s| {
+            s.split_once('-').map_or_else(
+                || (s.parse().ok(), None),
+                |(num, pre)| (num.parse().ok(), Some(pre.to_string())),
+            )
+        });
 
         Some(Self::Semver {
             major,
@@ -107,25 +103,25 @@ impl Version {
 
     /// Returns true if this is a semver version
     #[must_use]
-    pub fn is_semver(&self) -> bool {
+    pub const fn is_semver(&self) -> bool {
         matches!(self, Self::Semver { .. })
     }
 
     /// Returns true if this is a full SHA
     #[must_use]
-    pub fn is_sha(&self) -> bool {
+    pub const fn is_sha(&self) -> bool {
         matches!(self, Self::Sha { .. })
     }
 
     /// Returns true if this is a branch
     #[must_use]
-    pub fn is_branch(&self) -> bool {
+    pub const fn is_branch(&self) -> bool {
         matches!(self, Self::Branch { .. })
     }
 
     /// Returns true if this is a prerelease version
     #[must_use]
-    pub fn is_prerelease(&self) -> bool {
+    pub const fn is_prerelease(&self) -> bool {
         matches!(
             self,
             Self::Semver {
@@ -137,7 +133,7 @@ impl Version {
 
     /// Get the major version if this is semver
     #[must_use]
-    pub fn major(&self) -> Option<u32> {
+    pub const fn major(&self) -> Option<u32> {
         match self {
             Self::Semver { major, .. } => Some(*major),
             _ => None,
@@ -146,7 +142,7 @@ impl Version {
 
     /// Get the minor version if this is semver with minor
     #[must_use]
-    pub fn minor(&self) -> Option<u32> {
+    pub const fn minor(&self) -> Option<u32> {
         match self {
             Self::Semver { minor, .. } => *minor,
             _ => None,
@@ -155,7 +151,7 @@ impl Version {
 
     /// Get the patch version if this is semver with patch
     #[must_use]
-    pub fn patch(&self) -> Option<u32> {
+    pub const fn patch(&self) -> Option<u32> {
         match self {
             Self::Semver { patch, .. } => *patch,
             _ => None,
@@ -242,12 +238,12 @@ impl Ord for Version {
             (Self::Other { tag: t1 }, Self::Other { tag: t2 }) => t1.cmp(t2),
 
             // Cross-type: Semver > Sha > Branch > Other
-            (Self::Semver { .. }, _) => Ordering::Greater,
-            (_, Self::Semver { .. }) => Ordering::Less,
+            (Self::Semver { .. }, _) | (Self::Branch { .. }, Self::Other { .. }) => {
+                Ordering::Greater
+            }
+            (_, Self::Semver { .. }) | (Self::Other { .. }, Self::Branch { .. }) => Ordering::Less,
             (Self::Sha { .. }, _) => Ordering::Greater,
             (_, Self::Sha { .. }) => Ordering::Less,
-            (Self::Branch { .. }, Self::Other { .. }) => Ordering::Greater,
-            (Self::Other { .. }, Self::Branch { .. }) => Ordering::Less,
         }
     }
 }
@@ -282,7 +278,7 @@ pub struct VersionInfo {
 }
 
 impl VersionInfo {
-    /// Create a new VersionInfo
+    /// Create a new `VersionInfo`
     #[must_use]
     pub fn new(version: Version, sha: impl Into<String>) -> Self {
         Self {
@@ -303,7 +299,7 @@ pub struct BranchInfo {
 }
 
 impl VersionSet {
-    /// Create an empty VersionSet
+    /// Create an empty `VersionSet`
     #[must_use]
     pub fn new() -> Self {
         Self::default()

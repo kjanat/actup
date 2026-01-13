@@ -8,10 +8,13 @@
 
 use crate::{ActionRef, Error, Result};
 
-/// Parse a `uses:` string into an ActionRef
+/// Parse a `uses:` string into an `ActionRef`
 ///
-/// Returns Ok(None) for local references (./path).
-/// Returns Err for malformed references.
+/// Returns `Ok(None)` for local references (./path).
+///
+/// # Errors
+///
+/// Returns `Err` for malformed references.
 pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
     let input = input.trim();
 
@@ -131,7 +134,7 @@ fn looks_like_host(s: &str) -> bool {
 
 /// Extract all `uses:` values from a YAML workflow file
 ///
-/// Returns a list of (line_number, column, uses_value) tuples.
+/// Returns a list of (`line_number`, column, `uses_value`) tuples.
 /// Line numbers are 1-indexed.
 pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
     let mut results = Vec::new();
@@ -190,7 +193,7 @@ pub struct UsesLocation {
 impl UsesLocation {
     /// Get the byte range of the uses value in the line
     #[must_use]
-    pub fn value_range(&self) -> std::ops::Range<usize> {
+    pub const fn value_range(&self) -> std::ops::Range<usize> {
         let start = self.column - 1;
         start..start + self.value.len()
     }
@@ -206,6 +209,7 @@ impl UsesLocation {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

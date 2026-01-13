@@ -110,7 +110,7 @@ pub enum Error {
 impl Error {
     /// Returns true if this is a user error (something the user can fix)
     #[must_use]
-    pub fn is_user_error(&self) -> bool {
+    pub const fn is_user_error(&self) -> bool {
         matches!(
             self,
             Self::InvalidRef { .. }
@@ -123,7 +123,7 @@ impl Error {
 
     /// Returns true if this is an environment error (external factors)
     #[must_use]
-    pub fn is_environment_error(&self) -> bool {
+    pub const fn is_environment_error(&self) -> bool {
         matches!(
             self,
             Self::Network { .. }
@@ -137,7 +137,7 @@ impl Error {
     /// Returns true if this error means we couldn't verify the status
     /// (result is unknown/stale rather than definitively outdated or error)
     #[must_use]
-    pub fn is_unknown_status(&self) -> bool {
+    pub const fn is_unknown_status(&self) -> bool {
         matches!(
             self,
             Self::Network { .. } | Self::RateLimited { .. } | Self::Cache { .. }

@@ -3,11 +3,18 @@
 use actup_core::Config;
 use schemars::schema_for;
 
+use crate::cli::CliExitCode;
+
 pub fn run() -> i32 {
     let schema = schema_for!(Config);
-    println!(
-        "{}",
-        serde_json::to_string_pretty(&schema).expect("failed to serialize schema")
-    );
-    0
+    match serde_json::to_string_pretty(&schema) {
+        Ok(json) => {
+            println!("{json}");
+            CliExitCode::Success.into()
+        }
+        Err(e) => {
+            eprintln!("Error serializing schema: {e}");
+            CliExitCode::EnvironmentError.into()
+        }
+    }
 }

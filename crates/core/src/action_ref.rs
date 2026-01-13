@@ -33,7 +33,7 @@ pub struct ActionRef {
 }
 
 impl ActionRef {
-    /// Create a new ActionRef with all fields
+    /// Create a new `ActionRef` with all fields
     #[must_use]
     pub fn new(
         host: Option<String>,
@@ -51,7 +51,7 @@ impl ActionRef {
         }
     }
 
-    /// Create a simple ActionRef without host or subpath
+    /// Create a simple `ActionRef` without host or subpath
     #[must_use]
     pub fn simple(
         owner: impl Into<String>,
@@ -83,7 +83,7 @@ impl ActionRef {
             && s.chars().all(|c| c.is_ascii_digit() || c == '.')
     }
 
-    /// Convert to ActionRepoId (drops the ref portion)
+    /// Convert to `ActionRepoId` (drops the ref portion)
     #[must_use]
     pub fn to_repo_id(&self) -> ActionRepoId {
         ActionRepoId {
@@ -140,7 +140,7 @@ pub struct ActionRepoId {
 }
 
 impl ActionRepoId {
-    /// Create a new ActionRepoId
+    /// Create a new `ActionRepoId`
     #[must_use]
     pub fn new(
         host: Option<String>,
@@ -168,13 +168,15 @@ impl ActionRepoId {
     #[must_use]
     pub fn cache_key(&self, provider_namespace: &str, default_host: &str) -> String {
         let host = self.host.as_deref().unwrap_or(default_host);
-        match &self.subpath {
-            Some(p) => format!(
-                "{provider_namespace}::{host}/{}/{}/{p}",
-                self.owner, self.repo
-            ),
-            None => format!("{provider_namespace}::{host}/{}/{}", self.owner, self.repo),
-        }
+        self.subpath.as_ref().map_or_else(
+            || format!("{provider_namespace}::{host}/{}/{}", self.owner, self.repo),
+            |p| {
+                format!(
+                    "{provider_namespace}::{host}/{}/{}/{p}",
+                    self.owner, self.repo
+                )
+            },
+        )
     }
 }
 

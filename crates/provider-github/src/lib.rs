@@ -1,7 +1,7 @@
 //! GitHub provider for actup
 //!
 //! Implements the `Provider` trait for GitHub.com and GitHub Enterprise.
-//! Handles REST API calls, ETag caching, rate limiting, and authentication.
+//! Handles REST API calls, `ETag` caching, rate limiting, and authentication.
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
