@@ -3,7 +3,7 @@
 ## Overview and Motivation
 
 Outdated GitHub Actions in workflows can lead to security vulnerabilities, inconsistent CI behavior, and maintenance
-toil[\[1\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=If%20you%27re%20managing%20multiple%20repositories,when%20it%20breaks%20in%20production).
+toil[^dev.to/anderson_leite].\
 *Actup* is a Rust-based tool (edition 2024) comprising a CLI binary and a Language Server Protocol (LSP) component designed to automate
 checking and updating of GitHub Action versions. Its goals are to **detect outdated action versions**, **provide configurable update
 policies**, and **seamlessly integrate into both CI pipelines and developer editors**. By leveraging a modern Rust 2024 codebase and the
@@ -21,32 +21,29 @@ The *actup* project is organized as a Rust 2024 workspace with multiple crates:
   integrate with editors.
 
 The project uses **Rust 2024 edition** to leverage the latest language improvements. For example, the Cargo manifest specifies
-`edition = "2024"` [\[2\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=Update%20the%20), ensuring the codebase
-benefits from updated Rust tooling and features. The choice of Rust guarantees performance and safety, important for a tool that might run
-on every commit (via CI) or live in an editor providing feedback.
+`edition = "2024"`[^medium/selfint/lsp], ensuring the codebase benefits from updated Rust tooling and features. The choice of Rust
+guarantees performance and safety, important for a tool that might run on every commit (via CI) or live in an editor providing feedback.
 
 Additionally, the repository may include:
 
 - **Editor/IDE Integration**: Configuration for packaging the LSP into an editor extension (e.g. a VSCode extension) that launches
   `actup-lsp`.
 - **GitHub Action**: A reusable GitHub Action workflow or Docker container wrapping `actup-cli`, so organizations can run actup in CI (for
-  example, on pull requests) to auto-detect outdated actions. (This is similar in spirit to how *actions-up* can be run in
-  CI[\[3\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=,up) to generate
-  reports on PRs.)
+  example, on pull requests) to auto-detect outdated actions. (This is similar in spirit to how *actions-up* can be run in CI[^dev.to/anderson_leite]
+  to generate reports on PRs.)
 
 All components share the core logic to avoid divergence in results between CLI and LSP. The use of Rust 2024 and updated dependencies
 ensures that actup is maintainable and aligns with current best practices (for instance, the latest LSP spec version 3.17+ is
-supported[\[4\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=,%28Source)).
+supported[^medium/selfint/lsp]).
 
 ## Actup CLI: Features and Usage
 
 The `actup` CLI provides commands to scan and update workflow files in a repository:
 
 - `actup check`: Scans all GitHub Actions usage in the repository's workflow files and reports any outdated versions. By default, it looks
-  at `.github/workflows/**/*.yml` (the standard location for GitHub Actions
-  workflows[\[5\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=updates%20.%202.%20Specify%20%60%22github,existing%20file%2C%20save%20your%20changes))
-  and also any referenced reusable workflows or action metadata files. It parses each file for `uses: owner/repo@version` references. The
-  output is a list of findings, for example:
+  at `.github/workflows/**/*.yml` (the standard location for GitHub Actions workflows[^github/dependabot]) and also any referenced reusable
+  workflows or action metadata files. It parses each file for `uses: owner/repo@version` references. The output is a list of findings, for
+  example:
 
 <!-- -->
 
@@ -58,9 +55,8 @@ The `actup` CLI provides commands to scan and update workflow files in a reposit
 Each line shows the file and action reference, the current version, and either the latest available version or an error if the reference is
 invalid/unresolvable. Colorful output or icons may be used for clarity (e.g. ⚠️ for outdated, ❌ for errors, ✔️ for up-to-date) when in a
 TTY. The tool distinguishes update **severity**: e.g., marking major version updates separately because they may introduce breaking
-changes[\[6\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can).
-Minor/patch updates might be shown with a different symbol than major updates, to indicate relative risk (for instance, **\"Update available
-(minor)\"** vs **\"Update available (major!)\"**).
+changes[^dev.to/anderson_leite]. Minor/patch updates might be shown with a different symbol than major updates, to indicate relative risk
+(for instance, **\"Update available (minor)\"** vs **\"Update available (major!)\"**).
 
 - `actup update` (or `actup fix`): Optionally, a command to automatically update workflow files in-place. This command adheres to the
   configured policy (see **Configuration** section) to decide how far to upgrade each action. It will modify the YAML files, replacing
@@ -72,8 +68,7 @@ Minor/patch updates might be shown with a different symbol than major updates, t
 - `--config <path>`: specify a custom config file (overriding auto-discovery).
 
 - `--dry-run`: show what would be updated, without modifying files (this is useful to get a report in CI without changing code, similar to
-  how `actions-up --dry-run` is
-  used[\[7\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=match%20at%20L306%20,raw.txt%202%3E%261%20%7C%7C%20true)).
+  how `actions-up --dry-run` is used[^dev.to/anderson_leite]).
 
 - `--format=json|text`: machine-readable JSON output for scripting versus human-friendly text.
 
@@ -84,9 +79,7 @@ Minor/patch updates might be shown with a different symbol than major updates, t
 - **Scanning Scope**: By default, actup scans the standard locations (.github/workflows). It will also detect **reusable workflows**
   references. Reusable workflows are invoked with a syntax like `uses: owner/repo/.github/workflows/reusable.yml@v1` -- actup will treat
   these similarly to actions (the reference points to a workflow file in another repo at a given ref). According to GitHub docs, Dependabot
-  also checks for reusable workflow references and updates
-  them[\[8\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=for%20GitHub%20Actions%2C%20see%20Writing,workflows),
-  so actup will ensure these are not missed.
+  also checks for reusable workflow references and updates them[^github/dependabot], so actup will ensure these are not missed.
 
 - **Composite Actions**: If the repository contains local composite actions (i.e., action definitions in YAML with `uses` steps), actup can
   scan those as well. For example, a composite action in `.github/actions/my-action/action.yml` might use steps calling other actions by
@@ -101,9 +94,7 @@ Minor/patch updates might be shown with a different symbol than major updates, t
 By offering both a **read-only check** and an **auto-fix** command, the CLI lets users incorporate actup into their workflow as they see fit
 -- either as a reporting tool (e.g. run it locally or in CI to get a report of outdated actions) or as a maintenance tool to actually bump
 versions en masse. This is similar in spirit to existing tools like *actions-up*, which can detect outdated workflow actions and even update
-them
-automatically[\[9\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can),
-but actup is designed as a native binary with deeper editor integration and more customization.
+them automatically[^dev.to/anderson_leite], but actup is designed as a native binary with deeper editor integration and more customization.
 
 ## Configuration Design (`actup.toml` or YAML)
 
@@ -128,8 +119,7 @@ Key configuration options:
   major (v1 → v2). `"major"` allows all updates including breaking changes. `"latest"` could mean always go to the latest version available
   regardless of version series (this might jump majors). This preference ensures organizations can, for instance, automatically get critical
   patches but delay major upgrades for manual review. (This is analogous to how dependency update tools often let you control what level of
-  updates to apply
-  automatically[\[6\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can).)
+  updates to apply automatically[^dev.to/anderson_leite].)
 
 - **Pinning Strategy**: Controls how version references are written when updating. `"preserve"` means if the workflow originally used a tag
   like `@v2`, actup will continue using tag references for updates (e.g., update to `@v2.3.4` or `@v3` tag as appropriate). If the reference
@@ -164,11 +154,8 @@ explicit and tweakable per project or user.
 
 Actup's design ensures that a team can set a repo policy via the config (e.g., "only apply non-breaking updates automatically") and
 developers' editors and CI will all follow that policy. This avoids inconsistency, and it contrasts with GitHub Dependabot's all-or-nothing
-approach of always PR'ing the latest
-version[\[10\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=For%20each%20action%20in%20the,management%20for%20your%20custom%20actions).
-For example, Dependabot will open a PR for any new version (including majors) by
-default[\[10\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=For%20each%20action%20in%20the,management%20for%20your%20custom%20actions),
-whereas actup can be configured to ignore major bumps and only flag them for manual consideration.
+approach of always PR'ing the latest version[^github/dependabot]. For example, Dependabot will open a PR for any new version (including
+majors) by default[^github/dependabot], whereas actup can be configured to ignore major bumps and only flag them for manual consideration.
 
 ## Version Detection and Caching Mechanism
 
@@ -296,14 +283,11 @@ Real-world GitHub Action versioning can be messy. Actup is designed to handle se
 Actup fully supports composite actions and reusable workflows:
 
 - **Composite Actions**: As noted, if you have multiple composite actions in one repository, they all share the same version tags (since git
-  tags apply to the entire
-  repo)[\[11\]](https://earthly.dev/blog/composite-actions-github/#:~:text=When%20you%20use%20git%20tags,composite%20actions%20in%20one%20repo).
-  Actup's version detection accounts for this: a new tag will be considered an update for *all* actions in that repo. For example, if
-  `org/composite-repo@v1` is used (and that repo contains `actionA` and `actionB` as composite actions), when the maintainer releases
-  `v1.1`, both `actionA` and `actionB` are effectively at v1.1 now, even if maybe only one of them changed. Actup does not try to
-  distinguish which composite changed; it simply tracks the repo version. This is in line with GitHub's model where the whole repository is
-  versioned as a
-  unit[\[11\]](https://earthly.dev/blog/composite-actions-github/#:~:text=When%20you%20use%20git%20tags,composite%20actions%20in%20one%20repo).
+  tags apply to the entire repo)[^earthly/composite-actions]. Actup's version detection accounts for this: a new tag will be considered an
+  update for *all* actions in that repo. For example, if `org/composite-repo@v1` is used (and that repo contains `actionA` and `actionB` as
+  composite actions), when the maintainer releases `v1.1`, both `actionA` and `actionB` are effectively at v1.1 now, even if maybe only one
+  of them changed. Actup does not try to distinguish which composite changed; it simply tracks the repo version. This is in line with
+  GitHub's model where the whole repository is versioned as a unit[^earthly/composite-actions].
 
 - **Reusable Workflows**: These are workflows defined in one repo and invoked in another via `uses:`. They behave similarly to composite
   actions in terms of referencing (`owner/repo/path/file.yml@ref`). Actup treats them the same as any action reference: it will check if a
@@ -313,17 +297,14 @@ Actup fully supports composite actions and reusable workflows:
 
 By including composite actions and reusable workflows in the scan, actup provides a comprehensive update check for all GitHub Action-related
 references in a repository. This is more thorough than some built-in tools; for instance, Dependabot does handle reusable
-workflows[\[8\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=for%20GitHub%20Actions%2C%20see%20Writing,workflows),
-and actup matches that capability, while giving you local control over how and when to update.
+workflows[^github/dependabot], and actup matches that capability, while giving you local control over how and when to update.
 
 ## Actup LSP: Editor Integration and Guidance
 
 The companion **actup-LSP** brings these checks directly into the developer's editor/IDE. It\'s essentially a language server focused on
 GitHub Actions workflow files (YAML). By using the Language Server Protocol, actup-LSP can provide real-time diagnostics and fixes in any
 LSP-compatible editor (VSCode, Neovim with LSP client, etc.). This approach follows the modern trend of using LSP for specialized static
-analysis beyond programming language
-syntax[\[12\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=,will%20work%20on%20any%20language). The LSP operates
-roughly as follows:
+analysis beyond programming language syntax[^medium/selfint/lsp]. The LSP operates roughly as follows:
 
 - **Activation**: The LSP server activates for files matching the typical GitHub Actions workflow patterns (e.g., any YAML in a
   `.github/workflows` directory, or perhaps any file named `action.yml`/`workflow.yml`). The VSCode extension (for example) would register
@@ -333,9 +314,8 @@ roughly as follows:
   and identifies any outdated or invalid action references. It then sends diagnostic messages to the editor. Examples of diagnostics:
 
 - **Warning** on an outdated version: e.g., underlining `@v2` in `uses: actions/checkout@v2` with a message \"Newer version available:
-  v4[\[6\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can)\".
-  This would likely be a *warning* severity if it\'s a minor/patch update, or maybe *information* severity for patch, and *warning* for
-  major updates -- severity can be configurable.
+  v4[^dev.to/anderson_leite]\". This would likely be a *warning* severity if it\'s a minor/patch update, or maybe *information* severity for
+  patch, and *warning* for major updates -- severity can be configurable.
 
 - **Error** on an invalid reference: e.g., underlining the whole `uses: owner/unknown@v1` with \"Action repository not found\" or
   `uses: foo/bar@badtag` \"Version tag \'badtag\' not found\". Errors indicate something that definitely should be fixed by the user (typo
@@ -347,9 +327,8 @@ roughly as follows:
 The diagnostics update live as you edit. If you change a version in the file, the LSP will re-evaluate and clear or update the diagnostic
 accordingly. This immediate feedback loop ensures developers catch outdated actions even before pushing code. It's akin to having a linter
 that reminds you of dependency updates. In fact, similar tools exist for dependencies (for example, the *Depramanager* VSCode extension
-highlights outdated dependencies in config
-files[\[13\]](https://github.com/Okerew/depramanager#:~:text=,file%20of%20the%20given%20language)), and actup-LSP provides that capability
-specifically for GitHub Actions versions.
+highlights outdated dependencies in config files[^github/depramanager]), and actup-LSP provides that capability specifically for GitHub
+Actions versions.
 
 - **Code Actions (Quick Fixes)**: Perhaps the most powerful feature of the LSP is offering one-click fixes. When an outdated action version
   diagnostic is present, actup-LSP registers a **Code Action** for it. In editors like VSCode, this appears as a lightbulb or quick-fix
@@ -390,9 +369,8 @@ to choose how to update.
   outdated, it will list each but the editor can show them individually.
 
 By integrating with LSP, actup essentially becomes a **real-time advisor** for CI workflow maintenance. This is a step beyond periodic tools
-like Dependabot, giving immediate insight. It aligns with the idea that LSP can power cross-cutting static analysis
-tools[\[12\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=,will%20work%20on%20any%20language) -- here, the
-static analysis is on configuration files (YAML) to enforce DevOps best practices.
+like Dependabot, giving immediate insight. It aligns with the idea that LSP can power cross-cutting static analysis tools[^medium/selfint/lsp]
+-- here, the static analysis is on configuration files (YAML) to enforce DevOps best practices.
 
 ## CLI and LSP Synergy
 
@@ -404,10 +382,8 @@ and how they complement each other:
 - Periodically, a CI pipeline might run `actup check` (perhaps via a scheduled job or on pull requests) to fail builds if critical updates
   are missing. For example, if a severe security issue is discovered in an action version, the team could bump the updatePolicy to allow
   that patch and let actup auto-fix or at least alert in CI. This automation is similar to the approach described by Anderson Leite, where
-  outdated actions across many repos were detected and even auto-PR\'ed using a
-  tool[\[14\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=If%20you%27re%20managing%20multiple%20repositories,when%20it%20breaks%20in%20production)
-  [\[9\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can) --
-  actup could facilitate the same at an individual repo level or be scripted across repos.
+  outdated actions across many repos were detected and even auto-PR\'ed using a tool[^dev.to/anderson_leite] -- actup could facilitate the
+  same at an individual repo level or be scripted across repos.
 - When a new major release of some action comes out, Dependabot might open a PR; with actup-LSP, developers would also start seeing warnings
   in their editor if they\'re on the old major, prompting a more proactive discussion whether to upgrade.
 
@@ -422,60 +398,25 @@ pinning preferences) addresses the nuanced needs of different projects -- whethe
 the bleeding edge of actions. With caching and careful handling of edge cases like floating tags and composite actions, actup provides
 intelligent feedback rather than naive version bumps.
 
-This design takes inspiration from existing solutions (e.g. GitHub Dependabot's automated
-updates[\[10\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=For%20each%20action%20in%20the,management%20for%20your%20custom%20actions)
-and community tools like
-actions-up[\[15\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=Enter%20actions))
-but goes further by integrating into developers' daily workflows via an LSP. The result is a developer-friendly tool that keeps CI workflows
-secure, up-to-date, and consistent across projects with minimal manual effort -- a significant productivity and security win for teams using
-GitHub Actions.
-
-**Sources:** The benefits of automating Actions
-updates[\[1\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=If%20you%27re%20managing%20multiple%20repositories,when%20it%20breaks%20in%20production),
-capabilities of existing Actions update
-tools[\[15\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=Enter%20actions),
-GitHub's official approach with
-Dependabot[\[10\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=For%20each%20action%20in%20the,management%20for%20your%20custom%20actions)
-[\[8\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=for%20GitHub%20Actions%2C%20see%20Writing,workflows),
-and analogous editor tooling for dependency
-management[\[13\]](https://github.com/Okerew/depramanager#:~:text=,file%20of%20the%20given%20language) have all informed the design of
-actup, ensuring it is built on proven practices while offering new levels of convenience and control.
+This design takes inspiration from existing solutions (e.g. GitHub Dependabot's automated updates[^github/dependabot] and community tools
+like actions-up[^dev.to/anderson_leite]) but goes further by integrating into developers' daily workflows via an LSP. The result is a
+developer-friendly tool that keeps CI workflows secure, up-to-date, and consistent across projects with minimal manual effort -- a
+significant productivity and security win for teams using GitHub Actions.
 
 ---
 
-[\[1\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=If%20you%27re%20managing%20multiple%20repositories,when%20it%20breaks%20in%20production)
-[\[3\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=,up)
-[\[6\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can)
-[\[7\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=match%20at%20L306%20,raw.txt%202%3E%261%20%7C%7C%20true)
-[\[9\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=actions,It%20can)
-[\[14\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=If%20you%27re%20managing%20multiple%20repositories,when%20it%20breaks%20in%20production)
-[\[15\]](https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj#:~:text=Enter%20actions)
-Automating GitHub Actions Updates Across Your Entire Organization - DEV Community
+[^dev.to/anderson_leite]: Automating GitHub Actions Updates Across Your Entire Organization - DEV Community\
+    <https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj>
 
-<https://dev.to/anderson_leite/automating-github-actions-updates-across-your-entire-organization-17mj>
+[^medium/selfint/lsp]: LSP outside the editor. Using the language server protocol in... | by Tom Selfin | Medium\
+    <https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be>
 
-[\[2\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=Update%20the%20)
-[\[4\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=,%28Source)
-[\[12\]](https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be#:~:text=,will%20work%20on%20any%20language) LSP outside the editor.
-Using the language server protocol in... \| by Tom Selfin \| Medium
+[^github/dependabot]: Keeping your actions up to date with Dependabot - GitHub Docs\
+    <https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot>
 
-<https://medium.com/@selfint/lsp-outside-the-editor-431f77a9a4be>
+[^earthly/composite-actions]: Understanding and Using Composite Actions in GitHub - Earthly Blog\
+    <https://earthly.dev/blog/composite-actions-github/>
 
-[\[5\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=updates%20.%202.%20Specify%20%60%22github,existing%20file%2C%20save%20your%20changes)
-[\[8\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=for%20GitHub%20Actions%2C%20see%20Writing,workflows)
-[\[10\]](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot#:~:text=For%20each%20action%20in%20the,management%20for%20your%20custom%20actions)
-Keeping your actions up to date with Dependabot - GitHub Docs
-
-<https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/secure-your-dependencies/keeping-your-actions-up-to-date-with-dependabot>
-
-[\[11\]](https://earthly.dev/blog/composite-actions-github/#:~:text=When%20you%20use%20git%20tags,composite%20actions%20in%20one%20repo)
-Understanding and Using Composite Actions in GitHub - Earthly Blog
-
-<https://earthly.dev/blog/composite-actions-github/>
-
-[\[13\]](https://github.com/Okerew/depramanager#:~:text=,file%20of%20the%20given%20language) GitHub - Okerew/depramanager: The Depramanager
-is a Visual Studio Code (VSCode) extension designed to help developers manage dependencies for various programming languages. It provides
-functionalities to analyze, sync, update, and install dependencies, ensuring that your project\'s dependencies are up-to-date and correctly
-declared.
-
-<https://github.com/Okerew/depramanager>
+[^github/depramanager]: GitHub - Okerew/depramanager: The Depramanager is a Visual Studio Code (VSCode) extension designed to help
+    developers manage dependencies\
+    <https://github.com/Okerew/depramanager>
