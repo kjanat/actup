@@ -1,0 +1,4 @@
+Cargo.lock linguist-generated=true -diff
+
+.zed/*.json linguist-language=JSONC
+.rules linguist-language=Markdown
