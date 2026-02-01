@@ -347,9 +347,7 @@ impl<'de> Deserialize<'de> for BranchPolicy {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // UpdatePolicy tests
-    // ========================================================================
 
     #[test]
     fn test_update_policy_allows() {
@@ -408,9 +406,7 @@ mod tests {
         assert_eq!(UpdatePolicy::default(), UpdatePolicy::Minor);
     }
 
-    // ========================================================================
     // RefStyle tests
-    // ========================================================================
 
     #[test]
     fn test_ref_style_from_str() {
@@ -447,9 +443,7 @@ mod tests {
         assert_eq!(RefStyle::default(), RefStyle::Preserve);
     }
 
-    // ========================================================================
     // BranchPolicy tests
-    // ========================================================================
 
     #[test]
     fn test_branch_policy_from_str() {
@@ -490,9 +484,7 @@ mod tests {
         assert_eq!(BranchPolicy::Update.to_string(), "update");
     }
 
-    // ========================================================================
     // Deserialization tests
-    // ========================================================================
 
     #[test]
     fn test_update_policy_deserialize() {

@@ -152,9 +152,7 @@ pub fn build_cache_key(provider_namespace: &str, host: &str, repo: &ActionRepoId
 mod tests {
     use super::*;
 
-    // ========================================================================
     // CacheEntry tests
-    // ========================================================================
 
     #[test]
     fn test_cache_entry_new() {
@@ -195,9 +193,7 @@ mod tests {
         assert!(entry.last_modified.is_some());
     }
 
-    // ========================================================================
     // CacheError tests
-    // ========================================================================
 
     #[test]
     fn test_cache_error_display() {
@@ -213,9 +209,7 @@ mod tests {
         assert_eq!(CacheError::Disabled.to_string(), "cache is disabled");
     }
 
-    // ========================================================================
     // NoopCache tests
-    // ========================================================================
 
     #[tokio::test]
     async fn test_noop_cache_get_returns_not_found() {
@@ -252,9 +246,7 @@ mod tests {
         assert!(!cache.is_enabled());
     }
 
-    // ========================================================================
     // build_cache_key tests
-    // ========================================================================
 
     #[test]
     fn test_build_cache_key() {

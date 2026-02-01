@@ -16,9 +16,7 @@ use owo_colors::OwoColorize;
 
 use crate::cli::{CliExitCode, OutputFormat};
 
-// ============================================================================
 // ErrorTally - centralized error counting and exit code determination
-// ============================================================================
 
 /// Tracks errors by category for consistent exit code behavior.
 #[derive(Default, Debug)]
@@ -86,9 +84,7 @@ impl ErrorTally {
     }
 }
 
-// ============================================================================
 // PendingEdit - represents an edit to apply to a line
-// ============================================================================
 
 /// The kind of edit to apply.
 #[derive(Debug, Clone)]
@@ -185,9 +181,7 @@ impl PendingEdit {
     }
 }
 
-// ============================================================================
 // FileEdits - accumulated edits for a single file
-// ============================================================================
 
 /// Accumulated edits for a single file.
 pub struct FileEdits {
@@ -271,9 +265,7 @@ impl FileEdits {
     }
 }
 
-// ============================================================================
 // WorkflowScanner - shared file discovery and action extraction
-// ============================================================================
 
 /// Shared infrastructure for scanning workflow files.
 pub struct WorkflowScanner<'a> {
@@ -373,9 +365,7 @@ impl<'a> WorkflowScanner<'a> {
     }
 }
 
-// ============================================================================
 // EditResult - result of applying edits across files
-// ============================================================================
 
 /// Summary of edit operations.
 pub struct EditResult {
@@ -429,9 +419,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    // ========================================================================
     // ErrorTally tests
-    // ========================================================================
 
     #[test]
     fn test_error_tally_default() {
@@ -500,9 +488,7 @@ mod tests {
         assert_eq!(tally2.exit_code(), CliExitCode::Unresolvable);
     }
 
-    // ========================================================================
     // PendingEdit tests
-    // ========================================================================
 
     #[test]
     fn test_pending_edit_replace_range() {
@@ -562,9 +548,7 @@ mod tests {
         assert_eq!(result, "  - uses: actions/checkout@v2 # existing comment");
     }
 
-    // ========================================================================
     // FileEdits tests
-    // ========================================================================
 
     #[test]
     fn test_file_edits_empty() {
@@ -646,9 +630,7 @@ mod tests {
         );
     }
 
-    // ========================================================================
     // EditResult tests
-    // ========================================================================
 
     #[test]
     fn test_edit_result_exit_code_success() {

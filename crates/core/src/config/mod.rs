@@ -349,9 +349,7 @@ impl Config {
 mod tests {
     use super::*;
 
-    // ========================================================================
     // Config defaults tests
-    // ========================================================================
 
     #[test]
     fn test_config_default() {
@@ -366,9 +364,7 @@ mod tests {
         assert!(config.loaded_from.is_none());
     }
 
-    // ========================================================================
     // should_ignore tests
-    // ========================================================================
 
     #[test]
     fn test_should_ignore() {
@@ -411,9 +407,7 @@ mod tests {
         assert!(!config.should_ignore("owner", "other-repo"));
     }
 
-    // ========================================================================
     // policy_for tests
-    // ========================================================================
 
     #[test]
     fn test_policy_override() {
@@ -461,9 +455,7 @@ mod tests {
         assert_eq!(config.policy_for("special", "action"), UpdatePolicy::Minor);
     }
 
-    // ========================================================================
     // CacheConfig tests
-    // ========================================================================
 
     #[test]
     fn test_cache_config_default() {
@@ -482,9 +474,7 @@ mod tests {
         assert_eq!(cache.ttl, Duration::from_secs(12 * 3600));
     }
 
-    // ========================================================================
     // ActionOverride tests
-    // ========================================================================
 
     #[test]
     fn test_action_override_default() {
@@ -506,9 +496,7 @@ mod tests {
         assert!(override_cfg.ignore);
     }
 
-    // ========================================================================
     // ProvidersConfig tests
-    // ========================================================================
 
     #[test]
     fn test_providers_config_default() {
