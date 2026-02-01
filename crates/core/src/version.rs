@@ -526,6 +526,31 @@ mod tests {
     }
 
     #[test]
+    fn test_is_major_only_true() {
+        assert!(Version::parse("v1").is_major_only());
+        assert!(Version::parse("v6").is_major_only());
+        assert!(Version::parse("v42").is_major_only());
+    }
+
+    #[test]
+    fn test_is_major_only_false_with_minor() {
+        assert!(!Version::parse("v1.2").is_major_only());
+        assert!(!Version::parse("v1.0").is_major_only());
+    }
+
+    #[test]
+    fn test_is_major_only_false_with_patch() {
+        assert!(!Version::parse("v1.2.3").is_major_only());
+        assert!(!Version::parse("v1.0.0").is_major_only());
+    }
+
+    #[test]
+    fn test_is_major_only_false_with_prerelease() {
+        assert!(!Version::parse("v1.0.0-beta").is_major_only());
+        assert!(!Version::parse("v2.0.0-rc.1").is_major_only());
+    }
+
+    #[test]
     fn test_version_as_str() {
         assert_eq!(Version::parse("v1.2.3").as_str(), "v1.2.3");
         let sha = "a".repeat(40);

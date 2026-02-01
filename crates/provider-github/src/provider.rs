@@ -59,18 +59,14 @@ impl GitHubProvider {
             let info = VersionInfo::new(version.clone(), &tag.commit.sha);
 
             if let Version::Semver {
-                major,
-                minor,
-                patch,
-                prerelease,
-                ..
+                major, prerelease, ..
             } = &version
             {
                 // Always add to semver_tags (prereleases are filtered at query time)
                 semver_tags.push(info.clone());
 
                 // Track major-only tags (v1, v2, v6 - no minor/patch)
-                if minor.is_none() && patch.is_none() && prerelease.is_none() {
+                if version.is_major_only() {
                     major_tags.insert(*major, info.clone());
                 }
 
