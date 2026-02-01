@@ -3,34 +3,16 @@
 // For a full list of overridable settings, and general information on folder-specific settings,
 // see the documentation: https://zed.dev/docs/configuring-zed#settings-files
 {
-	// "lsp": { "tombi": { "enable_lsp_tasks": false } },
-	"formatter": [
-		{ "language_server": { "name": "dprint" } },
-		{ "external": { "command": "dprint", "arguments": ["fmt", "--stdin", "{buffer_path}"] } }
-	],
+	"formatter": [{ "external": { "command": "dprint", "arguments": ["fmt", "--stdin", "{buffer_path}"] } }],
 	"prettier": { "allowed": false },
 	"wrap_guides": [140],
 	"languages": { "Rust": { "wrap_guides": [100] } },
+	"file_types": { "Markdown": [".rules"] },
 	"lsp": {
 		"rust-analyzer": {
-			// "settings": {
-			// 	"procMacro": {
-			// 		"ignored": [
-			// 			"component",
-			// 			"server"
-			// 		]
-			// 	}
-			// },
 			"initialization_options": {
 				"diagnostics": { "experimental": { "enable": true } },
-				"checkOnSave": true,
-				"cargo": {
-					// Explicit features instead of allFeatures to avoid offline+github conflict
-					// offline is excluded as it's mutually exclusive with github
-					"allFeatures": true,
-					// "features": ["annotations", "cache", "github", "sarif", "git", "pr"],
-					"allTargets": true
-				},
+				"cargo": { "allFeatures": true }, // "allTargets": true
 				"check": { "workspace": true },
 				"completion": { "snippets": { "custom": {} } }
 			}

@@ -5,7 +5,7 @@ toml-version = "v1.1.0"
 
 [files]
 include = ["**/*.toml", "**/.*.toml"]
-exclude = ["**/tests/fixtures"]
+exclude = ["**/fixtures"]
 
 [format]
 [format.rules]
