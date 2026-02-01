@@ -5,11 +5,12 @@
 //! - Commit SHAs
 //! - Branch names
 
+use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
 
 /// A parsed version from a git ref
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Version {
     /// Semantic version (major, minor, patch)
     /// Minor and patch are optional (v1 vs v1.2 vs v1.2.3)
@@ -120,6 +121,20 @@ impl Version {
             self,
             Self::Semver {
                 prerelease: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// Returns true if this is a major-only version (e.g., v6 with no minor/patch)
+    #[must_use]
+    pub const fn is_major_only(&self) -> bool {
+        matches!(
+            self,
+            Self::Semver {
+                minor: None,
+                patch: None,
+                prerelease: None,
                 ..
             }
         )
@@ -243,13 +258,28 @@ impl Ord for Version {
 }
 
 /// A set of available versions for an action repository
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VersionSet {
     /// All available semver versions, sorted
     pub semver_tags: Vec<VersionInfo>,
 
-    /// Latest version per major (e.g., v1 -> v1.2.3, v2 -> v2.0.1)
+    /// Latest version per major
+    ///
+    /// Examples:
+    /// - `v1 -> v1.2.3`
+    /// - `v2 -> v2.0.1`
     pub latest_per_major: std::collections::HashMap<u32, VersionInfo>,
+
+    /// Major-only tags that exist
+    ///
+    /// Examples:
+    /// - `v1`
+    /// - `v2`
+    /// - `v6`
+    ///
+    /// Maps major version number to the [`VersionInfo`] for the major-only tag\
+    /// Used to suggest major-only refs when user already uses major-only style
+    pub major_tags: std::collections::HashMap<u32, VersionInfo>,
 
     /// Overall latest semver version
     pub latest: Option<VersionInfo>,
@@ -262,7 +292,7 @@ pub struct VersionSet {
 }
 
 /// Information about a specific version
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VersionInfo {
     /// The parsed version
     pub version: Version,
@@ -272,7 +302,7 @@ pub struct VersionInfo {
 }
 
 impl VersionInfo {
-    /// Create a new `VersionInfo`
+    /// Create a new [`VersionInfo`]
     #[must_use]
     pub fn new(version: Version, sha: impl Into<String>) -> Self {
         Self {
@@ -283,7 +313,7 @@ impl VersionInfo {
 }
 
 /// Information about a branch
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchInfo {
     /// Branch name
     pub name: String,
@@ -293,7 +323,7 @@ pub struct BranchInfo {
 }
 
 impl VersionSet {
-    /// Create an empty `VersionSet`
+    /// Create an empty [`VersionSet`]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -617,6 +647,7 @@ mod tests {
         let vs = VersionSet {
             semver_tags: vec![],
             latest_per_major,
+            major_tags: HashMap::new(),
             latest: Some(v4),
             default_branch: None,
             fetched_at: None,
@@ -640,6 +671,7 @@ mod tests {
         let vs = VersionSet {
             semver_tags: vec![],
             latest_per_major,
+            major_tags: HashMap::new(),
             latest: Some(v4),
             default_branch: None,
             fetched_at: None,
@@ -658,6 +690,7 @@ mod tests {
         let vs = VersionSet {
             semver_tags: vec![],
             latest_per_major: HashMap::new(),
+            major_tags: HashMap::new(),
             latest: Some(v4),
             default_branch: None,
             fetched_at: None,
@@ -685,6 +718,7 @@ mod tests {
         let vs = VersionSet {
             semver_tags: vec![],
             latest_per_major,
+            major_tags: HashMap::new(),
             latest: Some(beta),
             default_branch: None,
             fetched_at: None,

@@ -51,6 +51,7 @@ impl GitHubProvider {
     fn process_tags(tags: Vec<crate::types::GitHubTag>) -> VersionSet {
         let mut semver_tags = Vec::new();
         let mut latest_per_major: HashMap<u32, VersionInfo> = HashMap::new();
+        let mut major_tags: HashMap<u32, VersionInfo> = HashMap::new();
         let mut latest: Option<VersionInfo> = None;
 
         for tag in tags {
@@ -58,11 +59,20 @@ impl GitHubProvider {
             let info = VersionInfo::new(version.clone(), &tag.commit.sha);
 
             if let Version::Semver {
-                major, prerelease, ..
+                major,
+                minor,
+                patch,
+                prerelease,
+                ..
             } = &version
             {
                 // Always add to semver_tags (prereleases are filtered at query time)
                 semver_tags.push(info.clone());
+
+                // Track major-only tags (v1, v2, v6 - no minor/patch)
+                if minor.is_none() && patch.is_none() && prerelease.is_none() {
+                    major_tags.insert(*major, info.clone());
+                }
 
                 // Only update "latest" trackers for non-prerelease versions
                 // (prereleases are filtered at query time via allow_prerelease flag)
@@ -95,6 +105,7 @@ impl GitHubProvider {
         VersionSet {
             semver_tags,
             latest_per_major,
+            major_tags,
             latest,
             default_branch: None,
             fetched_at: Some(SystemTime::now()),

@@ -223,7 +223,7 @@ mod version_tests {
         }
     }
 
-    const fn make_version_set(
+    fn make_version_set(
         tags: Vec<VersionInfo>,
         latest: Option<VersionInfo>,
         latest_per_major: HashMap<u32, VersionInfo>,
@@ -231,6 +231,7 @@ mod version_tests {
         VersionSet {
             semver_tags: tags,
             latest_per_major,
+            major_tags: HashMap::new(),
             latest,
             default_branch: None,
             fetched_at: None,
