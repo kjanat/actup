@@ -12,6 +12,7 @@
 
 pub mod action_ref;
 pub mod cache;
+pub mod caching_provider;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -22,6 +23,7 @@ pub mod version;
 
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};
+pub use caching_provider::{CacheStats, CachingProvider};
 pub use config::{
     CONFIG_EXTENSIONS, Config, find_repo_config, iter_config_candidates, user_config_path,
 };
