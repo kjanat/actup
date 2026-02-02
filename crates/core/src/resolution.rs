@@ -158,10 +158,14 @@ pub fn check_action(action_ref: &ActionRef, versions: &VersionSet, config: &Conf
 
 /// Handle non-semver refs based on branch policy.
 fn status_for_non_semver(
-    _current: &Version,
+    current: &Version,
     branch_policy: BranchPolicy,
     versions: &VersionSet,
 ) -> CheckStatus {
+    // TODO: Use `current` to provide smarter suggestions for non-semver refs,
+    // e.g., comparing branch head commits or suggesting SHA pinning based on
+    // the specific ref type (branch vs non-standard tag).
+    let _ = current; // Silence unused warning until TODO is implemented
     match branch_policy {
         BranchPolicy::Ignore => CheckStatus::UpToDate,
         BranchPolicy::Warn => CheckStatus::Unresolvable {
@@ -229,7 +233,9 @@ pub async fn check_action_remote(
     config: &Config,
     registry: &ProviderRegistry,
 ) -> Result<CheckResult, Error> {
-    // Early return for ignored actions
+    // Performance optimization: check ignore list early to skip ProviderRegistry::find
+    // and provider.get_versions() network calls. Note: check_action() repeats this guard
+    // for correctness when called directly with pre-fetched versions.
     if config.should_ignore(&action_ref.owner, &action_ref.repo) {
         return Ok(CheckResult {
             action_ref: action_ref.clone(),
