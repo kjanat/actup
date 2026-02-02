@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 description       = "Provider-neutral core engine for GitHub Actions version management"
 license.workspace = true
+publish           = true
 
 [dependencies]
 # For config discovery

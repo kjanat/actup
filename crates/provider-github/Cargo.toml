@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 description       = "GitHub provider for actup - implements version resolution for GitHub.com and GitHub Enterprise"
 license.workspace = true
+publish           = true
 
 [dependencies]
 actup-core    = { path = "../core" }
