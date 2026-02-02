@@ -9,6 +9,8 @@ license.workspace = true
 actup-core    = { path = "../core" }
 # Base64 decoding for GitHub API content
 base64        = { workspace = true }
+# Async utilities (for parallel requests)
+futures       = { workspace = true }
 # HTTP client
 reqwest       = { workspace = true }
 # Semver parsing

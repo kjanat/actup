@@ -76,6 +76,17 @@ pub enum Error {
         retry_after: Option<std::time::Duration>,
     },
 
+    /// Permission denied (403 without rate limit indicators)
+    ///
+    /// Distinct from `RateLimited` - this indicates insufficient scopes/access
+    /// rather than temporary throttling.
+    Forbidden {
+        /// Provider that denied access
+        provider: String,
+        /// What went wrong
+        reason: String,
+    },
+
     /// Authentication failed or missing
     Auth {
         /// Provider requiring auth
@@ -128,6 +139,7 @@ impl Error {
             self,
             Self::Network { .. }
                 | Self::RateLimited { .. }
+                | Self::Forbidden { .. }
                 | Self::Auth { .. }
                 | Self::Cache { .. }
                 | Self::ProviderNotFound { .. }
@@ -188,6 +200,9 @@ impl fmt::Display for Error {
                 } else {
                     write!(f, "rate limited by {provider}")
                 }
+            }
+            Self::Forbidden { provider, reason } => {
+                write!(f, "permission denied by {provider}: {reason}")
             }
             Self::Auth { provider, reason } => {
                 write!(f, "authentication failed for {provider}: {reason}")
@@ -259,6 +274,10 @@ mod tests {
             Error::RateLimited {
                 provider: "github".into(),
                 retry_after: None,
+            },
+            Error::Forbidden {
+                provider: "github".into(),
+                reason: "insufficient scope".into(),
             },
             Error::Auth {
                 provider: "github".into(),
