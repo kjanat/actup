@@ -155,8 +155,8 @@ impl Cache for FileCache {
             self.ensure_dir().await?;
 
             let path = self.key_to_path(&key);
-            let content = serde_json::to_string_pretty(&entry)
-                .map_err(|e| CacheError::Serde(e.to_string()))?;
+            let content =
+                serde_json::to_string(&entry).map_err(|e| CacheError::Serde(e.to_string()))?;
 
             tokio::fs::write(&path, content)
                 .await
