@@ -1,36 +1,29 @@
 [package]
-name              = "actup-provider-github"
-version.workspace = true
-edition.workspace = true
-description       = "GitHub provider for actup - implements version resolution for GitHub.com and GitHub Enterprise"
-license.workspace = true
+name                 = "actup-provider-github"
+version.workspace    = true
+edition.workspace    = true
+description          = "GitHub provider for actup - implements version resolution for GitHub.com and GitHub Enterprise"
+homepage.workspace   = true
+repository.workspace = true
+license.workspace    = true
+publish.workspace    = true
 
 [dependencies]
-actup-core    = { path = "../core" }
-# Base64 decoding for GitHub API content
-base64        = { workspace = true }
-# Async utilities (for parallel requests)
-futures       = { workspace = true }
-# HTTP client
-reqwest       = { workspace = true }
-# Semver parsing
-semver        = { workspace = true }
-# GitHub API (optional, for more complex operations)
-# octocrab = { workspace = true, optional = true }
-# Serialization
-serde         = { workspace = true }
-serde_json    = { workspace = true }
-serde_yaml_ng = { workspace = true }
-# Error handling
-thiserror     = { workspace = true }
-# Async runtime
-tokio         = { workspace = true }
-# Logging
-tracing       = { workspace = true }
+actup-core    = { workspace = true }
+base64        = { workspace = true }  # Base64 decoding for GitHub API content
+futures       = { workspace = true }  # Async utilities (for parallel requests)
+reqwest       = { workspace = true }  # HTTP client
+semver        = { workspace = true }  # Semver parsing
+# octocrab    = { workspace = true, optional = true }  # GitHub API (optional)
+serde         = { workspace = true }  # Serialization
+serde_json    = { workspace = true }  # JSON parsing
+serde_yaml_ng = { workspace = true }  # YAML parsing
+thiserror     = { workspace = true }  # Error handling
+tokio         = { workspace = true }  # Async runtime
+tracing       = { workspace = true }  # Logging
 
 [dev-dependencies]
 insta    = { workspace = true }
-tokio    = { workspace = true }
 wiremock = { workspace = true }
 
 [lints]
