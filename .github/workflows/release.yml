@@ -150,5 +150,5 @@ jobs:
 
       - name: Publish crates
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
-        # Cargo 1.90+ handles dependency ordering; exclude stubs with publish=false
-        run: cargo publish --workspace --exclude actup-lsp --exclude actup-mcp
+        # Cargo 1.90+ handles dependency ordering and skips publish=false crates
+        run: cargo publish --workspace
