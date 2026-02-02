@@ -45,7 +45,8 @@ pub enum CheckStatus {
 
 /// Check if current version is up-to-date with target.
 ///
-/// Handles major-only refs like "v4" matching any v4.x.x.
+/// Handles major-only refs like "v4" matching any v4.x.x,
+/// and minor-only refs like "v4.2" matching any v4.2.x.
 fn is_version_current(current: &Version, target: Option<&VersionInfo>) -> bool {
     match (current, target) {
         // For major-only refs (v4), compare major versions
@@ -58,6 +59,16 @@ fn is_version_current(current: &Version, target: Option<&VersionInfo>) -> bool {
             },
             Some(t),
         ) => t.version.major() == Some(*major),
+        // For minor-only refs (v4.2), compare major and minor versions
+        (
+            Version::Semver {
+                major,
+                minor: Some(minor),
+                patch: None,
+                ..
+            },
+            Some(t),
+        ) => t.version.major() == Some(*major) && t.version.minor() == Some(*minor),
         // For full semver, compare Version values directly
         (_, Some(t)) => t.version == *current,
         (_, None) => false,
