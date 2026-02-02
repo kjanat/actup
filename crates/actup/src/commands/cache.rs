@@ -100,7 +100,15 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
     };
 
     let cache_dir = cache.cache_dir().clone();
-    let (entry_count, _) = match get_cache_stats(&cache_dir) {
+    // Use spawn_blocking to avoid blocking the async runtime with std::fs calls
+    let stats_result = {
+        let dir = cache_dir.clone();
+        tokio::task::spawn_blocking(move || get_cache_stats(&dir))
+            .await
+            .map_err(|e| std::io::Error::other(format!("task join error: {e}")))
+            .and_then(|r| r)
+    };
+    let (entry_count, _) = match stats_result {
         Ok(stats) => stats,
         Err(e) => {
             eprintln!("{}: {}", "Error reading cache directory".red(), e);
