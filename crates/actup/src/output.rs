@@ -153,6 +153,9 @@ fn print_json(findings: &[Finding]) {
         latest_version: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         latest_sha: Option<String>,
+        /// Full semver when latest_version is major-only (e.g., "v6.0.2" when latest is "v6")
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exact_version: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
     }
@@ -160,36 +163,41 @@ fn print_json(findings: &[Finding]) {
     let json_findings: Vec<JsonFinding> = findings
         .iter()
         .map(|f| {
-            let (status, current_version, latest_version, latest_sha, reason) = match &f.status {
-                FindingStatus::UpToDate => ("up_to_date".into(), None, None, None, None),
-                FindingStatus::Ignored => ("ignored".into(), None, None, None, None),
-                FindingStatus::Outdated {
-                    current, latest, ..
-                } => (
-                    "outdated".into(),
-                    Some(current.clone()),
-                    Some(latest.version.to_string()),
-                    Some(latest.sha.clone()),
-                    None,
-                ),
-                FindingStatus::Pinned { sha, tag: _ } => {
-                    ("pinned".into(), None, None, Some(sha.clone()), None)
-                }
-                FindingStatus::Unresolvable {
-                    reason,
-                    is_environment_error,
-                } => (
-                    if *is_environment_error {
-                        "error".into()
-                    } else {
-                        "unresolvable".into()
-                    },
-                    None,
-                    None,
-                    None,
-                    Some(reason.clone()),
-                ),
-            };
+            let (status, current_version, latest_version, latest_sha, exact_version, reason) =
+                match &f.status {
+                    FindingStatus::UpToDate => ("up_to_date".into(), None, None, None, None, None),
+                    FindingStatus::Ignored => ("ignored".into(), None, None, None, None, None),
+                    FindingStatus::Outdated {
+                        current,
+                        latest,
+                        exact_version,
+                    } => (
+                        "outdated".into(),
+                        Some(current.clone()),
+                        Some(latest.version.to_string()),
+                        Some(latest.sha.clone()),
+                        exact_version.clone(),
+                        None,
+                    ),
+                    FindingStatus::Pinned { sha, tag: _ } => {
+                        ("pinned".into(), None, None, Some(sha.clone()), None, None)
+                    }
+                    FindingStatus::Unresolvable {
+                        reason,
+                        is_environment_error,
+                    } => (
+                        if *is_environment_error {
+                            "error".into()
+                        } else {
+                            "unresolvable".into()
+                        },
+                        None,
+                        None,
+                        None,
+                        None,
+                        Some(reason.clone()),
+                    ),
+                };
 
             JsonFinding {
                 file: f.file.clone(),
@@ -204,6 +212,7 @@ fn print_json(findings: &[Finding]) {
                 current_version,
                 latest_version,
                 latest_sha,
+                exact_version,
                 reason,
             }
         })
