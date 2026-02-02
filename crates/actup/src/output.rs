@@ -279,8 +279,8 @@ pub fn print_summary(findings: &[Finding]) {
 /// Determines CLI exit code based on findings.
 ///
 /// Exit codes:
-/// - 0: Success (`UpToDate`, Ignored, Pinned are all considered healthy)
-/// - 1: Outdated found (only with `strict` mode)
+/// - 0: Success ([`UpToDate`], Ignored, Pinned are all considered healthy)
+/// - 1: Outdated found (only with [`strict`] mode)
 /// - 2: Unresolvable user error (bad ref, repo not found)
 /// - 3: Environment error (network, rate limit, auth)
 pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
@@ -1150,5 +1150,203 @@ mod tests {
 
         // Non-strict should return 0 despite multiple outdated
         assert_eq!(determine_exit_code(&findings, false), 0);
+    }
+
+    /// Test `From<&Finding>` trait implementation for `JsonFinding`.
+    #[test]
+    fn test_json_finding_from_finding_up_to_date() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 10,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::UpToDate,
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.file, "test.yml");
+        assert_eq!(json_finding.line, 10);
+        assert_eq!(json_finding.owner, "actions");
+        assert_eq!(json_finding.repo, "checkout");
+        assert_eq!(json_finding.reference, "v4");
+        assert_eq!(json_finding.status, "up_to_date");
+        assert!(json_finding.current_version.is_none());
+        assert!(json_finding.latest_version.is_none());
+        assert!(json_finding.pinned_tag.is_none());
+        assert!(json_finding.reason.is_none());
+    }
+
+    /// Test `From<&Finding>` for Outdated status.
+    #[test]
+    fn test_json_finding_from_finding_outdated() {
+        let finding = Finding {
+            file: "ci.yml".to_string(),
+            line: 15,
+            action_ref: make_action_ref("actions", "setup-node", "v3"),
+            status: FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: make_version_info("v4.0.0", "abc123"),
+                exact_version: Some("v4.0.0".to_string()),
+            },
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.status, "outdated");
+        assert_eq!(json_finding.current_version, Some("v3".to_string()));
+        assert_eq!(json_finding.latest_version, Some("v4.0.0".to_string()));
+        assert_eq!(json_finding.latest_sha, Some("abc123".to_string()));
+        assert_eq!(json_finding.exact_version, Some("v4.0.0".to_string()));
+        assert!(json_finding.pinned_tag.is_none()); // pinned_tag only for Pinned status
+    }
+
+    /// Test `From<&Finding>` for Pinned status with tag - verifies `pinned_tag` is set.
+    #[test]
+    fn test_json_finding_from_finding_pinned_with_tag() {
+        let finding = Finding {
+            file: "secure.yml".to_string(),
+            line: 20,
+            action_ref: make_action_ref("actions", "checkout", "abc123def456"),
+            status: FindingStatus::Pinned {
+                sha: "abc123def456abc123def456abc123def456abc1".to_string(),
+                tag: Some("v4.1.0".to_string()),
+            },
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.status, "pinned");
+        assert_eq!(
+            json_finding.latest_sha,
+            Some("abc123def456abc123def456abc123def456abc1".to_string())
+        );
+        assert_eq!(json_finding.pinned_tag, Some("v4.1.0".to_string()));
+        assert!(json_finding.current_version.is_none());
+        assert!(json_finding.latest_version.is_none());
+    }
+
+    /// Test `From<&Finding>` for Pinned status without tag - verifies `pinned_tag` is None.
+    #[test]
+    fn test_json_finding_from_finding_pinned_without_tag() {
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 5,
+            action_ref: make_action_ref("actions", "cache", "deadbeef"),
+            status: FindingStatus::Pinned {
+                sha: "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string(),
+                tag: None,
+            },
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.status, "pinned");
+        assert!(json_finding.pinned_tag.is_none());
+        assert_eq!(
+            json_finding.latest_sha,
+            Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string())
+        );
+    }
+
+    /// Test `From<&Finding>` for Ignored status - verifies `pinned_tag` is omitted.
+    #[test]
+    fn test_json_finding_from_finding_ignored() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("internal", "action", "main"),
+            status: FindingStatus::Ignored,
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.status, "ignored");
+        assert!(json_finding.pinned_tag.is_none());
+        assert!(json_finding.current_version.is_none());
+        assert!(json_finding.latest_version.is_none());
+    }
+
+    /// Test `From<&Finding>` for Unresolvable user error.
+    #[test]
+    fn test_json_finding_from_finding_unresolvable_user() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 5,
+            action_ref: make_action_ref("unknown", "action", "v1"),
+            status: FindingStatus::Unresolvable {
+                reason: "repository not found".to_string(),
+                is_environment_error: false,
+            },
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.status, "unresolvable");
+        assert_eq!(
+            json_finding.reason,
+            Some("repository not found".to_string())
+        );
+        assert!(json_finding.pinned_tag.is_none());
+    }
+
+    /// Test `From<&Finding>` for Unresolvable environment error.
+    #[test]
+    fn test_json_finding_from_finding_unresolvable_env() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 5,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::Unresolvable {
+                reason: "rate limit exceeded".to_string(),
+                is_environment_error: true,
+            },
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+
+        assert_eq!(json_finding.status, "error"); // env errors use "error" status
+        assert_eq!(json_finding.reason, Some("rate limit exceeded".to_string()));
+        assert!(json_finding.pinned_tag.is_none());
+    }
+
+    /// Test that `pinned_tag` is correctly serialized in JSON output.
+    #[test]
+    fn test_json_serialization_pinned_tag_present() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "abc123"),
+            status: FindingStatus::Pinned {
+                sha: "abc123abc123abc123abc123abc123abc123abc1".to_string(),
+                tag: Some("v4.2.0".to_string()),
+            },
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+        let serialized = serde_json::to_string(&json_finding).unwrap();
+
+        assert!(
+            serialized.contains("\"pinned_tag\":\"v4.2.0\""),
+            "JSON should contain pinned_tag field: {serialized}"
+        );
+    }
+
+    /// Test that `pinned_tag` is omitted from JSON when None (`skip_serializing_if`).
+    #[test]
+    fn test_json_serialization_pinned_tag_omitted() {
+        let finding = Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::UpToDate,
+        };
+
+        let json_finding = JsonFinding::from(&finding);
+        let serialized = serde_json::to_string(&json_finding).unwrap();
+
+        assert!(
+            !serialized.contains("pinned_tag"),
+            "JSON should not contain pinned_tag field for non-pinned: {serialized}"
+        );
     }
 }
