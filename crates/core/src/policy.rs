@@ -47,7 +47,6 @@ pub enum UpdatePolicy {
     /// # After (update_policy: minor):
     /// - uses: actions/checkout@v4.2.0
     /// ```
-    #[default]
     Minor,
 
     /// Major updates allowed (1.x -> 2.x).
@@ -70,6 +69,7 @@ pub enum UpdatePolicy {
     /// # After (update_policy: latest):
     /// - uses: actions/checkout@v4
     /// ```
+    #[default]
     Latest,
 }
 
@@ -403,7 +403,7 @@ mod tests {
 
     #[test]
     fn test_update_policy_default() {
-        assert_eq!(UpdatePolicy::default(), UpdatePolicy::Minor);
+        assert_eq!(UpdatePolicy::default(), UpdatePolicy::Latest);
     }
 
     // RefStyle tests

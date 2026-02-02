@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.update_policy, UpdatePolicy::Minor);
+        assert_eq!(config.update_policy, UpdatePolicy::Latest);
         assert_eq!(config.ref_style, RefStyle::Preserve);
         assert_eq!(config.branch_policy, BranchPolicy::Ignore);
         assert!(!config.allow_prerelease);
