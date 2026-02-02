@@ -17,7 +17,7 @@ use tokio::sync::RwLock;
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let github = GitHubProvider::new(token)?;
 /// let cached = CachingProvider::new(github);
 ///
@@ -102,15 +102,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
             // Cache miss - fetch from provider (no lock held during network call)
             let versions = self.inner.get_versions(&repo).await?;
 
-            // Store in cache (double-check to handle TOCTOU race)
+            // Store in cache (entry API handles TOCTOU race)
             let mut guard = self.version_cache.write().await;
-            if let Some(existing) = guard.get(&repo) {
-                return Ok(existing.clone());
-            }
-            guard.insert(repo, versions.clone());
+            let result = guard.entry(repo).or_insert_with(|| versions).clone();
             drop(guard);
 
-            Ok(versions)
+            Ok(result)
         })
     }
 
@@ -133,15 +130,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
             // Cache miss - fetch from provider
             let sha = self.inner.resolve_ref_to_sha(&repo, &ref_name).await?;
 
-            // Store in cache (double-check to handle TOCTOU race)
+            // Store in cache (entry API handles TOCTOU race)
             let mut guard = self.sha_cache.write().await;
-            if let Some(existing) = guard.get(&cache_key) {
-                return Ok(existing.clone());
-            }
-            guard.insert(cache_key, sha.clone());
+            let result = guard.entry(cache_key).or_insert_with(|| sha).clone();
             drop(guard);
 
-            Ok(sha)
+            Ok(result)
         })
     }
 
@@ -160,15 +154,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
             // Cache miss - fetch from provider
             let branch = self.inner.get_default_branch(&repo).await?;
 
-            // Store in cache (double-check to handle TOCTOU race)
+            // Store in cache (entry API handles TOCTOU race)
             let mut guard = self.branch_cache.write().await;
-            if let Some(existing) = guard.get(&repo) {
-                return Ok(existing.clone());
-            }
-            guard.insert(repo, branch.clone());
+            let result = guard.entry(repo).or_insert_with(|| branch).clone();
             drop(guard);
 
-            Ok(branch)
+            Ok(result)
         })
     }
 
