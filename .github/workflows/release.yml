@@ -134,4 +134,4 @@ jobs:
 
       - name: Publish crates
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
-        run: cargo publish --workspace
+        run: cargo publish --workspace # https://doc.rust-lang.org/cargo/CHANGELOG.html#cargo-190-2025-09-18
