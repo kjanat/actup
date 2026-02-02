@@ -226,6 +226,8 @@ fn format_size(bytes: u64) -> String {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
     } else if bytes >= 1024 {
         format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else if bytes == 1 {
+        "1 byte".to_string()
     } else {
         format!("{bytes} bytes")
     }
@@ -250,6 +252,7 @@ mod tests {
     #[test]
     fn test_format_size() {
         assert_eq!(format_size(0), "0 bytes");
+        assert_eq!(format_size(1), "1 byte");
         assert_eq!(format_size(512), "512 bytes");
         assert_eq!(format_size(1024), "1.0 KB");
         assert_eq!(format_size(1536), "1.5 KB");

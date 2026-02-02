@@ -1,7 +1,9 @@
 //! File-based persistent cache for version information
 //!
-//! Stores cached version data in `~/.cache/actup/` (Linux/macOS) or
-//! `%LOCALAPPDATA%\actup\cache\` (Windows).
+//! Stores cached version data in:
+//! - Linux: `~/.cache/actup/`
+//! - macOS: `~/Library/Caches/actup/`
+//! - Windows: `%LOCALAPPDATA%\actup\cache\`
 
 use actup_core::cache::{Cache, CacheEntry, CacheError, CacheResult};
 use std::future::Future;
@@ -71,11 +73,10 @@ impl FileCache {
 
     /// Ensure cache directory exists
     async fn ensure_dir(&self) -> CacheResult<()> {
-        if !self.cache_dir.exists() {
-            tokio::fs::create_dir_all(&self.cache_dir)
-                .await
-                .map_err(|e| CacheError::Io(format!("failed to create cache dir: {e}")))?;
-        }
+        // create_dir_all is idempotent - no need to check exists() first
+        tokio::fs::create_dir_all(&self.cache_dir)
+            .await
+            .map_err(|e| CacheError::Io(format!("failed to create cache dir: {e}")))?;
         Ok(())
     }
 }
@@ -113,13 +114,13 @@ impl Cache for FileCache {
 
             let path = self.key_to_path(&key);
 
-            if !path.exists() {
-                return Err(CacheError::NotFound);
-            }
-
-            let content = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|e| CacheError::Io(e.to_string()))?;
+            let content = match tokio::fs::read_to_string(&path).await {
+                Ok(c) => c,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(CacheError::NotFound);
+                }
+                Err(e) => return Err(CacheError::Io(e.to_string())),
+            };
 
             let entry: CacheEntry =
                 serde_json::from_str(&content).map_err(|e| CacheError::Serde(e.to_string()))?;
@@ -174,13 +175,11 @@ impl Cache for FileCache {
 
             let path = self.key_to_path(&key);
 
-            if path.exists() {
-                tokio::fs::remove_file(&path)
-                    .await
-                    .map_err(|e| CacheError::Io(e.to_string()))?;
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(CacheError::Io(e.to_string())),
             }
-
-            Ok(())
         })
     }
 
@@ -190,13 +189,11 @@ impl Cache for FileCache {
                 return Ok(());
             }
 
-            if !self.cache_dir.exists() {
-                return Ok(());
-            }
-
-            let mut entries = tokio::fs::read_dir(&self.cache_dir)
-                .await
-                .map_err(|e| CacheError::Io(e.to_string()))?;
+            let mut entries = match tokio::fs::read_dir(&self.cache_dir).await {
+                Ok(e) => e,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+                Err(e) => return Err(CacheError::Io(e.to_string())),
+            };
 
             let mut removed = 0;
             while let Some(entry) = entries
