@@ -12,7 +12,16 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_WORKFLOW_PATTERNS: &[&str] =
     &[".github/workflows/*.yml", ".github/workflows/*.yaml"];
 
-/// Default paths to scan for composite actions
+/// Default paths to scan for composite actions.
+///
+/// Covers conventional locations:
+/// - Repository root (`action.yml`) - for repos that ARE an action
+/// - `.github/actions/*/` - GitHub's recommended location
+///
+/// Note: GitHub allows `action.yml` in *any* subdirectory, but scanning
+/// `**/action.yml` would be slow and produce false positives (test fixtures,
+/// vendored deps, etc.). Users can add custom patterns via config's
+/// `extra_paths` if they use non-standard locations like `tools/my-action/`.
 pub const DEFAULT_ACTION_PATTERNS: &[&str] = &[
     "action.yml",
     "action.yaml",
