@@ -71,11 +71,12 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
         let full_pattern = root.join(pattern);
         if let Some(pattern_str) = full_pattern.to_str() {
             for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
-                seen_paths.insert(entry.clone());
-                files.push(DiscoveredFile {
-                    path: entry,
-                    kind: FileKind::Workflow,
-                });
+                if seen_paths.insert(entry.clone()) {
+                    files.push(DiscoveredFile {
+                        path: entry,
+                        kind: FileKind::Workflow,
+                    });
+                }
             }
         }
     }
@@ -85,11 +86,12 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
         let full_pattern = root.join(pattern);
         if let Some(pattern_str) = full_pattern.to_str() {
             for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
-                seen_paths.insert(entry.clone());
-                files.push(DiscoveredFile {
-                    path: entry,
-                    kind: FileKind::CompositeAction,
-                });
+                if seen_paths.insert(entry.clone()) {
+                    files.push(DiscoveredFile {
+                        path: entry,
+                        kind: FileKind::CompositeAction,
+                    });
+                }
             }
         }
     }
