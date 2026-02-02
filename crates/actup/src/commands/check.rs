@@ -328,4 +328,301 @@ mod tests {
             _ => panic!("expected Outdated status"),
         }
     }
+
+    /// Test that `exact_version` is None when no `VersionSet` is provided.
+    #[test]
+    fn test_exact_version_none_without_versions() {
+        let status = CheckStatus::Outdated {
+            current: "v4".to_string(),
+            target: make_version_info("v6", "ccc"), // major-only tag
+        };
+
+        let finding_status = to_finding_status(status, None);
+
+        match finding_status {
+            FindingStatus::Outdated { exact_version, .. } => {
+                assert_eq!(
+                    exact_version, None,
+                    "exact_version should be None when VersionSet is not provided"
+                );
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    /// Test that `exact_version` is None when major is not found in `latest_per_major`.
+    #[test]
+    fn test_exact_version_none_when_major_not_in_map() {
+        let v8_0_0 = make_version_info("v8.0.0", "bbb");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(8, v8_0_0.clone());
+
+        let versions = VersionSet {
+            semver_tags: vec![v8_0_0.clone()],
+            latest_per_major,
+            major_tags: HashMap::new(),
+            latest: Some(v8_0_0),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        // Target is major-only v6, but v6 is not in latest_per_major
+        let status = CheckStatus::Outdated {
+            current: "v4".to_string(),
+            target: make_version_info("v6", "ccc"), // major-only tag
+        };
+
+        let finding_status = to_finding_status(status, Some(&versions));
+
+        match finding_status {
+            FindingStatus::Outdated { exact_version, .. } => {
+                assert_eq!(
+                    exact_version, None,
+                    "exact_version should be None when target major is not in latest_per_major"
+                );
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    /// Test conversion of `CheckStatus::UpToDate`.
+    #[test]
+    fn test_to_finding_status_up_to_date() {
+        let status = CheckStatus::UpToDate;
+        let finding_status = to_finding_status(status, None);
+        assert!(matches!(finding_status, FindingStatus::UpToDate));
+    }
+
+    /// Test conversion of `CheckStatus::Ignored`.
+    #[test]
+    fn test_to_finding_status_ignored() {
+        let status = CheckStatus::Ignored;
+        let finding_status = to_finding_status(status, None);
+        assert!(matches!(finding_status, FindingStatus::Ignored));
+    }
+
+    /// Test conversion of `CheckStatus::Pinned`.
+    #[test]
+    fn test_to_finding_status_pinned() {
+        let status = CheckStatus::Pinned {
+            sha: "abc123def456".to_string(),
+            tag: Some("v4.0.0".to_string()),
+        };
+        let finding_status = to_finding_status(status, None);
+        match finding_status {
+            FindingStatus::Pinned { sha, tag } => {
+                assert_eq!(sha, "abc123def456");
+                assert_eq!(tag, Some("v4.0.0".to_string()));
+            }
+            _ => panic!("expected Pinned status"),
+        }
+    }
+
+    /// Test conversion of `CheckStatus::Pinned` without tag.
+    #[test]
+    fn test_to_finding_status_pinned_no_tag() {
+        let status = CheckStatus::Pinned {
+            sha: "deadbeef".to_string(),
+            tag: None,
+        };
+        let finding_status = to_finding_status(status, None);
+        match finding_status {
+            FindingStatus::Pinned { sha, tag } => {
+                assert_eq!(sha, "deadbeef");
+                assert_eq!(tag, None);
+            }
+            _ => panic!("expected Pinned status"),
+        }
+    }
+
+    /// Test conversion of `CheckStatus::Unresolvable`.
+    #[test]
+    fn test_to_finding_status_unresolvable() {
+        let status = CheckStatus::Unresolvable {
+            reason: "not found".to_string(),
+        };
+        let finding_status = to_finding_status(status, None);
+        match finding_status {
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => {
+                assert_eq!(reason, "not found");
+                assert!(!is_environment_error);
+            }
+            _ => panic!("expected Unresolvable status"),
+        }
+    }
+
+    /// Test `check_action_with_versions` when versions are available.
+    #[test]
+    fn test_check_action_with_versions_success() {
+        use actup_core::{ActionRef, UpdatePolicy};
+
+        let action_ref = ActionRef {
+            owner: "actions".to_string(),
+            repo: "checkout".to_string(),
+            ref_str: "v3".to_string(),
+            host: None,
+            subpath: None,
+        };
+
+        let v4_0_0 = make_version_info("v4.0.0", "abc123");
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(4, v4_0_0.clone());
+
+        let versions = VersionSet {
+            semver_tags: vec![v4_0_0.clone()],
+            latest_per_major,
+            major_tags: HashMap::new(),
+            latest: Some(v4_0_0),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        let config = Config {
+            update_policy: UpdatePolicy::Major,
+            ..Default::default()
+        };
+
+        let finding =
+            check_action_with_versions(&action_ref, "test.yml", 10, Some(&versions), &config);
+
+        assert_eq!(finding.file, "test.yml");
+        assert_eq!(finding.line, 10);
+        assert_eq!(finding.action_ref.owner, "actions");
+        assert!(matches!(finding.status, FindingStatus::Outdated { .. }));
+    }
+
+    /// Test `check_action_with_versions` when versions are None (fetch failed).
+    #[test]
+    fn test_check_action_with_versions_no_versions() {
+        use actup_core::ActionRef;
+
+        let action_ref = ActionRef {
+            owner: "actions".to_string(),
+            repo: "checkout".to_string(),
+            ref_str: "v4".to_string(),
+            host: None,
+            subpath: None,
+        };
+
+        let config = Config::default();
+
+        let finding = check_action_with_versions(&action_ref, "test.yml", 5, None, &config);
+
+        assert_eq!(finding.file, "test.yml");
+        assert_eq!(finding.line, 5);
+        match finding.status {
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => {
+                assert_eq!(reason, "failed to fetch versions");
+                assert!(is_environment_error);
+            }
+            _ => panic!("expected Unresolvable status with environment error"),
+        }
+    }
+
+    /// Test `exact_version` with minor-only version (v6.0 vs v6.0.2).
+    #[test]
+    fn test_exact_version_minor_only() {
+        let v6_0_2 = make_version_info("v6.0.2", "aaa");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+
+        let versions = VersionSet {
+            semver_tags: vec![v6_0_2.clone()],
+            latest_per_major,
+            major_tags: HashMap::new(),
+            latest: Some(v6_0_2),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        // Target is minor-only v6.0 (has minor, not major-only)
+        let status = CheckStatus::Outdated {
+            current: "v5.9.0".to_string(),
+            target: make_version_info("v6.0", "bbb"), // minor-only
+        };
+
+        let finding_status = to_finding_status(status, Some(&versions));
+
+        match finding_status {
+            FindingStatus::Outdated { exact_version, .. } => {
+                // Minor-only versions are not considered major-only, so exact_version should be None
+                assert_eq!(
+                    exact_version, None,
+                    "exact_version should be None for minor-only target"
+                );
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    /// Test `exact_version` when target version equals the exact version (no suffix needed).
+    #[test]
+    fn test_exact_version_equals_target() {
+        let v6 = make_version_info("v6", "aaa");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6.clone());
+
+        let versions = VersionSet {
+            semver_tags: vec![v6.clone()],
+            latest_per_major,
+            major_tags: HashMap::new(),
+            latest: Some(v6),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        // Both target and exact are "v6" - no difference
+        let status = CheckStatus::Outdated {
+            current: "v5".to_string(),
+            target: make_version_info("v6", "aaa"), // major-only tag
+        };
+
+        let finding_status = to_finding_status(status, Some(&versions));
+
+        match finding_status {
+            FindingStatus::Outdated { exact_version, .. } => {
+                // When major-only tag v6 resolves to v6 (same), exact_version is still Some("v6")
+                assert_eq!(exact_version, Some("v6".to_string()));
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    /// Test [`CollectedAction`] structure (ensures proper collection).
+    #[test]
+    fn test_collected_action_structure() {
+        use actup_core::ActionRef;
+
+        let action_ref = ActionRef {
+            owner: "actions".to_string(),
+            repo: "setup-node".to_string(),
+            ref_str: "v4".to_string(),
+            host: None,
+            subpath: None,
+        };
+
+        let repo_id = action_ref.to_repo_id();
+
+        let collected = CollectedAction {
+            file: "workflow.yml".to_string(),
+            line: 15,
+            action_ref: action_ref.clone(),
+            repo_id,
+        };
+
+        assert_eq!(collected.file, "workflow.yml");
+        assert_eq!(collected.line, 15);
+        assert_eq!(collected.action_ref.repo, "setup-node");
+        assert_eq!(collected.repo_id.owner, action_ref.owner);
+        assert_eq!(collected.repo_id.repo, action_ref.repo);
+    }
 }
