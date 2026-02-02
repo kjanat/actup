@@ -25,10 +25,13 @@ fn to_finding_status(status: CheckStatus, versions: Option<&VersionSet>) -> Find
         CheckStatus::UpToDate | CheckStatus::Ignored => FindingStatus::UpToDate,
         CheckStatus::Outdated { current, target } => {
             // If target is major-only (v6) but we have a full version (v6.0.2), include it
+            // Must use latest_per_major to get the correct major's latest, not global latest
             let exact_version = if target.version.is_major_only() {
-                versions
-                    .and_then(|v| v.latest.as_ref())
-                    .map(|l| l.version.to_string())
+                target.version.major().and_then(|major| {
+                    versions
+                        .and_then(|v| v.latest_per_major.get(&major))
+                        .map(|l| l.version.to_string())
+                })
             } else {
                 None
             };
@@ -184,6 +187,10 @@ pub async fn run(
         ));
     }
 
+    // Sort by file path then line number for stable, readable output
+    // (immediate findings like SHA-pinned may be interleaved with batched results)
+    findings.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line)));
+
     print_findings(&findings, format);
 
     if matches!(format, OutputFormat::Human) {
@@ -241,3 +248,95 @@ async fn batch_fetch_versions(
 
 // Tests for check command logic now live in actup-core::resolution module.
 // The CLI-specific tests for output formatting are in output.rs.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use actup_core::{Version, VersionInfo};
+    use std::collections::HashMap;
+
+    fn make_version_info(tag: &str, sha: &str) -> VersionInfo {
+        VersionInfo::new(Version::parse(tag), sha)
+    }
+
+    /// Test that `exact_version` uses major-scoped latest, not global latest.
+    ///
+    /// Scenario: user is on v4, target is v6 (major-only), global latest is v8.0.0.
+    /// `exact_version` should be v6.0.2 (latest for major 6), NOT v8.0.0.
+    #[test]
+    fn test_exact_version_uses_major_scoped_latest() {
+        // Build VersionSet with multiple majors
+        let v6_0_2 = make_version_info("v6.0.2", "aaa");
+        let v8_0_0 = make_version_info("v8.0.0", "bbb");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+        latest_per_major.insert(8, v8_0_0.clone());
+
+        let versions = VersionSet {
+            semver_tags: vec![v6_0_2, v8_0_0.clone()],
+            latest_per_major,
+            major_tags: HashMap::new(),
+            latest: Some(v8_0_0), // Global latest is v8.0.0
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        // Target is major-only v6 (suggesting upgrade from v4 to v6)
+        // CheckStatus::Outdated has current: String, target: VersionInfo
+        let status = CheckStatus::Outdated {
+            current: "v4".to_string(),
+            target: make_version_info("v6", "ccc"), // major-only tag
+        };
+
+        let finding_status = to_finding_status(status, Some(&versions));
+
+        // Verify exact_version is v6.0.2 (major 6's latest), NOT v8.0.0 (global)
+        match finding_status {
+            FindingStatus::Outdated { exact_version, .. } => {
+                assert_eq!(
+                    exact_version,
+                    Some("v6.0.2".to_string()),
+                    "exact_version should be latest for major 6, not global latest"
+                );
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    /// Test that `exact_version` is None for fully-qualified versions (not major-only).
+    #[test]
+    fn test_exact_version_none_for_full_version() {
+        let v6_0_2 = make_version_info("v6.0.2", "aaa");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+
+        let versions = VersionSet {
+            semver_tags: vec![v6_0_2.clone()],
+            latest_per_major,
+            major_tags: HashMap::new(),
+            latest: Some(v6_0_2),
+            default_branch: None,
+            fetched_at: None,
+        };
+
+        // Target is full version v6.0.2 (not major-only)
+        let status = CheckStatus::Outdated {
+            current: "v6.0.1".to_string(),
+            target: make_version_info("v6.0.2", "aaa"), // fully qualified
+        };
+
+        let finding_status = to_finding_status(status, Some(&versions));
+
+        match finding_status {
+            FindingStatus::Outdated { exact_version, .. } => {
+                assert_eq!(
+                    exact_version, None,
+                    "exact_version should be None for fully-qualified target"
+                );
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+}
