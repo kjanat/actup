@@ -138,15 +138,17 @@ jobs:
     runs-on: ubuntu-latest
     # Skip if repo is private (secrets can't be checked at job level)
     if: ${{ !github.event.repository.private }}
+    env:
+      # Job-level env so `if:` expressions can check token presence
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v6
+        env: { CARGO_REGISTRY_TOKEN: '' } # not needed for checkout
 
       - uses: dtolnay/rust-toolchain@stable
+        env: { CARGO_REGISTRY_TOKEN: '' } # not needed for toolchain setup
 
       - name: Publish crates
-        # Skip if no token configured (must check at step level via env)
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        # Cargo 1.90+ handles dependency ordering and skips publish=false crates
-        run: cargo publish --workspace
+        # Cargo 1.90+ handles dependency ordering; exclude stubs with publish=false
+        run: cargo publish --workspace --exclude actup-lsp --exclude actup-mcp
