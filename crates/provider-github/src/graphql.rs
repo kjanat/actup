@@ -355,13 +355,16 @@ impl GraphQLClient {
                             .is_some_and(|c| c.version >= version);
 
                         if !dominated_by_latest && !dominated_by_major {
+                            // Version is greater than both overall latest and major-specific latest
                             latest_per_major.insert(*major, info.clone());
                             latest = Some(info);
                         } else if !dominated_by_major {
+                            // Version is greater than major-specific latest but not overall latest
+                            // (invariant: latest >= max(latest_per_major) so this is the only other case)
                             latest_per_major.insert(*major, info.clone());
-                        } else if !dominated_by_latest {
-                            latest = Some(info);
                         }
+                        // Note: the case (!dominated_by_latest && dominated_by_major) is unreachable
+                        // because we maintain latest >= max(latest_per_major.values())
                     }
                 }
             }

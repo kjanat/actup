@@ -275,6 +275,10 @@ mod tests {
                 provider: "github".into(),
                 retry_after: None,
             },
+            Error::Forbidden {
+                provider: "github".into(),
+                reason: "insufficient scope".into(),
+            },
             Error::Auth {
                 provider: "github".into(),
                 reason: "invalid token".into(),
