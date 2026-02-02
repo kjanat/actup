@@ -14,6 +14,8 @@ pub const DEFAULT_WORKFLOW_PATTERNS: &[&str] =
 
 /// Default paths to scan for composite actions
 pub const DEFAULT_ACTION_PATTERNS: &[&str] = &[
+    "action.yml",
+    "action.yaml",
     ".github/actions/*/action.yml",
     ".github/actions/*/action.yaml",
 ];
@@ -56,6 +58,7 @@ impl FileKind {
 /// Discover all action-related files in a directory
 ///
 /// Searches for:
+/// - action.yml and action.yaml in root
 /// - .github/workflows/*.yml and .yaml
 /// - .github/actions/*/action.yml and .yaml
 /// - Any `extra_paths` from config
