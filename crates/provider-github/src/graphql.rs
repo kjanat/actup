@@ -88,9 +88,19 @@ impl GraphQLClient {
             return Ok(HashMap::new());
         }
 
+        // Clamp max_tags to API limit (GitHub GraphQL first: argument)
+        let max_tags = max_tags.min(100);
+
         debug!(count = repos.len(), "fetching versions via GraphQL batch");
 
         let (query, valid_repos) = Self::build_query(repos, max_tags);
+
+        // Early return if all repos were filtered out (invalid names)
+        if valid_repos.is_empty() {
+            debug!("no valid repos after filtering, skipping GraphQL request");
+            return Ok(HashMap::new());
+        }
+
         let response = self.execute_query(&query).await?;
 
         Ok(Self::parse_response(&valid_repos, &response))
