@@ -18,6 +18,8 @@ pub struct Finding {
 #[derive(Debug, Clone)]
 pub enum FindingStatus {
     UpToDate,
+    /// Action matched an ignore pattern in config
+    Ignored,
     Outdated {
         current: String,
         latest: VersionInfo,
@@ -70,6 +72,14 @@ fn print_human(findings: &[Finding]) {
                     line_prefix.dimmed(),
                     action_str,
                     "up to date".green()
+                );
+            }
+            FindingStatus::Ignored => {
+                println!(
+                    "{}{}  {}",
+                    line_prefix.dimmed(),
+                    action_str.dimmed(),
+                    "ignored".dimmed()
                 );
             }
             FindingStatus::Outdated {
@@ -152,6 +162,7 @@ fn print_json(findings: &[Finding]) {
         .map(|f| {
             let (status, current_version, latest_version, latest_sha, reason) = match &f.status {
                 FindingStatus::UpToDate => ("up_to_date".into(), None, None, None, None),
+                FindingStatus::Ignored => ("ignored".into(), None, None, None, None),
                 FindingStatus::Outdated {
                     current, latest, ..
                 } => (
@@ -210,6 +221,10 @@ pub fn print_summary(findings: &[Finding]) {
         .iter()
         .filter(|f| matches!(f.status, FindingStatus::UpToDate))
         .count();
+    let ignored = findings
+        .iter()
+        .filter(|f| matches!(f.status, FindingStatus::Ignored))
+        .count();
     let outdated = findings
         .iter()
         .filter(|f| matches!(f.status, FindingStatus::Outdated { .. }))
@@ -227,7 +242,7 @@ pub fn print_summary(findings: &[Finding]) {
     println!(
         "{}",
         format!(
-            "Scanned {total} action{}: {up_to_date} up to date, {outdated} outdated, {pinned} pinned, {unresolvable} unresolvable",
+            "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {unresolvable} unresolvable",
             if total == 1 { "" } else { "s" }
         )
         .bold()
@@ -471,6 +486,34 @@ mod tests {
         assert_eq!(finding.file, "workflow.yml");
         assert_eq!(finding.line, 10);
         assert!(matches!(finding.status, FindingStatus::UpToDate));
+    }
+
+    #[test]
+    fn test_finding_ignored() {
+        let finding = Finding {
+            file: "workflow.yml".to_string(),
+            line: 5,
+            action_ref: make_action_ref("internal", "action", "main"),
+            status: FindingStatus::Ignored,
+        };
+
+        assert_eq!(finding.file, "workflow.yml");
+        assert_eq!(finding.line, 5);
+        assert!(matches!(finding.status, FindingStatus::Ignored));
+    }
+
+    #[test]
+    fn test_determine_exit_code_ignored() {
+        // Ignored actions should not affect exit code (like UpToDate)
+        let findings = vec![Finding {
+            file: "test.yml".to_string(),
+            line: 1,
+            action_ref: make_action_ref("internal", "action", "main"),
+            status: FindingStatus::Ignored,
+        }];
+
+        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, true), 0);
     }
 
     #[test]

@@ -22,7 +22,8 @@ use crate::output::{Finding, FindingStatus, determine_exit_code, print_findings,
 /// When `versions` is provided, computes the exact version for major-only suggestions.
 fn to_finding_status(status: CheckStatus, versions: Option<&VersionSet>) -> FindingStatus {
     match status {
-        CheckStatus::UpToDate | CheckStatus::Ignored => FindingStatus::UpToDate,
+        CheckStatus::UpToDate => FindingStatus::UpToDate,
+        CheckStatus::Ignored => FindingStatus::Ignored,
         CheckStatus::Outdated { current, target } => {
             // If target is major-only (v6) but we have a full version (v6.0.2), include it
             // Must use latest_per_major to get the correct major's latest, not global latest
@@ -173,8 +174,10 @@ pub async fn run(
         ));
     }
 
-    // Sort by file path then line number for stable, readable output
-    // (immediate findings like SHA-pinned may be interleaved with batched results)
+    // Sort by file path then line number for stable, readable output.
+    // Only no-provider cases produce immediate findings (see early-return handling above);
+    // SHA→Pinned determination is performed later in `core_check_action` during Phase 3.
+    // Sorting after all batching is complete ensures deterministic output order.
     findings.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.line.cmp(&b.line)));
 
     print_findings(&findings, format);

@@ -20,6 +20,7 @@ console               = { workspace = true }  # Terminal utilities
 dirs                  = { workspace = true }  # Directory paths
 futures               = { workspace = true }  # Async utilities
 indicatif             = { workspace = true }  # Progress bars
+itertools             = { workspace = true }  # Iterator utilities
 owo-colors            = { workspace = true }  # Terminal colors
 sanitize-filename     = { workspace = true }  # Safe filenames
 schemars              = { workspace = true }  # JSON schema
