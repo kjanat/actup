@@ -9,7 +9,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::cli::{CacheAction, OutputFormat};
-use crate::file_cache::FileCache;
+use crate::file_cache::{FileCache, default_cache_dir};
 
 /// Cache info for JSON output
 #[derive(Serialize)]
@@ -167,11 +167,6 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
 /// Get cache directory from config or default
 fn get_cache_dir(config: &Config) -> PathBuf {
     config.cache.path.clone().unwrap_or_else(default_cache_dir)
-}
-
-/// Get default cache directory
-fn default_cache_dir() -> PathBuf {
-    dirs::cache_dir().map_or_else(|| PathBuf::from(".actup-cache"), |p| p.join("actup"))
 }
 
 /// Get cache statistics (entry count, total size)

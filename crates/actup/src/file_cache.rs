@@ -85,7 +85,8 @@ impl FileCache {
 /// - Linux: `~/.cache/actup/`
 /// - macOS: `~/Library/Caches/actup/`
 /// - Windows: `%LOCALAPPDATA%\actup\cache\`
-fn default_cache_dir() -> PathBuf {
+#[must_use]
+pub fn default_cache_dir() -> PathBuf {
     dirs::cache_dir().map_or_else(
         || {
             // Fallback to current directory if no cache dir available
