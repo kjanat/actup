@@ -20,7 +20,9 @@ jobs:
       fail-fast: false
       matrix:
         cross: [false]
-        archive: [tar.gz]
+        archive: [.tar.gz]
+        package: [actup]
+        ext: [""]
         include:
           # Linux
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
@@ -28,19 +30,18 @@ jobs:
           - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu, cross: true }
           - { os: ubuntu-latest, target: aarch64-unknown-linux-musl, cross: true }
           # macOS
-          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: macos-15-intel, target: x86_64-apple-darwin }
           - { os: macos-latest, target: aarch64-apple-darwin }
           # Windows
-          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: zip }
-          - { os: windows-latest, target: aarch64-pc-windows-msvc, archive: zip }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc, archive: .zip, ext: .exe }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, archive: .zip, ext: .exe }
 
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
+        with: { targets: "${{ matrix.target }}" }
 
       - name: Install musl tools
         if: contains(matrix.target, 'musl')
@@ -52,42 +53,38 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target ${{ matrix.target }} -p actup-cli
+        run: cross build --release --target "${{ matrix.target }}" -p "${{ matrix.package }}"
 
       - name: Build (native)
         if: "!matrix.cross"
-        run: cargo build --release --target ${{ matrix.target }} -p actup-cli
+        run: cargo build --release --target "${{ matrix.target }}" -p "${{ matrix.package }}"
 
-      - name: Package (Unix)
-        if: matrix.os != 'windows-latest'
+      - name: Package
+        shell: bash
         env:
           REF_NAME: ${{ github.ref_name }}
           TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+          PACKAGE: ${{ matrix.package }}
+          EXT: ${{ matrix.ext }}
         run: |
           mkdir -p dist
-          cp "target/${TARGET}/release/actup" dist/
+          cp "target/${TARGET}/release/${PACKAGE}${EXT}" dist/
           cp README.md LICENSE dist/
-          cd dist
-          tar -czvf "../actup-${REF_NAME}-${TARGET}.tar.gz" ./*
-
-      - name: Package (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        env:
-          REF_NAME: ${{ github.ref_name }}
-          TARGET: ${{ matrix.target }}
-        run: |
-          New-Item -ItemType Directory -Force -Path dist
-          Copy-Item "target/${env:TARGET}/release/actup.exe" -Destination dist/
-          Copy-Item README.md, LICENSE -Destination dist/
-          Compress-Archive -Path dist/* -DestinationPath "actup-${env:REF_NAME}-${env:TARGET}.zip"
+          if [[ "${ARCHIVE}" == ".zip" ]]; then
+            cd dist && 7z a "../${PACKAGE}-${REF_NAME}-${TARGET}${ARCHIVE}" ./*
+          else
+            tar -czvf "${PACKAGE}-${REF_NAME}-${TARGET}${ARCHIVE}" -C dist .
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v6
         with:
-          name: actup-${{ matrix.target }}
-          path: actup-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+          name: ${{ matrix.package }}-${{ matrix.target }}
+          path: ${{ matrix.package }}-${{ github.ref_name }}-${{ matrix.target }}${{ matrix.archive }}
           if-no-files-found: error
+          retention-days: 1
+          compression-level: 9
 
   checksums:
     name: Generate checksums
@@ -113,10 +110,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [
-      build,
-      checksums,
-    ]
+    needs: [build, checksums]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
