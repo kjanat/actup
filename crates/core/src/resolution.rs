@@ -46,7 +46,7 @@ pub enum CheckStatus {
 /// Check if current version is up-to-date with target.
 ///
 /// Handles major-only refs like "v4" matching any v4.x.x.
-fn is_version_current(current: &Version, target: Option<&VersionInfo>, ref_str: &str) -> bool {
+fn is_version_current(current: &Version, target: Option<&VersionInfo>) -> bool {
     match (current, target) {
         // For major-only refs (v4), compare major versions
         (
@@ -58,8 +58,8 @@ fn is_version_current(current: &Version, target: Option<&VersionInfo>, ref_str: 
             },
             Some(t),
         ) => t.version.major() == Some(*major),
-        // For full semver, exact match
-        (_, Some(t)) => t.version.to_string() == ref_str,
+        // For full semver, compare Version values directly
+        (_, Some(t)) => t.version == *current,
         (_, None) => false,
     }
 }
@@ -134,7 +134,7 @@ pub fn check_action(action_ref: &ActionRef, versions: &VersionSet, config: &Conf
     );
 
     // Check if current is up-to-date (handles v4 == v4.1.7 via major comparison)
-    if is_version_current(&current, target.as_ref(), &action_ref.ref_str) {
+    if is_version_current(&current, target.as_ref()) {
         return CheckResult {
             action_ref: action_ref.clone(),
             status: CheckStatus::UpToDate,
@@ -165,7 +165,6 @@ fn status_for_non_semver(
     // TODO: Use `current` to provide smarter suggestions for non-semver refs,
     // e.g., comparing branch head commits or suggesting SHA pinning based on
     // the specific ref type (branch vs non-standard tag).
-    let _ = current; // Silence unused warning until TODO is implemented
     match branch_policy {
         BranchPolicy::Ignore => CheckStatus::UpToDate,
         BranchPolicy::Warn => CheckStatus::Unresolvable {
@@ -178,7 +177,7 @@ fn status_for_non_semver(
                     reason: "non-semver ref should be pinned to SHA".into(),
                 },
                 |latest| CheckStatus::Outdated {
-                    current: "non-semver".into(),
+                    current: current.to_string(),
                     target: latest.clone(),
                 },
             )
