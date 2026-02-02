@@ -48,8 +48,10 @@ jobs:
         run: cargo nextest run --workspace --all-features --profile ci
       - name: Run tests (no default features)
         run: cargo nextest run --workspace --no-default-features --profile ci
+      - name: Run doctests
+        run: cargo test --doc --workspace --all-features
       - name: Upload test results to Codecov
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && secrets.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
         with:
           files: target/nextest/ci/junit.xml
@@ -95,7 +97,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
-      - uses: codecov/codecov-action@v5
+      - name: Upload coverage to Codecov
+        if: ${{ secrets.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v5
         with:
           files: lcov.info
           fail_ci_if_error: false
