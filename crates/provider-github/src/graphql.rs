@@ -178,24 +178,27 @@ impl GraphQLClient {
     /// Parse rate limit retry duration from response headers
     ///
     /// Checks `Retry-After` (seconds) and `X-RateLimit-Reset` (Unix timestamp).
+    /// Falls through to the next header if parsing fails.
     fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
         // Try Retry-After header first (seconds until retry)
-        if let Some(retry_after) = headers.get("retry-after")
-            && let Ok(secs) = retry_after.to_str().ok()?.parse::<u64>()
+        if let Some(secs) = headers
+            .get("retry-after")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
         {
             return Some(Duration::from_secs(secs));
         }
 
         // Try X-RateLimit-Reset header (Unix timestamp)
-        if let Some(reset) = headers.get("x-ratelimit-reset")
-            && let Ok(timestamp) = reset.to_str().ok()?.parse::<u64>()
+        if let Some(timestamp) = headers
+            .get("x-ratelimit-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            && let Ok(now) = SystemTime::now().duration_since(std::time::UNIX_EPOCH)
         {
-            let now = SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .ok()?
-                .as_secs();
-            if timestamp > now {
-                return Some(Duration::from_secs(timestamp - now));
+            let now_secs = now.as_secs();
+            if timestamp > now_secs {
+                return Some(Duration::from_secs(timestamp - now_secs));
             }
         }
 
