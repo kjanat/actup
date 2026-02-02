@@ -16,8 +16,8 @@ clap                  = { workspace = true }
 console               = { workspace = true }
 dirs                  = { workspace = true }
 futures               = { workspace = true }
-itertools             = { workspace = true }
 indicatif             = { workspace = true }
+itertools             = { workspace = true }
 owo-colors            = { workspace = true }
 sanitize-filename     = { workspace = true }
 schemars              = { workspace = true }

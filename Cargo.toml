@@ -19,10 +19,10 @@ directories        = "6"                                             # paths
 dirs               = "6"                                             # paths
 futures            = "0.3"                                           # async
 glob               = "0.3"                                           # patterns
-itertools          = "0.14"                                          # iterators
 human-panic        = "2"                                             # panics
 indicatif          = "0.18"                                          # progress
 insta              = { version = "1.42", features = ["yaml"] }       # snapshots
+itertools          = "0.14"                                          # iterators
 json_comments      = "0.2"                                           # jsonc
 miette             = { version = "7.6", features = ["fancy"] }       # errors
 node-semver        = "2"                                             # semver
