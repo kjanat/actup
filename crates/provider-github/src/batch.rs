@@ -9,8 +9,8 @@ use crate::graphql::GraphQLClient;
 use actup_core::cache::{Cache, CacheEntry, CacheError};
 use actup_core::version::VersionSet;
 use actup_core::{ActionRepoId, Provider};
-use futures::future::join_all;
-use std::collections::HashMap;
+use futures::StreamExt;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -75,8 +75,11 @@ impl<C: Cache> BatchFetcher<C> {
         let mut results = HashMap::new();
         let mut uncached = Vec::new();
 
-        // 1. Check cache for each repo
-        for repo in repos {
+        // Deduplicate input repos to avoid repeated cache reads and duplicate fetches
+        let unique_repos: HashSet<_> = repos.iter().cloned().collect();
+
+        // 1. Check cache for each unique repo
+        for repo in &unique_repos {
             let cache_key = repo.cache_key("github", self.provider.host());
 
             match self.cache.get(&cache_key).await {
@@ -154,27 +157,26 @@ impl<C: Cache> BatchFetcher<C> {
         }
     }
 
-    /// Fetch using parallel REST requests
+    /// Fetch using parallel REST requests with bounded concurrency
     async fn fetch_parallel_rest(
         &self,
         repos: &[ActionRepoId],
     ) -> HashMap<ActionRepoId, VersionSet> {
         use actup_core::Provider;
 
+        /// Maximum concurrent REST requests to avoid overwhelming the API
+        const CONCURRENCY_LIMIT: usize = 50;
+
         debug!(count = repos.len(), "using parallel REST fetch");
 
-        let futures: Vec<_> = repos
-            .iter()
-            .map(|repo| {
-                let repo = repo.clone();
-                async move {
-                    let result = self.provider.get_versions(&repo).await;
-                    (repo, result)
-                }
+        let results: Vec<_> = futures::stream::iter(repos.iter().cloned())
+            .map(|repo| async move {
+                let result = self.provider.get_versions(&repo).await;
+                (repo, result)
             })
-            .collect();
-
-        let results = join_all(futures).await;
+            .buffer_unordered(CONCURRENCY_LIMIT)
+            .collect()
+            .await;
 
         let mut map = HashMap::new();
         for (repo, result) in results {

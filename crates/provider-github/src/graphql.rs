@@ -33,13 +33,16 @@ impl GraphQLClient {
         Self::with_endpoint(GITHUB_GRAPHQL_URL, token)
     }
 
+    /// User-Agent header value derived from crate version at compile time
+    const USER_AGENT_VALUE: &'static str = concat!("actup/", env!("CARGO_PKG_VERSION"));
+
     /// Create a GraphQL client for a custom endpoint (GitHub Enterprise)
     ///
     /// # Errors
     /// Returns error if HTTP client cannot be created or token is invalid.
     pub fn with_endpoint(endpoint: &str, token: &str) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("actup/0.1"));
+        headers.insert(USER_AGENT, HeaderValue::from_static(Self::USER_AGENT_VALUE));
 
         let auth_value = format!("Bearer {token}");
         headers.insert(
@@ -87,17 +90,22 @@ impl GraphQLClient {
 
         debug!(count = repos.len(), "fetching versions via GraphQL batch");
 
-        let query = Self::build_query(repos, max_tags);
+        let (query, valid_repos) = Self::build_query(repos, max_tags);
         let response = self.execute_query(&query).await?;
 
-        Ok(Self::parse_response(repos, &response))
+        Ok(Self::parse_response(&valid_repos, &response))
     }
 
     /// Build GraphQL query for multiple repositories
-    fn build_query(repos: &[ActionRepoId], max_tags: u8) -> String {
+    ///
+    /// Returns the query string and the list of valid repos (filtered for injection safety).
+    /// The `valid_repos` list has contiguous indices matching the alias numbering (repo0, repo1, ...).
+    fn build_query(repos: &[ActionRepoId], max_tags: u8) -> (String, Vec<ActionRepoId>) {
         use std::fmt::Write;
         let mut query = String::from("query {\n");
-        for (i, repo) in repos.iter().enumerate() {
+        let mut valid_repos = Vec::new();
+
+        for repo in repos {
             // Validate owner/repo to prevent GraphQL injection
             // GitHub names: alphanumeric, hyphen, underscore, dot (no quotes/backslashes)
             if !Self::is_valid_github_name(&repo.owner) || !Self::is_valid_github_name(&repo.repo) {
@@ -108,6 +116,10 @@ impl GraphQLClient {
                 );
                 continue;
             }
+
+            // Use contiguous alias index based on valid repos count
+            let i = valid_repos.len();
+            valid_repos.push(repo.clone());
 
             // Use alias like repo0, repo1, etc.
             let _ = write!(
@@ -142,7 +154,7 @@ impl GraphQLClient {
         }
 
         query.push('}');
-        query
+        (query, valid_repos)
     }
 
     /// Validate GitHub owner/repo name (alphanumeric, hyphen, underscore, dot)
@@ -151,6 +163,33 @@ impl GraphQLClient {
             && name
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    }
+
+    /// Parse rate limit retry duration from response headers
+    ///
+    /// Checks `Retry-After` (seconds) and `X-RateLimit-Reset` (Unix timestamp).
+    fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+        // Try Retry-After header first (seconds until retry)
+        if let Some(retry_after) = headers.get("retry-after")
+            && let Ok(secs) = retry_after.to_str().ok()?.parse::<u64>()
+        {
+            return Some(Duration::from_secs(secs));
+        }
+
+        // Try X-RateLimit-Reset header (Unix timestamp)
+        if let Some(reset) = headers.get("x-ratelimit-reset")
+            && let Ok(timestamp) = reset.to_str().ok()?.parse::<u64>()
+        {
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            if timestamp > now {
+                return Some(Duration::from_secs(timestamp - now));
+            }
+        }
+
+        None
     }
 
     /// Execute GraphQL query
@@ -177,12 +216,40 @@ impl GraphQLClient {
             });
         }
 
-        if status == reqwest::StatusCode::FORBIDDEN
-            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
-        {
+        // Handle 429 Too Many Requests - always rate limited
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            let retry_after = Self::parse_retry_after(response.headers());
             return Err(Error::RateLimited {
                 provider: "github".to_string(),
-                retry_after: None,
+                retry_after,
+            });
+        }
+
+        // Handle 403 Forbidden - check headers to distinguish rate limit from permission denied
+        if status == reqwest::StatusCode::FORBIDDEN {
+            let headers = response.headers();
+            let has_rate_limit_headers = headers.contains_key("retry-after")
+                || headers.contains_key("x-ratelimit-reset")
+                || headers.contains_key("x-ratelimit-remaining");
+
+            if has_rate_limit_headers {
+                let retry_after = Self::parse_retry_after(headers);
+                return Err(Error::RateLimited {
+                    provider: "github".to_string(),
+                    retry_after,
+                });
+            }
+
+            // No rate limit headers - this is a permission/scope issue
+            let body = response.text().await.unwrap_or_default();
+            let reason = if body.is_empty() {
+                "insufficient permissions or token scope".to_string()
+            } else {
+                format!("insufficient permissions: {body}")
+            };
+            return Err(Error::Forbidden {
+                provider: "github".to_string(),
+                reason,
             });
         }
 
@@ -406,12 +473,14 @@ mod tests {
             subpath: None,
         }];
 
-        let query = GraphQLClient::build_query(&repos, 10);
+        let (query, valid_repos) = GraphQLClient::build_query(&repos, 10);
 
         assert!(query.contains("repo0: repository"));
         assert!(query.contains(r#"owner: "actions""#));
         assert!(query.contains(r#"name: "checkout""#));
         assert!(query.contains("first: 10"));
+        assert_eq!(valid_repos.len(), 1);
+        assert_eq!(valid_repos[0].owner, "actions");
     }
 
     #[test]
@@ -431,12 +500,13 @@ mod tests {
             },
         ];
 
-        let query = GraphQLClient::build_query(&repos, 5);
+        let (query, valid_repos) = GraphQLClient::build_query(&repos, 5);
 
         assert!(query.contains("repo0:"));
         assert!(query.contains("repo1:"));
         assert!(query.contains(r#"owner: "actions""#));
         assert!(query.contains(r#"owner: "dtolnay""#));
+        assert_eq!(valid_repos.len(), 2);
     }
 
     #[test]
@@ -479,6 +549,7 @@ mod tests {
 
     #[test]
     fn test_build_query_skips_invalid_repos() {
+        // Test with invalid repo in the middle to verify contiguous alias indexing
         let repos = vec![
             ActionRepoId {
                 host: None,
@@ -492,12 +563,40 @@ mod tests {
                 repo: "repo".to_string(),
                 subpath: None,
             },
+            ActionRepoId {
+                host: None,
+                owner: "another-valid".to_string(),
+                repo: "repo2".to_string(),
+                subpath: None,
+            },
         ];
 
-        let query = GraphQLClient::build_query(&repos, 10);
-        // Should include valid repo
-        assert!(query.contains(r#"owner: "valid""#));
-        // Should NOT include invalid repo
-        assert!(!query.contains("invalid"));
+        let (query, valid_repos) = GraphQLClient::build_query(&repos, 10);
+
+        // Valid repos included with contiguous alias numbering (0, 1 - not 0, 2)
+        assert!(
+            query.contains(r#"repo0: repository(owner: "valid", name: "repo")"#),
+            "first valid repo should have alias repo0"
+        );
+        assert!(
+            query.contains(r#"repo1: repository(owner: "another-valid", name: "repo2")"#),
+            "second valid repo should have alias repo1 (contiguous)"
+        );
+
+        // Invalid repo excluded - no "repo2:" alias (would exist if using original indices)
+        assert!(
+            !query.contains("repo2:"),
+            "alias numbering should be contiguous, no repo2:"
+        );
+        // No reference to the invalid owner
+        assert!(
+            !query.contains("invalid"),
+            "invalid owner should not appear in query"
+        );
+
+        // valid_repos should only contain the two valid repos
+        assert_eq!(valid_repos.len(), 2);
+        assert_eq!(valid_repos[0].owner, "valid");
+        assert_eq!(valid_repos[1].owner, "another-valid");
     }
 }
