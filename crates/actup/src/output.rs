@@ -21,6 +21,8 @@ pub enum FindingStatus {
     Outdated {
         current: String,
         latest: VersionInfo,
+        /// Full version when latest is a major-only tag (e.g., v6 with exact v6.0.2)
+        exact_version: Option<String>,
     },
     Pinned {
         sha: String,
@@ -70,13 +72,24 @@ fn print_human(findings: &[Finding]) {
                     "up to date".green()
                 );
             }
-            FindingStatus::Outdated { current, latest } => {
+            FindingStatus::Outdated {
+                current,
+                latest,
+                exact_version,
+            } => {
+                let version_str = latest.version.to_string();
+                let suffix = exact_version
+                    .as_ref()
+                    .filter(|ev| *ev != &version_str)
+                    .map(|ev| format!(" ({ev})"))
+                    .unwrap_or_default();
                 println!(
-                    "{}{}  {} -> {}",
+                    "{}{}  {} -> {}{}",
                     line_prefix.dimmed(),
                     action_str.yellow(),
                     current.red(),
-                    latest.version.to_string().green()
+                    version_str.green(),
+                    suffix.dimmed()
                 );
             }
             FindingStatus::Pinned { sha, tag } => {
@@ -139,7 +152,9 @@ fn print_json(findings: &[Finding]) {
         .map(|f| {
             let (status, current_version, latest_version, latest_sha, reason) = match &f.status {
                 FindingStatus::UpToDate => ("up_to_date".into(), None, None, None, None),
-                FindingStatus::Outdated { current, latest } => (
+                FindingStatus::Outdated {
+                    current, latest, ..
+                } => (
                     "outdated".into(),
                     Some(current.clone()),
                     Some(latest.version.to_string()),
@@ -212,13 +227,8 @@ pub fn print_summary(findings: &[Finding]) {
     println!(
         "{}",
         format!(
-            "Scanned {} action{}: {} up to date, {} outdated, {} pinned, {} unresolvable",
-            total,
-            if total == 1 { "" } else { "s" },
-            up_to_date,
-            outdated,
-            pinned,
-            unresolvable
+            "Scanned {total} action{}: {up_to_date} up to date, {outdated} outdated, {pinned} pinned, {unresolvable} unresolvable",
+            if total == 1 { "" } else { "s" }
         )
         .bold()
     );
@@ -302,6 +312,7 @@ mod tests {
             status: FindingStatus::Outdated {
                 current: "v3".to_string(),
                 latest: make_version_info("v4.0.0", "abc123"),
+                exact_version: None,
             },
         }];
 
@@ -317,6 +328,7 @@ mod tests {
             status: FindingStatus::Outdated {
                 current: "v3".to_string(),
                 latest: make_version_info("v4.0.0", "abc123"),
+                exact_version: None,
             },
         }];
 
@@ -366,6 +378,7 @@ mod tests {
                 status: FindingStatus::Outdated {
                     current: "v3".to_string(),
                     latest: make_version_info("v4.0.0", "abc123"),
+                    exact_version: None,
                 },
             },
             Finding {
@@ -402,6 +415,7 @@ mod tests {
                 status: FindingStatus::Outdated {
                     current: "v3".to_string(),
                     latest: make_version_info("v4.0.0", "abc123"),
+                    exact_version: None,
                 },
             },
             Finding {
@@ -468,11 +482,14 @@ mod tests {
             status: FindingStatus::Outdated {
                 current: "v3".to_string(),
                 latest: make_version_info("v4.0.0", "abc123"),
+                exact_version: None,
             },
         };
 
         match &finding.status {
-            FindingStatus::Outdated { current, latest } => {
+            FindingStatus::Outdated {
+                current, latest, ..
+            } => {
                 assert_eq!(current, "v3");
                 assert_eq!(latest.version.to_string(), "v4.0.0");
                 assert_eq!(latest.sha, "abc123");
