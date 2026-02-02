@@ -46,6 +46,7 @@ impl FileCache {
 
     /// Create a disabled cache (no-op)
     #[must_use]
+    #[allow(dead_code)] // Part of public API for future use
     pub const fn disabled() -> Self {
         Self {
             cache_dir: PathBuf::new(),
@@ -62,15 +63,17 @@ impl FileCache {
 
     /// Convert a cache key to a file path
     fn key_to_path(&self, key: &str) -> PathBuf {
-        // Sanitize key for filesystem: replace invalid chars
-        let safe_key = key.replace("::", "_").replace(['/', '\\'], "_");
+        // Sanitize key for filesystem using sanitize-filename crate
+        // This handles all OS-specific invalid characters (including Windows: : * ? " < > |)
+        let safe_key = sanitize_filename::sanitize(key);
         self.cache_dir.join(format!("{safe_key}.json"))
     }
 
     /// Ensure cache directory exists
-    fn ensure_dir(&self) -> CacheResult<()> {
+    async fn ensure_dir(&self) -> CacheResult<()> {
         if !self.cache_dir.exists() {
-            std::fs::create_dir_all(&self.cache_dir)
+            tokio::fs::create_dir_all(&self.cache_dir)
+                .await
                 .map_err(|e| CacheError::Io(format!("failed to create cache dir: {e}")))?;
         }
         Ok(())
@@ -78,13 +81,23 @@ impl FileCache {
 }
 
 /// Get the default cache directory for the current OS
+///
+/// - Linux: `~/.cache/actup/`
+/// - macOS: `~/Library/Caches/actup/`
+/// - Windows: `%LOCALAPPDATA%\actup\cache\`
 fn default_cache_dir() -> PathBuf {
     dirs::cache_dir().map_or_else(
         || {
             // Fallback to current directory if no cache dir available
             PathBuf::from(".actup-cache")
         },
-        |p| p.join("actup"),
+        |p| {
+            let base = p.join("actup");
+            // Windows uses an extra "cache" subdirectory per convention
+            #[cfg(windows)]
+            let base = base.join("cache");
+            base
+        },
     )
 }
 
@@ -135,7 +148,7 @@ impl Cache for FileCache {
                 return Ok(()); // Silently ignore writes when disabled
             }
 
-            self.ensure_dir()?;
+            self.ensure_dir().await?;
 
             let path = self.key_to_path(&key);
             let content = serde_json::to_string_pretty(&entry)

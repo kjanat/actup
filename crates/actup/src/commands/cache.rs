@@ -14,7 +14,7 @@ use crate::file_cache::FileCache;
 /// Cache info for JSON output
 #[derive(Serialize)]
 struct CacheInfo {
-    path: PathBuf,
+    path: String,
     enabled: bool,
     ttl_secs: u64,
     entry_count: usize,
@@ -33,7 +33,13 @@ pub async fn run(action: &CacheAction, format: OutputFormat, config: &Config) ->
 /// Show cache info
 fn info(format: OutputFormat, config: &Config) -> i32 {
     let cache_dir = get_cache_dir(config);
-    let (entry_count, total_size) = get_cache_stats(&cache_dir);
+    let (entry_count, total_size) = match get_cache_stats(&cache_dir) {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("{}: {}", "Error reading cache directory".red(), e);
+            return 3; // Environment error
+        }
+    };
 
     match format {
         OutputFormat::Human => {
@@ -59,16 +65,19 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
         }
         OutputFormat::Json => {
             let info = CacheInfo {
-                path: cache_dir,
+                path: cache_dir.to_string_lossy().into_owned(),
                 enabled: config.cache.enabled,
                 ttl_secs: config.cache.ttl.as_secs(),
                 entry_count,
                 total_size_bytes: total_size,
             };
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&info).unwrap_or_default()
-            );
+            match serde_json::to_string_pretty(&info) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing JSON".red(), e);
+                    return 3; // Environment error
+                }
+            }
         }
     }
 
@@ -91,7 +100,13 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
     };
 
     let cache_dir = cache.cache_dir().clone();
-    let (entry_count, _) = get_cache_stats(&cache_dir);
+    let (entry_count, _) = match get_cache_stats(&cache_dir) {
+        Ok(stats) => stats,
+        Err(e) => {
+            eprintln!("{}: {}", "Error reading cache directory".red(), e);
+            return 3; // Environment error
+        }
+    };
 
     if entry_count == 0 {
         match format {
@@ -136,7 +151,13 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
             let output = PathOutput {
                 path: cache_dir.to_string_lossy().into_owned(),
             };
-            println!("{}", serde_json::to_string(&output).unwrap_or_default());
+            match serde_json::to_string(&output) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing JSON".red(), e);
+                    return 3; // Environment error
+                }
+            }
         }
     }
 
@@ -154,27 +175,28 @@ fn default_cache_dir() -> PathBuf {
 }
 
 /// Get cache statistics (entry count, total size)
-fn get_cache_stats(cache_dir: &PathBuf) -> (usize, u64) {
+///
+/// Returns an error if the cache directory exists but cannot be read.
+fn get_cache_stats(cache_dir: &PathBuf) -> std::io::Result<(usize, u64)> {
     if !cache_dir.exists() {
-        return (0, 0);
+        return Ok((0, 0));
     }
 
     let mut count = 0;
     let mut size = 0u64;
 
-    if let Ok(entries) = std::fs::read_dir(cache_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().is_some_and(|ext| ext == "json") {
-                count += 1;
-                if let Ok(meta) = entry.metadata() {
-                    size += meta.len();
-                }
+    for entry in std::fs::read_dir(cache_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            count += 1;
+            if let Ok(meta) = entry.metadata() {
+                size += meta.len();
             }
         }
     }
 
-    (count, size)
+    Ok((count, size))
 }
 
 /// Format duration for human display

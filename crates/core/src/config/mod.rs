@@ -543,5 +543,7 @@ mod tests {
         // Default is empty strings per AGENTS.md - CLI layer sets actual defaults
         assert!(providers.default_host.is_empty());
         assert!(providers.instances.is_empty());
+        assert_eq!(providers.api_mode, ApiMode::Graphql);
+        assert_eq!(providers.max_tags_per_repo, DEFAULT_MAX_TAGS_PER_REPO);
     }
 }
