@@ -47,16 +47,27 @@ impl<P: Provider> CachingProvider<P> {
     }
 
     /// Clear all cached data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any cache lock is poisoned (indicates a prior panic while holding the lock).
+    #[allow(
+        clippy::expect_used,
+        reason = "poison = unrecoverable; panic is intentional"
+    )]
     pub fn clear_cache(&self) {
-        if let Ok(mut guard) = self.version_cache.write() {
-            guard.clear();
-        }
-        if let Ok(mut guard) = self.sha_cache.write() {
-            guard.clear();
-        }
-        if let Ok(mut guard) = self.branch_cache.write() {
-            guard.clear();
-        }
+        self.version_cache
+            .write()
+            .expect("version_cache lock poisoned")
+            .clear();
+        self.sha_cache
+            .write()
+            .expect("sha_cache lock poisoned")
+            .clear();
+        self.branch_cache
+            .write()
+            .expect("branch_cache lock poisoned")
+            .clear();
     }
 
     /// Get cache statistics for debugging.
@@ -111,8 +122,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
             // Cache miss - fetch from provider (no lock held during network call)
             let versions = self.inner.get_versions(&repo).await?;
 
-            // Store in cache
+            // Store in cache (double-check to handle TOCTOU race)
             if let Ok(mut guard) = self.version_cache.write() {
+                if let Some(existing) = guard.get(&repo) {
+                    return Ok(existing.clone());
+                }
                 guard.insert(repo, versions.clone());
             }
 
@@ -141,8 +155,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
             // Cache miss - fetch from provider
             let sha = self.inner.resolve_ref_to_sha(&repo, &ref_name).await?;
 
-            // Store in cache
+            // Store in cache (double-check to handle TOCTOU race)
             if let Ok(mut guard) = self.sha_cache.write() {
+                if let Some(existing) = guard.get(&cache_key) {
+                    return Ok(existing.clone());
+                }
                 guard.insert(cache_key, sha.clone());
             }
 
@@ -167,8 +184,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
             // Cache miss - fetch from provider
             let branch = self.inner.get_default_branch(&repo).await?;
 
-            // Store in cache
+            // Store in cache (double-check to handle TOCTOU race)
             if let Ok(mut guard) = self.branch_cache.write() {
+                if let Some(existing) = guard.get(&repo) {
+                    return Ok(existing.clone());
+                }
                 guard.insert(repo, branch.clone());
             }
 
