@@ -4,12 +4,13 @@
 //! implementation is left to the caller (file-based, in-memory, etc.).
 
 use crate::{ActionRepoId, VersionSet};
+use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
 /// A cached entry with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry {
     /// The cached version set
     pub versions: VersionSet,

@@ -2,30 +2,14 @@
 
 use std::path::Path;
 
-use actup_core::{ActionRef, Config, ProviderRegistry, UsesLocation, Version, VersionInfo};
+use actup_core::{
+    ActionRef, CheckStatus, Config, ProviderRegistry, UsesLocation,
+    check_action as core_check_action,
+};
 use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
 use crate::common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner};
-
-/// Check if an update is needed and return the new ref if so.
-fn needs_update(action_ref: &ActionRef, latest: &VersionInfo) -> Option<String> {
-    let current = Version::parse(&action_ref.ref_str);
-
-    let dominated = match &current {
-        // For major-only refs (v4), compare major versions
-        Version::Semver {
-            major,
-            minor: None,
-            patch: None,
-            ..
-        } => latest.version.major() != Some(*major),
-        // For full semver, exact match
-        _ => latest.version.to_string() != action_ref.ref_str,
-    };
-
-    dominated.then(|| latest.version.to_string())
-}
 
 /// Create an edit for updating an action ref.
 fn create_edit(loc: &UsesLocation, action_ref: &ActionRef, new_ref: &str) -> PendingEdit {
@@ -97,18 +81,13 @@ pub async fn run(
                 }
             };
 
-            let policy = config.policy_for(&action_ref.owner, &action_ref.repo);
-            let current = Version::parse(&action_ref.ref_str);
-
-            let Some(latest) =
-                versions.find_latest_for(&current, policy.allows_major(), config.allow_prerelease)
-            else {
-                continue;
+            // Use core check_action to determine if update needed
+            let result = core_check_action(&action_ref, &versions, config);
+            let CheckStatus::Outdated { target, .. } = result.status else {
+                continue; // Not outdated, skip
             };
 
-            let Some(new_ref) = needs_update(&action_ref, latest) else {
-                continue;
-            };
+            let new_ref = target.version.to_string();
 
             let edit = create_edit(&loc, &action_ref, &new_ref);
 
@@ -166,48 +145,7 @@ mod tests {
         }
     }
 
-    fn make_version_info(ver: &str, sha: &str) -> VersionInfo {
-        VersionInfo {
-            version: Version::parse(ver),
-            sha: sha.to_string(),
-        }
-    }
-
-    // needs_update tests
-
-    #[test]
-    fn test_needs_update_same_version() {
-        let action_ref = make_action_ref("actions", "checkout", "v4.2.0");
-        let latest = make_version_info("v4.2.0", "aaa");
-        assert!(needs_update(&action_ref, &latest).is_none());
-    }
-
-    #[test]
-    fn test_needs_update_outdated() {
-        let action_ref = make_action_ref("actions", "checkout", "v4.0.0");
-        let latest = make_version_info("v4.2.0", "aaa");
-        let result = needs_update(&action_ref, &latest);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), "v4.2.0");
-    }
-
-    #[test]
-    fn test_needs_update_major_only_same() {
-        let action_ref = make_action_ref("actions", "checkout", "v4");
-        let latest = make_version_info("v4.2.0", "aaa");
-        // v4 -> v4.x.x, major is same so no update needed
-        assert!(needs_update(&action_ref, &latest).is_none());
-    }
-
-    #[test]
-    fn test_needs_update_major_only_different() {
-        let action_ref = make_action_ref("actions", "checkout", "v3");
-        let latest = make_version_info("v4.0.0", "aaa");
-        // v3 -> v4.x.x, major differs so needs update
-        let result = needs_update(&action_ref, &latest);
-        assert!(result.is_some());
-        assert_eq!(result.unwrap(), "v4.0.0");
-    }
+    // Version resolution tests now live in actup-core::resolution module.
 
     // create_edit tests
 
