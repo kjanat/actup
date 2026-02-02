@@ -7,7 +7,7 @@ mod output;
 
 use std::process::ExitCode;
 
-use actup_core::{Config, ProviderRegistry};
+use actup_core::{CachingProvider, Config, ProviderRegistry};
 use actup_provider_github::GitHubProvider;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -92,10 +92,11 @@ fn build_registry(config: &Config) -> actup_core::Result<ProviderRegistry> {
     };
     registry.set_default_host(default_host);
 
-    // Add GitHub provider
+    // Add GitHub provider (wrapped with caching to deduplicate API requests)
     let github_token = std::env::var("GITHUB_TOKEN").ok();
     let github_provider = GitHubProvider::new(github_token.as_deref())?;
-    registry.register(Box::new(github_provider));
+    let cached_provider = CachingProvider::new(github_provider);
+    registry.register(Box::new(cached_provider));
 
     Ok(registry)
 }

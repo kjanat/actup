@@ -209,6 +209,7 @@ mod tests {
         VersionSet {
             semver_tags: tags,
             latest_per_major,
+            major_tags: HashMap::new(),
             latest,
             default_branch: None,
             fetched_at: None,
