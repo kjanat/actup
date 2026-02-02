@@ -113,20 +113,6 @@ pub async fn run(
         let relative = scanner.relative_path(file);
 
         for (loc, action_ref) in scanner.extract_actions(&content) {
-            // Already pinned to SHA - handle immediately
-            if action_ref.is_sha() {
-                findings.push(Finding {
-                    file: relative.clone(),
-                    line: loc.line,
-                    action_ref: action_ref.clone(),
-                    status: FindingStatus::Pinned {
-                        sha: action_ref.ref_str.clone(),
-                        tag: None,
-                    },
-                });
-                continue;
-            }
-
             // No provider for host - handle immediately
             if scanner.provider_for(&action_ref).is_none() {
                 findings.push(Finding {
