@@ -7,7 +7,7 @@ use crate::policy::BranchPolicy;
 use crate::{ActionRef, Config, Error, ProviderRegistry, Version, VersionInfo, VersionSet};
 
 /// Result of checking a single action reference
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckResult {
     /// The action reference that was checked
     pub action_ref: ActionRef,
@@ -16,7 +16,7 @@ pub struct CheckResult {
 }
 
 /// Status of an action version check
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckStatus {
     /// Action is at the latest allowed version
     UpToDate,
@@ -246,7 +246,10 @@ pub async fn check_action_remote(
         registry
             .find(action_ref.host.as_deref())
             .ok_or_else(|| Error::ProviderNotFound {
-                host: action_ref.host.clone().unwrap_or_default(),
+                host: action_ref
+                    .host
+                    .clone()
+                    .unwrap_or_else(|| "(default)".into()),
             })?;
 
     let versions = provider.get_versions(&action_ref.to_repo_id()).await?;
