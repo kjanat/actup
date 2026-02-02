@@ -128,8 +128,10 @@ impl Cache for FileCache {
             // Check TTL
             if entry.is_expired(self.ttl) {
                 debug!(key = %key, "cache entry expired");
-                // Remove expired entry
-                let _ = tokio::fs::remove_file(&path).await;
+                // Remove expired entry (best-effort, log failures)
+                if let Err(e) = tokio::fs::remove_file(&path).await {
+                    debug!(key = %key, path = %path.display(), error = %e, "failed to remove expired cache entry");
+                }
                 return Err(CacheError::NotFound);
             }
 
