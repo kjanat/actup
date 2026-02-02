@@ -3,6 +3,7 @@
 mod cli;
 mod commands;
 mod common;
+mod file_cache;
 mod output;
 
 use std::process::ExitCode;
@@ -44,8 +45,14 @@ async fn run(cli: Cli) -> i32 {
         | Command::Update { path, .. }
         | Command::Fix { path, .. }
         | Command::Pin { path, .. }
-        | Command::Config { path } => path.clone(),
-        Command::Schema => std::env::current_dir().unwrap_or_default(),
+        | Command::Config { path, .. } => path.clone(),
+        Command::Schema | Command::Cache { .. } => match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                eprintln!("Error reading current directory: {e}");
+                return CliExitCode::EnvironmentError.into();
+            }
+        },
     };
 
     let config = match Config::load(None, &start_dir) {
@@ -66,17 +73,29 @@ async fn run(cli: Cli) -> i32 {
     };
 
     match cli.command {
-        Command::Check { path, strict } => {
-            commands::check::run(&path, strict, cli.format, &config, &registry).await
+        Command::Check {
+            path,
+            strict,
+            format,
+        } => commands::check::run(&path, strict, format, &config, &registry).await,
+        Command::Update {
+            path,
+            dry_run,
+            format,
         }
-        Command::Update { path, dry_run } | Command::Fix { path, dry_run } => {
-            commands::update::run(&path, dry_run, cli.format, &config, &registry).await
-        }
-        Command::Pin { path, dry_run } => {
-            commands::pin::run(&path, dry_run, cli.format, &config, &registry).await
-        }
-        Command::Config { path } => commands::config::run(&path, cli.format, &config),
+        | Command::Fix {
+            path,
+            dry_run,
+            format,
+        } => commands::update::run(&path, dry_run, format, &config, &registry).await,
+        Command::Pin {
+            path,
+            dry_run,
+            format,
+        } => commands::pin::run(&path, dry_run, format, &config, &registry).await,
+        Command::Config { path, format } => commands::config::run(&path, format, &config),
         Command::Schema => commands::schema::run(),
+        Command::Cache { action, format } => commands::cache::run(&action, format, &config).await,
     }
 }
 

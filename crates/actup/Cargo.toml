@@ -14,8 +14,11 @@ actup-core            = { path = "../core" }
 actup-provider-github = { path = "../provider-github" }
 clap                  = { workspace = true }
 console               = { workspace = true }
+dirs                  = { workspace = true }
+futures               = { workspace = true }
 indicatif             = { workspace = true }
 owo-colors            = { workspace = true }
+sanitize-filename     = { workspace = true }
 schemars              = { workspace = true }
 serde                 = { workspace = true }
 serde_json            = { workspace = true }
