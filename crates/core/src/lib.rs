@@ -19,6 +19,7 @@ pub mod error;
 pub mod parser;
 pub mod policy;
 pub mod provider;
+pub mod resolution;
 pub mod version;
 
 // Re-export primary types at crate root
@@ -32,4 +33,5 @@ pub use error::{Error, Result};
 pub use parser::{UsesLocation, extract_uses_from_yaml, parse_uses};
 pub use policy::{BranchPolicy, RefStyle, UpdatePolicy};
 pub use provider::{Provider, ProviderKind, ProviderRegistry};
+pub use resolution::{CheckResult, CheckStatus, check_action, check_action_remote};
 pub use version::{BranchInfo, Version, VersionInfo, VersionSet};
