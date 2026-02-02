@@ -148,29 +148,5 @@ jobs:
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          set +e
-          failed=""
-
-          echo "Publishing actup-core..."
-          if ! cargo publish -p actup-core; then
-            failed="$failed actup-core"
-          fi
-          sleep 30
-
-          echo "Publishing actup-provider-github..."
-          if ! cargo publish -p actup-provider-github; then
-            failed="$failed actup-provider-github"
-          fi
-          sleep 30
-
-          echo "Publishing actup..."
-          if ! cargo publish -p actup; then
-            failed="$failed actup"
-          fi
-
-          if [ -n "$failed" ]; then
-            echo "::error::Failed to publish:$failed"
-            exit 1
-          fi
-          echo "All crates published successfully"
+        # Cargo 1.90+ handles dependency ordering and skips publish=false crates
+        run: cargo publish --workspace
