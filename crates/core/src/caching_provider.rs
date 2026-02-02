@@ -8,7 +8,7 @@ use crate::{ActionRepoId, Result, VersionSet};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::RwLock;
+use tokio::sync::RwLock;
 
 /// A provider wrapper that caches results to avoid duplicate API calls.
 ///
@@ -47,36 +47,18 @@ impl<P: Provider> CachingProvider<P> {
     }
 
     /// Clear all cached data.
-    ///
-    /// # Panics
-    ///
-    /// Panics if any cache lock is poisoned (indicates a prior panic while holding the lock).
-    #[allow(
-        clippy::expect_used,
-        reason = "poison = unrecoverable; panic is intentional"
-    )]
-    pub fn clear_cache(&self) {
-        self.version_cache
-            .write()
-            .expect("version_cache lock poisoned")
-            .clear();
-        self.sha_cache
-            .write()
-            .expect("sha_cache lock poisoned")
-            .clear();
-        self.branch_cache
-            .write()
-            .expect("branch_cache lock poisoned")
-            .clear();
+    pub async fn clear_cache(&self) {
+        self.version_cache.write().await.clear();
+        self.sha_cache.write().await.clear();
+        self.branch_cache.write().await.clear();
     }
 
     /// Get cache statistics for debugging.
-    #[must_use]
-    pub fn cache_stats(&self) -> CacheStats {
+    pub async fn cache_stats(&self) -> CacheStats {
         CacheStats {
-            versions: self.version_cache.read().map(|g| g.len()).unwrap_or(0),
-            shas: self.sha_cache.read().map(|g| g.len()).unwrap_or(0),
-            branches: self.branch_cache.read().map(|g| g.len()).unwrap_or(0),
+            versions: self.version_cache.read().await.len(),
+            shas: self.sha_cache.read().await.len(),
+            branches: self.branch_cache.read().await.len(),
         }
     }
 }
@@ -113,9 +95,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
 
         Box::pin(async move {
             // Check cache first (short-lived lock)
-            if let Ok(guard) = self.version_cache.read()
-                && let Some(cached) = guard.get(&repo)
-            {
+            if let Some(cached) = self.version_cache.read().await.get(&repo) {
                 return Ok(cached.clone());
             }
 
@@ -123,12 +103,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let versions = self.inner.get_versions(&repo).await?;
 
             // Store in cache (double-check to handle TOCTOU race)
-            if let Ok(mut guard) = self.version_cache.write() {
-                if let Some(existing) = guard.get(&repo) {
-                    return Ok(existing.clone());
-                }
-                guard.insert(repo, versions.clone());
+            let mut guard = self.version_cache.write().await;
+            if let Some(existing) = guard.get(&repo) {
+                return Ok(existing.clone());
             }
+            guard.insert(repo, versions.clone());
+            drop(guard);
 
             Ok(versions)
         })
@@ -146,9 +126,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let cache_key = (repo.clone(), ref_name.clone());
 
             // Check cache first
-            if let Ok(guard) = self.sha_cache.read()
-                && let Some(cached) = guard.get(&cache_key)
-            {
+            if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
                 return Ok(cached.clone());
             }
 
@@ -156,12 +134,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let sha = self.inner.resolve_ref_to_sha(&repo, &ref_name).await?;
 
             // Store in cache (double-check to handle TOCTOU race)
-            if let Ok(mut guard) = self.sha_cache.write() {
-                if let Some(existing) = guard.get(&cache_key) {
-                    return Ok(existing.clone());
-                }
-                guard.insert(cache_key, sha.clone());
+            let mut guard = self.sha_cache.write().await;
+            if let Some(existing) = guard.get(&cache_key) {
+                return Ok(existing.clone());
             }
+            guard.insert(cache_key, sha.clone());
+            drop(guard);
 
             Ok(sha)
         })
@@ -175,9 +153,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
 
         Box::pin(async move {
             // Check cache first
-            if let Ok(guard) = self.branch_cache.read()
-                && let Some(cached) = guard.get(&repo)
-            {
+            if let Some(cached) = self.branch_cache.read().await.get(&repo) {
                 return Ok(cached.clone());
             }
 
@@ -185,12 +161,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let branch = self.inner.get_default_branch(&repo).await?;
 
             // Store in cache (double-check to handle TOCTOU race)
-            if let Ok(mut guard) = self.branch_cache.write() {
-                if let Some(existing) = guard.get(&repo) {
-                    return Ok(existing.clone());
-                }
-                guard.insert(repo, branch.clone());
+            let mut guard = self.branch_cache.write().await;
+            if let Some(existing) = guard.get(&repo) {
+                return Ok(existing.clone());
             }
+            guard.insert(repo, branch.clone());
+            drop(guard);
 
             Ok(branch)
         })
@@ -419,7 +395,7 @@ mod tests {
         cached.get_versions(&repo).await.unwrap();
         assert_eq!(cached.inner.calls(), 1);
 
-        cached.clear_cache();
+        cached.clear_cache().await;
 
         // After clear, should fetch again
         cached.get_versions(&repo).await.unwrap();
@@ -439,7 +415,7 @@ mod tests {
         cached.resolve_ref_to_sha(&repo1, "v4").await.unwrap();
         cached.get_default_branch(&repo1).await.unwrap();
 
-        let stats = cached.cache_stats();
+        let stats = cached.cache_stats().await;
         assert_eq!(stats.versions, 2);
         assert_eq!(stats.shas, 1);
         assert_eq!(stats.branches, 1);

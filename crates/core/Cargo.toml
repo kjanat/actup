@@ -17,10 +17,11 @@ json_comments = { workspace = true }
 schemars      = { workspace = true }
 # Serialization
 serde         = { workspace = true }
+# Async runtime (for RwLock)
+tokio         = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
-tokio      = { workspace = true }
 
 [lints]
 workspace = true
