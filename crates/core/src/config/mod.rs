@@ -17,6 +17,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
+use std::num::NonZeroU8;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -24,6 +25,9 @@ pub use discovery::{
     CONFIG_EXTENSIONS, find_repo_config, iter_config_candidates, user_config_path,
 };
 
+/// # Actup configuration
+/// Configuration options for the GitHub Actions-like updater.
+///
 /// Main configuration struct.
 ///
 /// # Example Configuration
@@ -89,10 +93,9 @@ pub struct Config {
     pub loaded_from: Option<PathBuf>,
 }
 
-/// Per-action override configuration.
+/// # Per-action override configuration.
 ///
-/// # Example
-///
+/// ## Example
 /// ```toml
 /// # .actup.toml - Per-action overrides
 /// [actions."actions/checkout"]
@@ -105,8 +108,8 @@ pub struct Config {
 /// ref_style = "sha"
 /// ```
 ///
-/// ```yaml
-/// # Result in workflow:
+/// ## Result in workflow:
+/// ```console
 /// # actions/checkout@v3 -> actions/checkout@v4 (major allowed)
 /// # actions/cache@v3 -> unchanged (ignored)
 /// # internal/action@v1 -> internal/action@abc123... # v1.2.0 (pinned to SHA)
@@ -170,11 +173,22 @@ where
     Ok(Duration::from_secs(secs))
 }
 
-/// Provider configuration
+/// API mode for fetching versions
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ApiMode {
+    /// Use GraphQL API for batched requests (requires auth token)
+    #[default]
+    Graphql,
+    /// Use REST API with parallel requests
+    Rest,
+}
+
+/// # Provider configuration
 ///
-/// NOTE: Default uses empty strings. The CLI layer sets actual defaults.
-/// Core must remain provider-neutral per `AGENTS.md` spec.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+/// Default uses empty strings. The CLI layer sets actual defaults.
+/// Core must remain provider-neutral.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ProvidersConfig {
     /// Default provider kind
@@ -185,9 +199,34 @@ pub struct ProvidersConfig {
 
     /// Additional provider instances
     pub instances: Vec<ProviderInstance>,
+
+    /// API mode: graphql (batched, requires token) or rest (parallel requests)
+    pub api_mode: ApiMode,
+
+    /// Maximum tags to fetch per repo (default: 10, minimum: 1)
+    /// Fetches up to this many tags, or stops early when a stable release is found
+    pub max_tags_per_repo: NonZeroU8,
 }
 
-/// A configured provider instance
+/// Default maximum tags to fetch per repository
+pub const DEFAULT_MAX_TAGS_PER_REPO: NonZeroU8 = match NonZeroU8::new(10) {
+    Some(v) => v,
+    None => panic!("DEFAULT_MAX_TAGS_PER_REPO must be non-zero"),
+};
+
+impl Default for ProvidersConfig {
+    fn default() -> Self {
+        Self {
+            default_kind: String::new(),
+            default_host: String::new(),
+            instances: Vec::new(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: DEFAULT_MAX_TAGS_PER_REPO,
+        }
+    }
+}
+
+/// # A configured provider instance
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ProviderInstance {
     /// Provider kind (github, gitlab, gitea, etc.)

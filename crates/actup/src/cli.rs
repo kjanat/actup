@@ -11,10 +11,6 @@ pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
 
-    /// Output format
-    #[arg(long, global = true, default_value = "human")]
-    pub format: OutputFormat,
-
     /// Verbose output
     #[arg(short, long, global = true)]
     pub verbose: bool,
@@ -31,6 +27,10 @@ pub enum Command {
         /// Fail if any actions are outdated
         #[arg(long)]
         strict: bool,
+
+        /// Output format
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
     },
 
     /// Update actions to their latest versions
@@ -42,6 +42,10 @@ pub enum Command {
         /// Dry run - show what would be changed without modifying files
         #[arg(long)]
         dry_run: bool,
+
+        /// Output format
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
     },
 
     /// Alias for update
@@ -53,6 +57,10 @@ pub enum Command {
         /// Dry run - show what would be changed without modifying files
         #[arg(long)]
         dry_run: bool,
+
+        /// Output format
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
     },
 
     /// Pin all actions to their current SHA
@@ -64,6 +72,10 @@ pub enum Command {
         /// Dry run - show what would be changed without modifying files
         #[arg(long)]
         dry_run: bool,
+
+        /// Output format
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
     },
 
     /// Show effective configuration
@@ -71,10 +83,37 @@ pub enum Command {
         /// Path to check for config files
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Output format
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
     },
 
     /// Output JSON schema for configuration
     Schema,
+
+    /// Manage the version cache
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+
+        /// Output format
+        #[arg(long, default_value = "human")]
+        format: OutputFormat,
+    },
+}
+
+/// Cache subcommands
+#[derive(Subcommand)]
+pub enum CacheAction {
+    /// Show cache location and statistics
+    Info,
+
+    /// Clear all cached data
+    Clear,
+
+    /// Print cache directory path
+    Path,
 }
 
 #[derive(Clone, Copy, Default, ValueEnum)]

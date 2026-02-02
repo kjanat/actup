@@ -1,5 +1,6 @@
 //! CLI command implementations
 
+pub mod cache;
 pub mod check;
 pub mod config;
 pub mod pin;
