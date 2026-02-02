@@ -15,9 +15,9 @@
 		"cwd": "${configDir}",
 		"commands": [
 			{ "exts": ["rs"], "command": "rustfmt", "cacheKeyFiles": ["rustfmt.toml", "rust-toolchain.toml"] }, // Formats Rust files
-			{ "fileNames": ["package.json"], "command": "bunx sort-package-json --stdin" }, // Sorts package.json files
-			{ "exts": ["svg"], "command": "bunx svgo --multipass --pretty -q --input - --output -" }, // Prettifies and minifies SVG files
-			{ "exts": ["toml"], "command": "bunx tombi format --stdin-filename {{file_path}} -" }, // Formats toml files
+			{ "fileNames": ["package.json"], "command": "npx -y sort-package-json --stdin" }, // Sorts package.json files
+			{ "exts": ["svg"], "command": "npx -y svgo --multipass --pretty -q --input - --output -" }, // Prettifies and minifies SVG files
+			{ "exts": ["toml"], "command": "tombi format --stdin-filename {{file_path}} -" }, // Formats toml files
 			{ "exts": ["sh", "bash"], "command": "shfmt -i 0 -ln bash -bn -kp -ci --filename {{file_path}}" }, // Formats shell files
 			{ "fileNames": ["justfile"], "command": "just --dump" },
 		],
