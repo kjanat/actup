@@ -1,17 +1,8 @@
 name: Release
-
-on:
-  push: { tags: ["v*"] }
-
-concurrency:
-  group: release
-  cancel-in-progress: false
-
+on: { push: { tags: [ "v*"] } }
+concurrency: { group: release, cancel-in-progress: false }
 permissions: { contents: write }
-
-env:
-  CARGO_TERM_COLOR: always
-
+env: { CARGO_TERM_COLOR: always }
 jobs:
   build:
     name: Build (${{ matrix.target }})
@@ -116,9 +107,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: actions/download-artifact@v7
-        with:
-          path: artifacts
-          merge-multiple: true
+        with: { path: artifacts, merge-multiple: true }
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -127,26 +116,22 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
 
   publish:
     name: Publish to crates.io
     needs: release
     runs-on: ubuntu-latest
-    # Skip if repo is private (secrets can't be checked at job level)
     if: ${{ !github.event.repository.private }}
     env:
-      # Job-level env so `if:` expressions can check token presence
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v6
-        env: { CARGO_REGISTRY_TOKEN: "" } # not needed for checkout
+        env: { CARGO_REGISTRY_TOKEN: "" }
 
       - uses: dtolnay/rust-toolchain@stable
-        env: { CARGO_REGISTRY_TOKEN: "" } # not needed for toolchain setup
+        env: { CARGO_REGISTRY_TOKEN: "" }
 
       - name: Publish crates
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
-        # Cargo 1.90+ handles dependency ordering and skips publish=false crates
         run: cargo publish --workspace
