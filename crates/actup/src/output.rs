@@ -6,6 +6,106 @@ use serde::Serialize;
 
 use crate::cli::OutputFormat;
 
+/// JSON-serializable finding for structured output
+#[derive(Serialize)]
+struct JsonFinding {
+    file: String,
+    line: usize,
+    action: String,
+    owner: String,
+    repo: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    host: Option<String>,
+    provider: String,
+    reference: String,
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    latest_sha: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exact_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pinned_tag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
+}
+
+impl From<&Finding> for JsonFinding {
+    fn from(f: &Finding) -> Self {
+        let (
+            status,
+            current_version,
+            latest_version,
+            latest_sha,
+            exact_version,
+            pinned_tag,
+            reason,
+        ) = match &f.status {
+            FindingStatus::UpToDate => ("up_to_date", None, None, None, None, None, None),
+            FindingStatus::Ignored => ("ignored", None, None, None, None, None, None),
+            FindingStatus::Outdated {
+                current,
+                latest,
+                exact_version,
+            } => (
+                "outdated",
+                Some(current.clone()),
+                Some(latest.version.to_string()),
+                Some(latest.sha.clone()),
+                exact_version.clone(),
+                None,
+                None,
+            ),
+            FindingStatus::Pinned { sha, tag } => (
+                "pinned",
+                None,
+                None,
+                Some(sha.clone()),
+                None,
+                tag.clone(),
+                None,
+            ),
+            FindingStatus::Unresolvable {
+                reason,
+                is_environment_error,
+            } => (
+                if *is_environment_error {
+                    "error"
+                } else {
+                    "unresolvable"
+                },
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(reason.clone()),
+            ),
+        };
+
+        Self {
+            file: f.file.clone(),
+            line: f.line,
+            action: f.action_ref.to_string(),
+            owner: f.action_ref.owner.clone(),
+            repo: f.action_ref.repo.clone(),
+            host: f.action_ref.host.clone(),
+            provider: "github".to_string(), // TODO: get from registry when multi-provider
+            reference: f.action_ref.ref_str.clone(),
+            status: status.into(),
+            current_version,
+            latest_version,
+            latest_sha,
+            exact_version,
+            pinned_tag,
+            reason,
+        }
+    }
+}
+
 /// A finding from scanning a workflow file
 #[derive(Debug, Clone)]
 pub struct Finding {
@@ -135,91 +235,7 @@ fn print_human(findings: &[Finding]) {
 }
 
 fn print_json(findings: &[Finding]) {
-    #[derive(Serialize)]
-    struct JsonFinding {
-        file: String,
-        line: usize,
-        action: String,
-        owner: String,
-        repo: String,
-        /// Host (e.g., "github.com", "ghe.corp.internal") - required by spec
-        #[serde(skip_serializing_if = "Option::is_none")]
-        host: Option<String>,
-        /// Provider kind (e.g., "github", "gitlab") - required by spec
-        provider: String,
-        reference: String,
-        status: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        current_version: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        latest_version: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        latest_sha: Option<String>,
-        /// Full semver when `latest_version` is major-only (e.g., "v6.0.2" when latest is "v6")
-        #[serde(skip_serializing_if = "Option::is_none")]
-        exact_version: Option<String>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    }
-
-    let json_findings: Vec<JsonFinding> = findings
-        .iter()
-        .map(|f| {
-            let (status, current_version, latest_version, latest_sha, exact_version, reason) =
-                match &f.status {
-                    FindingStatus::UpToDate => ("up_to_date".into(), None, None, None, None, None),
-                    FindingStatus::Ignored => ("ignored".into(), None, None, None, None, None),
-                    FindingStatus::Outdated {
-                        current,
-                        latest,
-                        exact_version,
-                    } => (
-                        "outdated".into(),
-                        Some(current.clone()),
-                        Some(latest.version.to_string()),
-                        Some(latest.sha.clone()),
-                        exact_version.clone(),
-                        None,
-                    ),
-                    FindingStatus::Pinned { sha, tag: _ } => {
-                        ("pinned".into(), None, None, Some(sha.clone()), None, None)
-                    }
-                    FindingStatus::Unresolvable {
-                        reason,
-                        is_environment_error,
-                    } => (
-                        if *is_environment_error {
-                            "error".into()
-                        } else {
-                            "unresolvable".into()
-                        },
-                        None,
-                        None,
-                        None,
-                        None,
-                        Some(reason.clone()),
-                    ),
-                };
-
-            JsonFinding {
-                file: f.file.clone(),
-                line: f.line,
-                action: f.action_ref.to_string(),
-                owner: f.action_ref.owner.clone(),
-                repo: f.action_ref.repo.clone(),
-                host: f.action_ref.host.clone(),
-                provider: "github".to_string(), // TODO: get from registry when multi-provider
-                reference: f.action_ref.ref_str.clone(),
-                status,
-                current_version,
-                latest_version,
-                latest_sha,
-                exact_version,
-                reason,
-            }
-        })
-        .collect();
-
+    let json_findings: Vec<JsonFinding> = findings.iter().map(JsonFinding::from).collect();
     match serde_json::to_string_pretty(&json_findings) {
         Ok(json) => println!("{json}"),
         Err(e) => eprintln!("Error serializing findings: {e}"),
@@ -260,6 +276,13 @@ pub fn print_summary(findings: &[Finding]) {
     );
 }
 
+/// Determines CLI exit code based on findings.
+///
+/// Exit codes:
+/// - 0: Success (`UpToDate`, Ignored, Pinned are all considered healthy)
+/// - 1: Outdated found (only with `strict` mode)
+/// - 2: Unresolvable user error (bad ref, repo not found)
+/// - 3: Environment error (network, rate limit, auth)
 pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
     let has_outdated = findings
         .iter()
