@@ -5,47 +5,50 @@ members  = ["crates/*"]
 [workspace.package]
 version    = "0.1.0"
 edition    = "2024"
-repository = "https://github.com/kjanat/actup"
+homepage   = "https://github.com/kjanat/actup-v2#readme"
+repository = "https://github.com/kjanat/actup-v2"
 license    = "MIT OR Apache-2.0"
 keywords   = ["cli", "github-actions", "lsp", "version"]
 categories = ["command-line-utilities", "development-tools"]
+publish    = true
 
 [workspace.dependencies]
-base64             = "0.22"                                          # encoding
-clap_complete      = "4.5"                                           # completions
-console            = "0.16"                                          # terminal
-dashmap            = "6"                                             # concurrency
-directories        = "6"                                             # paths
-dirs               = "6"                                             # paths
-futures            = "0.3"                                           # async
-glob               = "0.3"                                           # patterns
-human-panic        = "2"                                             # panics
-indicatif          = "0.18"                                          # progress
-insta              = { version = "1.42", features = ["yaml"] }       # snapshots
-itertools          = "0.14"                                          # iterators
-json_comments      = "0.2"                                           # jsonc
-miette             = { version = "7.6", features = ["fancy"] }       # errors
-node-semver        = "2"                                             # semver
-octocrab           = "0.49"                                          # github
-owo-colors         = "4"                                             # colors
-rust-mcp-sdk       = "0.8"                                           # mcp
-sanitize-filename  = "0.6"                                           # filesystem
-schemars           = "1"                                             # schema
-schemars_derive    = "1"                                             # schema
-semver             = "1"                                             # semver
-serde              = { version = "1", features = ["derive"] }        # serialization
-serde_json         = "1"                                             # json
-serde_yaml_ng      = "0.10"                                          # yaml
-tempfile           = "3"                                             # testing
-thiserror          = "2"                                             # errors
-tokio              = { version = "1", features = ["full"] }          # async
-toml               = "0.9"                                           # config
-tower-lsp-server   = "0.23"                                          # lsp
-tracing            = "0.1"                                           # logging
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # logging
-url                = "2"                                             # urls
-walkdir            = "2"                                             # filesystem
-wiremock           = "0.6"                                           # mocking
+actup-core            = { path = "crates/core", version = "*" }
+actup-provider-github = { path = "crates/provider-github", version = "*" }
+base64                = "0.22"                                              # encoding
+clap_complete         = "4.5"                                               # completions
+console               = "0.16"                                              # terminal
+dashmap               = "6"                                                 # concurrency
+directories           = "6"                                                 # paths
+dirs                  = "6"                                                 # paths
+futures               = "0.3"                                               # async
+glob                  = "0.3"                                               # patterns
+human-panic           = "2"                                                 # panics
+indicatif             = "0.18"                                              # progress
+insta                 = { version = "1.42", features = ["yaml"] }           # snapshots
+json_comments         = "0.2"                                               # jsonc
+miette                = { version = "7.6", features = ["fancy"] }           # errors
+node-semver           = "2"                                                 # semver
+octocrab              = "0.49"                                              # github
+owo-colors            = "4"                                                 # colors
+rust-mcp-sdk          = "0.8"                                               # mcp
+sanitize-filename     = "0.6"                                               # filesystem
+schemars              = "1"                                                 # schema
+schemars_derive       = "1"                                                 # schema
+semver                = "1"                                                 # semver
+serde                 = { version = "1", features = ["derive"] }            # serialization
+serde_json            = "1"                                                 # json
+serde_yaml_ng         = "0.10"                                              # yaml
+tempfile              = "3"                                                 # testing
+thiserror             = "2"                                                 # errors
+tokio                 = { version = "1", features = ["full"] }              # async
+toml                  = "0.9"                                               # config
+tower-lsp-server      = "0.23"                                              # lsp
+tracing               = "0.1"                                               # logging
+tracing-subscriber    = { version = "0.3", features = ["env-filter"] }      # logging
+url                   = "2"                                                 # urls
+walkdir               = "2"                                                 # filesystem
+wiremock              = "0.6"                                               # mocking
 
 [workspace.dependencies.clap]  # CLI
 version  = "4.5"
@@ -110,8 +113,6 @@ invalid_codeblock_attributes = "warn"
 invalid_html_tags            = "deny"
 invalid_rust_codeblocks      = "deny"
 missing_crate_level_docs     = "forbid"
-missing_doc_code_examples    = "warn"
-missing_docs                 = "deny"
 private_doc_tests            = "warn"
 private_intra_doc_links      = "warn"
 redundant_explicit_links     = "deny"

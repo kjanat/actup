@@ -409,6 +409,75 @@ Never rely on live network in tests.
 
 ---
 
+## Commit message format
+
+Use [Conventional Commits](https://www.conventionalcommits.org/) with these guidelines:
+
+### Structure
+
+```
+<type>(<scope>): <description>
+
+[optional body]
+
+[optional footer]
+```
+
+### Types
+
+- `feat`: New feature
+- `fix`: Bug fix
+- `refactor`: Code change that neither fixes a bug nor adds a feature
+- `docs`: Documentation only
+- `test`: Adding or updating tests
+- `chore`: Maintenance (deps, CI, tooling)
+- `perf`: Performance improvement
+
+Add `!` after type/scope for breaking changes: `feat(policy)!: change default`
+
+### Rules
+
+1. **Use backticks for code** in commit messages:
+   - Good: `fix(check): handle None from \`GitHubProvider::new\``
+   - Bad: `fix(check): handle None from GitHubProvider::new`
+
+2. **Describe WHY, not just WHAT** — the diff shows what changed; the message explains the reasoning:
+   - Good: `fix(discovery): use consistent deduplication to prevent future pattern overlap bugs`
+   - Bad: `fix(discovery): check insert() return value`
+
+3. **Never title commits "addresses PR feedback"** — describe the actual changes and their purpose:
+   - Good: `fix(check): log provider errors to aid debugging auth failures`
+   - Bad: `fix: address PR review comments`
+
+4. **Keep subject line under 72 chars**, use body for details if needed
+
+### Examples
+
+```
+feat(cache): add file-based persistence with TTL
+
+Store version data in ~/.cache/actup/ to avoid repeated API calls.
+Uses JSON format with fetch timestamp for TTL validation.
+
+Closes #42
+```
+
+```
+fix(provider): capture error from `GitHubProvider::new`
+
+Previously discarded the error silently, making auth issues hard to
+debug. Now logs with `tracing::error!` including the error message.
+```
+
+```
+refactor(check): use `itertools::unique()` for repo deduplication
+
+Replaces verbose `collect::<HashSet<_>>().into_iter().collect()`
+pattern. Clearer intent, same performance.
+```
+
+---
+
 ## Security notes (critical)
 
 - Never execute workflow code.

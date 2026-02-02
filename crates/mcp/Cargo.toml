@@ -1,8 +1,11 @@
 [package]
-name              = "actup-mcp"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
+name                 = "actup-mcp"
+version.workspace    = true
+edition.workspace    = true
+homepage.workspace   = true
+repository.workspace = true
+license.workspace    = true
+publish              = false        # stub - not yet implemented
 
 [dependencies]
 
