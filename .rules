@@ -407,6 +407,8 @@ Never rely on live network in tests.
   - `InvalidRef` / `NotFound` (user)
   - `Network` / `RateLimit` / `Auth` (environment)
 
+- No decorative comment separators (e.g., `// ========` or `// ------`). Use doc comments or blank lines instead.
+
 ---
 
 ## Commit message format
