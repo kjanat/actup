@@ -46,7 +46,13 @@ async fn run(cli: Cli) -> i32 {
         | Command::Fix { path, .. }
         | Command::Pin { path, .. }
         | Command::Config { path, .. } => path.clone(),
-        Command::Schema | Command::Cache { .. } => std::env::current_dir().unwrap_or_default(),
+        Command::Schema | Command::Cache { .. } => match std::env::current_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                eprintln!("Error reading current directory: {e}");
+                return CliExitCode::EnvironmentError.into();
+            }
+        },
     };
 
     let config = match Config::load(None, &start_dir) {
