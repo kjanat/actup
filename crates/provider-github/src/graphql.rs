@@ -239,13 +239,21 @@ impl GraphQLClient {
         }
 
         // Handle 403 Forbidden - check headers to distinguish rate limit from permission denied
+        //
+        // NOTE: GitHub includes x-ratelimit-* headers on most responses, not just rate-limited ones.
+        // A normal 200 might have "x-ratelimit-remaining: 58". We must check the VALUE, not just
+        // presence. Rate limiting is indicated by:
+        //   - "retry-after" header exists (definitive), OR
+        //   - "x-ratelimit-remaining" == "0"
         if status == reqwest::StatusCode::FORBIDDEN {
             let headers = response.headers();
-            let has_rate_limit_headers = headers.contains_key("retry-after")
-                || headers.contains_key("x-ratelimit-reset")
-                || headers.contains_key("x-ratelimit-remaining");
+            let is_rate_limited = headers.contains_key("retry-after")
+                || headers
+                    .get("x-ratelimit-remaining")
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|s| s == "0");
 
-            if has_rate_limit_headers {
+            if is_rate_limited {
                 let retry_after = Self::parse_retry_after(headers);
                 return Err(Error::RateLimited {
                     provider: "github".to_string(),
