@@ -31,7 +31,7 @@ jobs:
           - { os: windows-latest, target: aarch64-pc-windows-msvc, archive: zip }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -73,7 +73,7 @@ jobs:
           Compress-Archive -Path dist/* -DestinationPath "actup-${{ github.ref_name }}-${{ matrix.target }}.zip"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: actup-${{ matrix.target }}
           path: actup-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
@@ -84,7 +84,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -96,7 +96,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Upload checksums
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: checksums
           path: artifacts/SHA256SUMS.txt
@@ -109,9 +109,9 @@ jobs:
     ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -133,7 +133,7 @@ jobs:
     # Skip if repo is private or no token configured
     if: ${{ !github.event.repository.private && secrets.CARGO_REGISTRY_TOKEN != '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: dtolnay/rust-toolchain@stable
 
