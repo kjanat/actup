@@ -11,65 +11,53 @@ keywords   = ["cli", "github-actions", "lsp", "version"]
 categories = ["command-line-utilities", "development-tools"]
 
 [workspace.dependencies]
-# Base64 encoding/decoding
-base64             = "0.22"
-# CLI
-clap               = { version = "4.5", features = [
-  "deprecated",
-  "derive",
-  "env",
-  "unicode",
-  "wrap_help",
-] }
-clap_complete      = "4.5"
-console            = "0.16"
-dashmap            = "6.1"
-directories        = "6.0"
-dirs               = "6"
-# Configuration
-figment            = { version = "0.10", features = ["env", "json", "toml", "yaml"] }
-# Async utilities
-futures            = "0.3"
-glob               = "0.3"
-human-panic        = "2.0"
-indicatif          = "0.18"
-# Testing
-insta              = { version = "1.42", features = ["yaml"] }
-json_comments      = "0.2"
-miette             = { version = "7.6", features = ["fancy"] }
-node-semver        = "2.1"
-octocrab           = "0.49"
-owo-colors         = "4.1"
-# HTTP/API
-reqwest            = { version = "0.13", default-features = false, features = [
-  "json",
-  "rustls",
-] }
-# MCP
-rust-mcp-sdk       = "0.8"
-# Schema
-sanitize-filename  = "0.6"
-schemars           = "1.2"
-schemars_derive    = "1.2"
-# Versioning
-semver             = "1.0"
-serde              = { version = "1.0", features = ["derive"] }
-serde_json         = "1.0"
-serde_yaml_ng      = "0.10"
-tempfile           = "3.19"
-# Error handling
-thiserror          = "2.0"
-# Core
-tokio              = { version = "1.49", features = ["full"] }
-toml               = "0.9"
-# LSP
-tower-lsp-server   = "0.23"
-# Utilities
-tracing            = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-url                = "2.5"
-walkdir            = "2.5"
-wiremock           = "0.6"
+base64             = "0.22"                                          # encoding
+clap_complete      = "4.5"                                           # completions
+console            = "0.16"                                          # terminal
+dashmap            = "6"                                             # concurrency
+directories        = "6"                                             # paths
+dirs               = "6"                                             # paths
+futures            = "0.3"                                           # async
+glob               = "0.3"                                           # patterns
+human-panic        = "2"                                             # panics
+indicatif          = "0.18"                                          # progress
+insta              = { version = "1.42", features = ["yaml"] }       # snapshots
+json_comments      = "0.2"                                           # jsonc
+miette             = { version = "7.6", features = ["fancy"] }       # errors
+node-semver        = "2"                                             # semver
+octocrab           = "0.49"                                          # github
+owo-colors         = "4"                                             # colors
+rust-mcp-sdk       = "0.8"                                           # mcp
+sanitize-filename  = "0.6"                                           # filesystem
+schemars           = "1"                                             # schema
+schemars_derive    = "1"                                             # schema
+semver             = "1"                                             # semver
+serde              = { version = "1", features = ["derive"] }        # serialization
+serde_json         = "1"                                             # json
+serde_yaml_ng      = "0.10"                                          # yaml
+tempfile           = "3"                                             # testing
+thiserror          = "2"                                             # errors
+tokio              = { version = "1", features = ["full"] }          # async
+toml               = "0.9"                                           # config
+tower-lsp-server   = "0.23"                                          # lsp
+tracing            = "0.1"                                           # logging
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }  # logging
+url                = "2"                                             # urls
+walkdir            = "2"                                             # filesystem
+wiremock           = "0.6"                                           # mocking
+
+[workspace.dependencies.clap]  # CLI
+version  = "4.5"
+features = ["deprecated", "derive", "env", "unicode", "wrap_help"]
+
+[workspace.dependencies.figment]  # Configuration
+version  = "0.10"
+features = ["env", "json", "toml", "yaml"]
+
+[workspace.dependencies.reqwest]  # HTTP/API
+version          = "0.13"
+default-features = false
+features         = ["json", "rustls"]
 
 [workspace.lints.clippy]
 all                                = { level = "warn", priority = -1 }
@@ -115,6 +103,18 @@ unwrap_used                        = "deny"
 unsafe_code = "forbid"
 
 [workspace.lints.rustdoc]
+bare_urls                    = "deny"
+broken_intra_doc_links       = "deny"
+invalid_codeblock_attributes = "warn"
+invalid_html_tags            = "deny"
+invalid_rust_codeblocks      = "deny"
+missing_crate_level_docs     = "forbid"
+missing_doc_code_examples    = "warn"
+missing_docs                 = "deny"
+private_doc_tests            = "warn"
+private_intra_doc_links      = "warn"
+redundant_explicit_links     = "deny"
+unescaped_backticks          = "warn"
 
 [profile.ci-test]
 inherits  = "test"
