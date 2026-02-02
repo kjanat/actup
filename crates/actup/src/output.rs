@@ -499,6 +499,34 @@ mod tests {
     }
 
     #[test]
+    fn test_finding_outdated_with_exact_version() {
+        // Test major-only tag with exact version suffix (e.g., "v6 -> v7 (v7.2.1)")
+        let finding = Finding {
+            file: "ci.yml".to_string(),
+            line: 15,
+            action_ref: make_action_ref("actions", "checkout", "v4"),
+            status: FindingStatus::Outdated {
+                current: "v4".to_string(),
+                latest: make_version_info("v5", "def456"), // major-only tag
+                exact_version: Some("v5.2.1".to_string()), // actual semver
+            },
+        };
+
+        match &finding.status {
+            FindingStatus::Outdated {
+                current,
+                latest,
+                exact_version,
+            } => {
+                assert_eq!(current, "v4");
+                assert_eq!(latest.version.to_string(), "v5");
+                assert_eq!(exact_version, &Some("v5.2.1".to_string()));
+            }
+            _ => panic!("expected Outdated status"),
+        }
+    }
+
+    #[test]
     fn test_finding_pinned_with_tag() {
         let finding = Finding {
             file: "deploy.yml".to_string(),

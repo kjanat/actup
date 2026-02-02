@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
+use itertools::Itertools;
+
 use actup_core::{
     ActionRef, ActionRepoId, CheckStatus, Config, VersionSet, check_action as core_check_action,
 };
@@ -154,12 +156,11 @@ pub async fn run(
     let versions_map = if collected_actions.is_empty() {
         HashMap::new()
     } else {
-        // Build unique repo list
+        // Build unique repo list (deduplicated)
         let unique_repos: Vec<ActionRepoId> = collected_actions
             .iter()
             .map(|c| c.repo_id.clone())
-            .collect::<std::collections::HashSet<_>>()
-            .into_iter()
+            .unique()
             .collect();
 
         debug!(
@@ -217,9 +218,12 @@ async fn batch_fetch_versions(
 
     // Create provider with optional token
     let token = std::env::var("GITHUB_TOKEN").ok();
-    let Ok(provider) = GitHubProvider::new(token.as_deref()) else {
-        tracing::error!("failed to create GitHub provider");
-        return HashMap::new();
+    let provider = match GitHubProvider::new(token.as_deref()) {
+        Ok(p) => p,
+        Err(e) => {
+            tracing::error!(error = %e, "failed to create GitHub provider");
+            return HashMap::new();
+        }
     };
 
     // Create batch fetcher with GraphQL support if token available

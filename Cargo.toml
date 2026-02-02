@@ -19,6 +19,7 @@ directories        = "6"                                             # paths
 dirs               = "6"                                             # paths
 futures            = "0.3"                                           # async
 glob               = "0.3"                                           # patterns
+itertools          = "0.14"                                          # iterators
 human-panic        = "2"                                             # panics
 indicatif          = "0.18"                                          # progress
 insta              = { version = "1.42", features = ["yaml"] }       # snapshots
