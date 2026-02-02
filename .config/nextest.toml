@@ -2,11 +2,11 @@
 # https://nexte.st/docs/configuration/
 
 [profile.default]
-retries = 0
+retries   = 0
 fail-fast = true
 
 [profile.ci]
-retries = 2
+retries   = 2
 fail-fast = false
 # JUnit output for Codecov test results
-junit = { path = "junit.xml" }
+junit     = { path = "junit.xml" }
