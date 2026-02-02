@@ -8,7 +8,7 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::time::Duration;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// File-based cache implementation
 pub struct FileCache {
@@ -206,11 +206,10 @@ impl Cache for FileCache {
             {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "json") {
-                    if let Err(e) = tokio::fs::remove_file(&path).await {
-                        warn!(path = %path.display(), error = %e, "failed to remove cache file");
-                    } else {
-                        removed += 1;
-                    }
+                    tokio::fs::remove_file(&path).await.map_err(|e| {
+                        CacheError::Io(format!("failed to remove {}: {e}", path.display()))
+                    })?;
+                    removed += 1;
                 }
             }
 
