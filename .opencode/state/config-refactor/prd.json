@@ -173,7 +173,7 @@
 			"depends": ["fetch-settings", "host-config", "registration-types"],
 			"priority": "standard",
 			"overseerId": "task_01KHSANXYD1QA1WT6FQ05HWC5T",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "docs-update",

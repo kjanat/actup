@@ -31,6 +31,14 @@
         "ttl": 86400
       }
     },
+    "default_host": {
+      "description": "Default host for bare `owner/repo` refs.\nIf `None`, resolves via provider preset for `\"github.com\"` when present, else errors.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
     "extra_paths": {
       "description": "Additional paths to scan (beyond defaults)\n\nBy default, actup scans:\n- `.github/workflows/**/*.{yml,yaml}` (workflows)\n- `.github/actions/**/action.{yml,yaml}` (composite actions)\n\nUse `extra_paths` to scan additional locations:\n\nExamples:\n- `\".gitea/workflows\"` - Gitea workflow directory\n- `\".woodpecker/*.yml\"` - Woodpecker CI pipelines\n- `\"ci/pipelines/**/*.yaml\"` - Custom CI directory\n- `\".drone.yml\"` - Specific Drone CI config file\n- `\"infra/terraform/github-actions.tf\"` - GitHub Actions in Terraform",
       "type": "array",
@@ -39,23 +47,28 @@
         "type": "string"
       }
     },
+    "fetch": {
+      "description": "Fetch settings (`api_mode`, `max_tags_per_repo`)",
+      "$ref": "#/$defs/FetchSettings",
+      "default": {
+        "api_mode": "graphql",
+        "max_tags_per_repo": 10
+      }
+    },
+    "hosts": {
+      "description": "Per-host configuration (keyed by lowercase hostname)",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/HostConfig"
+      },
+      "default": {}
+    },
     "ignore": {
       "description": "Actions to ignore (supports owner/repo, owner/repo@ref, and owner/* patterns)\n\nExamples:\n- `\"actions/checkout\"` - ignores all refs of this action\n- `\"actions/checkout@v2\"` - ignores only the v2 ref\n- `\"my-org/*\"` - ignores all actions from my-org\n- `\"tool/action@1.91.0\"` - ignores specific version (e.g., MSRV pin)",
       "type": "array",
       "default": [],
       "items": {
         "type": "string"
-      }
-    },
-    "providers": {
-      "description": "Provider configuration",
-      "$ref": "#/$defs/Providers",
-      "default": {
-        "api_mode": "graphql",
-        "default_host": "github.com",
-        "default_kind": "github",
-        "instances": [],
-        "max_tags_per_repo": 10
       }
     },
     "ref_style": {
@@ -167,75 +180,98 @@
         }
       }
     },
-    "ProviderInstance": {
-      "title": "A configured provider instance",
-      "type": "object",
-      "properties": {
-        "api_base": {
-          "description": "API base URL (for enterprise/self-hosted)",
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "host": {
-          "description": "Host this instance serves",
-          "type": "string"
-        },
-        "kind": {
-          "description": "Provider kind (github, gitlab, gitea, etc.)",
-          "type": "string"
-        },
-        "token_env": {
-          "description": "Environment variable name for token",
-          "type": [
-            "string",
-            "null"
-          ]
-        }
-      },
-      "required": [
-        "kind",
-        "host"
-      ]
-    },
-    "Providers": {
-      "title": "Provider configuration",
-      "description": "Default uses empty strings. The CLI layer sets actual defaults.\nCore must remain provider-neutral.",
+    "FetchSettings": {
+      "description": "Global fetch settings applied to all providers unless overridden per-host.\n\nControls how actup communicates with provider APIs. Per-host overrides\nin `HostConfig` take precedence over these values.",
       "type": "object",
       "properties": {
         "api_mode": {
-          "description": "API mode: graphql (batched, requires token) or rest (parallel requests)",
+          "description": "API mode: `\"graphql\"` (batched, requires auth) or `\"rest\"` (parallel)",
           "$ref": "#/$defs/ApiMode",
           "default": "graphql"
         },
-        "default_host": {
-          "description": "Default host (e.g., \"github.com\")",
-          "type": "string",
-          "default": "github.com"
-        },
-        "default_kind": {
-          "description": "Default provider kind",
-          "type": "string",
-          "default": "github"
-        },
-        "instances": {
-          "description": "Additional provider instances",
-          "type": "array",
-          "default": [],
-          "items": {
-            "$ref": "#/$defs/ProviderInstance"
-          }
-        },
         "max_tags_per_repo": {
-          "description": "Maximum tags to fetch per repo (default: 10, minimum: 1)\nFetches up to this many tags, or stops early when a stable release is found",
+          "description": "Maximum tags to fetch per repository (1–255).\nStops early when a stable release satisfying policy is found.",
           "type": "integer",
           "format": "uint8",
           "default": 10,
           "maximum": 255,
           "minimum": 1
         }
-      }
+      },
+      "additionalProperties": false
+    },
+    "HostConfig": {
+      "description": "Per-host configuration for a single provider host.\n\nAll fields are optional: they act as overrides on top of provider preset\ndefaults and global `[fetch]` settings. After resolution, `kind`, `api_base`,\nand `token_env` must all be present (validated post-merge).\n\nUsed as values in the `[hosts.\"hostname\"]` config map.",
+      "type": "object",
+      "properties": {
+        "api_base": {
+          "description": "API base URL. Required after merge (may be inferred by provider registration).\nMust include scheme (`http://` or `https://`), no query or fragment.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "api_mode": {
+          "description": "Override global `[fetch].api_mode` for this host.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ApiMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "kind": {
+          "description": "Provider kind. Required for non-preset hosts; implied by preset for known hosts.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HostKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_tags_per_repo": {
+          "description": "Override global `[fetch].max_tags_per_repo` for this host.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 1
+        },
+        "token_env": {
+          "description": "Env var name for auth token. Required after merge (may be defaulted by preset).",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostKind": {
+      "description": "Provider kind identifiers.\n\nEach variant corresponds to a provider crate that implements the [`Provider`](crate::Provider)\ntrait. Used for cache namespacing, registration lookup, and config validation.\n\nAdding a new provider requires adding a variant here **and** a provider crate.",
+      "oneOf": [
+        {
+          "description": "GitHub / GitHub Enterprise",
+          "type": "string",
+          "const": "github"
+        },
+        {
+          "description": "GitLab (gitlab.com or self-hosted)",
+          "type": "string",
+          "const": "gitlab"
+        },
+        {
+          "description": "Gitea / Forgejo",
+          "type": "string",
+          "const": "gitea"
+        }
+      ]
     },
     "Style": {
       "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With ref_style: preserve - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With ref_style: tag - converts to version tags\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With ref_style: sha - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",

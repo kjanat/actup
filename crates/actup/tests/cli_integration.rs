@@ -701,3 +701,134 @@ mod version_tests {
         assert!(!sha.is_semver());
     }
 }
+
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod schema_tests {
+    use actup_core::Config;
+    use schemars::schema_for;
+
+    fn generated_schema() -> serde_json::Value {
+        let schema = schema_for!(Config);
+        let json = serde_json::to_string_pretty(&schema).unwrap();
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn schema_file_matches_generated() {
+        let on_disk = include_str!("../../../schemas/actup-config.schema.json");
+        let on_disk: serde_json::Value = serde_json::from_str(on_disk).unwrap();
+        let generated = generated_schema();
+        assert_eq!(
+            on_disk, generated,
+            "schemas/actup-config.schema.json is stale — run `just schema` to regenerate"
+        );
+    }
+
+    #[test]
+    fn schema_has_new_config_types() {
+        let schema = generated_schema();
+        let defs = schema.get("$defs").expect("$defs missing");
+
+        // New types from config-refactor must be present
+        assert!(
+            defs.get("FetchSettings").is_some(),
+            "FetchSettings missing from $defs"
+        );
+        assert!(
+            defs.get("HostConfig").is_some(),
+            "HostConfig missing from $defs"
+        );
+        assert!(
+            defs.get("HostKind").is_some(),
+            "HostKind missing from $defs"
+        );
+    }
+
+    #[test]
+    fn schema_has_no_old_provider_types() {
+        let schema = generated_schema();
+        let defs = schema.get("$defs").expect("$defs missing");
+
+        // Old types removed during config-refactor must be absent
+        assert!(
+            defs.get("Providers").is_none(),
+            "Providers still in $defs — old type not removed"
+        );
+        assert!(
+            defs.get("ProviderInstance").is_none(),
+            "ProviderInstance still in $defs — old type not removed"
+        );
+    }
+
+    #[test]
+    fn schema_top_level_properties() {
+        let schema = generated_schema();
+        let props = schema.get("properties").expect("properties missing");
+
+        // New fields
+        assert!(
+            props.get("default_host").is_some(),
+            "default_host property missing"
+        );
+        assert!(props.get("fetch").is_some(), "fetch property missing");
+        assert!(props.get("hosts").is_some(), "hosts property missing");
+
+        // Old field must be gone
+        assert!(
+            props.get("providers").is_none(),
+            "providers property still present — old field not removed"
+        );
+    }
+
+    #[test]
+    fn schema_fetch_settings_has_deny_unknown() {
+        let schema = generated_schema();
+        let fetch = &schema["$defs"]["FetchSettings"];
+        assert_eq!(
+            fetch.get("additionalProperties"),
+            Some(&serde_json::Value::Bool(false)),
+            "FetchSettings should deny unknown fields"
+        );
+    }
+
+    #[test]
+    fn schema_host_config_has_deny_unknown() {
+        let schema = generated_schema();
+        let host = &schema["$defs"]["HostConfig"];
+        assert_eq!(
+            host.get("additionalProperties"),
+            Some(&serde_json::Value::Bool(false)),
+            "HostConfig should deny unknown fields"
+        );
+    }
+
+    #[test]
+    fn schema_hostkind_variants() {
+        let schema = generated_schema();
+        let hk = &schema["$defs"]["HostKind"];
+        let variants = hk.get("oneOf").expect("HostKind missing oneOf");
+        let consts: Vec<&str> = variants
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.get("const").and_then(serde_json::Value::as_str))
+            .collect();
+        assert_eq!(consts, vec!["github", "gitlab", "gitea"]);
+    }
+
+    #[test]
+    fn schema_hosts_keyed_by_hostname() {
+        let schema = generated_schema();
+        let hosts = &schema["properties"]["hosts"];
+        // hosts should be an object with additionalProperties referencing HostConfig
+        assert_eq!(
+            hosts.get("type").and_then(serde_json::Value::as_str),
+            Some("object")
+        );
+        let additional = hosts
+            .get("additionalProperties")
+            .expect("hosts missing additionalProperties");
+        let ref_str = additional.get("$ref").and_then(serde_json::Value::as_str);
+        assert_eq!(ref_str, Some("#/$defs/HostConfig"));
+    }
+}

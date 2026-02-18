@@ -28,6 +28,7 @@ Started: 2026-02-18
 - `Registration::create` returns `Box<dyn Provider>` — can't wrap in `CachingProvider<P>` without blanket `impl Provider for Box<dyn Provider>` (follow-up improvement)
 - CLI no longer directly imports provider types (`GitHubProvider`, etc.) — only references `REGISTRATION` statics via `available_registrations()`
 - `HostConfig` has no `Default` impl — must construct with explicit `None` fields or helper fn; `..Default::default()` will not compile
+- JSON schema generated from `Config` via `schemars::schema_for!` macro — run `just schema` after config struct changes; `schema_file_matches_generated` integration test catches drift
 
 ---
 
@@ -232,3 +233,16 @@ Started: 2026-02-18
 - JSON/TOML output unchanged (serializes raw `Config` struct — effective resolution is a display concern)
 - Files changed: `crates/actup/src/commands/config.rs`, `crates/actup/src/main.rs`
 - **Learnings:** `config::run()` needs registrations to resolve effective config, but JSON/TOML output should stay raw (users may want to see what's in their config file, not the resolved values). `sort_unstable()` preferred over `sort()` for `&str` slices (clippy `stable_sort_primitive`). Source annotation logic is inherently per-field — no good way to generalize without overcomplicating.
+
+## Task - json-schema
+
+- Regenerated `schemas/actup-config.schema.json` via `just schema` (`cargo run --bin actup -- schema`)
+- Old types removed from schema: `Providers`, `ProviderInstance`, `providers` property
+- New types present: `FetchSettings`, `HostConfig`, `HostKind`, `default_host`, `fetch`, `hosts`
+- `HostConfig` and `FetchSettings` correctly have `"additionalProperties": false` (deny_unknown_fields)
+- `HostKind` has `oneOf` with `github`, `gitlab`, `gitea` consts
+- `hosts` is `object` with `additionalProperties` referencing `$defs/HostConfig`
+- Added 8 schema drift-detection tests in `cli_integration.rs::schema_tests`: file-matches-generated, has-new-types, no-old-types, top-level-properties, fetch-deny-unknown, host-deny-unknown, hostkind-variants, hosts-keyed-by-hostname
+- Example configs (`.actup.toml`, `examples/multi-provider.actup.toml`) already use new format from `wire-config-fields` task
+- Files changed: `schemas/actup-config.schema.json`, `crates/actup/tests/cli_integration.rs`
+- **Learnings:** `schema_file_matches_generated` test with `include_str!` is the strongest drift guard — catches any struct/derive/serde change. `just schema` is the canonical regeneration command. Schema is derived from `schemars::JsonSchema` derive macro, so schema always reflects the Rust types — no manual editing needed.
