@@ -144,7 +144,7 @@
 			"depends": ["resolution-logic"],
 			"priority": "integration",
 			"overseerId": "task_01KHSANXWBA2G2HMTB4AH8RBMA",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "test-cli-integration",

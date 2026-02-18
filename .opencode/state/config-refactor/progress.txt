@@ -23,7 +23,10 @@ Started: 2026-02-18
 - Example configs in `examples/` — must be kept in sync with config struct changes
 - `Config` has `#[serde(default)]` on the struct, so all new fields must either have `Default` or be `Option`
 - Resolution logic in `config/resolution.rs` submodule — `effective_host()` is the entry point for hostname-to-`ProviderConfig` resolution; `resolve_default_host()` handles `default_host` fallback to `"github.com"` preset
-- `effective_host()` takes `&Config`, `&[&Registration]`, and `&FetchSettings` — re-exported from `actup_core`; CLI will call it per-host in `build_registry()`
+- `effective_host()` takes `&Config`, `&[&Registration]`, and `&FetchSettings` — re-exported from `actup_core`; CLI calls it per-host in `build_registry()`
+- `build_registry()` uses `resolve_and_register()` helper: `effective_host()` → find registration by kind → `(registration.create)(config)` → `registry.register(provider)`
+- `Registration::create` returns `Box<dyn Provider>` — can't wrap in `CachingProvider<P>` without blanket `impl Provider for Box<dyn Provider>` (follow-up improvement)
+- CLI no longer directly imports provider types (`GitHubProvider`, etc.) — only references `REGISTRATION` statics via `available_registrations()`
 
 ---
 
@@ -195,3 +198,14 @@ Started: 2026-02-18
 - Idempotency: `effective_host_idempotent`
 - Files changed: `crates/core/src/config/resolution.rs`
 - **Learnings:** Clippy `similar_names` triggers on `gh_result`/`gl_result` — use full `github_result`/`gitlab_result`. Single-char string patterns should use `char` (`'?'` not `"?"`). Hypothetical registrations with unusual capabilities (graphql-only) are useful for testing error paths that don't exist with real providers yet.
+
+## Task - cli-build-registry
+
+- Replaced manual kind-matching `build_registry()` with registration-based approach
+- New `resolve_and_register()` helper: calls `effective_host()` to get `ProviderConfig`, finds registration by kind, calls `(registration.create)(config)`, registers provider
+- `build_registry()` now: (1) `resolve_default_host()` for validated default, (2) resolves all explicit `config.hosts` entries, (3) ensures default host always registered even without explicit entry
+- Removed direct provider type imports (`GitHubProvider`, `GitLabProvider`, `GiteaProvider`) — CLI only references `REGISTRATION` statics now
+- Removed `CachingProvider` wrapping since `Registration::create` returns `Box<dyn Provider>` and `CachingProvider<P>` requires concrete `P: Provider`
+- Removed ~95 lines of manual provider construction (kind matching, api_base inference, token reading) — all delegated to `effective_host()` + registration `create` fn
+- Files changed: `crates/actup/src/main.rs`
+- **Learnings:** `CachingProvider<P: Provider>` can't wrap `Box<dyn Provider>` without a blanket impl. This is a follow-up improvement — either add `impl Provider for Box<dyn Provider>` in core, or have `Registration::create` return a wrapped type. The in-memory dedup is an optimization, not correctness; providers still work without it. `resolve_default_host()` properly validates the default and falls back to `"github.com"` preset — eliminates the old hardcoded `unwrap_or("github.com")` pattern.

@@ -10,12 +10,10 @@ mod output;
 
 use std::process::ExitCode;
 
-use actup_core::{CachingProvider, Config, Registration, provider, validate_no_duplicate_presets};
-#[cfg(feature = "gitea")]
-use actup_provider_gitea::GiteaProvider;
-use actup_provider_github::GitHubProvider;
-#[cfg(feature = "gitlab")]
-use actup_provider_gitlab::GitLabProvider;
+use actup_core::{
+    Config, Registration, effective_host, provider, resolve_default_host,
+    validate_no_duplicate_presets,
+};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
@@ -138,100 +136,49 @@ fn available_registrations() -> Vec<&'static Registration> {
     registrations
 }
 
-fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
-    // Validate provider registrations early (panics on duplicate preset hosts).
-    // The full registration-based provider construction will replace the
-    // manual matching below in the `cli-build-registry` task.
-    let _registrations = available_registrations();
+/// Resolve a hostname, create its provider, and register it.
+///
+/// Looks up the [`Registration`] by kind (from the resolved [`actup_core::ProviderConfig`])
+/// and calls its `create` fn pointer to construct the concrete provider.
+fn resolve_and_register(
+    hostname: &str,
+    config: &Config,
+    registrations: &[&'static Registration],
+    registry: &mut provider::Registry,
+) -> actup_core::Result<()> {
+    let provider_config = effective_host(hostname, config, registrations, &config.fetch)?;
 
+    let registration = registrations
+        .iter()
+        .find(|r| r.kind == provider_config.kind)
+        .ok_or_else(|| actup_core::Error::InvalidConfig {
+            path: format!("host \"{hostname}\""),
+            reason: format!("no registration for kind {:?}", provider_config.kind),
+        })?;
+
+    let provider = (registration.create)(provider_config)?;
+    registry.register(provider);
+    Ok(())
+}
+
+fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
+    let registrations = available_registrations();
     let mut registry = provider::Registry::new();
 
-    // Set default host from config (falls back to "github.com" when None)
-    let default_host = config.default_host.as_deref().unwrap_or("github.com");
-    registry.set_default_host(default_host);
+    // Resolve default host (validates + falls back to "github.com" preset)
+    let default_host = resolve_default_host(config, &registrations)?;
+    registry.set_default_host(&default_host);
 
-    let mut has_default_github_instance = false;
-
-    // Register configured host entries from [hosts."hostname"]
-    for (host, host_config) in &config.hosts {
-        let kind_str = host_config.kind.map_or("github", |k| match k {
-            actup_core::HostKind::Github => "github",
-            actup_core::HostKind::Gitlab => "gitlab",
-            actup_core::HostKind::Gitea => "gitea",
-        });
-
-        match kind_str {
-            "github" => {
-                if host == default_host {
-                    has_default_github_instance = true;
-                }
-
-                let token = host_config
-                    .token_env
-                    .as_ref()
-                    .and_then(|env_var| std::env::var(env_var).ok());
-
-                // Compute host-aware api_base: github.com uses api.github.com,
-                // GHES uses {host}/api/v3
-                let default_api_base = if host.is_empty() || host == "github.com" {
-                    "https://api.github.com".to_string()
-                } else {
-                    format!("https://{host}/api/v3")
-                };
-                let api_base = host_config.api_base.as_deref().unwrap_or(&default_api_base);
-
-                let provider = GitHubProvider::with_host(api_base, host, token.as_deref())?;
-                let cached = CachingProvider::new(provider);
-                registry.register(Box::new(cached));
-            }
-
-            #[cfg(feature = "gitlab")]
-            "gitlab" => {
-                let token = host_config
-                    .token_env
-                    .as_ref()
-                    .and_then(|env_var| std::env::var(env_var).ok());
-
-                let default_base = format!("https://{host}");
-                let api_base = host_config.api_base.as_deref().unwrap_or(&default_base);
-
-                let provider = GitLabProvider::with_host(api_base, host, token.as_deref())?;
-                let cached = CachingProvider::new(provider);
-                registry.register(Box::new(cached));
-            }
-
-            #[cfg(feature = "gitea")]
-            "gitea" => {
-                let token = host_config
-                    .token_env
-                    .as_ref()
-                    .and_then(|env_var| std::env::var(env_var).ok());
-
-                let default_base = format!("https://{host}");
-                let api_base = host_config.api_base.as_deref().unwrap_or(&default_base);
-
-                let provider = GiteaProvider::new(api_base, host, token.as_deref())?;
-                let cached = CachingProvider::new(provider);
-                registry.register(Box::new(cached));
-            }
-
-            _ => {
-                tracing::warn!(
-                    kind = kind_str,
-                    host = %host,
-                    "unknown provider kind in config, skipping"
-                );
-            }
-        }
+    // Resolve and register explicit [hosts."hostname"] entries
+    let mut registered_hosts = std::collections::HashSet::new();
+    for hostname in config.hosts.keys() {
+        resolve_and_register(hostname, config, &registrations, &mut registry)?;
+        registered_hosts.insert(hostname.clone());
     }
 
-    // Register fallback GitHub provider after configured instances so configured
-    // github.com providers take precedence in registry lookups.
-    if !has_default_github_instance {
-        let github_token = std::env::var("GITHUB_TOKEN").ok();
-        let github_provider = GitHubProvider::new(github_token.as_deref())?;
-        let cached_provider = CachingProvider::new(github_provider);
-        registry.register(Box::new(cached_provider));
+    // Ensure the default host is always registered (preset provides zero-config)
+    if !registered_hosts.contains(&default_host) {
+        resolve_and_register(&default_host, config, &registrations, &mut registry)?;
     }
 
     Ok(registry)
