@@ -1,0 +1,21 @@
+[package]
+name                 = "actup-providers"
+version.workspace    = true
+edition.workspace    = true
+description          = "Shared utilities for actup provider implementations"
+homepage.workspace   = true
+repository.workspace = true
+license.workspace    = true
+publish.workspace    = true
+
+[lib]
+name = "actup_providers"
+path = "src/lib.rs"
+
+[dependencies]
+actup-core    = { workspace = true }
+serde         = { workspace = true }
+serde_yaml_ng = { workspace = true }
+
+[lints]
+workspace = true
