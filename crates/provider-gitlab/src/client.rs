@@ -296,12 +296,14 @@ impl GitLabClient {
     ///
     /// Returns error if ref doesn't exist or network failure.
     pub async fn resolve_ref(&self, owner: &str, repo: &str, ref_name: &str) -> Result<String> {
-        // Try as branch first
-        if let Ok(branch) = self.get_branch(owner, repo, ref_name).await {
-            return Ok(branch.commit.id);
+        // Try as branch first (propagate non-NotFound errors)
+        match self.get_branch(owner, repo, ref_name).await {
+            Ok(branch) => return Ok(branch.commit.id),
+            Err(Error::NotFound { .. }) => {}
+            Err(e) => return Err(e),
         }
 
-        // Try direct tag lookup first to avoid paginating all tags
+        // Try direct tag lookup to avoid paginating all tags
         match self.get_tag(owner, repo, ref_name).await {
             Ok(tag) => return Ok(tag.target),
             Err(Error::NotFound { .. }) => {}

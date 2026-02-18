@@ -108,27 +108,18 @@ fn is_version_current(current: &version::Version, target: Option<&Arc<version::I
     }
 }
 
-/// Determine status when no target version is found.
-fn status_for_no_target(current: &version::Version, branch_policy: policy::Branch) -> CheckStatus {
-    // Semver refs with no versions found
-    if !current.is_branch() && current.is_semver() {
-        return CheckStatus::Unresolvable {
-            reason: NO_VERSIONS_FOUND_REASON.into(),
-            is_environment_error: false,
-        };
-    }
-
-    // Branch or other non-semver refs
-    match branch_policy {
-        policy::Branch::Ignore => CheckStatus::UpToDate, // Treat as OK when ignoring
-        policy::Branch::Warn => CheckStatus::Unresolvable {
-            reason: "non-semver ref (branch or tag)".into(),
-            is_environment_error: false,
-        },
-        policy::Branch::Update => CheckStatus::Unresolvable {
-            reason: "non-semver ref should be pinned to SHA".into(),
-            is_environment_error: false,
-        },
+/// Determine status when no target version is found for a semver ref.
+///
+/// This is only called for semver refs (non-semver refs are handled earlier
+/// by `status_for_non_semver`).
+fn status_for_no_target(current: &version::Version) -> CheckStatus {
+    debug_assert!(
+        current.is_semver(),
+        "status_for_no_target called with non-semver ref"
+    );
+    CheckStatus::Unresolvable {
+        reason: NO_VERSIONS_FOUND_REASON.into(),
+        is_environment_error: false,
     }
 }
 
@@ -187,12 +178,7 @@ pub fn check_action(
     }
 
     target.map_or_else(
-        || {
-            CheckResult::new(
-                action_ref.clone(),
-                status_for_no_target(&current, config.branch_policy),
-            )
-        },
+        || CheckResult::new(action_ref.clone(), status_for_no_target(&current)),
         |t| {
             CheckResult::new(
                 action_ref.clone(),

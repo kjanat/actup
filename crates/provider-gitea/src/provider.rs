@@ -165,14 +165,10 @@ impl Provider for GiteaProvider {
                             return Ok(Some(text));
                         }
                     }
+                    // NotFound is expected - try next filename
                     Err(actup_core::Error::NotFound { .. }) => {}
-                    Err(e) => {
-                        debug!(
-                            error = %e,
-                            filename = %filename,
-                            "error fetching README, continuing"
-                        );
-                    }
+                    // Propagate auth/rate-limit/network errors
+                    Err(e) => return Err(e),
                 }
             }
 

@@ -134,10 +134,15 @@ fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
                     .as_ref()
                     .and_then(|env_var| std::env::var(env_var).ok());
 
-                let api_base = instance
-                    .api_base
-                    .as_deref()
-                    .unwrap_or("https://api.github.com");
+                // Compute host-aware api_base: github.com uses api.github.com,
+                // GHES uses {host}/api/v3
+                let default_api_base = if instance.host.is_empty() || instance.host == "github.com"
+                {
+                    "https://api.github.com".to_string()
+                } else {
+                    format!("https://{}/api/v3", instance.host)
+                };
+                let api_base = instance.api_base.as_deref().unwrap_or(&default_api_base);
 
                 let provider =
                     GitHubProvider::with_host(api_base, &instance.host, token.as_deref())?;

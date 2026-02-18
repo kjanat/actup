@@ -63,7 +63,10 @@ Create `src/client.rs`:
 
 ```rust
 use actup_core::{Error, Result};
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{
+    Client, Response, StatusCode,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+};
 use std::time::Duration;
 
 pub struct YourClient {
