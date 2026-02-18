@@ -81,3 +81,132 @@ fn create_github_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn 
     let provider = GitHubProvider::with_host(&config.api_base, &config.host, token.as_deref())?;
     Ok(Box::new(provider))
 }
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use std::num::NonZeroU8;
+
+    use actup_core::config::registration::ProviderConfig;
+    use actup_core::{ApiMode, HostKind};
+
+    use super::*;
+
+    #[test]
+    fn registration_kind_is_github() {
+        assert_eq!(REGISTRATION.kind, HostKind::Github);
+    }
+
+    #[test]
+    fn registration_has_one_preset() {
+        assert_eq!(REGISTRATION.presets.len(), 1);
+    }
+
+    #[test]
+    fn preset_host_is_github_com() {
+        assert_eq!(REGISTRATION.presets[0].host, "github.com");
+    }
+
+    #[test]
+    fn preset_api_base_is_public_api() {
+        assert_eq!(REGISTRATION.presets[0].api_base, "https://api.github.com");
+    }
+
+    #[test]
+    fn preset_token_env_is_github_token() {
+        assert_eq!(REGISTRATION.presets[0].token_env, "GITHUB_TOKEN");
+    }
+
+    #[test]
+    fn default_token_env_matches_preset() {
+        assert_eq!(REGISTRATION.default_token_env, Some("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn capabilities_supports_graphql() {
+        assert!(REGISTRATION.capabilities.supports_graphql);
+    }
+
+    #[test]
+    fn capabilities_supports_rest() {
+        assert!(REGISTRATION.capabilities.supports_rest);
+    }
+
+    #[test]
+    fn infer_api_base_returns_none_for_github_com() {
+        let result = (REGISTRATION.infer_api_base)("github.com");
+        assert_eq!(result, None, "preset host should not need inference");
+    }
+
+    #[test]
+    fn infer_api_base_returns_ghe_url() {
+        let result = (REGISTRATION.infer_api_base)("ghe.corp.com");
+        assert_eq!(result, Some("https://ghe.corp.com/api/v3".into()));
+    }
+
+    #[test]
+    fn infer_api_base_ghe_with_subdomain() {
+        let result = (REGISTRATION.infer_api_base)("github.internal.example.org");
+        assert_eq!(
+            result,
+            Some("https://github.internal.example.org/api/v3".into())
+        );
+    }
+
+    #[test]
+    fn infer_api_base_ghe_short_hostname() {
+        let result = (REGISTRATION.infer_api_base)("ghes");
+        assert_eq!(result, Some("https://ghes/api/v3".into()));
+    }
+
+    #[test]
+    fn create_produces_provider_with_valid_config() {
+        // No GITHUB_TOKEN env needed — provider runs unauthenticated
+        let config = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://api.github.com".into(),
+            token_env: "_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+        };
+        let result = (REGISTRATION.create)(config);
+        assert!(result.is_ok(), "create should succeed without token");
+    }
+
+    #[test]
+    fn create_produces_provider_for_ghe() {
+        let config = ProviderConfig {
+            host: "ghe.corp.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://ghe.corp.com/api/v3".into(),
+            token_env: "_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+        };
+        let result = (REGISTRATION.create)(config);
+        assert!(result.is_ok(), "create should succeed for GHE host");
+    }
+
+    #[test]
+    fn preset_values_match_module_constants() {
+        assert_eq!(REGISTRATION.presets[0].host, GITHUB_HOST);
+        assert_eq!(
+            REGISTRATION.presets[0].api_base,
+            format!("https://{GITHUB_API_HOST}")
+        );
+    }
+
+    #[test]
+    fn debug_output_includes_kind_and_presets() {
+        let debug = format!("{REGISTRATION:?}");
+        assert!(debug.contains("Github"));
+        assert!(debug.contains("github.com"));
+        assert!(debug.contains("GITHUB_TOKEN"));
+        // fn pointers excluded by finish_non_exhaustive
+        assert!(debug.contains(".."));
+        assert!(!debug.contains("infer_api_base"));
+        assert!(!debug.contains("create"));
+    }
+}

@@ -86,7 +86,7 @@
 			"description": "Unit tests for GitHub provider registration: preset values correct, infer_api_base returns correct URLs for github.com vs GHE hosts, capabilities flags set. Done when: tests verify preset + inference behavior.",
 			"depends": ["github-registration"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "available-registrations",

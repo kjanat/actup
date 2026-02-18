@@ -110,3 +110,16 @@ Started: 2026-02-18
 - Added `#[allow(clippy::needless_pass_by_value)]` on `create_github_provider` — signature must match `Registration::create` fn pointer type
 - Files changed: `crates/provider-github/src/lib.rs`
 - **Learnings:** `Registration::create` fn pointer takes `ProviderConfig` by value, which triggers clippy `needless_pass_by_value` on the implementing function since not all fields are moved. Allow-lint is the correct fix since the signature is dictated by the trait. Named `fn` (not closure) required for `static` initializer — closures can't be used in static context even if they don't capture.
+
+## Task - test-github-registration
+
+- Added 15 tests to `crates/provider-github/src/lib.rs` in `#[cfg(test)] mod tests`
+- Preset verification: host, api_base, token_env values, count (1 preset), kind
+- `default_token_env` matches preset
+- Capabilities: both `supports_graphql` and `supports_rest` true
+- `infer_api_base`: returns `None` for `github.com`, `https://{host}/api/v3` for GHE hosts (tested 3 variants: standard, subdomain, short hostname)
+- `create` fn: succeeds for both github.com and GHE with nonexistent token env var (unauthenticated mode)
+- Preset values cross-checked against module constants (`GITHUB_HOST`, `GITHUB_API_HOST`)
+- Debug output verified: includes kind/presets/token, excludes fn pointers
+- Files changed: `crates/provider-github/src/lib.rs`
+- **Learnings:** Tests against the real `REGISTRATION` static (not mocks) give stronger guarantees — verifies the actual wiring. `create` fn works without token env set since `GitHubProvider::with_host` accepts `None` token.
