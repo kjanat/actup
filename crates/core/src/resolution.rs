@@ -454,6 +454,35 @@ mod tests {
     }
 
     #[test]
+    fn test_check_action_major_no_v_prefix_up_to_date_when_exists() {
+        // "6" should be UpToDate when a "6" tag actually exists
+        let action = make_action_ref("actions", "setup-node", "6");
+        let tag_6 = make_version_info("6", "sha6_no_v"); // exact match
+        let v6_tag = make_version_info("v6", "sha6_with_v");
+        let v6_0_2 = make_version_info("v6.0.2", "sha6full");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+        let mut major_tags = HashMap::new();
+        major_tags.insert(6, v6_tag.clone());
+
+        let versions = make_version_set(
+            vec![tag_6, v6_tag, v6_0_2.clone()],
+            Some(v6_0_2),
+            latest_per_major,
+            major_tags,
+        );
+        let config = Config::default();
+
+        let result = check_action(&action, &versions, &config);
+        assert!(
+            matches!(result.status(), CheckStatus::UpToDate),
+            "Expected UpToDate when '6' tag exists, got {:?}",
+            result.status()
+        );
+    }
+
+    #[test]
     fn test_check_action_ignored() {
         let action = make_action_ref("ignored", "action", "v1.0.0");
         let v2 = make_version_info("v2.0.0", "abc123");
