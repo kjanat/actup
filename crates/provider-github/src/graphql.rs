@@ -2,8 +2,10 @@
 //!
 //! Fetches version information for multiple repositories in a single request.
 
-use actup_core::version::{BranchInfo, Version, VersionInfo, VersionSet};
-use actup_core::{ActionRepoId, Error, Result};
+use actup_core::action_ref::ActionRepoId;
+use actup_core::error::{Error, Result};
+use actup_core::version;
+use actup_providers::{TagLike, process_tags};
 use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize};
@@ -83,7 +85,7 @@ impl GraphQLClient {
         &self,
         repos: &[ActionRepoId],
         max_tags: u8,
-    ) -> Result<HashMap<ActionRepoId, VersionSet>> {
+    ) -> Result<HashMap<ActionRepoId, version::Set>> {
         if repos.is_empty() {
             return Ok(HashMap::new());
         }
@@ -118,10 +120,11 @@ impl GraphQLClient {
         for repo in repos {
             // Validate owner/repo to prevent GraphQL injection
             // GitHub names: alphanumeric, hyphen, underscore, dot (no quotes/backslashes)
-            if !Self::is_valid_github_name(&repo.owner) || !Self::is_valid_github_name(&repo.repo) {
+            if !Self::is_valid_github_name(repo.owner()) || !Self::is_valid_github_name(repo.repo())
+            {
                 warn!(
-                    owner = %repo.owner,
-                    repo = %repo.repo,
+                    owner = %repo.owner(),
+                    repo = %repo.repo(),
                     "skipping repo with invalid characters in owner/repo name"
                 );
                 continue;
@@ -157,8 +160,8 @@ impl GraphQLClient {
   }}
 "#,
                 i = i,
-                owner = repo.owner,
-                repo = repo.repo,
+                owner = repo.owner(),
+                repo = repo.repo(),
                 max_tags = max_tags,
             );
         }
@@ -292,7 +295,7 @@ impl GraphQLClient {
     fn parse_response(
         repos: &[ActionRepoId],
         response: &GraphQLResponse,
-    ) -> HashMap<ActionRepoId, VersionSet> {
+    ) -> HashMap<ActionRepoId, version::Set> {
         let mut results = HashMap::new();
 
         // Check for GraphQL-level errors
@@ -310,20 +313,20 @@ impl GraphQLClient {
             let alias = format!("repo{i}");
 
             let Some(repo_data) = data.get(&alias) else {
-                debug!(owner = %repo.owner, repo = %repo.repo, "repo not found in GraphQL response");
+                debug!(owner = %repo.owner(), repo = %repo.repo(), "repo not found in GraphQL response");
                 continue;
             };
 
             // Handle null response (repo not found)
             if repo_data.is_null() {
-                debug!(owner = %repo.owner, repo = %repo.repo, "repo returned null (not found or no access)");
+                debug!(owner = %repo.owner(), repo = %repo.repo(), "repo returned null (not found or no access)");
                 continue;
             }
 
             let repo_info: RepositoryData = match serde_json::from_value(repo_data.clone()) {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!(owner = %repo.owner, repo = %repo.repo, error = %e, "failed to parse repo data");
+                    warn!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "failed to parse repo data");
                     continue;
                 }
             };
@@ -335,79 +338,44 @@ impl GraphQLClient {
         results
     }
 
-    /// Convert repository data to [`VersionSet`]
-    fn build_version_set(repo_data: &RepositoryData) -> VersionSet {
-        let mut semver_tags = Vec::new();
-        let mut latest_per_major: HashMap<u32, VersionInfo> = HashMap::new();
-        let mut major_tags: HashMap<u32, VersionInfo> = HashMap::new();
-        let mut latest: Option<VersionInfo> = None;
-
-        if let Some(refs) = &repo_data.refs {
-            for node in &refs.nodes {
-                let sha = node.target_sha().unwrap_or_default();
-                if sha.is_empty() {
-                    continue;
-                }
-
-                let version = Version::parse(&node.name);
-                let info = VersionInfo::new(version.clone(), &sha);
-
-                if let Version::Semver {
-                    major,
-                    minor,
-                    patch,
-                    prerelease,
-                    ..
-                } = &version
-                {
-                    semver_tags.push(info.clone());
-
-                    // Track major-only tags (v1, v2, v6 - no minor/patch)
-                    if minor.is_none() && patch.is_none() && prerelease.is_none() {
-                        major_tags.insert(*major, info.clone());
-                    }
-
-                    // Only track stable releases for "latest"
-                    if prerelease.is_none() {
-                        let dominated_by_latest =
-                            latest.as_ref().is_some_and(|l| l.version >= version);
-                        let dominated_by_major = latest_per_major
-                            .get(major)
-                            .is_some_and(|c| c.version >= version);
-
-                        if !dominated_by_latest && !dominated_by_major {
-                            // Version is greater than both overall latest and major-specific latest
-                            latest_per_major.insert(*major, info.clone());
-                            latest = Some(info);
-                        } else if !dominated_by_major {
-                            // Version is greater than major-specific latest but not overall latest
-                            // (invariant: latest >= max(latest_per_major) so this is the only other case)
-                            latest_per_major.insert(*major, info.clone());
+    /// Convert repository data to [`version::Set`]
+    ///
+    /// Uses the shared [`process_tags`] function from `actup_providers::tags`
+    /// to ensure consistent tag processing across all providers.
+    fn build_version_set(repo_data: &RepositoryData) -> version::Set {
+        // Convert GraphQL TagNodes to ProcessableTags, filtering those with valid SHAs
+        let tags = repo_data
+            .refs
+            .as_ref()
+            .map(|refs| {
+                refs.nodes
+                    .iter()
+                    .filter_map(|node| {
+                        let sha = node.target_sha()?;
+                        if sha.is_empty() {
+                            return None;
                         }
-                        // Note: the case (!dominated_by_latest && dominated_by_major) is unreachable
-                        // because we maintain latest >= max(latest_per_major.values())
-                    }
-                }
-            }
+                        Some(ProcessableTag {
+                            name: node.name.clone(),
+                            sha,
+                        })
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        // Use shared tag processing logic
+        let mut set = process_tags(tags);
+
+        // Set default branch if present (GraphQL-specific: fetched in same query)
+        if let Some(br) = &repo_data.default_branch_ref
+            && let Some(sha) = br.target_sha()
+        {
+            let branch = version::BranchInfo::new(br.name.clone(), sha);
+            set.set_default_branch(branch);
         }
 
-        // Sort descending by version
-        semver_tags.sort_by(|a, b| b.version.cmp(&a.version));
-
-        // Extract default branch info
-        let default_branch = repo_data.default_branch_ref.as_ref().map(|br| BranchInfo {
-            name: br.name.clone(),
-            sha: br.target_sha().unwrap_or_default(),
-        });
-
-        VersionSet {
-            semver_tags,
-            latest_per_major,
-            major_tags,
-            latest,
-            default_branch,
-            fetched_at: Some(SystemTime::now()),
-        }
+        set
     }
 }
 
@@ -453,6 +421,25 @@ impl TagNode {
     }
 }
 
+/// Wrapper for processing GraphQL tags via the shared `process_tags` function.
+///
+/// GraphQL `TagNode` returns `Option<String>` for SHA (computed from nested response),
+/// but `TagLike` requires `&str`. This wrapper pre-computes and stores the SHA.
+struct ProcessableTag {
+    name: String,
+    sha: String,
+}
+
+impl TagLike for ProcessableTag {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sha(&self) -> &str {
+        &self.sha
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RefNode {
     name: String,
@@ -490,12 +477,7 @@ mod tests {
 
     #[test]
     fn test_build_query_single_repo() {
-        let repos = vec![ActionRepoId {
-            host: None,
-            owner: "actions".to_string(),
-            repo: "checkout".to_string(),
-            subpath: None,
-        }];
+        let repos = vec![ActionRepoId::simple("actions", "checkout")];
 
         let (query, valid_repos) = GraphQLClient::build_query(&repos, 10);
 
@@ -504,24 +486,14 @@ mod tests {
         assert!(query.contains(r#"name: "checkout""#));
         assert!(query.contains("first: 10"));
         assert_eq!(valid_repos.len(), 1);
-        assert_eq!(valid_repos[0].owner, "actions");
+        assert_eq!(valid_repos[0].owner(), "actions");
     }
 
     #[test]
     fn test_build_query_multiple_repos() {
         let repos = vec![
-            ActionRepoId {
-                host: None,
-                owner: "actions".to_string(),
-                repo: "checkout".to_string(),
-                subpath: None,
-            },
-            ActionRepoId {
-                host: None,
-                owner: "dtolnay".to_string(),
-                repo: "rust-toolchain".to_string(),
-                subpath: None,
-            },
+            ActionRepoId::simple("actions", "checkout"),
+            ActionRepoId::simple("dtolnay", "rust-toolchain"),
         ];
 
         let (query, valid_repos) = GraphQLClient::build_query(&repos, 5);
@@ -575,24 +547,9 @@ mod tests {
     fn test_build_query_skips_invalid_repos() {
         // Test with invalid repo in the middle to verify contiguous alias indexing
         let repos = vec![
-            ActionRepoId {
-                host: None,
-                owner: "valid".to_string(),
-                repo: "repo".to_string(),
-                subpath: None,
-            },
-            ActionRepoId {
-                host: None,
-                owner: "invalid\"owner".to_string(),
-                repo: "repo".to_string(),
-                subpath: None,
-            },
-            ActionRepoId {
-                host: None,
-                owner: "another-valid".to_string(),
-                repo: "repo2".to_string(),
-                subpath: None,
-            },
+            ActionRepoId::simple("valid", "repo"),
+            ActionRepoId::simple("invalid\"owner", "repo"),
+            ActionRepoId::simple("another-valid", "repo2"),
         ];
 
         let (query, valid_repos) = GraphQLClient::build_query(&repos, 10);
@@ -620,7 +577,7 @@ mod tests {
 
         // valid_repos should only contain the two valid repos
         assert_eq!(valid_repos.len(), 2);
-        assert_eq!(valid_repos[0].owner, "valid");
-        assert_eq!(valid_repos[1].owner, "another-valid");
+        assert_eq!(valid_repos[0].owner(), "valid");
+        assert_eq!(valid_repos[1].owner(), "another-valid");
     }
 }

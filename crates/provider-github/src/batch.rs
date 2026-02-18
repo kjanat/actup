@@ -6,8 +6,8 @@
 
 use crate::GitHubProvider;
 use crate::graphql::GraphQLClient;
-use actup_core::cache::{Cache, CacheEntry, CacheError};
-use actup_core::version::VersionSet;
+use actup_core::cache::{self, Cache};
+use actup_core::version;
 use actup_core::{ActionRepoId, Provider};
 use futures::StreamExt;
 use std::collections::{HashMap, HashSet};
@@ -71,7 +71,7 @@ impl<C: Cache> BatchFetcher<C> {
     pub async fn fetch_versions(
         &self,
         repos: &[ActionRepoId],
-    ) -> HashMap<ActionRepoId, VersionSet> {
+    ) -> HashMap<ActionRepoId, version::Set> {
         let mut results = HashMap::new();
         let mut uncached = Vec::new();
 
@@ -85,19 +85,19 @@ impl<C: Cache> BatchFetcher<C> {
             match self.cache.get(&cache_key).await {
                 Ok(entry) => {
                     debug!(
-                        owner = %repo.owner,
-                        repo = %repo.repo,
+                        owner = %repo.owner(),
+                        repo = %repo.repo(),
                         "cache hit"
                     );
-                    results.insert(repo.clone(), entry.versions);
+                    results.insert(repo.clone(), entry.versions().clone());
                 }
-                Err(CacheError::NotFound | CacheError::Disabled) => {
+                Err(cache::Error::NotFound | cache::Error::Disabled) => {
                     uncached.push(repo.clone());
                 }
                 Err(e) => {
                     warn!(
-                        owner = %repo.owner,
-                        repo = %repo.repo,
+                        owner = %repo.owner(),
+                        repo = %repo.repo(),
                         error = %e,
                         "cache read error"
                     );
@@ -123,12 +123,12 @@ impl<C: Cache> BatchFetcher<C> {
         // 3. Store results in cache and collect
         for (repo, versions) in fetched {
             let cache_key = repo.cache_key("github", self.provider.host());
-            let entry = CacheEntry::new(versions.clone());
+            let entry = cache::Entry::new(versions.clone());
 
             if let Err(e) = self.cache.set(&cache_key, entry).await {
                 warn!(
-                    owner = %repo.owner,
-                    repo = %repo.repo,
+                    owner = %repo.owner(),
+                    repo = %repo.repo(),
                     error = %e,
                     "failed to cache versions"
                 );
@@ -145,7 +145,7 @@ impl<C: Cache> BatchFetcher<C> {
         &self,
         client: &GraphQLClient,
         repos: &[ActionRepoId],
-    ) -> HashMap<ActionRepoId, VersionSet> {
+    ) -> HashMap<ActionRepoId, version::Set> {
         debug!(count = repos.len(), "using GraphQL batch fetch");
 
         match client.batch_get_versions(repos, self.max_tags).await {
@@ -161,7 +161,7 @@ impl<C: Cache> BatchFetcher<C> {
     async fn fetch_parallel_rest(
         &self,
         repos: &[ActionRepoId],
-    ) -> HashMap<ActionRepoId, VersionSet> {
+    ) -> HashMap<ActionRepoId, version::Set> {
         use actup_core::Provider;
 
         /// Maximum concurrent REST requests to avoid overwhelming the API
@@ -186,8 +186,8 @@ impl<C: Cache> BatchFetcher<C> {
                 }
                 Err(e) => {
                     warn!(
-                        owner = %repo.owner,
-                        repo = %repo.repo,
+                        owner = %repo.owner(),
+                        repo = %repo.repo(),
                         error = %e,
                         "failed to fetch versions"
                     );
@@ -199,11 +199,13 @@ impl<C: Cache> BatchFetcher<C> {
     }
 
     /// Get access to the underlying provider for single-repo operations
+    #[must_use]
     pub const fn provider(&self) -> &GitHubProvider {
         &self.provider
     }
 
     /// Check if GraphQL is available
+    #[must_use]
     pub const fn has_graphql(&self) -> bool {
         self.graphql.is_some()
     }
@@ -213,22 +215,16 @@ impl<C: Cache> BatchFetcher<C> {
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
-    use actup_core::cache::NoopCache;
 
     #[allow(dead_code, reason = "helper function for future tests")]
     fn make_repo(owner: &str, repo: &str) -> ActionRepoId {
-        ActionRepoId {
-            host: None,
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            subpath: None,
-        }
+        ActionRepoId::simple(owner, repo)
     }
 
     #[test]
     fn test_rest_only_has_no_graphql() {
         let provider = GitHubProvider::new(None).unwrap();
-        let cache = Arc::new(NoopCache);
+        let cache = Arc::new(cache::Noop);
         let fetcher = BatchFetcher::rest_only(provider, cache, 10);
 
         assert!(!fetcher.has_graphql());
@@ -237,7 +233,7 @@ mod tests {
     #[test]
     fn test_with_graphql_no_token() {
         let provider = GitHubProvider::new(None).unwrap();
-        let cache = Arc::new(NoopCache);
+        let cache = Arc::new(cache::Noop);
         let fetcher = BatchFetcher::with_graphql(provider, cache, None, 10);
 
         // No token = no GraphQL
