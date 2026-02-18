@@ -179,6 +179,23 @@ pub fn check_action(
 
     // Check if current is up-to-date (handles v4 == v4.1.7 via major comparison)
     if is_version_current(&current, target.as_ref()) {
+        // For major-only refs (like "v4" or "6"), verify the exact tag exists.
+        // Prevents false "up to date" when user writes "6" but only "v6" exists.
+        if current.is_major_only() && !versions.has_exact_tag(action_ref.ref_str()) {
+            return CheckResult::new(
+                action_ref.clone(),
+                target.map_or_else(
+                    || CheckStatus::Unresolvable {
+                        reason: format!("tag '{}' not found", action_ref.ref_str()),
+                        is_environment_error: false,
+                    },
+                    |t| CheckStatus::Outdated {
+                        current: action_ref.ref_str().to_string(),
+                        target: t,
+                    },
+                ),
+            );
+        }
         return CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
     }
 
@@ -383,13 +400,15 @@ mod tests {
 
     #[test]
     fn test_check_action_major_tag_up_to_date() {
-        // "v4" should be up-to-date if latest v4.x.x exists
+        // "v4" should be up-to-date if the repo has a "v4" tag
         let action = make_action_ref("actions", "checkout", "v4");
+        let v4_tag = make_version_info("v4", "abc123");
         let v4_2 = make_version_info("v4.2.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(4, v4_2.clone());
+        // Include both v4 (major tag) and v4.2.0 in semver_tags
         let versions = make_version_set(
-            vec![v4_2.clone()],
+            vec![v4_tag, v4_2.clone()],
             Some(v4_2),
             latest_per_major,
             HashMap::new(),
@@ -398,6 +417,69 @@ mod tests {
 
         let result = check_action(&action, &versions, &config);
         assert!(matches!(result.status(), CheckStatus::UpToDate));
+    }
+
+    #[test]
+    fn test_check_action_major_no_v_prefix_not_up_to_date() {
+        // "6" (no v prefix) should NOT be up-to-date when only "v6" tag exists.
+        // Tag "6" doesn't exist — GitHub Actions would fail at runtime.
+        let action = make_action_ref("actions", "setup-node", "6");
+        let v6_tag = make_version_info("v6", "sha6");
+        let v6_0_2 = make_version_info("v6.0.2", "sha6full");
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+        let mut major_tags = HashMap::new();
+        major_tags.insert(6, v6_tag.clone());
+        let versions = make_version_set(
+            vec![v6_tag, v6_0_2.clone()],
+            Some(v6_0_2),
+            latest_per_major,
+            major_tags,
+        );
+        let config = Config::default();
+
+        let result = check_action(&action, &versions, &config);
+        // Should be Outdated (suggesting "v6"), NOT UpToDate
+        match result.status() {
+            CheckStatus::Outdated { current, target } => {
+                assert_eq!(current, "6");
+                assert!(
+                    target.version().to_string().starts_with("v6"),
+                    "Should suggest 'v6.x', got '{}'",
+                    target.version()
+                );
+            }
+            other => panic!("Expected Outdated for '6' when only 'v6' exists, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_check_action_major_no_v_prefix_up_to_date_when_exists() {
+        // "6" should be UpToDate when a "6" tag actually exists
+        let action = make_action_ref("actions", "setup-node", "6");
+        let tag_6 = make_version_info("6", "sha6_no_v"); // exact match
+        let v6_tag = make_version_info("v6", "sha6_with_v");
+        let v6_0_2 = make_version_info("v6.0.2", "sha6full");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+        let mut major_tags = HashMap::new();
+        major_tags.insert(6, v6_tag.clone());
+
+        let versions = make_version_set(
+            vec![tag_6, v6_tag, v6_0_2.clone()],
+            Some(v6_0_2),
+            latest_per_major,
+            major_tags,
+        );
+        let config = Config::default();
+
+        let result = check_action(&action, &versions, &config);
+        assert!(
+            matches!(result.status(), CheckStatus::UpToDate),
+            "Expected UpToDate when '6' tag exists, got {:?}",
+            result.status()
+        );
     }
 
     #[test]
