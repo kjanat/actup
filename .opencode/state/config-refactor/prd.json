@@ -10,7 +10,7 @@
 			"description": "Add HostKind enum (Github, Gitlab, Gitea) to actup-core with serde rename_all lowercase. ApiMode already exists. Done when: enum compiles, serde rename works.",
 			"priority": "architecture",
 			"overseerId": "task_01KHSANXK58X0VPHJ9TG9HNSWX",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "fetch-settings",

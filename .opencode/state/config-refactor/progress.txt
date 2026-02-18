@@ -5,8 +5,24 @@ Started: 2026-02-18
 
 ## Codebase Patterns
 
-<!-- Consolidate reusable patterns here -->
+- Config types live in `crates/core/src/config/mod.rs`, re-exported via `crates/core/src/lib.rs`
+- Crate dir is `crates/core/` (not `crates/actup-core/` as AGENTS.md suggests)
+- Enums use `#[serde(rename_all = "lowercase")]` for TOML/JSON serialization
+- Tests in same file via `#[cfg(test)] mod tests`, use `#[allow(clippy::unwrap_used)]`
+- `serde_json` available as dev-dep for round-trip tests
+- `deny_unknown_fields` not yet used but spec requires it on new config structs
+- `Hash` derive needed on `HostKind` for use as `HashMap` key in later tasks
 
 ---
 
 <!-- Task logs below - APPEND ONLY -->
+
+## Task - hostkind-enum
+
+- Added `HostKind` enum with `Github`, `Gitlab`, `Gitea` variants
+- Derives: `Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema`
+- `#[serde(rename_all = "lowercase")]` + `Display` impl
+- Re-exported from `actup_core::HostKind`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- Tests: serde round-trip, display, rejects unknown, case-sensitive, hashable
+- **Learnings:** Added `Hash` beyond spec minimum since `HostKind` will be used as HashMap key in `hosts` map and registration lookup

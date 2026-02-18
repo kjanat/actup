@@ -223,6 +223,33 @@ impl std::fmt::Display for ApiMode {
     }
 }
 
+/// Provider kind identifiers.
+///
+/// Each variant corresponds to a provider crate that implements the [`Provider`](crate::Provider)
+/// trait. Used for cache namespacing, registration lookup, and config validation.
+///
+/// Adding a new provider requires adding a variant here **and** a provider crate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum HostKind {
+    /// GitHub / GitHub Enterprise
+    Github,
+    /// GitLab (gitlab.com or self-hosted)
+    Gitlab,
+    /// Gitea / Forgejo
+    Gitea,
+}
+
+impl std::fmt::Display for HostKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Github => write!(f, "github"),
+            Self::Gitlab => write!(f, "gitlab"),
+            Self::Gitea => write!(f, "gitea"),
+        }
+    }
+}
+
 /// # Provider configuration
 ///
 /// Default uses empty strings. The CLI layer sets actual defaults.
@@ -624,5 +651,57 @@ mod tests {
         assert!(providers.instances.is_empty());
         assert_eq!(providers.api_mode, ApiMode::Graphql);
         assert_eq!(providers.max_tags_per_repo, DEFAULT_MAX_TAGS_PER_REPO);
+    }
+
+    // HostKind tests
+
+    #[test]
+    fn test_hostkind_serde_roundtrip() {
+        #[allow(clippy::unwrap_used)]
+        for (variant, expected_str) in [
+            (HostKind::Github, "\"github\""),
+            (HostKind::Gitlab, "\"gitlab\""),
+            (HostKind::Gitea, "\"gitea\""),
+        ] {
+            let json = serde_json::to_string(&variant).unwrap();
+            assert_eq!(json, expected_str, "serialize {variant:?}");
+
+            let back: HostKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, variant, "deserialize {expected_str}");
+        }
+    }
+
+    #[test]
+    fn test_hostkind_display() {
+        assert_eq!(HostKind::Github.to_string(), "github");
+        assert_eq!(HostKind::Gitlab.to_string(), "gitlab");
+        assert_eq!(HostKind::Gitea.to_string(), "gitea");
+    }
+
+    #[test]
+    fn test_hostkind_rejects_unknown() {
+        let result = serde_json::from_str::<HostKind>("\"bitbucket\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hostkind_case_sensitive() {
+        // serde rename_all = "lowercase" means uppercase should fail
+        let result = serde_json::from_str::<HostKind>("\"Github\"");
+        assert!(result.is_err());
+
+        let result = serde_json::from_str::<HostKind>("\"GITHUB\"");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hostkind_hashable() {
+        use std::collections::HashSet;
+        let mut set = HashSet::new();
+        set.insert(HostKind::Github);
+        set.insert(HostKind::Gitlab);
+        set.insert(HostKind::Gitea);
+        set.insert(HostKind::Github); // duplicate
+        assert_eq!(set.len(), 3);
     }
 }
