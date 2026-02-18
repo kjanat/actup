@@ -3,8 +3,8 @@
 //! Wraps any `Provider` implementation with an in-memory cache to avoid
 //! duplicate network requests within a single command invocation.
 
-use crate::provider::{ActionYml, Provider, ProviderKind, Sha40};
-use crate::{ActionRepoId, Result, VersionSet};
+use crate::provider::{self, ActionYml, Provider, Sha40};
+use crate::{ActionRepoId, Result, version};
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -29,7 +29,7 @@ use tokio::sync::RwLock;
 /// ```
 pub struct CachingProvider<P> {
     inner: P,
-    version_cache: RwLock<HashMap<ActionRepoId, VersionSet>>,
+    version_cache: RwLock<HashMap<ActionRepoId, version::Set>>,
     sha_cache: RwLock<HashMap<(ActionRepoId, String), Sha40>>,
     branch_cache: RwLock<HashMap<ActionRepoId, String>>,
 }
@@ -67,15 +67,35 @@ impl<P: Provider> CachingProvider<P> {
 #[derive(Debug, Clone, Default)]
 pub struct CacheStats {
     /// Number of cached version sets
-    pub versions: usize,
+    versions: usize,
     /// Number of cached SHA resolutions
-    pub shas: usize,
+    shas: usize,
     /// Number of cached default branches
-    pub branches: usize,
+    branches: usize,
+}
+
+impl CacheStats {
+    /// Get the number of cached version sets
+    #[must_use]
+    pub const fn versions(&self) -> usize {
+        self.versions
+    }
+
+    /// Get the number of cached SHA resolutions
+    #[must_use]
+    pub const fn shas(&self) -> usize {
+        self.shas
+    }
+
+    /// Get the number of cached default branches
+    #[must_use]
+    pub const fn branches(&self) -> usize {
+        self.branches
+    }
 }
 
 impl<P: Provider> Provider for CachingProvider<P> {
-    fn kind(&self) -> ProviderKind {
+    fn kind(&self) -> provider::Kind {
         self.inner.kind()
     }
 
@@ -90,7 +110,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
     fn get_versions(
         &self,
         repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<VersionSet>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
         let repo = repo.clone();
 
         Box::pin(async move {
@@ -188,7 +208,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use super::*;
-    use crate::version::{Version, VersionInfo};
+    use crate::version;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -210,8 +230,8 @@ mod tests {
     }
 
     impl Provider for CountingProvider {
-        fn kind(&self) -> ProviderKind {
-            ProviderKind::GitHub
+        fn kind(&self) -> provider::Kind {
+            provider::Kind::GitHub
         }
 
         fn host(&self) -> &'static str {
@@ -221,16 +241,18 @@ mod tests {
         fn get_versions(
             &self,
             _repo: &ActionRepoId,
-        ) -> Pin<Box<dyn Future<Output = Result<VersionSet>> + Send + '_>> {
+        ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async {
-                Ok(VersionSet {
-                    latest: Some(VersionInfo::new(
-                        Version::parse("v1.0.0"),
+                Ok(version::Set::build(
+                    Vec::new(),
+                    HashMap::new(),
+                    HashMap::new(),
+                    Some(Arc::new(version::Info::new(
+                        version::Version::parse("v1.0.0"),
                         "abc123def456abc123def456abc123def456abc1",
-                    )),
-                    ..Default::default()
-                })
+                    ))),
+                ))
             })
         }
 
@@ -271,12 +293,7 @@ mod tests {
     }
 
     fn make_repo(owner: &str, repo: &str) -> ActionRepoId {
-        ActionRepoId {
-            host: None,
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            subpath: None,
-        }
+        ActionRepoId::simple(owner, repo)
     }
 
     #[tokio::test]
@@ -295,8 +312,8 @@ mod tests {
 
         // Results should match
         assert_eq!(
-            v1.latest.as_ref().unwrap().version,
-            v2.latest.as_ref().unwrap().version
+            v1.latest().unwrap().version(),
+            v2.latest().unwrap().version()
         );
     }
 
@@ -407,9 +424,9 @@ mod tests {
         cached.get_default_branch(&repo1).await.unwrap();
 
         let stats = cached.cache_stats().await;
-        assert_eq!(stats.versions, 2);
-        assert_eq!(stats.shas, 1);
-        assert_eq!(stats.branches, 1);
+        assert_eq!(stats.versions(), 2);
+        assert_eq!(stats.shas(), 1);
+        assert_eq!(stats.branches(), 1);
     }
 
     #[tokio::test]
@@ -417,7 +434,7 @@ mod tests {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
 
-        assert_eq!(cached.kind(), ProviderKind::GitHub);
+        assert_eq!(cached.kind(), provider::Kind::GitHub);
         assert_eq!(cached.host(), "github.com");
         assert_eq!(cached.cache_namespace(), "github");
     }

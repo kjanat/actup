@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
+use std::sync::Arc;
 
 /// A parsed version from a git ref
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -258,17 +259,21 @@ impl Ord for Version {
 }
 
 /// A set of available versions for an action repository
+///
+/// Uses `Arc<Info>` internally for cheap cloning when the same version
+/// appears in multiple collections (e.g., both `semver_tags` and `latest`).
+/// Arc is used instead of Rc because Provider requires Send + Sync.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct VersionSet {
+pub struct Set {
     /// All available semver versions, sorted
-    pub semver_tags: Vec<VersionInfo>,
+    semver_tags: Vec<Arc<Info>>,
 
     /// Latest version per major
     ///
     /// Examples:
     /// - `v1 -> v1.2.3`
     /// - `v2 -> v2.0.1`
-    pub latest_per_major: std::collections::HashMap<u32, VersionInfo>,
+    latest_per_major: std::collections::HashMap<u32, Arc<Info>>,
 
     /// Major-only tags that exist
     ///
@@ -277,32 +282,32 @@ pub struct VersionSet {
     /// - `v2`
     /// - `v6`
     ///
-    /// Maps major version number to the [`VersionInfo`] for the major-only tag\
+    /// Maps major version number to the [`Info`] for the major-only tag\
     /// Used to suggest major-only refs when user already uses major-only style
-    pub major_tags: std::collections::HashMap<u32, VersionInfo>,
+    major_tags: std::collections::HashMap<u32, Arc<Info>>,
 
     /// Overall latest semver version
-    pub latest: Option<VersionInfo>,
+    latest: Option<Arc<Info>>,
 
     /// Default branch info
-    pub default_branch: Option<BranchInfo>,
+    default_branch: Option<BranchInfo>,
 
     /// When this data was fetched
-    pub fetched_at: Option<std::time::SystemTime>,
+    fetched_at: Option<std::time::SystemTime>,
 }
 
 /// Information about a specific version
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct VersionInfo {
+pub struct Info {
     /// The parsed version
-    pub version: Version,
+    version: Version,
 
     /// The commit SHA this version points to
-    pub sha: String,
+    sha: String,
 }
 
-impl VersionInfo {
-    /// Create a new [`VersionInfo`]
+impl Info {
+    /// Create a new [`Info`]
     #[must_use]
     pub fn new(version: Version, sha: impl Into<String>) -> Self {
         Self {
@@ -310,23 +315,115 @@ impl VersionInfo {
             sha: sha.into(),
         }
     }
+
+    /// Get the version
+    #[must_use]
+    pub const fn version(&self) -> &Version {
+        &self.version
+    }
+
+    /// Get the commit SHA
+    #[must_use]
+    pub fn sha(&self) -> &str {
+        &self.sha
+    }
 }
 
 /// Information about a branch
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchInfo {
     /// Branch name
-    pub name: String,
+    name: String,
 
     /// Current HEAD commit SHA
-    pub sha: String,
+    sha: String,
 }
 
-impl VersionSet {
-    /// Create an empty [`VersionSet`]
+impl BranchInfo {
+    /// Create a new `BranchInfo`
+    #[must_use]
+    pub fn new(name: impl Into<String>, sha: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            sha: sha.into(),
+        }
+    }
+
+    /// Get the branch name
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Get the commit SHA
+    #[must_use]
+    pub fn sha(&self) -> &str {
+        &self.sha
+    }
+}
+
+impl Set {
+    /// Create an empty [`Set`]
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Build a version set with all fields
+    ///
+    /// This is the primary constructor for providers building version information.
+    /// Use [`Set::new()`] for an empty set.
+    #[must_use]
+    pub fn build(
+        semver_tags: Vec<Arc<Info>>,
+        latest_per_major: std::collections::HashMap<u32, Arc<Info>>,
+        major_tags: std::collections::HashMap<u32, Arc<Info>>,
+        latest: Option<Arc<Info>>,
+    ) -> Self {
+        Self {
+            semver_tags,
+            latest_per_major,
+            major_tags,
+            latest,
+            default_branch: None,
+            fetched_at: Some(std::time::SystemTime::now()),
+        }
+    }
+
+    /// Get all semver tags
+    #[must_use]
+    pub fn semver_tags(&self) -> &[Arc<Info>] {
+        &self.semver_tags
+    }
+
+    /// Get the latest version per major
+    #[must_use]
+    pub const fn latest_per_major(&self) -> &std::collections::HashMap<u32, Arc<Info>> {
+        &self.latest_per_major
+    }
+
+    /// Get major-only tags that exist
+    #[must_use]
+    pub const fn major_tags(&self) -> &std::collections::HashMap<u32, Arc<Info>> {
+        &self.major_tags
+    }
+
+    /// Get the overall latest semver version
+    #[must_use]
+    pub const fn latest(&self) -> Option<&Arc<Info>> {
+        self.latest.as_ref()
+    }
+
+    /// Get the default branch info
+    #[must_use]
+    pub const fn default_branch(&self) -> Option<&BranchInfo> {
+        self.default_branch.as_ref()
+    }
+
+    /// Get when this data was fetched
+    #[must_use]
+    pub const fn fetched_at(&self) -> Option<std::time::SystemTime> {
+        self.fetched_at
     }
 
     /// Find the latest version that satisfies the given policy for a current version
@@ -336,19 +433,19 @@ impl VersionSet {
         current: &Version,
         allow_major: bool,
         allow_prerelease: bool,
-    ) -> Option<&VersionInfo> {
+    ) -> Option<&Arc<Info>> {
         match current {
             Version::Semver { major, .. } => {
                 if allow_major {
                     // Return overall latest (filtered by prerelease if needed)
                     self.latest
                         .as_ref()
-                        .filter(|v| allow_prerelease || !v.version.is_prerelease())
+                        .filter(|v| allow_prerelease || !v.version().is_prerelease())
                 } else {
                     // Return latest for this major
                     self.latest_per_major
                         .get(major)
-                        .filter(|v| allow_prerelease || !v.version.is_prerelease())
+                        .filter(|v| allow_prerelease || !v.version().is_prerelease())
                 }
             }
             _ => {
@@ -360,6 +457,23 @@ impl VersionSet {
                 }
             }
         }
+    }
+
+    /// Set the default branch information
+    pub fn set_default_branch(&mut self, branch: BranchInfo) {
+        self.default_branch = Some(branch);
+    }
+
+    /// Builder-style setter for default branch
+    #[must_use]
+    pub fn with_default_branch(mut self, branch: BranchInfo) -> Self {
+        self.default_branch = Some(branch);
+        self
+    }
+
+    /// Get mutable access to major tags (for providers building version sets)
+    pub const fn major_tags_mut(&mut self) -> &mut std::collections::HashMap<u32, Arc<Info>> {
+        &mut self.major_tags
     }
 }
 
@@ -629,13 +743,13 @@ mod tests {
         assert!(branch > other);
     }
 
-    // VersionInfo tests
+    // version::Info tests
 
     #[test]
     fn test_version_info_new() {
-        let info = VersionInfo::new(Version::parse("v1.0.0"), "abc123");
-        assert_eq!(info.version.to_string(), "v1.0.0");
-        assert_eq!(info.sha, "abc123");
+        let info = Info::new(Version::parse("v1.0.0"), "abc123");
+        assert_eq!(info.version().to_string(), "v1.0.0");
+        assert_eq!(info.sha(), "abc123");
     }
 
     // BranchInfo tests
@@ -646,30 +760,49 @@ mod tests {
             name: "main".to_string(),
             sha: "abc123".to_string(),
         };
-        assert_eq!(info.name, "main");
-        assert_eq!(info.sha, "abc123");
+        assert_eq!(info.name(), "main");
+        assert_eq!(info.sha(), "abc123");
     }
 
-    // VersionSet tests
+    // [`version::Set`] tests
 
     #[test]
     fn test_version_set_new() {
-        let vs = VersionSet::new();
-        assert!(vs.semver_tags.is_empty());
-        assert!(vs.latest.is_none());
-        assert!(vs.default_branch.is_none());
+        let vs = Set::new();
+        assert!(vs.semver_tags().is_empty());
+        assert!(vs.latest().is_none());
+        assert!(vs.default_branch().is_none());
+    }
+
+    #[test]
+    fn test_version_set_build() {
+        let v1 = Arc::new(Info::new(Version::parse("v1.0.0"), "aaa"));
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(1, Arc::clone(&v1));
+
+        let vs = Set::build(
+            vec![Arc::clone(&v1)],
+            latest_per_major.clone(),
+            HashMap::new(),
+            Some(v1),
+        );
+
+        assert_eq!(vs.semver_tags().len(), 1);
+        assert_eq!(vs.latest_per_major().len(), 1);
+        assert!(vs.latest().is_some());
+        assert!(vs.fetched_at().is_some());
     }
 
     #[test]
     fn test_find_latest_for_major_allowed() {
-        let v3 = VersionInfo::new(Version::parse("v3.0.0"), "aaa");
-        let v4 = VersionInfo::new(Version::parse("v4.0.0"), "bbb");
+        let v3 = Arc::new(Info::new(Version::parse("v3.0.0"), "aaa"));
+        let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
         let mut latest_per_major = HashMap::new();
-        latest_per_major.insert(3, v3);
-        latest_per_major.insert(4, v4.clone());
+        latest_per_major.insert(3, Arc::clone(&v3));
+        latest_per_major.insert(4, Arc::clone(&v4));
 
-        let vs = VersionSet {
+        let vs = Set {
             semver_tags: vec![],
             latest_per_major,
             major_tags: HashMap::new(),
@@ -686,14 +819,14 @@ mod tests {
 
     #[test]
     fn test_find_latest_for_major_not_allowed() {
-        let v3_1 = VersionInfo::new(Version::parse("v3.1.0"), "aaa");
-        let v4 = VersionInfo::new(Version::parse("v4.0.0"), "bbb");
+        let v3_1 = Arc::new(Info::new(Version::parse("v3.1.0"), "aaa"));
+        let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
         let mut latest_per_major = HashMap::new();
-        latest_per_major.insert(3, v3_1);
-        latest_per_major.insert(4, v4.clone());
+        latest_per_major.insert(3, Arc::clone(&v3_1));
+        latest_per_major.insert(4, Arc::clone(&v4));
 
-        let vs = VersionSet {
+        let vs = Set {
             semver_tags: vec![],
             latest_per_major,
             major_tags: HashMap::new(),
@@ -710,9 +843,9 @@ mod tests {
 
     #[test]
     fn test_find_latest_for_non_semver() {
-        let v4 = VersionInfo::new(Version::parse("v4.0.0"), "bbb");
+        let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
-        let vs = VersionSet {
+        let vs = Set {
             semver_tags: vec![],
             latest_per_major: HashMap::new(),
             major_tags: HashMap::new(),
@@ -735,12 +868,12 @@ mod tests {
 
     #[test]
     fn test_find_latest_for_filters_prerelease() {
-        let beta = VersionInfo::new(Version::parse("v4.0.0-beta"), "aaa");
+        let beta = Arc::new(Info::new(Version::parse("v4.0.0-beta"), "aaa"));
 
         let mut latest_per_major = HashMap::new();
-        latest_per_major.insert(4, beta.clone());
+        latest_per_major.insert(4, Arc::clone(&beta));
 
-        let vs = VersionSet {
+        let vs = Set {
             semver_tags: vec![],
             latest_per_major,
             major_tags: HashMap::new(),
@@ -758,5 +891,51 @@ mod tests {
         // With allow_prerelease, includes beta
         let result = vs.find_latest_for(&current, false, true);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_set_default_branch() {
+        let mut vs = Set::new();
+        assert!(vs.default_branch().is_none());
+
+        let branch = BranchInfo {
+            name: "main".to_string(),
+            sha: "abc123".to_string(),
+        };
+        vs.set_default_branch(branch);
+
+        assert!(vs.default_branch().is_some());
+        assert_eq!(vs.default_branch().unwrap().name(), "main");
+        assert_eq!(vs.default_branch().unwrap().sha(), "abc123");
+    }
+
+    #[test]
+    fn test_with_default_branch() {
+        let branch = BranchInfo {
+            name: "develop".to_string(),
+            sha: "def456".to_string(),
+        };
+
+        let vs = Set::new().with_default_branch(branch);
+
+        assert!(vs.default_branch().is_some());
+        assert_eq!(vs.default_branch().unwrap().name(), "develop");
+        assert_eq!(vs.default_branch().unwrap().sha(), "def456");
+    }
+
+    #[test]
+    fn test_major_tags_mut() {
+        let mut vs = Set::new();
+        assert!(vs.major_tags().is_empty());
+
+        let v1_tag = Arc::new(Info::new(Version::parse("v1"), "aaa"));
+        let v2_tag = Arc::new(Info::new(Version::parse("v2"), "bbb"));
+
+        vs.major_tags_mut().insert(1, v1_tag);
+        vs.major_tags_mut().insert(2, v2_tag);
+
+        assert_eq!(vs.major_tags().len(), 2);
+        assert!(vs.major_tags().contains_key(&1));
+        assert!(vs.major_tags().contains_key(&2));
     }
 }

@@ -3,14 +3,14 @@
 //! Providers implement the interface for querying action versions from
 //! different git hosting platforms (GitHub, GitLab, Gitea, etc.).
 
-use crate::{ActionRepoId, Result, VersionSet};
+use crate::{ActionRepoId, Result, version};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
 /// Identifies the type of provider
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ProviderKind {
+pub enum Kind {
     /// GitHub.com or GitHub Enterprise
     GitHub,
     /// GitLab.com or self-hosted GitLab
@@ -23,7 +23,7 @@ pub enum ProviderKind {
     Local,
 }
 
-impl fmt::Display for ProviderKind {
+impl fmt::Display for Kind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::GitHub => write!(f, "github"),
@@ -35,7 +35,7 @@ impl fmt::Display for ProviderKind {
     }
 }
 
-impl ProviderKind {
+impl Kind {
     /// Get the cache namespace for this provider kind
     #[must_use]
     pub const fn cache_namespace(&self) -> &'static str {
@@ -51,7 +51,7 @@ impl ProviderKind {
 
 /// A 40-character commit SHA
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Sha40(pub String);
+pub struct Sha40(String);
 
 impl Sha40 {
     /// Create a new Sha40, validating the format and normalizing to lowercase
@@ -81,75 +81,454 @@ impl fmt::Display for Sha40 {
 #[derive(Debug, Clone, Default)]
 pub struct ActionYml {
     /// Raw YAML content
-    pub raw: String,
+    raw: String,
     /// Action name from the file
-    pub name: Option<String>,
+    name: Option<String>,
     /// Action description
-    pub description: Option<String>,
+    description: Option<String>,
     /// Author if specified
-    pub author: Option<String>,
+    author: Option<String>,
     /// Input parameters
-    pub inputs: std::collections::HashMap<String, ActionInput>,
+    inputs: std::collections::HashMap<String, ActionInput>,
     /// Output values
-    pub outputs: std::collections::HashMap<String, ActionOutput>,
+    outputs: std::collections::HashMap<String, ActionOutput>,
     /// How the action runs
-    pub runs: Option<ActionRuns>,
+    runs: Option<ActionRuns>,
+}
+
+impl ActionYml {
+    /// Create a new `ActionYml` with raw YAML content
+    #[must_use]
+    pub fn new(raw: impl Into<String>) -> Self {
+        Self {
+            raw: raw.into(),
+            ..Default::default()
+        }
+    }
+
+    /// Get the raw YAML content
+    #[must_use]
+    pub fn raw(&self) -> &str {
+        &self.raw
+    }
+
+    /// Get the action name
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Get the action description
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Get the author
+    #[must_use]
+    pub fn author(&self) -> Option<&str> {
+        self.author.as_deref()
+    }
+
+    /// Get the input parameters
+    #[must_use]
+    pub const fn inputs(&self) -> &std::collections::HashMap<String, ActionInput> {
+        &self.inputs
+    }
+
+    /// Get the output values
+    #[must_use]
+    pub const fn outputs(&self) -> &std::collections::HashMap<String, ActionOutput> {
+        &self.outputs
+    }
+
+    /// Get the runs configuration
+    #[must_use]
+    pub const fn runs(&self) -> Option<&ActionRuns> {
+        self.runs.as_ref()
+    }
+
+    /// Builder: Set the action name
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Builder: Set the description
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Builder: Set the author
+    #[must_use]
+    pub fn with_author(mut self, author: impl Into<String>) -> Self {
+        self.author = Some(author.into());
+        self
+    }
+
+    /// Builder: Set the inputs
+    #[must_use]
+    pub fn with_inputs(mut self, inputs: std::collections::HashMap<String, ActionInput>) -> Self {
+        self.inputs = inputs;
+        self
+    }
+
+    /// Builder: Set the outputs
+    #[must_use]
+    pub fn with_outputs(
+        mut self,
+        outputs: std::collections::HashMap<String, ActionOutput>,
+    ) -> Self {
+        self.outputs = outputs;
+        self
+    }
+
+    /// Builder: Set the runs configuration
+    #[must_use]
+    pub fn with_runs(mut self, runs: ActionRuns) -> Self {
+        self.runs = Some(runs);
+        self
+    }
 }
 
 /// An input parameter for an action
 #[derive(Debug, Clone, Default)]
 pub struct ActionInput {
     /// Description of the input
-    pub description: Option<String>,
+    description: Option<String>,
     /// Whether this input is required
-    pub required: bool,
+    required: bool,
     /// Default value if not provided
-    pub default: Option<String>,
+    default: Option<String>,
     /// Deprecation message if deprecated
-    pub deprecation_message: Option<String>,
+    deprecation_message: Option<String>,
+}
+
+impl ActionInput {
+    /// Create a new `ActionInput`
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            description: None,
+            required: false,
+            default: None,
+            deprecation_message: None,
+        }
+    }
+
+    /// Get the input description
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Check if this input is required
+    #[must_use]
+    pub const fn required(&self) -> bool {
+        self.required
+    }
+
+    /// Get the default value
+    #[must_use]
+    pub fn default(&self) -> Option<&str> {
+        self.default.as_deref()
+    }
+
+    /// Get the deprecation message
+    #[must_use]
+    pub fn deprecation_message(&self) -> Option<&str> {
+        self.deprecation_message.as_deref()
+    }
+
+    /// Builder: Set the description
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Builder: Set whether this input is required
+    #[must_use]
+    pub const fn with_required(mut self, required: bool) -> Self {
+        self.required = required;
+        self
+    }
+
+    /// Builder: Set the default value
+    #[must_use]
+    pub fn with_default(mut self, default: impl Into<String>) -> Self {
+        self.default = Some(default.into());
+        self
+    }
+
+    /// Builder: Set the deprecation message
+    #[must_use]
+    pub fn with_deprecation_message(mut self, message: impl Into<String>) -> Self {
+        self.deprecation_message = Some(message.into());
+        self
+    }
 }
 
 /// An output value from an action
 #[derive(Debug, Clone, Default)]
 pub struct ActionOutput {
     /// Description of the output
-    pub description: Option<String>,
+    description: Option<String>,
     /// Value expression (for composite actions)
-    pub value: Option<String>,
+    value: Option<String>,
+}
+
+impl ActionOutput {
+    /// Create a new `ActionOutput`
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            description: None,
+            value: None,
+        }
+    }
+
+    /// Get the output description
+    #[must_use]
+    pub fn description(&self) -> Option<&str> {
+        self.description.as_deref()
+    }
+
+    /// Get the value expression
+    #[must_use]
+    pub fn value(&self) -> Option<&str> {
+        self.value.as_deref()
+    }
+
+    /// Builder: Set the description
+    #[must_use]
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Builder: Set the value expression
+    #[must_use]
+    pub fn with_value(mut self, value: impl Into<String>) -> Self {
+        self.value = Some(value.into());
+        self
+    }
 }
 
 /// How the action executes
 #[derive(Debug, Clone)]
 pub struct ActionRuns {
-    /// Runtime: "composite", "node20", "node16", "docker"
-    pub using: String,
+    /// Runtime: "composite", "node24", "node22", "node20", "node16", "docker"
+    using: String,
     /// Main entry point (for node/docker)
-    pub main: Option<String>,
+    main: Option<String>,
     /// Pre-run script
-    pub pre: Option<String>,
+    pre: Option<String>,
     /// Post-run script
-    pub post: Option<String>,
+    post: Option<String>,
     /// Docker image (for docker actions)
-    pub image: Option<String>,
+    image: Option<String>,
     /// Steps (for composite actions)
-    pub steps: Vec<ActionStep>,
+    steps: Vec<ActionStep>,
+}
+
+impl ActionRuns {
+    /// Create a new `ActionRuns` with the runtime
+    #[must_use]
+    pub fn new(using: impl Into<String>) -> Self {
+        Self {
+            using: using.into(),
+            main: None,
+            pre: None,
+            post: None,
+            image: None,
+            steps: Vec::new(),
+        }
+    }
+
+    /// Get the runtime
+    #[must_use]
+    pub fn using(&self) -> &str {
+        &self.using
+    }
+
+    /// Get the main entry point
+    #[must_use]
+    pub fn main(&self) -> Option<&str> {
+        self.main.as_deref()
+    }
+
+    /// Get the pre-run script
+    #[must_use]
+    pub fn pre(&self) -> Option<&str> {
+        self.pre.as_deref()
+    }
+
+    /// Get the post-run script
+    #[must_use]
+    pub fn post(&self) -> Option<&str> {
+        self.post.as_deref()
+    }
+
+    /// Get the Docker image
+    #[must_use]
+    pub fn image(&self) -> Option<&str> {
+        self.image.as_deref()
+    }
+
+    /// Get the steps
+    #[must_use]
+    pub fn steps(&self) -> &[ActionStep] {
+        &self.steps
+    }
+
+    /// Builder: Set the main entry point
+    #[must_use]
+    pub fn with_main(mut self, main: impl Into<String>) -> Self {
+        self.main = Some(main.into());
+        self
+    }
+
+    /// Builder: Set the pre-run script
+    #[must_use]
+    pub fn with_pre(mut self, pre: impl Into<String>) -> Self {
+        self.pre = Some(pre.into());
+        self
+    }
+
+    /// Builder: Set the post-run script
+    #[must_use]
+    pub fn with_post(mut self, post: impl Into<String>) -> Self {
+        self.post = Some(post.into());
+        self
+    }
+
+    /// Builder: Set the Docker image
+    #[must_use]
+    pub fn with_image(mut self, image: impl Into<String>) -> Self {
+        self.image = Some(image.into());
+        self
+    }
+
+    /// Builder: Set the steps
+    #[must_use]
+    pub fn with_steps(mut self, steps: Vec<ActionStep>) -> Self {
+        self.steps = steps;
+        self
+    }
 }
 
 /// A step in a composite action
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ActionStep {
     /// Step name
-    pub name: Option<String>,
+    name: Option<String>,
     /// Step ID for outputs
-    pub id: Option<String>,
+    id: Option<String>,
     /// Action to run (uses:)
-    pub uses: Option<String>,
+    uses: Option<String>,
     /// Shell command (run:)
-    pub run: Option<String>,
+    run: Option<String>,
     /// Shell to use
-    pub shell: Option<String>,
+    shell: Option<String>,
     /// Working directory
-    pub working_directory: Option<String>,
+    working_directory: Option<String>,
+}
+
+impl ActionStep {
+    /// Create a new `ActionStep`
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            name: None,
+            id: None,
+            uses: None,
+            run: None,
+            shell: None,
+            working_directory: None,
+        }
+    }
+
+    /// Get the step name
+    #[must_use]
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    /// Get the step ID
+    #[must_use]
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
+    }
+
+    /// Get the uses value
+    #[must_use]
+    pub fn uses(&self) -> Option<&str> {
+        self.uses.as_deref()
+    }
+
+    /// Get the run command
+    #[must_use]
+    pub fn run(&self) -> Option<&str> {
+        self.run.as_deref()
+    }
+
+    /// Get the shell
+    #[must_use]
+    pub fn shell(&self) -> Option<&str> {
+        self.shell.as_deref()
+    }
+
+    /// Get the working directory
+    #[must_use]
+    pub fn working_directory(&self) -> Option<&str> {
+        self.working_directory.as_deref()
+    }
+
+    /// Builder: Set the step name
+    #[must_use]
+    pub fn with_name(mut self, name: impl Into<String>) -> Self {
+        self.name = Some(name.into());
+        self
+    }
+
+    /// Builder: Set the step ID
+    #[must_use]
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Builder: Set the uses value
+    #[must_use]
+    pub fn with_uses(mut self, uses: impl Into<String>) -> Self {
+        self.uses = Some(uses.into());
+        self
+    }
+
+    /// Builder: Set the run command
+    #[must_use]
+    pub fn with_run(mut self, run: impl Into<String>) -> Self {
+        self.run = Some(run.into());
+        self
+    }
+
+    /// Builder: Set the shell
+    #[must_use]
+    pub fn with_shell(mut self, shell: impl Into<String>) -> Self {
+        self.shell = Some(shell.into());
+        self
+    }
+
+    /// Builder: Set the working directory
+    #[must_use]
+    pub fn with_working_directory(mut self, working_directory: impl Into<String>) -> Self {
+        self.working_directory = Some(working_directory.into());
+        self
+    }
 }
 
 /// Trait for action providers (GitHub, GitLab, etc.)
@@ -158,7 +537,7 @@ pub struct ActionStep {
 /// host-agnostic. Implementations live in separate crates.
 pub trait Provider: Send + Sync {
     /// Get the provider kind
-    fn kind(&self) -> ProviderKind;
+    fn kind(&self) -> Kind;
 
     /// Get the host this provider serves (e.g., "github.com")
     fn host(&self) -> &str;
@@ -172,7 +551,7 @@ pub trait Provider: Send + Sync {
     fn get_versions(
         &self,
         repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<VersionSet>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>>;
 
     /// Resolve a ref (tag/branch) to a full commit SHA
     fn resolve_ref_to_sha(
@@ -207,12 +586,12 @@ pub trait Provider: Send + Sync {
 /// Resolves providers by host, with support for default provider
 /// when no explicit host is specified in an action reference.
 #[derive(Default)]
-pub struct ProviderRegistry {
+pub struct Registry {
     providers: Vec<Box<dyn Provider>>,
     default_host: Option<String>,
 }
 
-impl ProviderRegistry {
+impl Registry {
     /// Create a new empty registry
     #[must_use]
     pub fn new() -> Self {
@@ -250,7 +629,7 @@ impl ProviderRegistry {
     /// Find a provider for an `ActionRepoId`
     #[must_use]
     pub fn find_for_repo(&self, repo: &ActionRepoId) -> Option<&dyn Provider> {
-        self.find(repo.host.as_deref())
+        self.find(repo.host())
     }
 
     /// Find a provider by kind (for GHE hosts without exact match)
@@ -258,7 +637,7 @@ impl ProviderRegistry {
     /// Returns the first provider matching the given kind.
     /// Useful as fallback when `find()` returns None for custom hosts.
     #[must_use]
-    pub fn find_by_kind(&self, kind: ProviderKind) -> Option<&dyn Provider> {
+    pub fn find_by_kind(&self, kind: Kind) -> Option<&dyn Provider> {
         self.providers
             .iter()
             .find(|p| p.kind() == kind)
@@ -272,9 +651,9 @@ impl ProviderRegistry {
     }
 }
 
-impl fmt::Debug for ProviderRegistry {
+impl fmt::Debug for Registry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ProviderRegistry")
+        f.debug_struct("Registry")
             .field("default_host", &self.default_host)
             .field("provider_count", &self.providers.len())
             .finish()
@@ -289,12 +668,12 @@ mod tests {
 
     /// Mock provider for testing
     struct MockProvider {
-        kind: ProviderKind,
+        kind: Kind,
         host: String,
     }
 
     impl MockProvider {
-        fn new(kind: ProviderKind, host: &str) -> Self {
+        fn new(kind: Kind, host: &str) -> Self {
             Self {
                 kind,
                 host: host.to_string(),
@@ -303,7 +682,7 @@ mod tests {
     }
 
     impl Provider for MockProvider {
-        fn kind(&self) -> ProviderKind {
+        fn kind(&self) -> Kind {
             self.kind
         }
 
@@ -314,8 +693,8 @@ mod tests {
         fn get_versions(
             &self,
             _repo: &ActionRepoId,
-        ) -> Pin<Box<dyn Future<Output = Result<VersionSet>> + Send + '_>> {
-            Box::pin(async { Ok(VersionSet::default()) })
+        ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+            Box::pin(async { Ok(version::Set::default()) })
         }
 
         fn resolve_ref_to_sha(
@@ -350,24 +729,24 @@ mod tests {
         }
     }
 
-    // ProviderKind tests
+    // Kind tests
 
     #[test]
-    fn test_provider_kind_display() {
-        assert_eq!(ProviderKind::GitHub.to_string(), "github");
-        assert_eq!(ProviderKind::GitLab.to_string(), "gitlab");
-        assert_eq!(ProviderKind::Gitea.to_string(), "gitea");
-        assert_eq!(ProviderKind::Bitbucket.to_string(), "bitbucket");
-        assert_eq!(ProviderKind::Local.to_string(), "local");
+    fn test_kind_display() {
+        assert_eq!(Kind::GitHub.to_string(), "github");
+        assert_eq!(Kind::GitLab.to_string(), "gitlab");
+        assert_eq!(Kind::Gitea.to_string(), "gitea");
+        assert_eq!(Kind::Bitbucket.to_string(), "bitbucket");
+        assert_eq!(Kind::Local.to_string(), "local");
     }
 
     #[test]
-    fn test_provider_kind_cache_namespace() {
-        assert_eq!(ProviderKind::GitHub.cache_namespace(), "github");
-        assert_eq!(ProviderKind::GitLab.cache_namespace(), "gitlab");
-        assert_eq!(ProviderKind::Gitea.cache_namespace(), "gitea");
-        assert_eq!(ProviderKind::Bitbucket.cache_namespace(), "bitbucket");
-        assert_eq!(ProviderKind::Local.cache_namespace(), "local");
+    fn test_kind_cache_namespace() {
+        assert_eq!(Kind::GitHub.cache_namespace(), "github");
+        assert_eq!(Kind::GitLab.cache_namespace(), "gitlab");
+        assert_eq!(Kind::Gitea.cache_namespace(), "gitea");
+        assert_eq!(Kind::Bitbucket.cache_namespace(), "bitbucket");
+        assert_eq!(Kind::Local.cache_namespace(), "local");
     }
 
     // Sha40 tests
@@ -410,33 +789,27 @@ mod tests {
         assert_eq!(format!("{sha}"), "abc123def456abc123def456abc123def456abc1");
     }
 
-    // ProviderRegistry tests
+    // Registry tests
 
     #[test]
     fn test_registry_new_empty() {
-        let registry = ProviderRegistry::new();
+        let registry = Registry::new();
         assert!(registry.providers().is_empty());
         assert!(registry.default_host().is_none());
     }
 
     #[test]
     fn test_registry_set_default_host() {
-        let mut registry = ProviderRegistry::new();
+        let mut registry = Registry::new();
         registry.set_default_host("github.com");
         assert_eq!(registry.default_host(), Some("github.com"));
     }
 
     #[test]
     fn test_registry_register_and_find() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "github.com",
-        )));
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitLab,
-            "gitlab.com",
-        )));
+        let mut registry = Registry::new();
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
+        registry.register(Box::new(MockProvider::new(Kind::GitLab, "gitlab.com")));
 
         assert_eq!(registry.providers().len(), 2);
 
@@ -451,12 +824,9 @@ mod tests {
 
     #[test]
     fn test_registry_find_uses_default() {
-        let mut registry = ProviderRegistry::new();
+        let mut registry = Registry::new();
         registry.set_default_host("github.com");
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "github.com",
-        )));
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
 
         // host=None should use default
         let provider = registry.find(None);
@@ -466,30 +836,19 @@ mod tests {
 
     #[test]
     fn test_registry_find_returns_none_for_unknown_host() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "github.com",
-        )));
+        let mut registry = Registry::new();
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
 
         assert!(registry.find(Some("unknown.com")).is_none());
     }
 
     #[test]
     fn test_registry_find_for_repo() {
-        let mut registry = ProviderRegistry::new();
+        let mut registry = Registry::new();
         registry.set_default_host("github.com");
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "github.com",
-        )));
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
 
-        let repo = ActionRepoId {
-            host: None,
-            owner: "actions".to_string(),
-            repo: "checkout".to_string(),
-            subpath: None,
-        };
+        let repo = ActionRepoId::simple("actions", "checkout");
 
         let provider = registry.find_for_repo(&repo);
         assert!(provider.is_some());
@@ -498,44 +857,32 @@ mod tests {
 
     #[test]
     fn test_registry_find_by_kind() {
-        let mut registry = ProviderRegistry::new();
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "github.com",
-        )));
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "ghe.corp.com",
-        )));
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitLab,
-            "gitlab.com",
-        )));
+        let mut registry = Registry::new();
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "ghe.corp.com")));
+        registry.register(Box::new(MockProvider::new(Kind::GitLab, "gitlab.com")));
 
         // find_by_kind returns first match
-        let github = registry.find_by_kind(ProviderKind::GitHub);
+        let github = registry.find_by_kind(Kind::GitHub);
         assert!(github.is_some());
         assert_eq!(github.unwrap().host(), "github.com");
 
-        let gitlab = registry.find_by_kind(ProviderKind::GitLab);
+        let gitlab = registry.find_by_kind(Kind::GitLab);
         assert!(gitlab.is_some());
         assert_eq!(gitlab.unwrap().host(), "gitlab.com");
 
-        let gitea = registry.find_by_kind(ProviderKind::Gitea);
+        let gitea = registry.find_by_kind(Kind::Gitea);
         assert!(gitea.is_none());
     }
 
     #[test]
     fn test_registry_debug_format() {
-        let mut registry = ProviderRegistry::new();
+        let mut registry = Registry::new();
         registry.set_default_host("github.com");
-        registry.register(Box::new(MockProvider::new(
-            ProviderKind::GitHub,
-            "github.com",
-        )));
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
 
         let debug = format!("{registry:?}");
-        assert!(debug.contains("ProviderRegistry"));
+        assert!(debug.contains("Registry"));
         assert!(debug.contains("github.com"));
         assert!(debug.contains("provider_count: 1"));
     }

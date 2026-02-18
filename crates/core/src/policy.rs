@@ -26,7 +26,7 @@ use std::fmt;
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum UpdatePolicy {
+pub enum Update {
     /// Only patch updates within same major.minor (1.2.3 -> 1.2.4).
     ///
     /// ```yaml
@@ -73,7 +73,7 @@ pub enum UpdatePolicy {
     Latest,
 }
 
-impl UpdatePolicy {
+impl Update {
     /// Returns true if this policy allows major version bumps
     #[must_use]
     pub const fn allows_major(&self) -> bool {
@@ -99,7 +99,7 @@ impl UpdatePolicy {
     }
 }
 
-impl fmt::Display for UpdatePolicy {
+impl fmt::Display for Update {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Patch => write!(f, "patch"),
@@ -110,30 +110,30 @@ impl fmt::Display for UpdatePolicy {
     }
 }
 
-impl<'de> Deserialize<'de> for UpdatePolicy {
+impl<'de> Deserialize<'de> for Update {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct UpdatePolicyVisitor;
+        struct UpdateVisitor;
 
-        impl Visitor<'_> for UpdatePolicyVisitor {
-            type Value = UpdatePolicy;
+        impl Visitor<'_> for UpdateVisitor {
+            type Value = Update;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("one of: patch, minor, major, latest")
             }
 
-            fn visit_str<E>(self, value: &str) -> Result<UpdatePolicy, E>
+            fn visit_str<E>(self, value: &str) -> Result<Update, E>
             where
                 E: de::Error,
             {
-                UpdatePolicy::from_str_loose(value)
+                Update::from_str_loose(value)
                     .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(value), &self))
             }
         }
 
-        deserializer.deserialize_str(UpdatePolicyVisitor)
+        deserializer.deserialize_str(UpdateVisitor)
     }
 }
 
@@ -154,7 +154,7 @@ impl<'de> Deserialize<'de> for UpdatePolicy {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum RefStyle {
+pub enum Style {
     /// Keep the original style (tag stays tag, SHA stays SHA).
     ///
     /// ```yaml
@@ -193,7 +193,7 @@ pub enum RefStyle {
     Sha,
 }
 
-impl RefStyle {
+impl Style {
     /// Parse from string (case-insensitive)
     #[must_use]
     pub fn from_str_loose(s: &str) -> Option<Self> {
@@ -206,7 +206,7 @@ impl RefStyle {
     }
 }
 
-impl fmt::Display for RefStyle {
+impl fmt::Display for Style {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Preserve => write!(f, "preserve"),
@@ -216,30 +216,30 @@ impl fmt::Display for RefStyle {
     }
 }
 
-impl<'de> Deserialize<'de> for RefStyle {
+impl<'de> Deserialize<'de> for Style {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct RefStyleVisitor;
+        struct StyleVisitor;
 
-        impl Visitor<'_> for RefStyleVisitor {
-            type Value = RefStyle;
+        impl Visitor<'_> for StyleVisitor {
+            type Value = Style;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("one of: preserve, tag, sha")
             }
 
-            fn visit_str<E>(self, value: &str) -> Result<RefStyle, E>
+            fn visit_str<E>(self, value: &str) -> Result<Style, E>
             where
                 E: de::Error,
             {
-                RefStyle::from_str_loose(value)
+                Style::from_str_loose(value)
                     .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(value), &self))
             }
         }
 
-        deserializer.deserialize_str(RefStyleVisitor)
+        deserializer.deserialize_str(StyleVisitor)
     }
 }
 
@@ -259,7 +259,7 @@ impl<'de> Deserialize<'de> for RefStyle {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-pub enum BranchPolicy {
+pub enum Branch {
     /// Ignore branch refs (don't flag as outdated).
     ///
     /// ```yaml
@@ -292,7 +292,7 @@ pub enum BranchPolicy {
     Update,
 }
 
-impl BranchPolicy {
+impl Branch {
     /// Parse from string (case-insensitive)
     #[must_use]
     pub fn from_str_loose(s: &str) -> Option<Self> {
@@ -305,7 +305,7 @@ impl BranchPolicy {
     }
 }
 
-impl fmt::Display for BranchPolicy {
+impl fmt::Display for Branch {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Ignore => write!(f, "ignore"),
@@ -315,30 +315,30 @@ impl fmt::Display for BranchPolicy {
     }
 }
 
-impl<'de> Deserialize<'de> for BranchPolicy {
+impl<'de> Deserialize<'de> for Branch {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
-        struct BranchPolicyVisitor;
+        struct BranchVisitor;
 
-        impl Visitor<'_> for BranchPolicyVisitor {
-            type Value = BranchPolicy;
+        impl Visitor<'_> for BranchVisitor {
+            type Value = Branch;
 
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("one of: ignore, warn, update")
             }
 
-            fn visit_str<E>(self, value: &str) -> Result<BranchPolicy, E>
+            fn visit_str<E>(self, value: &str) -> Result<Branch, E>
             where
                 E: de::Error,
             {
-                BranchPolicy::from_str_loose(value)
+                Branch::from_str_loose(value)
                     .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(value), &self))
             }
         }
 
-        deserializer.deserialize_str(BranchPolicyVisitor)
+        deserializer.deserialize_str(BranchVisitor)
     }
 }
 
@@ -347,141 +347,99 @@ impl<'de> Deserialize<'de> for BranchPolicy {
 mod tests {
     use super::*;
 
-    // UpdatePolicy tests
+    // Update tests
 
     #[test]
     fn test_update_policy_allows() {
-        assert!(!UpdatePolicy::Patch.allows_major());
-        assert!(!UpdatePolicy::Patch.allows_minor());
+        assert!(!Update::Patch.allows_major());
+        assert!(!Update::Patch.allows_minor());
 
-        assert!(!UpdatePolicy::Minor.allows_major());
-        assert!(UpdatePolicy::Minor.allows_minor());
+        assert!(!Update::Minor.allows_major());
+        assert!(Update::Minor.allows_minor());
 
-        assert!(UpdatePolicy::Major.allows_major());
-        assert!(UpdatePolicy::Major.allows_minor());
+        assert!(Update::Major.allows_major());
+        assert!(Update::Major.allows_minor());
 
-        assert!(UpdatePolicy::Latest.allows_major());
-        assert!(UpdatePolicy::Latest.allows_minor());
+        assert!(Update::Latest.allows_major());
+        assert!(Update::Latest.allows_minor());
     }
 
     #[test]
     fn test_update_policy_from_str() {
-        assert_eq!(
-            UpdatePolicy::from_str_loose("PATCH"),
-            Some(UpdatePolicy::Patch)
-        );
-        assert_eq!(
-            UpdatePolicy::from_str_loose("minor"),
-            Some(UpdatePolicy::Minor)
-        );
-        assert_eq!(
-            UpdatePolicy::from_str_loose("MAJOR"),
-            Some(UpdatePolicy::Major)
-        );
-        assert_eq!(
-            UpdatePolicy::from_str_loose("latest"),
-            Some(UpdatePolicy::Latest)
-        );
-        assert_eq!(
-            UpdatePolicy::from_str_loose("all"),
-            Some(UpdatePolicy::Latest)
-        );
-        assert_eq!(
-            UpdatePolicy::from_str_loose("any"),
-            Some(UpdatePolicy::Latest)
-        );
-        assert_eq!(UpdatePolicy::from_str_loose("invalid"), None);
+        assert_eq!(Update::from_str_loose("PATCH"), Some(Update::Patch));
+        assert_eq!(Update::from_str_loose("minor"), Some(Update::Minor));
+        assert_eq!(Update::from_str_loose("MAJOR"), Some(Update::Major));
+        assert_eq!(Update::from_str_loose("latest"), Some(Update::Latest));
+        assert_eq!(Update::from_str_loose("all"), Some(Update::Latest));
+        assert_eq!(Update::from_str_loose("any"), Some(Update::Latest));
+        assert_eq!(Update::from_str_loose("invalid"), None);
     }
 
     #[test]
     fn test_update_policy_display() {
-        assert_eq!(UpdatePolicy::Patch.to_string(), "patch");
-        assert_eq!(UpdatePolicy::Minor.to_string(), "minor");
-        assert_eq!(UpdatePolicy::Major.to_string(), "major");
-        assert_eq!(UpdatePolicy::Latest.to_string(), "latest");
+        assert_eq!(Update::Patch.to_string(), "patch");
+        assert_eq!(Update::Minor.to_string(), "minor");
+        assert_eq!(Update::Major.to_string(), "major");
+        assert_eq!(Update::Latest.to_string(), "latest");
     }
 
     #[test]
     fn test_update_policy_default() {
-        assert_eq!(UpdatePolicy::default(), UpdatePolicy::Latest);
+        assert_eq!(Update::default(), Update::Latest);
     }
 
-    // RefStyle tests
+    // Style tests
 
     #[test]
     fn test_ref_style_from_str() {
-        assert_eq!(
-            RefStyle::from_str_loose("preserve"),
-            Some(RefStyle::Preserve)
-        );
-        assert_eq!(RefStyle::from_str_loose("KEEP"), Some(RefStyle::Preserve));
-        assert_eq!(
-            RefStyle::from_str_loose("original"),
-            Some(RefStyle::Preserve)
-        );
+        assert_eq!(Style::from_str_loose("preserve"), Some(Style::Preserve));
+        assert_eq!(Style::from_str_loose("KEEP"), Some(Style::Preserve));
+        assert_eq!(Style::from_str_loose("original"), Some(Style::Preserve));
 
-        assert_eq!(RefStyle::from_str_loose("tag"), Some(RefStyle::Tag));
-        assert_eq!(RefStyle::from_str_loose("TAGS"), Some(RefStyle::Tag));
-        assert_eq!(RefStyle::from_str_loose("version"), Some(RefStyle::Tag));
+        assert_eq!(Style::from_str_loose("tag"), Some(Style::Tag));
+        assert_eq!(Style::from_str_loose("TAGS"), Some(Style::Tag));
+        assert_eq!(Style::from_str_loose("version"), Some(Style::Tag));
 
-        assert_eq!(RefStyle::from_str_loose("SHA"), Some(RefStyle::Sha));
-        assert_eq!(RefStyle::from_str_loose("commit"), Some(RefStyle::Sha));
-        assert_eq!(RefStyle::from_str_loose("pin"), Some(RefStyle::Sha));
+        assert_eq!(Style::from_str_loose("SHA"), Some(Style::Sha));
+        assert_eq!(Style::from_str_loose("commit"), Some(Style::Sha));
+        assert_eq!(Style::from_str_loose("pin"), Some(Style::Sha));
 
-        assert_eq!(RefStyle::from_str_loose("invalid"), None);
+        assert_eq!(Style::from_str_loose("invalid"), None);
     }
 
     #[test]
     fn test_ref_style_display() {
-        assert_eq!(RefStyle::Preserve.to_string(), "preserve");
-        assert_eq!(RefStyle::Tag.to_string(), "tag");
-        assert_eq!(RefStyle::Sha.to_string(), "sha");
+        assert_eq!(Style::Preserve.to_string(), "preserve");
+        assert_eq!(Style::Tag.to_string(), "tag");
+        assert_eq!(Style::Sha.to_string(), "sha");
     }
 
     #[test]
     fn test_ref_style_default() {
-        assert_eq!(RefStyle::default(), RefStyle::Preserve);
+        assert_eq!(Style::default(), Style::Preserve);
     }
 
-    // BranchPolicy tests
+    // Branch tests
 
     #[test]
     fn test_branch_policy_from_str() {
-        assert_eq!(
-            BranchPolicy::from_str_loose("ignore"),
-            Some(BranchPolicy::Ignore)
-        );
-        assert_eq!(
-            BranchPolicy::from_str_loose("SKIP"),
-            Some(BranchPolicy::Ignore)
-        );
+        assert_eq!(Branch::from_str_loose("ignore"), Some(Branch::Ignore));
+        assert_eq!(Branch::from_str_loose("SKIP"), Some(Branch::Ignore));
 
-        assert_eq!(
-            BranchPolicy::from_str_loose("warn"),
-            Some(BranchPolicy::Warn)
-        );
-        assert_eq!(
-            BranchPolicy::from_str_loose("WARNING"),
-            Some(BranchPolicy::Warn)
-        );
+        assert_eq!(Branch::from_str_loose("warn"), Some(Branch::Warn));
+        assert_eq!(Branch::from_str_loose("WARNING"), Some(Branch::Warn));
 
-        assert_eq!(
-            BranchPolicy::from_str_loose("update"),
-            Some(BranchPolicy::Update)
-        );
-        assert_eq!(
-            BranchPolicy::from_str_loose("PIN"),
-            Some(BranchPolicy::Update)
-        );
+        assert_eq!(Branch::from_str_loose("update"), Some(Branch::Update));
+        assert_eq!(Branch::from_str_loose("PIN"), Some(Branch::Update));
 
-        assert_eq!(BranchPolicy::from_str_loose("invalid"), None);
+        assert_eq!(Branch::from_str_loose("invalid"), None);
     }
 
     #[test]
     fn test_branch_policy_display() {
-        assert_eq!(BranchPolicy::Ignore.to_string(), "ignore");
-        assert_eq!(BranchPolicy::Warn.to_string(), "warn");
-        assert_eq!(BranchPolicy::Update.to_string(), "update");
+        assert_eq!(Branch::Ignore.to_string(), "ignore");
+        assert_eq!(Branch::Warn.to_string(), "warn");
+        assert_eq!(Branch::Update.to_string(), "update");
     }
 
     // Deserialization tests
@@ -489,45 +447,45 @@ mod tests {
     #[test]
     fn test_update_policy_deserialize() {
         let json = r#""patch""#;
-        let policy: UpdatePolicy = serde_json::from_str(json).unwrap();
-        assert_eq!(policy, UpdatePolicy::Patch);
+        let policy: Update = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, Update::Patch);
 
         let json = r#""LATEST""#;
-        let policy: UpdatePolicy = serde_json::from_str(json).unwrap();
-        assert_eq!(policy, UpdatePolicy::Latest);
+        let policy: Update = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, Update::Latest);
     }
 
     #[test]
     fn test_ref_style_deserialize() {
         let json = r#""sha""#;
-        let style: RefStyle = serde_json::from_str(json).unwrap();
-        assert_eq!(style, RefStyle::Sha);
+        let style: Style = serde_json::from_str(json).unwrap();
+        assert_eq!(style, Style::Sha);
 
         let json = r#""TAG""#;
-        let style: RefStyle = serde_json::from_str(json).unwrap();
-        assert_eq!(style, RefStyle::Tag);
+        let style: Style = serde_json::from_str(json).unwrap();
+        assert_eq!(style, Style::Tag);
     }
 
     #[test]
     fn test_branch_policy_deserialize() {
         let json = r#""warn""#;
-        let policy: BranchPolicy = serde_json::from_str(json).unwrap();
-        assert_eq!(policy, BranchPolicy::Warn);
+        let policy: Branch = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, Branch::Warn);
 
         let json = r#""UPDATE""#;
-        let policy: BranchPolicy = serde_json::from_str(json).unwrap();
-        assert_eq!(policy, BranchPolicy::Update);
+        let policy: Branch = serde_json::from_str(json).unwrap();
+        assert_eq!(policy, Branch::Update);
     }
 
     #[test]
     fn test_deserialize_invalid_values() {
-        let result: Result<UpdatePolicy, _> = serde_json::from_str(r#""invalid""#);
+        let result: Result<Update, _> = serde_json::from_str(r#""invalid""#);
         assert!(result.is_err());
 
-        let result: Result<RefStyle, _> = serde_json::from_str(r#""invalid""#);
+        let result: Result<Style, _> = serde_json::from_str(r#""invalid""#);
         assert!(result.is_err());
 
-        let result: Result<BranchPolicy, _> = serde_json::from_str(r#""invalid""#);
+        let result: Result<Branch, _> = serde_json::from_str(r#""invalid""#);
         assert!(result.is_err());
     }
 }

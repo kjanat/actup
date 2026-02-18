@@ -31,7 +31,9 @@ pub use config::{
 pub use discovery::{DiscoveredFile, FileKind, discover_files};
 pub use error::{Error, Result};
 pub use parser::{UsesLocation, extract_uses_from_yaml, parse_uses};
-pub use policy::{BranchPolicy, RefStyle, UpdatePolicy};
-pub use provider::{Provider, ProviderKind, ProviderRegistry};
-pub use resolution::{CheckResult, CheckStatus, check_action, check_action_remote};
-pub use version::{BranchInfo, Version, VersionInfo, VersionSet};
+pub use policy::Update;
+pub use provider::Provider;
+pub use resolution::{
+    CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, check_action, check_action_remote,
+};
+pub use version::{BranchInfo, Info, Version};
