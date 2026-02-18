@@ -286,8 +286,7 @@ pub async fn check_action_remote(
     // - Refs that exist but aren't semver-tagged (branches, commits)
     //
     // Trade-off: We can't determine if there's a newer version without fetching
-    // all tags, so we optimistically assume up-to-date. This behavior should be
-    // documented in user-facing docs (see docs/behavior.md or similar).
+    // all tags, so we optimistically assume up-to-date.
     let no_versions_but_ref_exists = matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
         && provider
             .resolve_ref_to_sha(&action_ref.to_repo_id(), action_ref.ref_str())
@@ -320,6 +319,7 @@ mod tests {
         tags: Vec<version::Info>,
         latest: Option<version::Info>,
         latest_per_major: HashMap<u32, version::Info>,
+        major_tags: HashMap<u32, version::Info>,
     ) -> version::Set {
         version::Set::build(
             tags.into_iter().map(Arc::new).collect(),
@@ -327,7 +327,10 @@ mod tests {
                 .into_iter()
                 .map(|(k, v)| (k, Arc::new(v)))
                 .collect(),
-            HashMap::new(),
+            major_tags
+                .into_iter()
+                .map(|(k, v)| (k, Arc::new(v)))
+                .collect(),
             latest.map(Arc::new),
         )
     }
@@ -338,7 +341,12 @@ mod tests {
         let v4_2 = make_version_info("v4.2.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(4, v4_2.clone());
-        let versions = make_version_set(vec![v4_2.clone()], Some(v4_2), latest_per_major);
+        let versions = make_version_set(
+            vec![v4_2.clone()],
+            Some(v4_2),
+            latest_per_major,
+            HashMap::new(),
+        );
         let config = Config::default();
 
         let result = check_action(&action, &versions, &config);
@@ -352,7 +360,12 @@ mod tests {
         let v4_2 = make_version_info("v4.2.0", "bbb");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(4, v4_2.clone());
-        let versions = make_version_set(vec![v4_0, v4_2.clone()], Some(v4_2), latest_per_major);
+        let versions = make_version_set(
+            vec![v4_0, v4_2.clone()],
+            Some(v4_2),
+            latest_per_major,
+            HashMap::new(),
+        );
         let config = Config::default();
 
         let result = check_action(&action, &versions, &config);
@@ -366,7 +379,12 @@ mod tests {
         let v4_2 = make_version_info("v4.2.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(4, v4_2.clone());
-        let versions = make_version_set(vec![v4_2.clone()], Some(v4_2), latest_per_major);
+        let versions = make_version_set(
+            vec![v4_2.clone()],
+            Some(v4_2),
+            latest_per_major,
+            HashMap::new(),
+        );
         let config = Config::default();
 
         let result = check_action(&action, &versions, &config);
@@ -377,7 +395,7 @@ mod tests {
     fn test_check_action_ignored() {
         let action = make_action_ref("ignored", "action", "v1.0.0");
         let v2 = make_version_info("v2.0.0", "abc123");
-        let versions = make_version_set(vec![v2.clone()], Some(v2), HashMap::new());
+        let versions = make_version_set(vec![v2.clone()], Some(v2), HashMap::new(), HashMap::new());
         let config = Config {
             ignore: vec!["ignored/action".to_string()],
             ..Default::default()
@@ -392,7 +410,7 @@ mod tests {
         let sha = "abc123def456abc123def456abc123def456abcd";
         let action = make_action_ref("actions", "checkout", sha);
         let v4 = make_version_info("v4.0.0", sha);
-        let versions = make_version_set(vec![v4.clone()], Some(v4), HashMap::new());
+        let versions = make_version_set(vec![v4.clone()], Some(v4), HashMap::new(), HashMap::new());
         let config = Config::default();
 
         let result = check_action(&action, &versions, &config);
@@ -405,7 +423,7 @@ mod tests {
     #[test]
     fn test_check_action_branch_ignored() {
         let action = make_action_ref("actions", "checkout", "main");
-        let versions = make_version_set(vec![], None, HashMap::new());
+        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
         let config = Config {
             branch_policy: policy::Branch::Ignore,
             ..Default::default()
@@ -418,7 +436,7 @@ mod tests {
     #[test]
     fn test_check_action_branch_warn() {
         let action = make_action_ref("actions", "checkout", "main");
-        let versions = make_version_set(vec![], None, HashMap::new());
+        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
         let config = Config {
             branch_policy: policy::Branch::Warn,
             ..Default::default()
@@ -436,7 +454,12 @@ mod tests {
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(3, v3.clone());
         latest_per_major.insert(4, v4.clone());
-        let versions = make_version_set(vec![v3, v4.clone()], Some(v4), latest_per_major);
+        let versions = make_version_set(
+            vec![v3, v4.clone()],
+            Some(v4),
+            latest_per_major,
+            HashMap::new(),
+        );
 
         // With minor policy (default), v3.0.0 is up-to-date (latest v3.x)
         let config = Config {
@@ -457,7 +480,8 @@ mod tests {
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(1, v1.clone());
-        let versions = make_version_set(vec![v1.clone()], Some(v1), latest_per_major);
+        let versions =
+            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new());
 
         let config = Config {
             branch_policy: policy::Branch::Ignore,
@@ -481,7 +505,8 @@ mod tests {
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(1, v1.clone());
-        let versions = make_version_set(vec![v1.clone()], Some(v1), latest_per_major);
+        let versions =
+            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new());
 
         let config = Config {
             branch_policy: policy::Branch::Warn,
@@ -510,7 +535,8 @@ mod tests {
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(1, v1.clone());
-        let versions = make_version_set(vec![v1.clone()], Some(v1), latest_per_major);
+        let versions =
+            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new());
 
         let config = Config {
             branch_policy: policy::Branch::Update,
@@ -559,13 +585,14 @@ mod tests {
         latest_per_major.insert(6, v6_0_2.clone());
 
         // Include both v6.0.2 and v6 tags
-        let mut versions = make_version_set(
-            vec![v4_2, v6_0_2.clone(), v6_major.clone()],
+        let mut major_tags = HashMap::new();
+        major_tags.insert(6, v6_major.clone());
+        let versions = make_version_set(
+            vec![v4_2, v6_0_2.clone(), v6_major],
             Some(v6_0_2),
             latest_per_major,
+            major_tags,
         );
-        // Add major_tags field for the implementation to use
-        versions.major_tags_mut().insert(6, Arc::new(v6_major));
 
         let config = Config {
             update_policy: policy::Update::Major,
@@ -601,7 +628,12 @@ mod tests {
         latest_per_major.insert(6, v6_0_2.clone());
 
         // No v6 major tag - only full semver versions
-        let versions = make_version_set(vec![v4_2, v6_0_2.clone()], Some(v6_0_2), latest_per_major);
+        let versions = make_version_set(
+            vec![v4_2, v6_0_2.clone()],
+            Some(v6_0_2),
+            latest_per_major,
+            HashMap::new(),
+        );
 
         let config = Config {
             update_policy: policy::Update::Major,
@@ -637,12 +669,14 @@ mod tests {
         latest_per_major.insert(4, v4_1.clone());
         latest_per_major.insert(6, v6_0_2.clone());
 
-        let mut versions = make_version_set(
-            vec![v4_1, v6_0_2.clone(), v6_major.clone()],
+        let mut major_tags = HashMap::new();
+        major_tags.insert(6, v6_major.clone());
+        let versions = make_version_set(
+            vec![v4_1, v6_0_2.clone(), v6_major],
             Some(v6_0_2),
             latest_per_major,
+            major_tags,
         );
-        versions.major_tags_mut().insert(6, Arc::new(v6_major));
 
         let config = Config {
             update_policy: policy::Update::Major,

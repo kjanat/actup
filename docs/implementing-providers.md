@@ -85,7 +85,10 @@ impl YourClient {
             // Add auth header appropriate for your platform
             headers.insert(
                 "Authorization",
-                HeaderValue::from_str(&format!("Bearer {t}"))?,
+                HeaderValue::from_str(&format!("Bearer {t}")).map_err(|e| Error::Network {
+                    operation: "set auth header".to_string(),
+                    message: e.to_string(),
+                })?,
             );
         }
 
@@ -256,15 +259,19 @@ impl Provider for YourProvider {
         Box::pin(async move {
             // Try common README filenames
             for filename in ["README.md", "readme.md", "README"] {
-                if let Ok(content) = self
+                match self
                     .client
                     .get_file(&owner, &repo_name, filename, &ref_name)
                     .await
                 {
-                    // Decode base64 content
-                    if let Ok(text) = decode_base64_content(&content) {
-                        return Ok(Some(text));
+                    Ok(content) => {
+                        // Decode base64 content
+                        if let Ok(text) = decode_base64_content(&content) {
+                            return Ok(Some(text));
+                        }
                     }
+                    Err(Error::NotFound { .. }) => continue, // Try next filename
+                    Err(e) => return Err(e), // Propagate auth/rate-limit/network errors
                 }
             }
             Ok(None)
@@ -352,8 +359,52 @@ fn process_tags(tags: Vec<YourTag>) -> version::Set {
     version::Set::build(semver_tags, latest_per_major, major_tags, latest)
 }
 
+/// Decode base64-encoded file content (e.g., from GitLab/GitHub file APIs)
+fn decode_base64_content(content: &str) -> Result<String> {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let bytes = STANDARD.decode(content).map_err(|e| Error::Parse {
+        context: "base64 decode".to_string(),
+        reason: e.to_string(),
+    })?;
+    String::from_utf8(bytes).map_err(|e| Error::Parse {
+        context: "UTF-8 decode".to_string(),
+        reason: e.to_string(),
+    })
+}
+
 /// Parse action.yml content (module-level function, not method!)
 fn parse_action_yml(raw: &str) -> Result<ActionYml> {
+    #[derive(Deserialize)]
+    struct RawInput {
+        description: Option<String>,
+        required: Option<bool>,
+        default: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct RawOutput {
+        description: Option<String>,
+        value: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct RawStep {
+        name: Option<String>,
+        uses: Option<String>,
+        run: Option<String>,
+        #[serde(rename = "if")]
+        condition: Option<String>,
+    }
+
+    #[derive(Deserialize)]
+    struct RawRuns {
+        using: Option<String>,
+        main: Option<String>,
+        pre: Option<String>,
+        post: Option<String>,
+        steps: Option<Vec<RawStep>>,
+    }
+
     #[derive(Deserialize)]
     struct RawActionYml {
         name: Option<String>,
@@ -363,8 +414,6 @@ fn parse_action_yml(raw: &str) -> Result<ActionYml> {
         outputs: Option<HashMap<String, RawOutput>>,
         runs: Option<RawRuns>,
     }
-
-    // Define RawInput, RawOutput, RawRuns, RawStep here...
 
     let parsed: RawActionYml = serde_yaml_ng::from_str(raw).map_err(|e| Error::YamlParse {
         path: "action.yml".into(),

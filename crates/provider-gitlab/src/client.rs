@@ -85,6 +85,13 @@ impl GitLabClient {
                 message: e.to_string(),
             })?;
 
+        if api_base.trim().is_empty() {
+            return Err(Error::Network {
+                operation: "validate API configuration".to_string(),
+                message: "api_base must not be empty".to_string(),
+            });
+        }
+
         let api_base_url = if api_base.starts_with("http") {
             format!("{api_base}/api/v4")
         } else {
@@ -303,27 +310,17 @@ impl GitLabClient {
             Err(e) => return Err(e),
         }
 
-        // Try direct tag lookup to avoid paginating all tags
+        // Try direct tag lookup - if not found, ref doesn't exist
         match self.get_tag(owner, repo, ref_name).await {
-            Ok(tag) => return Ok(tag.target),
-            Err(Error::NotFound { .. }) => {}
-            Err(e) => return Err(e),
+            Ok(tag) => Ok(tag.target),
+            Err(Error::NotFound { .. }) => Err(Error::RefNotFound {
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+                ref_name: ref_name.to_string(),
+                host: Some(self.host.clone()),
+            }),
+            Err(e) => Err(e),
         }
-
-        // Fall back to paginated tag list lookup
-        let tags = self.list_tags(owner, repo, None).await?;
-        for tag in tags {
-            if tag.name == ref_name {
-                return Ok(tag.target);
-            }
-        }
-
-        Err(Error::RefNotFound {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            ref_name: ref_name.to_string(),
-            host: Some(self.host.clone()),
-        })
     }
 
     /// Execute a GET request with retry logic

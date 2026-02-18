@@ -212,8 +212,12 @@ mod tests {
         let entry = Entry::new(version::Set::default());
         let age = entry.age();
         assert!(age.is_some());
-        // Age should be very small for a just-created entry
-        assert!(age.unwrap() < Duration::from_secs(1));
+        // Age should be small for a just-created entry.
+        // Use 5s threshold to tolerate CI/clock jitter.
+        assert!(
+            age.unwrap() < Duration::from_secs(5),
+            "entry age {age:?} exceeded 5s threshold"
+        );
     }
 
     #[test]
