@@ -1,0 +1,189 @@
+{
+	"prdName": "config-refactor",
+	"spec": "specs/config-refactor.md",
+	"description": "Refactor provider config from [providers] Vec to [fetch] + [hosts.\"hostname\"] keyed map with provider registration API",
+	"tasks": [
+		{
+			"id": "hostkind-enum",
+			"phase": 1,
+			"title": "Add HostKind enum",
+			"description": "Add HostKind enum (Github, Gitlab, Gitea) to actup-core with serde rename_all lowercase. ApiMode already exists. Done when: enum compiles, serde rename works.",
+			"priority": "architecture",
+			"overseerId": "task_01KHSANXK58X0VPHJ9TG9HNSWX",
+			"passes": false
+		},
+		{
+			"id": "fetch-settings",
+			"phase": 1,
+			"title": "Add FetchSettings + Default impl",
+			"description": "Add FetchSettings struct with api_mode (ApiMode) and max_tags_per_repo (NonZeroU8). Done when: struct compiles, default returns Graphql + 10.",
+			"priority": "architecture",
+			"overseerId": "task_01KHSANXM66YG36GGQZCF5J4ZP",
+			"passes": false
+		},
+		{
+			"id": "host-config",
+			"phase": 1,
+			"title": "Add HostConfig struct",
+			"description": "Add HostConfig with all optional fields: kind, api_base, token_env, api_mode, max_tags_per_repo. Done when: struct compiles with deny_unknown_fields, deserializes from TOML.",
+			"depends": ["hostkind-enum"],
+			"priority": "architecture",
+			"overseerId": "task_01KHSANXN4EJEGVCS8BRMTCQSE",
+			"passes": false
+		},
+		{
+			"id": "test-config-types",
+			"phase": 1,
+			"title": "Test config types (HostKind, FetchSettings, HostConfig)",
+			"description": "Unit tests for new config types: HostKind serde round-trip, FetchSettings default values, HostConfig TOML deserialization with all field combinations. Done when: cargo test passes, covers happy path + edge cases.",
+			"depends": ["hostkind-enum", "fetch-settings", "host-config"],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "registration-types",
+			"phase": 1,
+			"title": "Add Registration, Preset, Capabilities, ProviderConfig",
+			"description": "Add provider registration types to actup-core: Preset (host, api_base, token_env), Capabilities (supports_graphql/rest), ProviderConfig (resolved host config), Registration (kind, presets, inference fn, create fn). Done when: types compile with no provider crate deps.",
+			"depends": ["hostkind-enum"],
+			"priority": "architecture",
+			"overseerId": "task_01KHSANXP1JNZYS845NABE4132",
+			"passes": false
+		},
+		{
+			"id": "test-registration-types",
+			"phase": 1,
+			"title": "Test registration types",
+			"description": "Unit tests for Registration, Preset, Capabilities structs. Test Preset construction, Capabilities combinations, mock Registration with infer_api_base fn. Done when: tests pass, struct construction verified.",
+			"depends": ["registration-types"],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "wire-config-fields",
+			"phase": 1,
+			"title": "Wire new fields into Config struct",
+			"description": "Replace old providers field in Config with: default_host (Option<String>), fetch (FetchSettings), hosts (HashMap<String, HostConfig>). Done when: Config compiles, old Providers removed.",
+			"depends": ["fetch-settings", "host-config"],
+			"priority": "architecture",
+			"overseerId": "task_01KHSANXQ0YQP5MS6MAZQ46XJJ",
+			"passes": false
+		},
+		{
+			"id": "github-registration",
+			"phase": 2,
+			"title": "GitHub provider exports REGISTRATION",
+			"description": "Export static REGISTRATION from actup-provider-github with github.com preset, GITHUB_TOKEN default, GHE api_base inference (https://{host}/api/v3), graphql+rest capabilities. Done when: const compiles, preset present.",
+			"depends": ["registration-types"],
+			"priority": "integration",
+			"overseerId": "task_01KHSANXR3Q404Q39PKDZ7JB5B",
+			"passes": false
+		},
+		{
+			"id": "test-github-registration",
+			"phase": 2,
+			"title": "Test GitHub REGISTRATION",
+			"description": "Unit tests for GitHub provider registration: preset values correct, infer_api_base returns correct URLs for github.com vs GHE hosts, capabilities flags set. Done when: tests verify preset + inference behavior.",
+			"depends": ["github-registration"],
+			"priority": "integration",
+			"passes": false
+		},
+		{
+			"id": "available-registrations",
+			"phase": 2,
+			"title": "Feature-gated available_registrations()",
+			"description": "Add feature-gated function returning Vec<&'static Registration> based on enabled features. Done when: returns correct registrations per features, panics on duplicate preset hosts.",
+			"depends": ["registration-types", "github-registration"],
+			"priority": "integration",
+			"overseerId": "task_01KHSANXS1XJE2DRJSWWZ4D2W0",
+			"passes": false
+		},
+		{
+			"id": "validation",
+			"phase": 2,
+			"title": "Implement validation (hostname, URL, post-merge)",
+			"description": "Hostname: lowercase, no scheme/path/port/whitespace. api_base: scheme required, path allowed, no query/fragment, strip trailing /. Post-merge: kind, api_base, token_env required. Done when: validation rejects invalid, accepts valid per spec.",
+			"depends": ["fetch-settings", "host-config"],
+			"priority": "integration",
+			"overseerId": "task_01KHSANXT4433ZWD0P0CMH3VCA",
+			"passes": false
+		},
+		{
+			"id": "test-validation",
+			"phase": 2,
+			"title": "Test validation rules",
+			"description": "Comprehensive tests for validation: hostname rejects https://, ports, uppercase, whitespace; api_base requires scheme, strips trailing /; post-merge catches missing required fields. Done when: test per validation rule in spec.",
+			"depends": ["validation"],
+			"priority": "integration",
+			"passes": false
+		},
+		{
+			"id": "resolution-logic",
+			"phase": 2,
+			"title": "Implement resolution logic (effective_host)",
+			"description": "Implement effective_host(hostname) per spec algorithm: preset -> user override -> kind validation -> registration lookup -> defaults/inference -> required field validation -> api_mode capability check. Done when: tests cover all branches.",
+			"depends": ["available-registrations", "validation"],
+			"priority": "integration",
+			"overseerId": "task_01KHSANXV7C8QA2QZWJNH9JNF2",
+			"passes": false
+		},
+		{
+			"id": "test-resolution-logic",
+			"phase": 2,
+			"title": "Test resolution logic",
+			"description": "Tests for effective_host: preset-only host, user override of preset, non-preset with kind, inference fallbacks, error cases (missing kind, unavailable provider, invalid api_mode). Done when: all 7 algorithm steps have test coverage.",
+			"depends": ["resolution-logic"],
+			"priority": "integration",
+			"passes": false
+		},
+		{
+			"id": "cli-build-registry",
+			"phase": 3,
+			"title": "Update CLI build_registry()",
+			"description": "Update CLI to use available_registrations() and effective_host() for provider creation. Done when: actup check works with new config format.",
+			"depends": ["resolution-logic"],
+			"priority": "integration",
+			"overseerId": "task_01KHSANXWBA2G2HMTB4AH8RBMA",
+			"passes": false
+		},
+		{
+			"id": "test-cli-integration",
+			"phase": 3,
+			"title": "Test CLI with new config",
+			"description": "Integration tests for CLI: empty config uses github.com preset, [hosts] override works, invalid config errors gracefully, actup check + actup config commands work. Done when: CLI behavior matches spec examples.",
+			"depends": ["cli-build-registry"],
+			"priority": "integration",
+			"passes": false
+		},
+		{
+			"id": "config-command",
+			"phase": 3,
+			"title": "Update config command display",
+			"description": "Update actup config to show new structure: default_host, [fetch] settings, [hosts] entries with resolved effective config. Done when: shows new structure, distinguishes preset vs user values.",
+			"depends": ["host-config", "registration-types"],
+			"priority": "standard",
+			"overseerId": "task_01KHSANXXA4RD6XNFJEYEBCY42",
+			"passes": false
+		},
+		{
+			"id": "json-schema",
+			"phase": 3,
+			"title": "Regenerate JSON schema",
+			"description": "Regenerate schemas/config.json to match new FetchSettings, HostConfig, HostKind, updated Config. Done when: schema validates against new TOML examples.",
+			"depends": ["fetch-settings", "host-config", "registration-types"],
+			"priority": "standard",
+			"overseerId": "task_01KHSANXYD1QA1WT6FQ05HWC5T",
+			"passes": false
+		},
+		{
+			"id": "docs-update",
+			"phase": 3,
+			"title": "Update docs + examples",
+			"description": "Update README, docs/, example configs to reflect [fetch]/[hosts] structure. Add migration notes per spec table. Done when: no references to old format remain.",
+			"depends": ["resolution-logic"],
+			"priority": "polish",
+			"overseerId": "task_01KHSANXZP3G48GCMTP1X16YFW",
+			"passes": false
+		}
+	]
+}
