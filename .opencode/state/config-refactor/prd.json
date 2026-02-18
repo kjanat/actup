@@ -48,7 +48,7 @@
 			"depends": ["hostkind-enum"],
 			"priority": "architecture",
 			"overseerId": "task_01KHSANXP1JNZYS845NABE4132",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "test-registration-types",

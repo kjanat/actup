@@ -8,6 +8,7 @@
 //! 5. Defaults (lowest)
 
 pub mod discovery;
+pub mod registration;
 
 use crate::Error;
 use crate::policy;
