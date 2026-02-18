@@ -110,13 +110,8 @@ async fn run(cli: Cli) -> i32 {
 fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
     let mut registry = provider::Registry::new();
 
-    // Set default host from config or fallback to github.com
-    // (Core defaults are empty to remain provider-neutral)
-    let default_host = if config.providers.default_host.is_empty() {
-        "github.com"
-    } else {
-        &config.providers.default_host
-    };
+    // Set default host from config (defaults to "github.com" in core)
+    let default_host = config.providers.default_host.as_str();
     registry.set_default_host(default_host);
 
     let mut has_default_github_instance = false;

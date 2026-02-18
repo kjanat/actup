@@ -256,8 +256,8 @@ pub const DEFAULT_MAX_TAGS_PER_REPO: NonZeroU8 = match NonZeroU8::new(10) {
 impl Default for Providers {
     fn default() -> Self {
         Self {
-            default_kind: String::new(),
-            default_host: String::new(),
+            default_kind: "github".into(),
+            default_host: "github.com".into(),
             instances: Vec::new(),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: DEFAULT_MAX_TAGS_PER_REPO,
@@ -619,8 +619,8 @@ mod tests {
     #[test]
     fn test_providers_config_default() {
         let providers = Providers::default();
-        // Default is empty strings per AGENTS.md - CLI layer sets actual defaults
-        assert!(providers.default_host.is_empty());
+        assert_eq!(providers.default_kind, "github");
+        assert_eq!(providers.default_host, "github.com");
         assert!(providers.instances.is_empty());
         assert_eq!(providers.api_mode, ApiMode::Graphql);
         assert_eq!(providers.max_tags_per_repo, DEFAULT_MAX_TAGS_PER_REPO);

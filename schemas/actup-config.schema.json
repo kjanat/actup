@@ -52,8 +52,8 @@
       "$ref": "#/$defs/Providers",
       "default": {
         "api_mode": "graphql",
-        "default_host": "",
-        "default_kind": "",
+        "default_host": "github.com",
+        "default_kind": "github",
         "instances": [],
         "max_tags_per_repo": 10
       }
@@ -212,12 +212,12 @@
         "default_host": {
           "description": "Default host (e.g., \"github.com\")",
           "type": "string",
-          "default": ""
+          "default": "github.com"
         },
         "default_kind": {
           "description": "Default provider kind",
           "type": "string",
-          "default": ""
+          "default": "github"
         },
         "instances": {
           "description": "Additional provider instances",
