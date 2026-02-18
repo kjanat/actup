@@ -99,7 +99,10 @@ async fn run(cli: Cli) -> i32 {
             dry_run,
             format,
         } => commands::pin::run(&path, dry_run, format, &config, &registry).await,
-        Command::Config { path, format } => commands::config::run(&path, format, &config),
+        Command::Config { path, format } => {
+            let registrations = available_registrations();
+            commands::config::run(&path, format, &config, &registrations)
+        }
         Command::Schema => commands::schema::run(),
         Command::Cache { action, format } => commands::cache::run(&action, format, &config).await,
     }

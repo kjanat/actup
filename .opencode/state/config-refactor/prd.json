@@ -163,7 +163,7 @@
 			"depends": ["host-config", "registration-types"],
 			"priority": "standard",
 			"overseerId": "task_01KHSANXXA4RD6XNFJEYEBCY42",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "json-schema",

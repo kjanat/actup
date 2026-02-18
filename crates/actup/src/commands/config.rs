@@ -2,15 +2,22 @@
 
 use std::path::Path;
 
-use actup_core::{Config, iter_config_candidates};
+use actup_core::{
+    Config, Registration, effective_host, iter_config_candidates, resolve_default_host,
+};
 use owo_colors::OwoColorize;
 
 use crate::cli::{CliExitCode, OutputFormat};
 
-pub fn run(path: &Path, format: OutputFormat, config: &Config) -> i32 {
+pub fn run(
+    path: &Path,
+    format: OutputFormat,
+    config: &Config,
+    registrations: &[&'static Registration],
+) -> i32 {
     match format {
         OutputFormat::Human => {
-            display_human(config, path);
+            display_human(config, path, registrations);
         }
         OutputFormat::Json => {
             let json = match serde_json::to_string_pretty(config) {
@@ -37,7 +44,7 @@ pub fn run(path: &Path, format: OutputFormat, config: &Config) -> i32 {
     CliExitCode::Success.into()
 }
 
-fn display_human(config: &Config, path: &Path) {
+fn display_human(config: &Config, path: &Path, registrations: &[&'static Registration]) {
     println!("{}", "Configuration".bold());
     println!();
 
@@ -67,28 +74,12 @@ fn display_human(config: &Config, path: &Path) {
     }
     println!();
 
-    println!("{}:", "Hosts".bold());
-    let default_host = config
-        .default_host
-        .as_deref()
-        .unwrap_or("(github.com via preset)");
-    println!("  default_host: {default_host}");
+    println!("{}:", "Fetch".bold());
+    println!("  api_mode:          {}", config.fetch.api_mode);
+    println!("  max_tags_per_repo: {}", config.fetch.max_tags_per_repo);
     println!();
 
-    println!("{}:", "Fetch".bold());
-    println!("  api_mode:     {}", config.fetch.api_mode);
-    println!("  max_tags:     {}", config.fetch.max_tags_per_repo);
-    if !config.hosts.is_empty() {
-        println!();
-        println!("  {} host(s) configured:", config.hosts.len());
-        for (host, hc) in &config.hosts {
-            let kind = hc
-                .kind
-                .map_or_else(|| "(inherited)".into(), |k| k.to_string());
-            println!("    {host}: kind={kind}");
-        }
-    }
-    println!();
+    display_hosts(config, registrations);
 
     if !config.ignore.is_empty() {
         println!("{}:", "Ignored Actions".bold());
@@ -134,5 +125,138 @@ fn display_human(config: &Config, path: &Path) {
                 println!("    {}", p.display());
             }
         }
+    }
+}
+
+/// Display hosts section with resolved effective configuration.
+///
+/// Shows the default host and then each host's resolved config,
+/// distinguishing preset vs user-specified values.
+fn display_hosts(config: &Config, registrations: &[&'static Registration]) {
+    println!("{}:", "Hosts".bold());
+
+    // Default host
+    let default_host = match resolve_default_host(config, registrations) {
+        Ok(host) => host,
+        Err(e) => {
+            println!("  default_host: {} {}", "(error)".red(), e);
+            println!();
+            return;
+        }
+    };
+
+    let explicit_default = config.default_host.is_some();
+    if explicit_default {
+        println!("  default_host: {default_host}");
+    } else {
+        println!("  default_host: {default_host} {}", "(via preset)".dimmed());
+    }
+    println!();
+
+    // Collect all hosts to display: explicit hosts + default host if not already listed
+    let mut hosts_to_show: Vec<&str> = config.hosts.keys().map(String::as_str).collect();
+    hosts_to_show.sort_unstable();
+
+    let default_in_hosts = config.hosts.contains_key(default_host.as_str());
+    if !default_in_hosts {
+        // Show default host first even though it's not in [hosts]
+        display_effective_host(&default_host, config, registrations, true);
+    }
+
+    for hostname in &hosts_to_show {
+        let is_default = *hostname == default_host;
+        display_effective_host(hostname, config, registrations, is_default);
+    }
+}
+
+/// Display the resolved effective config for a single host.
+fn display_effective_host(
+    hostname: &str,
+    config: &Config,
+    registrations: &[&'static Registration],
+    is_default: bool,
+) {
+    let suffix = if is_default {
+        " (default)".dimmed().to_string()
+    } else {
+        String::new()
+    };
+
+    // Check if this is a preset host
+    let is_preset = registrations
+        .iter()
+        .any(|r| r.presets.iter().any(|p| p.host == hostname));
+
+    let has_user_entry = config.hosts.contains_key(hostname);
+
+    println!("  {}{}:", hostname.bold(), suffix);
+
+    match effective_host(hostname, config, registrations, &config.fetch) {
+        Ok(resolved) => {
+            let user_config = config.hosts.get(hostname);
+
+            // kind
+            let kind_source = source_label(is_preset, user_config.and_then(|hc| hc.kind).is_some());
+            println!("    kind:      {} {}", resolved.kind, kind_source);
+
+            // api_base
+            let api_base_source = source_label(
+                is_preset,
+                user_config.and_then(|hc| hc.api_base.as_ref()).is_some(),
+            );
+            let api_base_label =
+                if !is_preset && user_config.and_then(|hc| hc.api_base.as_ref()).is_none() {
+                    "(inferred)".dimmed().to_string()
+                } else {
+                    api_base_source
+                };
+            println!("    api_base:  {} {}", resolved.api_base, api_base_label);
+
+            // token_env
+            let token_env_source = source_label(
+                is_preset,
+                user_config.and_then(|hc| hc.token_env.as_ref()).is_some(),
+            );
+            println!("    token_env: {} {}", resolved.token_env, token_env_source);
+
+            // api_mode
+            let api_mode_source = if user_config.and_then(|hc| hc.api_mode).is_some() {
+                "(host override)".dimmed().to_string()
+            } else {
+                "(from [fetch])".dimmed().to_string()
+            };
+            println!("    api_mode:  {} {}", resolved.api_mode, api_mode_source);
+
+            // max_tags_per_repo
+            let max_tags_source = if user_config.and_then(|hc| hc.max_tags_per_repo).is_some() {
+                "(host override)".dimmed().to_string()
+            } else {
+                "(from [fetch])".dimmed().to_string()
+            };
+            println!(
+                "    max_tags:  {} {}",
+                resolved.max_tags_per_repo, max_tags_source
+            );
+        }
+        Err(e) => {
+            let entry_note = if has_user_entry {
+                ""
+            } else {
+                " (no config entry)"
+            };
+            println!("    {} {}{}", "error:".red(), e, entry_note);
+        }
+    }
+    println!();
+}
+
+/// Produce a source annotation for a resolved field value.
+fn source_label(is_preset: bool, has_user_override: bool) -> String {
+    if has_user_override {
+        "(user override)".dimmed().to_string()
+    } else if is_preset {
+        "(preset)".dimmed().to_string()
+    } else {
+        "(default)".dimmed().to_string()
     }
 }
