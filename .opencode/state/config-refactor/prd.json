@@ -153,7 +153,7 @@
 			"description": "Integration tests for CLI: empty config uses github.com preset, [hosts] override works, invalid config errors gracefully, actup check + actup config commands work. Done when: CLI behavior matches spec examples.",
 			"depends": ["cli-build-registry"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "config-command",

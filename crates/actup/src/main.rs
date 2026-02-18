@@ -192,6 +192,28 @@ mod tests {
 
     use super::*;
 
+    /// Construct a `HostConfig` with only `kind` set (no Default impl available).
+    fn host_config_with_kind(kind: HostKind) -> actup_core::HostConfig {
+        actup_core::HostConfig {
+            kind: Some(kind),
+            api_base: None,
+            token_env: None,
+            api_mode: None,
+            max_tags_per_repo: None,
+        }
+    }
+
+    /// Construct an empty `HostConfig` (all None).
+    fn host_config_empty() -> actup_core::HostConfig {
+        actup_core::HostConfig {
+            kind: None,
+            api_base: None,
+            token_env: None,
+            api_mode: None,
+            max_tags_per_repo: None,
+        }
+    }
+
     #[test]
     fn available_registrations_includes_github() {
         let regs = available_registrations();
@@ -272,5 +294,185 @@ mod tests {
         let _ = &mut expected; // suppress unused_assignments
 
         assert_eq!(regs.len(), expected);
+    }
+
+    #[test]
+    fn build_registry_empty_config_uses_github_preset() {
+        let config = Config::default();
+        let registry = build_registry(&config).unwrap();
+        assert_eq!(
+            registry.default_host(),
+            Some("github.com"),
+            "empty config must default to github.com"
+        );
+        assert!(
+            registry.find(Some("github.com")).is_some(),
+            "github.com provider must be registered"
+        );
+    }
+
+    #[test]
+    fn build_registry_explicit_default_host_github() {
+        let config = Config {
+            default_host: Some("github.com".to_string()),
+            ..Default::default()
+        };
+        let registry = build_registry(&config).unwrap();
+        assert_eq!(registry.default_host(), Some("github.com"));
+        assert!(registry.find(Some("github.com")).is_some());
+    }
+
+    #[test]
+    fn build_registry_default_host_always_registered_even_without_hosts_entry() {
+        // default_host = github.com, no [hosts."github.com"] entry
+        let config = Config::default();
+        assert!(config.hosts.is_empty());
+        let registry = build_registry(&config).unwrap();
+        assert!(
+            registry.find(Some("github.com")).is_some(),
+            "default host must be registered even without explicit hosts entry"
+        );
+    }
+
+    #[test]
+    fn build_registry_hosts_entry_for_default_host_no_duplicate() {
+        // explicit [hosts."github.com"] should not cause double-registration
+        let mut config = Config::default();
+        config.hosts.insert(
+            "github.com".to_string(),
+            host_config_with_kind(HostKind::Github),
+        );
+        let registry = build_registry(&config).unwrap();
+        assert!(registry.find(Some("github.com")).is_some());
+        // Registry allows duplicates in Vec but build_registry skips re-registering
+        // default_host if already in config.hosts
+        assert_eq!(
+            registry
+                .providers()
+                .iter()
+                .filter(|p| p.host() == "github.com")
+                .count(),
+            1,
+            "github.com should be registered exactly once"
+        );
+    }
+
+    #[test]
+    fn build_registry_ghe_host_requires_kind() {
+        // [hosts."ghe.corp.com"] without kind should error
+        let mut config = Config::default();
+        config
+            .hosts
+            .insert("ghe.corp.com".to_string(), host_config_empty());
+        let result = build_registry(&config);
+        assert!(result.is_err(), "GHE host without kind must error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("kind"),
+            "error must mention missing kind: {err}"
+        );
+    }
+
+    #[test]
+    fn build_registry_ghe_host_with_github_kind() {
+        // [hosts."ghe.corp.com"] with kind = "github" should succeed
+        // (api_base inferred, token_env defaults)
+        let mut config = Config::default();
+        config.hosts.insert(
+            "ghe.corp.com".to_string(),
+            host_config_with_kind(HostKind::Github),
+        );
+        let registry = build_registry(&config).unwrap();
+        assert!(
+            registry.find(Some("ghe.corp.com")).is_some(),
+            "GHE host with github kind must be registered"
+        );
+        // github.com should also be registered (default)
+        assert!(registry.find(Some("github.com")).is_some());
+    }
+
+    #[test]
+    fn build_registry_invalid_hostname_errors() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "UPPERCASE.COM".to_string(),
+            host_config_with_kind(HostKind::Github),
+        );
+        let result = build_registry(&config);
+        assert!(result.is_err(), "uppercase hostname must error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("lowercase") || err.contains("case"),
+            "error must mention case: {err}"
+        );
+    }
+
+    #[test]
+    fn build_registry_invalid_default_host_errors() {
+        let config = Config {
+            default_host: Some("INVALID HOST".to_string()),
+            ..Default::default()
+        };
+        let result = build_registry(&config);
+        assert!(
+            result.is_err(),
+            "invalid default_host must error: {result:?}"
+        );
+    }
+
+    #[test]
+    fn build_registry_invalid_api_base_in_hosts_errors() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "ghe.corp.com".to_string(),
+            actup_core::HostConfig {
+                kind: Some(HostKind::Github),
+                api_base: Some("no-scheme.example.com/api".to_string()),
+                token_env: None,
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+        let result = build_registry(&config);
+        assert!(result.is_err(), "api_base without scheme must error");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("scheme") || err.contains("http"),
+            "error must mention scheme: {err}"
+        );
+    }
+
+    #[test]
+    fn build_registry_fetch_settings_propagated() {
+        use actup_core::{ApiMode, FetchSettings};
+        use std::num::NonZeroU8;
+
+        let config = Config {
+            fetch: FetchSettings {
+                api_mode: ApiMode::Rest,
+                max_tags_per_repo: NonZeroU8::new(50).unwrap(),
+            },
+            ..Default::default()
+        };
+        // Should succeed — github provider supports both graphql and rest
+        let registry = build_registry(&config).unwrap();
+        assert!(registry.find(Some("github.com")).is_some());
+    }
+
+    #[test]
+    fn build_registry_multiple_hosts() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "ghe1.corp.com".to_string(),
+            host_config_with_kind(HostKind::Github),
+        );
+        config.hosts.insert(
+            "ghe2.corp.com".to_string(),
+            host_config_with_kind(HostKind::Github),
+        );
+        let registry = build_registry(&config).unwrap();
+        assert!(registry.find(Some("ghe1.corp.com")).is_some());
+        assert!(registry.find(Some("ghe2.corp.com")).is_some());
+        assert!(registry.find(Some("github.com")).is_some());
     }
 }

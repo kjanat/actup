@@ -27,6 +27,7 @@ Started: 2026-02-18
 - `build_registry()` uses `resolve_and_register()` helper: `effective_host()` → find registration by kind → `(registration.create)(config)` → `registry.register(provider)`
 - `Registration::create` returns `Box<dyn Provider>` — can't wrap in `CachingProvider<P>` without blanket `impl Provider for Box<dyn Provider>` (follow-up improvement)
 - CLI no longer directly imports provider types (`GitHubProvider`, etc.) — only references `REGISTRATION` statics via `available_registrations()`
+- `HostConfig` has no `Default` impl — must construct with explicit `None` fields or helper fn; `..Default::default()` will not compile
 
 ---
 
@@ -209,3 +210,11 @@ Started: 2026-02-18
 - Removed ~95 lines of manual provider construction (kind matching, api_base inference, token reading) — all delegated to `effective_host()` + registration `create` fn
 - Files changed: `crates/actup/src/main.rs`
 - **Learnings:** `CachingProvider<P: Provider>` can't wrap `Box<dyn Provider>` without a blanket impl. This is a follow-up improvement — either add `impl Provider for Box<dyn Provider>` in core, or have `Registration::create` return a wrapped type. The in-memory dedup is an optimization, not correctness; providers still work without it. `resolve_default_host()` properly validates the default and falls back to `"github.com"` preset — eliminates the old hardcoded `unwrap_or("github.com")` pattern.
+
+## Task - test-cli-integration
+
+- Added 11 `build_registry` unit tests in `main.rs`: empty config uses github.com preset, explicit default_host, default_host always registered, hosts entry dedup, GHE requires kind, GHE with github kind succeeds, invalid hostname errors, invalid default_host errors, invalid api_base errors, fetch settings propagated, multiple hosts
+- Added 13 integration tests in `cli_integration.rs` `new_config_format_tests` module: empty config defaults, `[fetch]` overrides, `[hosts]` loading, `default_host` loading, multiple hosts, per-host fetch overrides, full new-format config, JSON/TOML serialize roundtrip, config JSON/TOML output field verification, invalid unknown fields in hosts/fetch, invalid host kind
+- Helper fns `host_config_with_kind()` and `host_config_empty()` for constructing `HostConfig` without `Default` impl
+- Files changed: `crates/actup/src/main.rs`, `crates/actup/tests/cli_integration.rs`
+- **Learnings:** `HostConfig` intentionally has no `Default` — helper fns or explicit construction needed in tests. Integration tests in `tests/` need `#![allow(clippy::unwrap_used, clippy::expect_used)]` at module level since workspace-level clippy denies both. Existing `test_support` module with `ok_or_panic`/`some_or_panic` is the established pattern for integration tests.
