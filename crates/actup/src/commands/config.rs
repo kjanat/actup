@@ -49,11 +49,18 @@ fn display_human(config: &Config, path: &Path) {
     println!();
 
     println!("{}:", "Cache".bold());
-    println!(
-        "  ttl:      {} seconds ({} hours)",
-        config.cache.ttl.as_secs(),
-        config.cache.ttl.as_secs() / 3600
-    );
+    let ttl_secs = config.cache.ttl.as_secs();
+    if ttl_secs < 3600 {
+        println!(
+            "  ttl:      {ttl_secs} seconds ({:.1} minutes)",
+            config.cache.ttl.as_secs_f64() / 60.0
+        );
+    } else {
+        println!(
+            "  ttl:      {ttl_secs} seconds ({:.1} hours)",
+            config.cache.ttl.as_secs_f64() / 3600.0
+        );
+    }
     println!("  enabled:  {}", config.cache.enabled);
     if let Some(path) = &config.cache.path {
         println!("  path:     {}", path.display());
@@ -110,7 +117,9 @@ fn display_human(config: &Config, path: &Path) {
         if found.is_empty() {
             println!("  Using defaults (no config file found)");
         } else {
-            println!("  Config file(s) found but not loaded:");
+            println!(
+                "  Config file(s) found but not loaded (using CLI defaults and/or explicit overrides):"
+            );
             for p in found {
                 println!("    {}", p.display());
             }

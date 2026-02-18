@@ -52,7 +52,10 @@ impl GiteaClient {
     /// Returns an error if the HTTP client cannot be created or token is invalid.
     pub fn new(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("actup/0.1"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(concat!("actup/", env!("CARGO_PKG_VERSION"))),
+        );
         headers.insert("Accept", HeaderValue::from_static("application/json"));
 
         if let Some(t) = token {

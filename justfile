@@ -175,7 +175,7 @@ doc-open:
 [group('docs')]
 schema:
     @mkdir -p {{ schema_dir }}
-    cargo run --bin actup -- schema >{{ schema_dir }}/{{ actup_config }}
+    cargo run --bin actup -- schema > {{ schema_dir }}/{{ actup_config }}
 
 # CI
 

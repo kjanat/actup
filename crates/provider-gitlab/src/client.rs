@@ -214,6 +214,24 @@ impl GitLabClient {
         self.handle_response(response, owner, repo).await
     }
 
+    /// Get a single tag by name
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or tag not found.
+    pub async fn get_tag(&self, owner: &str, repo: &str, tag: &str) -> Result<GitLabTag> {
+        let project_id = Self::encode_project_path(owner, repo);
+        let tag_encoded = urlencoding::encode(tag);
+        let url = format!(
+            "{}/projects/{project_id}/repository/tags/{tag_encoded}",
+            self.api_base
+        );
+        debug!(url = %url, tag = %tag, "fetching tag info");
+
+        let response = self.get(&url).await?;
+        self.handle_response(response, owner, repo).await
+    }
+
     /// Get file content from repository
     ///
     /// # Errors
@@ -266,9 +284,10 @@ impl GitLabClient {
 
     /// Resolve a ref (tag or branch) to a commit SHA
     ///
-    /// GitLab doesn't have a direct "resolve ref" endpoint, so we:
+    /// GitLab doesn't expose a single resolve-ref endpoint, so we:
     /// 1. Try to get it as a branch first
-    /// 2. Fall back to checking tags
+    /// 2. Try a direct tag lookup
+    /// 3. Fall back to paginated tag listing
     ///
     /// # Errors
     ///
@@ -279,7 +298,14 @@ impl GitLabClient {
             return Ok(branch.commit.id);
         }
 
-        // Try as tag
+        // Try direct tag lookup first to avoid paginating all tags
+        match self.get_tag(owner, repo, ref_name).await {
+            Ok(tag) => return Ok(tag.target),
+            Err(Error::NotFound { .. }) => {}
+            Err(e) => return Err(e),
+        }
+
+        // Fall back to paginated tag list lookup
         let tags = self.list_tags(owner, repo, None).await?;
         for tag in tags {
             if tag.name == ref_name {

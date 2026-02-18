@@ -19,7 +19,7 @@ All platform details live in provider crates.
 
 ### 2. Provider Trait is Minimal but Complete
 
-The `Provider` trait requires only 5 methods:
+The `Provider` trait requires 7 methods:
 
 ```rust
 pub trait Provider: Send + Sync {

@@ -183,13 +183,21 @@ pub fn parse_action_yml(raw: &str) -> Result<ActionYml> {
 
             // Validate runs based on using type
             let using = r.using.as_str();
-            if using.starts_with("node") && r.main.is_none() {
+            let has_main = r
+                .main
+                .as_deref()
+                .is_some_and(|main| !main.trim().is_empty());
+            if using.starts_with("node") && !has_main {
                 return Err(actup_core::Error::YamlParse {
                     path: "action.yml".into(),
                     reason: format!("'runs.using: {using}' requires 'runs.main' to be set"),
                 });
             }
-            if using == "docker" && r.image.is_none() {
+            let has_image = r
+                .image
+                .as_deref()
+                .is_some_and(|image| !image.trim().is_empty());
+            if using == "docker" && !has_image {
                 return Err(actup_core::Error::YamlParse {
                     path: "action.yml".into(),
                     reason: "'runs.using: docker' requires 'runs.image' to be set".into(),
@@ -347,6 +355,32 @@ runs:
         let runs = result.runs().unwrap();
         assert_eq!(runs.using(), "docker");
         assert_eq!(runs.image(), Some("Dockerfile"));
+    }
+
+    #[test]
+    fn test_parse_action_yml_node_action_rejects_blank_main() {
+        let yaml = r#"
+name: Bad Node Action
+description: Invalid node action
+runs:
+  using: node20
+  main: "   "
+"#;
+        let result = parse_action_yml(yaml);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_action_yml_docker_action_rejects_blank_image() {
+        let yaml = r#"
+name: Bad Docker Action
+description: Invalid docker action
+runs:
+  using: docker
+  image: "   "
+"#;
+        let result = parse_action_yml(yaml);
+        assert!(result.is_err());
     }
 
     #[test]

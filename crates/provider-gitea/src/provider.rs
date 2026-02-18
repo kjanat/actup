@@ -1,6 +1,7 @@
 //! Gitea provider implementation
 
 use crate::client::GiteaClient;
+use crate::types::GiteaContent;
 use actup_core::action_ref::ActionRepoId;
 use actup_core::error::Result;
 use actup_core::provider::{self, ActionYml, Provider, Sha40};
@@ -38,6 +39,20 @@ impl GiteaProvider {
             client,
         })
     }
+}
+
+fn decode_base64_file_text(content: &GiteaContent) -> Option<String> {
+    if content.content_type != "file" {
+        return None;
+    }
+
+    let encoded = content.content.as_deref()?;
+    if content.encoding.as_deref()? != "base64" {
+        return None;
+    }
+
+    let decoded = STANDARD.decode(encoded).ok()?;
+    String::from_utf8(decoded).ok()
 }
 
 impl Provider for GiteaProvider {
@@ -140,22 +155,13 @@ impl Provider for GiteaProvider {
                 "README",
                 "README.txt",
             ] {
-                match self
+                if let Ok(content) = self
                     .client
                     .get_contents(&owner, &repo_name, filename, &ref_name)
                     .await
+                    && let Some(text) = decode_base64_file_text(&content)
                 {
-                    Ok(content) if content.content_type == "file" => {
-                        if let Some(encoded) = content.content
-                            && let Some(encoding) = content.encoding
-                            && encoding == "base64"
-                            && let Ok(decoded) = STANDARD.decode(&encoded)
-                            && let Ok(text) = String::from_utf8(decoded)
-                        {
-                            return Ok(Some(text));
-                        }
-                    }
-                    _ => {}
+                    return Ok(Some(text));
                 }
             }
 
@@ -189,13 +195,8 @@ impl Provider for GiteaProvider {
                     .get_contents(&owner, &repo_name, filename, &ref_name)
                     .await
                 {
-                    Ok(content) if content.content_type == "file" => {
-                        if let Some(encoded) = content.content
-                            && let Some(encoding) = content.encoding
-                            && encoding == "base64"
-                            && let Ok(decoded) = STANDARD.decode(&encoded)
-                            && let Ok(text) = String::from_utf8(decoded)
-                        {
+                    Ok(content) => {
+                        if let Some(text) = decode_base64_file_text(&content) {
                             return parse_action_yml(&text);
                         }
                     }
@@ -212,7 +213,6 @@ impl Provider for GiteaProvider {
                         }
                     }
                     Err(e) => return Err(e),
-                    _ => {}
                 }
             }
 

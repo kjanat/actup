@@ -326,10 +326,21 @@ fn process_tags(tags: Vec<YourTag>) -> version::Set {
 
             if prerelease.is_none() {
                 // Update latest trackers (see GitHub provider for full logic)
-                latest_per_major.entry(*major).or_insert(info.clone());
-                if latest.as_ref().map_or(true, |l| l.version() < &version) {
-                    latest = Some(info);
-                }
+                latest_per_major
+                    .entry(*major)
+                    .and_modify(|existing| {
+                        if existing.version() < &version {
+                            *existing = info.clone();
+                        }
+                    })
+                    .or_insert(info.clone());
+
+                latest = match latest {
+                    Some(current_latest) if current_latest.version() >= &version => {
+                        Some(current_latest)
+                    }
+                    _ => Some(info),
+                };
             }
         }
     }
@@ -517,10 +528,21 @@ fn process_tags(tags: Vec<YourTag>) -> version::Set {
             if prerelease.is_none() {
                 // Track latest overall and latest per major
                 // (See GitHub provider for full optimized logic)
-                latest_per_major.insert(*major, info.clone());
-                if latest.as_ref().map_or(true, |l| l.version() < &version) {
-                    latest = Some(info);
-                }
+                latest_per_major
+                    .entry(*major)
+                    .and_modify(|existing| {
+                        if existing.version() < &version {
+                            *existing = info.clone();
+                        }
+                    })
+                    .or_insert(info.clone());
+
+                latest = match latest {
+                    Some(current_latest) if current_latest.version() >= &version => {
+                        Some(current_latest)
+                    }
+                    _ => Some(info),
+                };
             }
         }
     }

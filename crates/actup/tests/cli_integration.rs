@@ -2,14 +2,30 @@
 //!
 //! These tests verify the CLI commands work correctly with real workflow files.
 
+mod test_support {
+    use std::fmt::Display;
+
+    pub fn ok_or_panic<T, E: Display>(result: Result<T, E>, context: &str) -> T {
+        match result {
+            Ok(value) => value,
+            Err(error) => panic!("{context}: {error}"),
+        }
+    }
+
+    pub fn some_or_panic<T>(option: Option<T>, context: &str) -> T {
+        option.unwrap_or_else(|| panic!("{context}"))
+    }
+}
+
 mod parser_tests {
+    use super::test_support::ok_or_panic;
     use actup_core::{ActionRef, extract_uses_from_yaml, parse_uses};
 
     fn parse_uses_or_panic(input: &str) -> Option<ActionRef> {
-        match parse_uses(input) {
-            Ok(parsed) => parsed,
-            Err(error) => panic!("parse_uses failed for `{input}`: {error}"),
-        }
+        ok_or_panic(
+            parse_uses(input),
+            &format!("parse_uses failed for `{input}`"),
+        )
     }
 
     #[test]
@@ -73,18 +89,24 @@ mod parser_tests {
 }
 
 mod discovery_tests {
+    use super::test_support::ok_or_panic;
     use actup_core::{FileKind, discover_files};
     use std::fs;
     use tempfile::TempDir;
 
     #[test]
     fn test_discover_workflows() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let workflows_dir = temp.path().join(".github/workflows");
-        fs::create_dir_all(&workflows_dir).expect("create workflows dir");
-        fs::write(workflows_dir.join("ci.yml"), "name: CI").expect("write ci fixture");
-        fs::write(workflows_dir.join("release.yaml"), "name: Release")
-            .expect("write release fixture");
+        ok_or_panic(fs::create_dir_all(&workflows_dir), "create workflows dir");
+        ok_or_panic(
+            fs::write(workflows_dir.join("ci.yml"), "name: CI"),
+            "write ci fixture",
+        );
+        ok_or_panic(
+            fs::write(workflows_dir.join("release.yaml"), "name: Release"),
+            "write release fixture",
+        );
 
         let files = discover_files(temp.path(), &[]);
         assert_eq!(files.len(), 2);
@@ -93,10 +115,13 @@ mod discovery_tests {
 
     #[test]
     fn test_discover_composite_actions() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let action_dir = temp.path().join(".github/actions/my-action");
-        fs::create_dir_all(&action_dir).expect("create action dir");
-        fs::write(action_dir.join("action.yml"), "name: My Action").expect("write action fixture");
+        ok_or_panic(fs::create_dir_all(&action_dir), "create action dir");
+        ok_or_panic(
+            fs::write(action_dir.join("action.yml"), "name: My Action"),
+            "write action fixture",
+        );
 
         let files = discover_files(temp.path(), &[]);
         assert_eq!(files.len(), 1);
@@ -105,18 +130,20 @@ mod discovery_tests {
 
     #[test]
     fn test_discover_empty_repo() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let files = discover_files(temp.path(), &[]);
         assert!(files.is_empty());
     }
 
     #[test]
     fn test_discover_with_extra_paths() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let custom_dir = temp.path().join("custom");
-        fs::create_dir_all(&custom_dir).expect("create custom dir");
-        fs::write(custom_dir.join("workflow.yml"), "name: Custom")
-            .expect("write custom workflow fixture");
+        ok_or_panic(fs::create_dir_all(&custom_dir), "create custom dir");
+        ok_or_panic(
+            fs::write(custom_dir.join("workflow.yml"), "name: Custom"),
+            "write custom workflow fixture",
+        );
 
         let extra = vec!["custom/*.yml".to_string()];
         let files = discover_files(temp.path(), &extra);
@@ -126,13 +153,14 @@ mod discovery_tests {
 }
 
 mod config_tests {
+    use super::test_support::{ok_or_panic, some_or_panic};
     use actup_core::{Config, find_repo_config, iter_config_candidates};
     use std::fs;
     use tempfile::TempDir;
 
     #[test]
     fn test_config_discovery_order() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let candidates: Vec<_> = iter_config_candidates(temp.path()).collect();
 
         // First should be actup.toml at root
@@ -152,70 +180,80 @@ mod config_tests {
 
     #[test]
     fn test_find_repo_config_toml() {
-        let temp = TempDir::new().expect("create temp dir");
-        fs::write(temp.path().join("actup.toml"), "update_policy = \"minor\"")
-            .expect("write actup.toml fixture");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
+        ok_or_panic(
+            fs::write(temp.path().join("actup.toml"), "update_policy = \"minor\""),
+            "write actup.toml fixture",
+        );
 
-        let found = find_repo_config(temp.path()).expect("find repo config");
+        let found = some_or_panic(find_repo_config(temp.path()), "find repo config");
         assert!(found.ends_with("actup.toml"));
     }
 
     #[test]
     fn test_find_repo_config_json() {
-        let temp = TempDir::new().expect("create temp dir");
-        fs::write(
-            temp.path().join("actup.json"),
-            r#"{"update_policy": "minor"}"#,
-        )
-        .expect("write actup.json fixture");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
+        ok_or_panic(
+            fs::write(
+                temp.path().join("actup.json"),
+                r#"{"update_policy": "minor"}"#,
+            ),
+            "write actup.json fixture",
+        );
 
-        let found = find_repo_config(temp.path()).expect("find repo config");
+        let found = some_or_panic(find_repo_config(temp.path()), "find repo config");
         assert!(found.ends_with("actup.json"));
     }
 
     #[test]
     fn test_find_repo_config_dotconfig() {
-        let temp = TempDir::new().expect("create temp dir");
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let config_dir = temp.path().join(".config");
-        fs::create_dir_all(&config_dir).expect("create .config dir");
-        fs::write(config_dir.join("actup.toml"), "update_policy = \"patch\"")
-            .expect("write .config actup.toml fixture");
+        ok_or_panic(fs::create_dir_all(&config_dir), "create .config dir");
+        ok_or_panic(
+            fs::write(config_dir.join("actup.toml"), "update_policy = \"patch\""),
+            "write .config actup.toml fixture",
+        );
 
-        let found = find_repo_config(temp.path()).expect("find repo config");
+        let found = some_or_panic(find_repo_config(temp.path()), "find repo config");
         assert!(found.to_string_lossy().contains(".config"));
     }
 
     #[test]
     fn test_config_load_with_overrides() {
-        let temp = TempDir::new().expect("create temp dir");
-        fs::write(
-            temp.path().join("actup.toml"),
-            r#"
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
+        ok_or_panic(
+            fs::write(
+                temp.path().join("actup.toml"),
+                r#"
 update_policy = "minor"
 
 [actions."special/action"]
 update_policy = "patch"
 "#,
-        )
-        .expect("write actup.toml fixture");
+            ),
+            "write actup.toml fixture",
+        );
 
-        let config = Config::load(None, temp.path()).expect("load config from fixture");
+        let config = ok_or_panic(Config::load(None, temp.path()), "load config from fixture");
         assert_eq!(config.policy_for("normal", "action").to_string(), "minor");
         assert_eq!(config.policy_for("special", "action").to_string(), "patch");
     }
 
     #[test]
     fn test_config_ignore_patterns() {
-        let temp = TempDir::new().expect("create temp dir");
-        fs::write(
-            temp.path().join("actup.toml"),
-            r#"
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
+        ok_or_panic(
+            fs::write(
+                temp.path().join("actup.toml"),
+                r#"
 ignore = ["internal/*", "deprecated/action"]
 "#,
-        )
-        .expect("write actup.toml fixture");
+            ),
+            "write actup.toml fixture",
+        );
 
-        let config = Config::load(None, temp.path()).expect("load config from fixture");
+        let config = ok_or_panic(Config::load(None, temp.path()), "load config from fixture");
         assert!(config.should_ignore("internal", "anything", "v1"));
         assert!(config.should_ignore("deprecated", "action", "v2"));
         assert!(!config.should_ignore("external", "action", "v1"));
@@ -223,6 +261,7 @@ ignore = ["internal/*", "deprecated/action"]
 }
 
 mod version_tests {
+    use super::test_support::some_or_panic;
     use actup_core::version;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -260,7 +299,7 @@ mod version_tests {
         let current = version::Version::parse("v1.0.0");
         let latest = versions.find_latest_for(&current, false, false);
 
-        let latest = latest.expect("expected latest version for minor policy");
+        let latest = some_or_panic(latest, "expected latest version for minor policy");
         assert_eq!(latest.version().to_string(), "v1.2.0");
     }
 
@@ -280,7 +319,7 @@ mod version_tests {
         let current = version::Version::parse("v1.0.0");
         let latest = versions.find_latest_for(&current, true, false);
 
-        let latest = latest.expect("expected latest version for major policy");
+        let latest = some_or_panic(latest, "expected latest version for major policy");
         assert_eq!(latest.version().to_string(), "v3.0.0");
     }
 

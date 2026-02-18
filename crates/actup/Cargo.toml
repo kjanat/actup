@@ -40,7 +40,7 @@ wiremock = { workspace = true }  # HTTP mocking
 [features]
 default = ["gitea", "github", "gitlab"]
 gitea   = ["actup-provider-gitea"]
-github  = []                             # GitHub support (always available via actup-provider-github)
+github  = []                             # Placeholder for API symmetry; `actup-provider-github` is non-optional, so this feature does not toggle compilation.
 gitlab  = ["actup-provider-gitlab"]
 
 [lints]

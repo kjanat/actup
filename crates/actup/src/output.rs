@@ -249,7 +249,7 @@ fn print_human(findings: &[Finding]) {
                 let version_str = latest.version().to_string();
                 let suffix = exact_version
                     .as_ref()
-                    .filter(|ev| *ev != &version_str)
+                    .filter(|ev| ev.as_str() != version_str)
                     .map(|ev| format!(" ({ev})"))
                     .unwrap_or_default();
                 println!(

@@ -238,14 +238,14 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
         OutputFormat::Json => match serde_json::to_string(&output) {
             Ok(json) => println!("{json}"),
             Err(e) => {
-                eprintln!("{}: {}", "Error serializing JSON".red(), e);
+                eprintln!("{}: {}", "Error serializing output".red(), e);
                 return 3; // Environment error
             }
         },
         OutputFormat::Toml => match toml::to_string_pretty(&output) {
             Ok(toml) => println!("{toml}"),
             Err(e) => {
-                eprintln!("{}: {}", "Error serializing TOML".red(), e);
+                eprintln!("{}: {}", "Error serializing output".red(), e);
                 return 3; // Environment error
             }
         },

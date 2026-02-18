@@ -250,14 +250,7 @@ fn find_best_target(
     let latest = versions.find_latest_for(current, allow_major, allow_prerelease)?;
 
     // Check if user has major-only style (v4, v5, etc.)
-    let user_has_major_only = matches!(
-        current,
-        version::Version::Semver {
-            minor: None,
-            patch: None,
-            ..
-        }
-    );
+    let user_has_major_only = current.is_major_only();
 
     if user_has_major_only {
         // Try to find a major-only tag for the target's major version

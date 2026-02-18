@@ -18,9 +18,9 @@ pub struct GiteaTag {
     /// Message associated with the tag (None for lightweight tags)
     pub message: Option<String>,
     /// Tarball download URL
-    pub tarball_url: String,
+    pub tarball_url: Option<String>,
     /// Zipball download URL
-    pub zipball_url: String,
+    pub zipball_url: Option<String>,
 }
 
 impl TagLike for GiteaTag {

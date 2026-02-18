@@ -119,16 +119,16 @@ fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
     };
     registry.set_default_host(default_host);
 
-    // Register default GitHub provider
-    let github_token = std::env::var("GITHUB_TOKEN").ok();
-    let github_provider = GitHubProvider::new(github_token.as_deref())?;
-    let cached_provider = CachingProvider::new(github_provider);
-    registry.register(Box::new(cached_provider));
+    let mut has_default_github_instance = false;
 
     // Register configured provider instances
     for instance in &config.providers.instances {
         match instance.kind.as_str() {
             "github" => {
+                if instance.host == default_host {
+                    has_default_github_instance = true;
+                }
+
                 let token = instance
                     .token_env
                     .as_ref()
@@ -184,6 +184,15 @@ fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
                 );
             }
         }
+    }
+
+    // Register fallback GitHub provider after configured instances so configured
+    // github.com providers take precedence in registry lookups.
+    if !has_default_github_instance {
+        let github_token = std::env::var("GITHUB_TOKEN").ok();
+        let github_provider = GitHubProvider::new(github_token.as_deref())?;
+        let cached_provider = CachingProvider::new(github_provider);
+        registry.register(Box::new(cached_provider));
     }
 
     Ok(registry)

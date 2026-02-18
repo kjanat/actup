@@ -150,7 +150,7 @@ pub struct Noop;
 
 impl Cache for Noop {
     fn get(&self, _key: &str) -> Pin<Box<dyn Future<Output = Result<Entry>> + Send + '_>> {
-        Box::pin(async { Err(Error::NotFound) })
+        Box::pin(async { Err(Error::Disabled) })
     }
 
     fn set(
@@ -245,10 +245,10 @@ mod tests {
     // Noop cache tests
 
     #[tokio::test]
-    async fn test_noop_cache_get_returns_not_found() {
+    async fn test_noop_cache_get_returns_disabled() {
         let cache = Noop;
         let result = cache.get("any_key").await;
-        assert!(matches!(result, Err(Error::NotFound)));
+        assert!(matches!(result, Err(Error::Disabled)));
     }
 
     #[tokio::test]
