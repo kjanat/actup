@@ -7,16 +7,26 @@ allow_prerelease = false
 ignore           = ["dtolnay/rust-toolchain@1.91.0"]
 extra_paths      = []
 
+# [actions]
 # [actions."dtolnay/rust-toolchain"]
-# ignore = true  # `ignore.versions` would be nice. or to be able to specify what to ignore.
+# update_policy = "patch"
+# TODO: `ignore.versions` would be nice. or to be able to specify what to ignore.
+# e.g. `ignore = ["1.91.0"]` or `ignore = ["1.91.0", "1.92.0"]`
+#       or `ignore = ["<1.92.0"]` or `ignore = [">=1.91.0, <1.92.0"]`
+#
+# [actions."dtolnay/rust-toolchain"]
+# ignore = true
 
 [cache]
 ttl     = 86400
 enabled = true
 
 [providers]
-default_kind      = ""
-default_host      = ""
-instances         = []
+default_kind      = "github"
+default_host      = "github.com"
 api_mode          = "graphql"
 max_tags_per_repo = 100
+
+[[providers.instances]]
+kind = "gitea"
+host = "gitea.kajkowalski.nl"
