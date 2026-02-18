@@ -96,7 +96,7 @@
 			"depends": ["registration-types", "github-registration"],
 			"priority": "integration",
 			"overseerId": "task_01KHSANXS1XJE2DRJSWWZ4D2W0",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "validation",

@@ -10,7 +10,7 @@ mod output;
 
 use std::process::ExitCode;
 
-use actup_core::{CachingProvider, Config, provider};
+use actup_core::{CachingProvider, Config, Registration, provider, validate_no_duplicate_presets};
 #[cfg(feature = "gitea")]
 use actup_provider_gitea::GiteaProvider;
 use actup_provider_github::GitHubProvider;
@@ -107,7 +107,43 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
+/// Returns all provider registrations enabled by Cargo features.
+///
+/// Each compiled-in provider crate contributes its static [`Registration`].
+/// The returned list is validated: duplicate preset hostnames across
+/// providers cause a panic (programmer invariant).
+///
+/// Feature gates:
+/// - GitHub is always included (`actup-provider-github` is non-optional)
+/// - GitLab included when `gitlab` feature is enabled
+/// - Gitea included when `gitea` feature is enabled
+///
+/// # Panics
+///
+/// Panics if two or more registrations share the same preset hostname.
+#[must_use]
+fn available_registrations() -> Vec<&'static Registration> {
+    let registrations = vec![
+        &actup_provider_github::REGISTRATION,
+        // GitLab and Gitea providers will be added here once they export
+        // `REGISTRATION`. The feature gates are ready:
+        //
+        // #[cfg(feature = "gitlab")]
+        // &actup_provider_gitlab::REGISTRATION,
+        //
+        // #[cfg(feature = "gitea")]
+        // &actup_provider_gitea::REGISTRATION,
+    ];
+    validate_no_duplicate_presets(&registrations);
+    registrations
+}
+
 fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
+    // Validate provider registrations early (panics on duplicate preset hosts).
+    // The full registration-based provider construction will replace the
+    // manual matching below in the `cli-build-registry` task.
+    let _registrations = available_registrations();
+
     let mut registry = provider::Registry::new();
 
     // Set default host from config (falls back to "github.com" when None)
@@ -199,4 +235,95 @@ fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
     }
 
     Ok(registry)
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use actup_core::HostKind;
+
+    use super::*;
+
+    #[test]
+    fn available_registrations_includes_github() {
+        let regs = available_registrations();
+        assert!(
+            regs.iter().any(|r| r.kind == HostKind::Github),
+            "GitHub registration must always be present"
+        );
+    }
+
+    #[test]
+    fn available_registrations_nonempty() {
+        let regs = available_registrations();
+        assert!(!regs.is_empty(), "must have at least one registration");
+    }
+
+    #[test]
+    fn available_registrations_no_duplicate_presets() {
+        let regs = available_registrations();
+        let mut seen_hosts = std::collections::HashSet::new();
+        for reg in &regs {
+            for preset in reg.presets {
+                assert!(
+                    seen_hosts.insert(preset.host),
+                    "duplicate preset host: {}",
+                    preset.host
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn available_registrations_github_preset_host() {
+        let regs = available_registrations();
+        let github = regs.iter().find(|r| r.kind == HostKind::Github).unwrap();
+        assert!(
+            github.presets.iter().any(|p| p.host == "github.com"),
+            "GitHub preset must include github.com"
+        );
+    }
+
+    #[test]
+    fn available_registrations_all_have_capabilities() {
+        let regs = available_registrations();
+        for reg in &regs {
+            assert!(
+                reg.capabilities.supports_graphql || reg.capabilities.supports_rest,
+                "{:?} provider has no supported API modes",
+                reg.kind
+            );
+        }
+    }
+
+    #[test]
+    fn available_registrations_is_deterministic() {
+        let a = available_registrations();
+        let b = available_registrations();
+        assert_eq!(a.len(), b.len());
+        for (ra, rb) in a.iter().zip(b.iter()) {
+            assert_eq!(ra.kind, rb.kind);
+            assert_eq!(ra.presets.len(), rb.presets.len());
+        }
+    }
+
+    #[test]
+    fn available_registrations_expected_count() {
+        let regs = available_registrations();
+        // Currently only GitHub exports REGISTRATION.
+        // When GitLab/Gitea add theirs, update expected count
+        // based on default features (github + gitlab + gitea = 3).
+        let mut expected = 1; // GitHub is always present
+
+        // GitLab/Gitea registrations not yet exported by provider crates.
+        // When they are, uncomment:
+        // #[cfg(feature = "gitlab")]
+        // { expected += 1; }
+        // #[cfg(feature = "gitea")]
+        // { expected += 1; }
+        let _ = &mut expected; // suppress unused_assignments
+
+        assert_eq!(regs.len(), expected);
+    }
 }

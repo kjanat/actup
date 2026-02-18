@@ -14,7 +14,8 @@ Started: 2026-02-18
 - `Hash` derive needed on `HostKind` for use as `HashMap` key in later tasks
 - Registration types in `config/registration.rs` submodule, re-exported from `lib.rs`
 - `Registration` uses `fn` pointer fields (`infer_api_base`, `create`); needs manual `Debug` impl with `finish_non_exhaustive()`
-- CLI `build_registry()` in `crates/actup/src/main.rs` — main consumer of config provider fields
+- CLI `build_registry()` in `crates/actup/src/main.rs` — main consumer of config provider fields; calls `available_registrations()` for early preset validation
+- `available_registrations()` in `crates/actup/src/main.rs` — feature-gated provider assembly; can't live in `actup-providers` due to circular deps
 - Config display in `crates/actup/src/commands/config.rs` — human-readable config output
 - Example configs in `examples/` — must be kept in sync with config struct changes
 - `Config` has `#[serde(default)]` on the struct, so all new fields must either have `Default` or be `Option`
@@ -123,3 +124,15 @@ Started: 2026-02-18
 - Debug output verified: includes kind/presets/token, excludes fn pointers
 - Files changed: `crates/provider-github/src/lib.rs`
 - **Learnings:** Tests against the real `REGISTRATION` static (not mocks) give stronger guarantees — verifies the actual wiring. `create` fn works without token env set since `GitHubProvider::with_host` accepts `None` token.
+
+## Task - available-registrations
+
+- Added `validate_no_duplicate_presets()` to `crates/core/src/config/registration.rs` — panics on duplicate preset hostnames across registrations
+- Re-exported `validate_no_duplicate_presets` from `actup_core`
+- Added `available_registrations()` to `crates/actup/src/main.rs` — feature-gated assembly of provider registrations
+- GitHub always included (non-optional dep); GitLab/Gitea gated by `#[cfg(feature = "...")]` (commented until providers export `REGISTRATION`)
+- Wired into `build_registry()` for early preset validation (prevents dead_code warning)
+- 9 tests for `validate_no_duplicate_presets`: empty, single, disjoint, no-presets, duplicate across kinds, duplicate within kind, multiple presets per registration, panic message content
+- 7 tests for `available_registrations`: includes_github, nonempty, no_duplicate_presets, github_preset_host, all_have_capabilities, is_deterministic, expected_count
+- Files changed: `crates/core/src/config/registration.rs`, `crates/core/src/lib.rs`, `crates/actup/src/main.rs`
+- **Learnings:** `pub(crate)` on functions in binary crates triggers dead_code warning even if tests use it (tests compile as separate target). Plain `fn` + `super::*` in test module works without the warning. `_registrations` binding silences `#[must_use]` on the return value. `actup-providers` crate can't host `available_registrations()` due to circular deps (provider crates depend on it).

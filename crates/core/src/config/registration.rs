@@ -5,6 +5,7 @@
 //! resolution to fill defaults and validate host entries — without depending
 //! on any provider crate directly.
 
+use std::collections::HashMap;
 use std::num::NonZeroU8;
 
 use super::{ApiMode, HostKind};
@@ -102,6 +103,31 @@ impl std::fmt::Debug for Registration {
             .field("default_token_env", &self.default_token_env)
             .field("capabilities", &self.capabilities)
             .finish_non_exhaustive()
+    }
+}
+
+/// Validates that no two registrations share the same preset hostname.
+///
+/// Preset hostnames must be globally unique — if two provider crates both
+/// claim `"github.com"`, the build is misconfigured. This is a programmer
+/// invariant, so violation panics rather than returning an error.
+///
+/// # Panics
+///
+/// Panics if any preset hostname appears in more than one registration,
+/// with a message listing the conflicting providers and the duplicate host.
+pub fn validate_no_duplicate_presets(registrations: &[&Registration]) {
+    let mut seen: HashMap<&str, HostKind> = HashMap::new();
+    for reg in registrations {
+        for preset in reg.presets {
+            if let Some(existing_kind) = seen.get(preset.host) {
+                panic!(
+                    "duplicate preset hostname \"{}\": registered by both {:?} and {:?} providers",
+                    preset.host, existing_kind, reg.kind,
+                );
+            }
+            seen.insert(preset.host, reg.kind);
+        }
     }
 }
 
@@ -652,5 +678,253 @@ mod tests {
         assert!(debug.contains("ghe.corp.com"));
         assert!(debug.contains("Capabilities"));
         assert!(debug.contains("default_token_env"));
+    }
+
+    #[test]
+    fn validate_no_duplicates_empty() {
+        validate_no_duplicate_presets(&[]);
+    }
+
+    #[test]
+    fn validate_no_duplicates_single_registration() {
+        let reg = Registration {
+            kind: HostKind::Github,
+            presets: &[Preset {
+                host: "github.com",
+                api_base: "https://api.github.com",
+                token_env: "GITHUB_TOKEN",
+            }],
+            default_token_env: Some("GITHUB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&reg]);
+    }
+
+    #[test]
+    fn validate_no_duplicates_disjoint_presets() {
+        let github = Registration {
+            kind: HostKind::Github,
+            presets: &[Preset {
+                host: "github.com",
+                api_base: "https://api.github.com",
+                token_env: "GITHUB_TOKEN",
+            }],
+            default_token_env: Some("GITHUB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let gitlab = Registration {
+            kind: HostKind::Gitlab,
+            presets: &[Preset {
+                host: "gitlab.com",
+                api_base: "https://gitlab.com/api/v4",
+                token_env: "GITLAB_TOKEN",
+            }],
+            default_token_env: Some("GITLAB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let gitea = Registration {
+            kind: HostKind::Gitea,
+            presets: &[],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&github, &gitlab, &gitea]);
+    }
+
+    #[test]
+    fn validate_no_duplicates_no_presets() {
+        let gitea = Registration {
+            kind: HostKind::Gitea,
+            presets: &[],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let gitlab = Registration {
+            kind: HostKind::Gitlab,
+            presets: &[],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&gitea, &gitlab]);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate preset hostname \"github.com\"")]
+    fn validate_duplicates_panics() {
+        let reg1 = Registration {
+            kind: HostKind::Github,
+            presets: &[Preset {
+                host: "github.com",
+                api_base: "https://api.github.com",
+                token_env: "GITHUB_TOKEN",
+            }],
+            default_token_env: Some("GITHUB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let reg2 = Registration {
+            kind: HostKind::Gitlab,
+            presets: &[Preset {
+                host: "github.com",
+                api_base: "https://api.github.com",
+                token_env: "OTHER_TOKEN",
+            }],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&reg1, &reg2]);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate preset hostname \"example.com\"")]
+    fn validate_duplicates_within_same_kind() {
+        let reg1 = Registration {
+            kind: HostKind::Github,
+            presets: &[Preset {
+                host: "example.com",
+                api_base: "https://example.com/api/v3",
+                token_env: "TOKEN_A",
+            }],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let reg2 = Registration {
+            kind: HostKind::Github,
+            presets: &[Preset {
+                host: "example.com",
+                api_base: "https://example.com/api/v3",
+                token_env: "TOKEN_B",
+            }],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&reg1, &reg2]);
+    }
+
+    #[test]
+    fn validate_multiple_presets_per_registration_no_conflict() {
+        let reg = Registration {
+            kind: HostKind::Github,
+            presets: &[
+                Preset {
+                    host: "github.com",
+                    api_base: "https://api.github.com",
+                    token_env: "GITHUB_TOKEN",
+                },
+                Preset {
+                    host: "github.dev",
+                    api_base: "https://api.github.dev",
+                    token_env: "GITHUB_DEV_TOKEN",
+                },
+            ],
+            default_token_env: Some("GITHUB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let gitlab = Registration {
+            kind: HostKind::Gitlab,
+            presets: &[Preset {
+                host: "gitlab.com",
+                api_base: "https://gitlab.com/api/v4",
+                token_env: "GITLAB_TOKEN",
+            }],
+            default_token_env: Some("GITLAB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&reg, &gitlab]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Github")]
+    fn validate_panic_message_includes_provider_kinds() {
+        let reg1 = Registration {
+            kind: HostKind::Github,
+            presets: &[Preset {
+                host: "shared.example.com",
+                api_base: "https://shared.example.com/api/v3",
+                token_env: "TOKEN",
+            }],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let reg2 = Registration {
+            kind: HostKind::Gitea,
+            presets: &[Preset {
+                host: "shared.example.com",
+                api_base: "https://shared.example.com/api/v1",
+                token_env: "TOKEN2",
+            }],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        validate_no_duplicate_presets(&[&reg1, &reg2]);
     }
 }
