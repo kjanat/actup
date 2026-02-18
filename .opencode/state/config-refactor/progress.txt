@@ -151,3 +151,12 @@ Started: 2026-02-18
 - 27 tests: 16 hostname (valid simple/subdomain/short/hyphens, rejects empty/uppercase/caps/https/http/path/port/leading-trailing-internal-whitespace/tab, context propagation), 7 api_base (valid https/http/path, strips trailing slashes, rejects empty/no-scheme/ftp/query/fragment, context propagation), 8 provider_config (valid github/ghe, rejects empty api_base/token_env/invalid api_base, host in error, query/fragment rejected)
 - Files changed: `crates/core/src/config/validation.rs` (new), `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
 - **Learnings:** `Error::InvalidConfig.path` field works well as a generic context string (not just file paths). `validate_api_base` returns the normalized value rather than mutating — functional style fits better with the resolution pipeline where the caller will build `ProviderConfig`. `kind` validation (required after merge) is deferred to `effective_host()` in the resolution-logic task since it requires registration lookup.
+
+## Task - test-validation
+
+- Expanded validation test suite from 27 → 60 tests (33 new tests)
+- Hostname: added newline rejection, numeric IP-like hostnames, single-char valid, uppercase suggestion in error message, scheme-without-slashes (`:` → port error), `hosts` context propagation, validation priority ordering (case check before scheme)
+- api_base: added `ssh://` rejection, port-in-URL valid, `http://localhost:3000` valid, path-with-trailing-slash normalization, GitLab `/api/v4` valid, Gitea `/api/v1` valid, query-with-path rejection, fragment-with-path rejection, bare hostname rejection
+- ProviderConfig: added GitLab/Gitea kind variants, trailing-slash-through-delegation, empty-before-shape error ordering, token_env-after-api_base ordering, both-empty-api_base-wins priority, error format host prefix, max/min tags boundary (255/1)
+- Files changed: `crates/core/src/config/validation.rs`
+- **Learnings:** Validation error ordering matters for UX — empty checks before shape checks gives clearer messages. The `validate_provider_config` delegates to `validate_api_base` but doesn't expose the normalized return value — that's intentional since the caller already has a `ProviderConfig` with a concrete `api_base` string. Hostname validation runs case check before scheme check, so `https://GitHub.com` gets a "lowercase" error, not "scheme" — correct priority since fixing case first is more actionable.

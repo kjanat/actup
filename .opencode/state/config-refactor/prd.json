@@ -115,7 +115,7 @@
 			"description": "Comprehensive tests for validation: hostname rejects https://, ports, uppercase, whitespace; api_base requires scheme, strips trailing /; post-merge catches missing required fields. Done when: test per validation rule in spec.",
 			"depends": ["validation"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "resolution-logic",

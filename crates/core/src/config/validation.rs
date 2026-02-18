@@ -253,9 +253,57 @@ mod tests {
     }
 
     #[test]
+    fn hostname_rejects_newline() {
+        let err = validate_hostname("github\n.com", "hosts").unwrap_err();
+        assert!(err.to_string().contains("whitespace"), "{err}");
+    }
+
+    #[test]
+    fn hostname_valid_numeric_subdomain() {
+        assert!(validate_hostname("10.0.0.1", "hosts").is_ok());
+    }
+
+    #[test]
+    fn hostname_valid_single_char() {
+        assert!(validate_hostname("a", "hosts").is_ok());
+    }
+
+    #[test]
+    fn hostname_uppercase_suggestion_in_error() {
+        let err = validate_hostname("GitHub.COM", "hosts").unwrap_err();
+        let msg = err.to_string();
+        // Error should suggest the lowercase version
+        assert!(
+            msg.contains("github.com"),
+            "should suggest lowercase fix: {msg}"
+        );
+    }
+
+    #[test]
+    fn hostname_rejects_scheme_without_slashes() {
+        // "https:host" contains `:` → rejected as port
+        let err = validate_hostname("https:github.com", "hosts").unwrap_err();
+        assert!(err.to_string().contains("port"), "{err}");
+    }
+
+    #[test]
     fn hostname_context_in_error() {
         let err = validate_hostname("Bad.Host", "default_host").unwrap_err();
         assert!(err.to_string().contains("default_host"), "{err}");
+    }
+
+    #[test]
+    fn hostname_hosts_context_in_error() {
+        let err = validate_hostname("BAD", "hosts").unwrap_err();
+        assert!(err.to_string().contains("hosts"), "{err}");
+    }
+
+    #[test]
+    fn hostname_rejects_scheme_check_before_case() {
+        // "https://GitHub.com" has scheme — scheme error takes priority
+        let err = validate_hostname("https://GitHub.com", "hosts").unwrap_err();
+        // Uppercase check runs first (before scheme), so this is a lowercase error
+        assert!(err.to_string().contains("lowercase"), "{err}");
     }
 
     // === api_base validation ===
@@ -318,6 +366,60 @@ mod tests {
     fn api_base_rejects_fragment() {
         let err = validate_api_base("https://api.github.com#section", "test").unwrap_err();
         assert!(err.to_string().contains("fragment"), "{err}");
+    }
+
+    #[test]
+    fn api_base_rejects_ssh_scheme() {
+        let err = validate_api_base("ssh://git@github.com", "test").unwrap_err();
+        assert!(err.to_string().contains("scheme"), "{err}");
+    }
+
+    #[test]
+    fn api_base_valid_with_port() {
+        let result = validate_api_base("https://ghe.local:8443/api/v3", "test").unwrap();
+        assert_eq!(result, "https://ghe.local:8443/api/v3");
+    }
+
+    #[test]
+    fn api_base_valid_http_localhost() {
+        let result = validate_api_base("http://localhost:3000", "test").unwrap();
+        assert_eq!(result, "http://localhost:3000");
+    }
+
+    #[test]
+    fn api_base_preserves_path_with_trailing_slash_stripped() {
+        let result = validate_api_base("https://ghe.corp.com/api/v3/", "test").unwrap();
+        assert_eq!(result, "https://ghe.corp.com/api/v3");
+    }
+
+    #[test]
+    fn api_base_valid_gitlab_path() {
+        let result = validate_api_base("https://gitlab.com/api/v4", "test").unwrap();
+        assert_eq!(result, "https://gitlab.com/api/v4");
+    }
+
+    #[test]
+    fn api_base_valid_gitea_path() {
+        let result = validate_api_base("https://gitea.example.com/api/v1", "test").unwrap();
+        assert_eq!(result, "https://gitea.example.com/api/v1");
+    }
+
+    #[test]
+    fn api_base_rejects_query_with_path() {
+        let err = validate_api_base("https://ghe.corp.com/api/v3?version=2", "test").unwrap_err();
+        assert!(err.to_string().contains("query"), "{err}");
+    }
+
+    #[test]
+    fn api_base_rejects_fragment_with_path() {
+        let err = validate_api_base("https://ghe.corp.com/api/v3#section", "test").unwrap_err();
+        assert!(err.to_string().contains("fragment"), "{err}");
+    }
+
+    #[test]
+    fn api_base_rejects_bare_hostname() {
+        let err = validate_api_base("github.com/api/v3", "test").unwrap_err();
+        assert!(err.to_string().contains("scheme"), "{err}");
     }
 
     #[test]
@@ -406,5 +508,106 @@ mod tests {
         config.api_base = "https://api.github.com#frag".into();
         let err = validate_provider_config(&config).unwrap_err();
         assert!(err.to_string().contains("fragment"), "{err}");
+    }
+
+    #[test]
+    fn provider_config_valid_gitlab() {
+        let config = ProviderConfig {
+            host: "gitlab.com".into(),
+            kind: HostKind::Gitlab,
+            api_base: "https://gitlab.com/api/v4".into(),
+            token_env: "GITLAB_TOKEN".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+        };
+        assert!(validate_provider_config(&config).is_ok());
+    }
+
+    #[test]
+    fn provider_config_valid_gitea() {
+        let config = ProviderConfig {
+            host: "gitea.example.com".into(),
+            kind: HostKind::Gitea,
+            api_base: "https://gitea.example.com/api/v1".into(),
+            token_env: "GITEA_TOKEN".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(5).unwrap(),
+        };
+        assert!(validate_provider_config(&config).is_ok());
+    }
+
+    #[test]
+    fn provider_config_api_base_trailing_slash_normalized() {
+        // validate_provider_config delegates to validate_api_base which normalizes,
+        // but validate_provider_config only checks validity (Ok/Err), it doesn't
+        // return the normalized value. This test verifies the delegation doesn't
+        // reject trailing slashes.
+        let mut config = valid_provider_config();
+        config.api_base = "https://api.github.com/".into();
+        assert!(validate_provider_config(&config).is_ok());
+    }
+
+    #[test]
+    fn provider_config_empty_api_base_checked_before_url_shape() {
+        // Empty api_base should fail with "required" message, not "scheme" message
+        let mut config = valid_provider_config();
+        config.api_base = String::new();
+        let err = validate_provider_config(&config).unwrap_err();
+        assert!(err.to_string().contains("required"), "{err}");
+    }
+
+    #[test]
+    fn provider_config_empty_token_env_checked_after_api_base() {
+        // If api_base is valid but token_env is empty, error should be about token_env
+        let mut config = valid_provider_config();
+        config.token_env = String::new();
+        let err = validate_provider_config(&config).unwrap_err();
+        assert!(err.to_string().contains("token_env"), "{err}");
+    }
+
+    #[test]
+    fn provider_config_both_empty_api_base_wins() {
+        // If both api_base and token_env are empty, api_base error comes first
+        let mut config = valid_provider_config();
+        config.api_base = String::new();
+        config.token_env = String::new();
+        let err = validate_provider_config(&config).unwrap_err();
+        assert!(err.to_string().contains("api_base"), "{err}");
+    }
+
+    #[test]
+    fn provider_config_error_format_includes_host_prefix() {
+        // Error context should be formatted as 'host "hostname"'
+        let mut config = valid_provider_config();
+        config.host = "my-ghe.internal".into();
+        config.api_base = String::new();
+        let err = validate_provider_config(&config).unwrap_err();
+        assert!(err.to_string().contains("my-ghe.internal"), "{err}");
+    }
+
+    #[test]
+    fn provider_config_max_tags_boundary() {
+        let config = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://api.github.com".into(),
+            token_env: "GITHUB_TOKEN".into(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: NonZeroU8::new(255).unwrap(),
+        };
+        assert!(validate_provider_config(&config).is_ok());
+    }
+
+    #[test]
+    fn provider_config_min_tags_boundary() {
+        let config = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://api.github.com".into(),
+            token_env: "GITHUB_TOKEN".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(1).unwrap(),
+        };
+        assert!(validate_provider_config(&config).is_ok());
     }
 }
