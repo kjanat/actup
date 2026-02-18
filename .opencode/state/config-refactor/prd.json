@@ -29,7 +29,7 @@
 			"depends": ["hostkind-enum"],
 			"priority": "architecture",
 			"overseerId": "task_01KHSANXN4EJEGVCS8BRMTCQSE",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "test-config-types",

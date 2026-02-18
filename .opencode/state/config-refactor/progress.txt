@@ -36,3 +36,12 @@ Started: 2026-02-18
 - Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
 - Tests: default values, serde roundtrip, custom values, partial deserialization, empty object defaults, rejects zero, deny unknown fields, boundary (255/256)
 - **Learnings:** `deny_unknown_fields` works correctly with `serde_json`; `NonZeroU8` serde rejects 0 automatically
+
+## Task - host-config
+
+- Added `HostConfig` struct with all-`Option` fields: `kind`, `api_base`, `token_env`, `api_mode`, `max_tags_per_repo`
+- `#[serde(deny_unknown_fields)]` for typo protection, NO `#[serde(default)]` since fields are explicit overrides
+- `#[allow(clippy::module_name_repetitions)]` needed (same as `Config` struct)
+- Re-exported from `actup_core::HostConfig`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- **Learnings:** `HostConfig` intentionally has no `Default` impl — all fields are `Option` overrides, not defaults. `deny_unknown_fields` without `default` means deserialization requires no extra fields but doesn't fill missing ones

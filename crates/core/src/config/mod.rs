@@ -274,6 +274,34 @@ impl Default for FetchSettings {
     }
 }
 
+/// Per-host configuration for a single provider host.
+///
+/// All fields are optional: they act as overrides on top of provider preset
+/// defaults and global `[fetch]` settings. After resolution, `kind`, `api_base`,
+/// and `token_env` must all be present (validated post-merge).
+///
+/// Used as values in the `[hosts."hostname"]` config map.
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HostConfig {
+    /// Provider kind. Required for non-preset hosts; implied by preset for known hosts.
+    pub kind: Option<HostKind>,
+
+    /// API base URL. Required after merge (may be inferred by provider registration).
+    /// Must include scheme (`http://` or `https://`), no query or fragment.
+    pub api_base: Option<String>,
+
+    /// Env var name for auth token. Required after merge (may be defaulted by preset).
+    pub token_env: Option<String>,
+
+    /// Override global `[fetch].api_mode` for this host.
+    pub api_mode: Option<ApiMode>,
+
+    /// Override global `[fetch].max_tags_per_repo` for this host.
+    pub max_tags_per_repo: Option<NonZeroU8>,
+}
+
 /// # Provider configuration
 ///
 /// Default uses empty strings. The CLI layer sets actual defaults.
