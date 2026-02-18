@@ -10,6 +10,28 @@ use std::fmt;
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Primary error type for actup-core operations
+///
+/// # Provider Implementation Guide
+///
+/// When implementing a provider, use these error variants:
+///
+/// - [`NotFound`]: HTTP 404 on repo lookup (not ref-specific)
+/// - [`RefNotFound`]: Specific ref/tag/branch doesn't exist
+/// - [`RateLimited`]: HTTP 429 or rate limit headers
+/// - [`Auth`]: HTTP 401/403 (auth required or insufficient permissions)
+/// - [`Network`]: Connection failures, timeouts, or other HTTP errors
+/// - [`Internal`]: Unexpected data format (bad SHA, encoding issues)
+///
+/// For JSON/YAML parsing of responses, use [`Network`] with operation "parse response".
+/// For YAML parsing of action files, use [`YamlParse`].
+///
+/// [`NotFound`]: Error::NotFound
+/// [`RefNotFound`]: Error::RefNotFound
+/// [`RateLimited`]: Error::RateLimited
+/// [`Auth`]: Error::Auth
+/// [`Network`]: Error::Network
+/// [`Internal`]: Error::Internal
+/// [`YamlParse`]: Error::YamlParse
 #[derive(Debug)]
 pub enum Error {
     // === User Errors (fixable by user) ===
@@ -22,6 +44,17 @@ pub enum Error {
     },
 
     /// Action repository not found (404)
+    ///
+    /// # Provider Implementation Example
+    ///
+    /// ```rust,ignore
+    /// // When HTTP 404 on repo lookup:
+    /// Err(Error::NotFound {
+    ///     owner: owner.to_string(),
+    ///     repo: repo.to_string(),
+    ///     host: Some(self.host.clone()),
+    /// })
+    /// ```
     NotFound {
         /// The owner/org that wasn't found
         owner: String,
@@ -32,6 +65,18 @@ pub enum Error {
     },
 
     /// Version/tag/branch doesn't exist in the repository
+    ///
+    /// # Provider Implementation Example
+    ///
+    /// ```rust,ignore
+    /// // When a specific ref (tag/branch) is not found:
+    /// Err(Error::RefNotFound {
+    ///     owner: owner.to_string(),
+    ///     repo: repo.to_string(),
+    ///     ref_name: ref_name.to_string(),
+    ///     host: Some(self.host.clone()),
+    /// })
+    /// ```
     RefNotFound {
         /// The owner/org
         owner: String,
@@ -69,6 +114,21 @@ pub enum Error {
     },
 
     /// API rate limit exceeded
+    ///
+    /// # Provider Implementation Example
+    ///
+    /// ```rust,ignore
+    /// // When HTTP 429 (rate limited):
+    /// Err(Error::RateLimited {
+    ///     provider: "github".to_string(),
+    ///     retry_after: response
+    ///         .headers()
+    ///         .get("retry-after")
+    ///         .and_then(|v| v.to_str().ok())
+    ///         .and_then(|s| s.parse::<u64>().ok())
+    ///         .map(std::time::Duration::from_secs),
+    /// })
+    /// ```
     RateLimited {
         /// Provider that rate limited us
         provider: String,
@@ -88,6 +148,22 @@ pub enum Error {
     },
 
     /// Authentication failed or missing
+    ///
+    /// # Provider Implementation Examples
+    ///
+    /// ```rust,ignore
+    /// // Invalid token format:
+    /// Err(Error::Auth {
+    ///     provider: "github".to_string(),
+    ///     reason: format!("invalid token format: {e}"),
+    /// })
+    ///
+    /// // HTTP 401 (unauthorized):
+    /// Err(Error::Auth {
+    ///     provider: "gitlab".to_string(),
+    ///     reason: "unauthorized - check your token".to_string(),
+    /// })
+    /// ```
     Auth {
         /// Provider requiring auth
         provider: String,

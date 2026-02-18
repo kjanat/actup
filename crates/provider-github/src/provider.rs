@@ -1,18 +1,15 @@
 //! GitHub provider implementation
 
 use crate::client::GitHubClient;
-use actup_core::provider::{
-    ActionInput, ActionOutput, ActionRuns, ActionStep, ActionYml, Provider, ProviderKind, Sha40,
-};
-use actup_core::version::{BranchInfo, Version, VersionInfo, VersionSet};
-use actup_core::{ActionRepoId, Result};
+use actup_core::action_ref::ActionRepoId;
+use actup_core::error::Result;
+use actup_core::provider::{self, ActionYml, Provider, Sha40};
+use actup_core::version;
+use actup_providers::{parse_action_yml, process_tags};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use serde::Deserialize;
-use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::SystemTime;
-use tracing::{debug, warn};
+use tracing::debug;
 
 /// GitHub provider for resolving action versions
 pub struct GitHubProvider {
@@ -46,72 +43,11 @@ impl GitHubProvider {
             client,
         })
     }
-
-    /// Parse tags into `VersionInfo`, filtering and sorting
-    fn process_tags(tags: Vec<crate::types::GitHubTag>) -> VersionSet {
-        let mut semver_tags = Vec::new();
-        let mut latest_per_major: HashMap<u32, VersionInfo> = HashMap::new();
-        let mut major_tags: HashMap<u32, VersionInfo> = HashMap::new();
-        let mut latest: Option<VersionInfo> = None;
-
-        for tag in tags {
-            let version = Version::parse(&tag.name);
-            let info = VersionInfo::new(version.clone(), &tag.commit.sha);
-
-            if let Version::Semver {
-                major, prerelease, ..
-            } = &version
-            {
-                // Always add to semver_tags (prereleases are filtered at query time)
-                semver_tags.push(info.clone());
-
-                // Track major-only tags (v1, v2, v6 - no minor/patch)
-                if version.is_major_only() {
-                    major_tags.insert(*major, info.clone());
-                }
-
-                // Only update "latest" trackers for non-prerelease versions
-                // (prereleases are filtered at query time via allow_prerelease flag)
-                if prerelease.is_none() {
-                    // Determine destinations first to minimize clones
-                    let dominated_by_latest = latest.as_ref().is_some_and(|l| l.version >= version);
-                    let dominated_by_major = latest_per_major
-                        .get(major)
-                        .is_some_and(|c| c.version >= version);
-
-                    // Update latest trackers, clone only when needed
-                    if !dominated_by_latest && !dominated_by_major {
-                        // New latest AND new latest for major
-                        latest_per_major.insert(*major, info.clone());
-                        latest = Some(info);
-                    } else if !dominated_by_major {
-                        // New latest for this major only
-                        latest_per_major.insert(*major, info.clone());
-                    } else if !dominated_by_latest {
-                        // New overall latest only
-                        latest = Some(info);
-                    }
-                }
-            }
-        }
-
-        // Sort semver tags descending
-        semver_tags.sort_by(|a, b| b.version.cmp(&a.version));
-
-        VersionSet {
-            semver_tags,
-            latest_per_major,
-            major_tags,
-            latest,
-            default_branch: None,
-            fetched_at: Some(SystemTime::now()),
-        }
-    }
 }
 
 impl Provider for GitHubProvider {
-    fn kind(&self) -> ProviderKind {
-        ProviderKind::GitHub
+    fn kind(&self) -> provider::Kind {
+        provider::Kind::GitHub
     }
 
     fn host(&self) -> &str {
@@ -121,9 +57,9 @@ impl Provider for GitHubProvider {
     fn get_versions(
         &self,
         repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<VersionSet>> + Send + '_>> {
-        let owner = repo.owner.clone();
-        let repo_name = repo.repo.clone();
+    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
 
         Box::pin(async move {
             debug!(owner = %owner, repo = %repo_name, "fetching versions from GitHub");
@@ -131,8 +67,8 @@ impl Provider for GitHubProvider {
             // Get tags
             let tags = self.client.list_tags(&owner, &repo_name, None).await?;
 
-            // Process into VersionSet
-            let mut version_set = Self::process_tags(tags);
+            // Process into [`version::Set`]
+            let mut version_set = process_tags(tags);
 
             // Get default branch info
             let repo_info = self.client.get_repo(&owner, &repo_name).await?;
@@ -141,10 +77,10 @@ impl Provider for GitHubProvider {
                 .get_branch(&owner, &repo_name, &repo_info.default_branch)
                 .await?;
 
-            version_set.default_branch = Some(BranchInfo {
-                name: repo_info.default_branch,
-                sha: branch.commit.sha,
-            });
+            version_set.set_default_branch(version::BranchInfo::new(
+                repo_info.default_branch,
+                branch.commit.sha,
+            ));
 
             Ok(version_set)
         })
@@ -155,8 +91,8 @@ impl Provider for GitHubProvider {
         repo: &ActionRepoId,
         ref_name: &str,
     ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
-        let owner = repo.owner.clone();
-        let repo_name = repo.repo.clone();
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
         let ref_name = ref_name.to_string();
 
         Box::pin(async move {
@@ -205,8 +141,8 @@ impl Provider for GitHubProvider {
         &self,
         repo: &ActionRepoId,
     ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
-        let owner = repo.owner.clone();
-        let repo_name = repo.repo.clone();
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
 
         Box::pin(async move {
             let repo_info = self.client.get_repo(&owner, &repo_name).await?;
@@ -219,8 +155,8 @@ impl Provider for GitHubProvider {
         repo: &ActionRepoId,
         ref_name: Option<&str>,
     ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
-        let owner = repo.owner.clone();
-        let repo_name = repo.repo.clone();
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
         let ref_name = ref_name.map(String::from);
 
         Box::pin(async move {
@@ -264,23 +200,53 @@ impl Provider for GitHubProvider {
         repo: &ActionRepoId,
         ref_name: &str,
     ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
-        let owner = repo.owner.clone();
-        let repo_name = repo.repo.clone();
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
         let ref_name = ref_name.to_string();
-        let subpath = repo.subpath.clone();
+        let subpath = repo.subpath().map(str::to_owned);
 
         Box::pin(async move {
-            // Determine the path to action.yml
-            let path = match &subpath {
+            // Determine base path for action file
+            let action_path = match &subpath {
                 Some(p) if p.ends_with("action.yml") || p.ends_with("action.yaml") => p.clone(),
                 Some(p) => format!("{p}/action.yml"),
                 None => "action.yml".to_string(),
             };
 
-            let content = self
+            // Try action.yml first, then action.yaml (both are valid)
+            let content = match self
                 .client
-                .get_content(&owner, &repo_name, &path, Some(&ref_name))
-                .await?;
+                .get_content(&owner, &repo_name, &action_path, Some(&ref_name))
+                .await
+            {
+                Ok(content) => content,
+                Err(actup_core::Error::NotFound { .. }) => {
+                    if std::path::Path::new(&action_path)
+                        .extension()
+                        .is_some_and(|ext| ext.eq_ignore_ascii_case("yml"))
+                    {
+                        let yaml_path = std::path::Path::new(&action_path)
+                            .with_extension("yaml")
+                            .to_string_lossy()
+                            .to_string();
+                        debug!(
+                            owner = %owner,
+                            repo = %repo_name,
+                            "action.yml not found, trying action.yaml"
+                        );
+                        self.client
+                            .get_content(&owner, &repo_name, &yaml_path, Some(&ref_name))
+                            .await?
+                    } else {
+                        return Err(actup_core::Error::NotFound {
+                            owner: owner.clone(),
+                            repo: repo_name.clone(),
+                            host: Some(self.host.clone()),
+                        });
+                    }
+                }
+                Err(e) => return Err(e),
+            };
 
             // Decode content
             let raw = if let (Some(encoded), Some("base64")) =
@@ -299,139 +265,18 @@ impl Provider for GitHubProvider {
                     message: format!("action.yml is not valid UTF-8: {e}"),
                 })?
             } else {
-                warn!(
-                    owner = %owner,
-                    repo = %repo_name,
-                    "GitHub returned content without base64 encoding"
-                );
-                String::new()
+                return Err(actup_core::Error::Internal {
+                    context: "get_action_yml".into(),
+                    message: format!(
+                        "GitHub returned content without base64 encoding for {owner}/{repo_name}"
+                    ),
+                });
             };
 
             // Parse the YAML content
             parse_action_yml(&raw)
         })
     }
-}
-
-/// Raw deserialization types for action.yml
-#[derive(Debug, Deserialize, Default)]
-struct RawActionYml {
-    name: Option<String>,
-    description: Option<String>,
-    author: Option<String>,
-    #[serde(default)]
-    inputs: HashMap<String, RawInput>,
-    #[serde(default)]
-    outputs: HashMap<String, RawOutput>,
-    runs: Option<RawRuns>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RawInput {
-    description: Option<String>,
-    #[serde(default)]
-    required: bool,
-    default: Option<String>,
-    #[serde(rename = "deprecationMessage")]
-    deprecation_message: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RawOutput {
-    description: Option<String>,
-    value: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RawRuns {
-    using: String,
-    main: Option<String>,
-    pre: Option<String>,
-    post: Option<String>,
-    image: Option<String>,
-    #[serde(default)]
-    steps: Vec<RawStep>,
-}
-
-#[derive(Debug, Deserialize, Default)]
-struct RawStep {
-    name: Option<String>,
-    id: Option<String>,
-    uses: Option<String>,
-    run: Option<String>,
-    shell: Option<String>,
-    #[serde(rename = "working-directory")]
-    working_directory: Option<String>,
-}
-
-/// Parse action.yml content into `ActionYml` struct
-#[allow(clippy::cognitive_complexity)]
-fn parse_action_yml(raw: &str) -> Result<ActionYml> {
-    let parsed: RawActionYml =
-        serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {
-            path: "action.yml".into(),
-            reason: e.to_string(),
-        })?;
-
-    let inputs = parsed
-        .inputs
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k,
-                ActionInput {
-                    description: v.description,
-                    required: v.required,
-                    default: v.default,
-                    deprecation_message: v.deprecation_message,
-                },
-            )
-        })
-        .collect();
-
-    let outputs = parsed
-        .outputs
-        .into_iter()
-        .map(|(k, v)| {
-            (
-                k,
-                ActionOutput {
-                    description: v.description,
-                    value: v.value,
-                },
-            )
-        })
-        .collect();
-
-    let runs = parsed.runs.map(|r| ActionRuns {
-        using: r.using,
-        main: r.main,
-        pre: r.pre,
-        post: r.post,
-        image: r.image,
-        steps: r
-            .steps
-            .into_iter()
-            .map(|s| ActionStep {
-                name: s.name,
-                id: s.id,
-                uses: s.uses,
-                run: s.run,
-                shell: s.shell,
-                working_directory: s.working_directory,
-            })
-            .collect(),
-    });
-
-    Ok(ActionYml {
-        raw: raw.to_string(),
-        name: parsed.name,
-        description: parsed.description,
-        author: parsed.author,
-        inputs,
-        outputs,
-        runs,
-    })
 }
 
 #[cfg(test)]
@@ -454,25 +299,25 @@ mod tests {
 
     #[test]
     fn test_process_tags_empty() {
-        let result = GitHubProvider::process_tags(vec![]);
-        assert!(result.semver_tags.is_empty());
-        assert!(result.latest.is_none());
-        assert!(result.latest_per_major.is_empty());
+        let result = process_tags(vec![] as Vec<GitHubTag>);
+        assert!(result.semver_tags().is_empty());
+        assert!(result.latest().is_none());
+        assert!(result.latest_per_major().is_empty());
     }
 
     #[test]
     fn test_process_tags_single_version() {
         let tags = vec![make_tag("v1.0.0", "aaa111")];
-        let result = GitHubProvider::process_tags(tags);
+        let result = process_tags(tags);
 
-        assert_eq!(result.semver_tags.len(), 1);
-        assert!(result.latest.is_some());
+        assert_eq!(result.semver_tags().len(), 1);
+        assert!(result.latest().is_some());
         assert_eq!(
-            result.latest.as_ref().unwrap().version.to_string(),
+            result.latest().as_ref().unwrap().version().to_string(),
             "v1.0.0"
         );
-        assert_eq!(result.latest_per_major.len(), 1);
-        assert!(result.latest_per_major.contains_key(&1));
+        assert_eq!(result.latest_per_major().len(), 1);
+        assert!(result.latest_per_major().contains_key(&1));
     }
 
     #[test]
@@ -482,13 +327,13 @@ mod tests {
             make_tag("v2.0.0", "bbb"),
             make_tag("v1.5.0", "ccc"),
         ];
-        let result = GitHubProvider::process_tags(tags);
+        let result = process_tags(tags);
 
         // Should be sorted descending
-        assert_eq!(result.semver_tags.len(), 3);
-        assert_eq!(result.semver_tags[0].version.to_string(), "v2.0.0");
-        assert_eq!(result.semver_tags[1].version.to_string(), "v1.5.0");
-        assert_eq!(result.semver_tags[2].version.to_string(), "v1.0.0");
+        assert_eq!(result.semver_tags().len(), 3);
+        assert_eq!(result.semver_tags()[0].version().to_string(), "v2.0.0");
+        assert_eq!(result.semver_tags()[1].version().to_string(), "v1.5.0");
+        assert_eq!(result.semver_tags()[2].version().to_string(), "v1.0.0");
     }
 
     #[test]
@@ -498,10 +343,10 @@ mod tests {
             make_tag("v2.0.0", "bbb"),
             make_tag("v3.0.0", "ccc"),
         ];
-        let result = GitHubProvider::process_tags(tags);
+        let result = process_tags(tags);
 
-        assert!(result.latest.is_some());
-        assert_eq!(result.latest.unwrap().version.to_string(), "v3.0.0");
+        assert!(result.latest().is_some());
+        assert_eq!(result.latest().unwrap().version().to_string(), "v3.0.0");
     }
 
     #[test]
@@ -513,15 +358,25 @@ mod tests {
             make_tag("v2.0.0", "d"),
             make_tag("v2.1.0", "e"),
         ];
-        let result = GitHubProvider::process_tags(tags);
+        let result = process_tags(tags);
 
-        assert_eq!(result.latest_per_major.len(), 2);
+        assert_eq!(result.latest_per_major().len(), 2);
         assert_eq!(
-            result.latest_per_major.get(&1).unwrap().version.to_string(),
+            result
+                .latest_per_major()
+                .get(&1)
+                .unwrap()
+                .version()
+                .to_string(),
             "v1.2.0"
         );
         assert_eq!(
-            result.latest_per_major.get(&2).unwrap().version.to_string(),
+            result
+                .latest_per_major()
+                .get(&2)
+                .unwrap()
+                .version()
+                .to_string(),
             "v2.1.0"
         );
     }
@@ -533,12 +388,12 @@ mod tests {
             make_tag("v2.0.0-beta.1", "bbb"),
             make_tag("v2.0.0-rc.1", "ccc"),
         ];
-        let result = GitHubProvider::process_tags(tags);
+        let result = process_tags(tags);
 
         // Prereleases are included in semver_tags (filtered at query time)
-        assert_eq!(result.semver_tags.len(), 3);
+        assert_eq!(result.semver_tags().len(), 3);
         // But "latest" only tracks stable releases
-        assert_eq!(result.latest.unwrap().version.to_string(), "v1.0.0");
+        assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
     }
 
     #[test]
@@ -548,146 +403,10 @@ mod tests {
             make_tag("latest", "bbb"),
             make_tag("main", "ccc"),
         ];
-        let result = GitHubProvider::process_tags(tags);
+        let result = process_tags(tags);
 
         // Non-semver should be ignored
-        assert_eq!(result.semver_tags.len(), 1);
-        assert_eq!(result.latest.unwrap().version.to_string(), "v1.0.0");
-    }
-
-    // parse_action_yml tests
-
-    #[test]
-    fn test_parse_action_yml_minimal() {
-        let yaml = r"
-name: Test Action
-description: A test action
-";
-        let result = parse_action_yml(yaml).unwrap();
-        assert_eq!(result.name, Some("Test Action".to_string()));
-        assert_eq!(result.description, Some("A test action".to_string()));
-        assert!(result.author.is_none());
-    }
-
-    #[test]
-    fn test_parse_action_yml_with_inputs() {
-        let yaml = r#"
-name: Test
-description: Test
-inputs:
-  token:
-    description: The GitHub token
-    required: true
-  timeout:
-    description: Timeout in seconds
-    required: false
-    default: "30"
-"#;
-        let result = parse_action_yml(yaml).unwrap();
-        assert_eq!(result.inputs.len(), 2);
-
-        let token = result.inputs.get("token").unwrap();
-        assert_eq!(token.description, Some("The GitHub token".to_string()));
-        assert!(token.required);
-        assert!(token.default.is_none());
-
-        let timeout = result.inputs.get("timeout").unwrap();
-        assert!(!timeout.required);
-        assert_eq!(timeout.default, Some("30".to_string()));
-    }
-
-    #[test]
-    fn test_parse_action_yml_with_outputs() {
-        let yaml = r"
-name: Test
-description: Test
-outputs:
-  result:
-    description: The result value
-    value: ${{ steps.run.outputs.result }}
-";
-        let result = parse_action_yml(yaml).unwrap();
-        assert_eq!(result.outputs.len(), 1);
-
-        let output = result.outputs.get("result").unwrap();
-        assert_eq!(output.description, Some("The result value".to_string()));
-        assert!(output.value.is_some());
-    }
-
-    #[test]
-    fn test_parse_action_yml_node_action() {
-        let yaml = r"
-name: Node Action
-description: A Node.js action
-runs:
-  using: node20
-  main: dist/index.js
-";
-        let result = parse_action_yml(yaml).unwrap();
-        assert!(result.runs.is_some());
-
-        let runs = result.runs.unwrap();
-        assert_eq!(runs.using, "node20");
-        assert_eq!(runs.main, Some("dist/index.js".to_string()));
-    }
-
-    #[test]
-    fn test_parse_action_yml_composite_action() {
-        let yaml = r#"
-name: Composite Action
-description: A composite action
-runs:
-  using: composite
-  steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-    - name: Run script
-      run: echo "Hello"
-      shell: bash
-"#;
-        let result = parse_action_yml(yaml).unwrap();
-        assert!(result.runs.is_some());
-
-        let runs = result.runs.unwrap();
-        assert_eq!(runs.using, "composite");
-        assert_eq!(runs.steps.len(), 2);
-
-        assert_eq!(runs.steps[0].name, Some("Checkout".to_string()));
-        assert_eq!(runs.steps[0].uses, Some("actions/checkout@v4".to_string()));
-
-        assert_eq!(runs.steps[1].name, Some("Run script".to_string()));
-        assert_eq!(runs.steps[1].run, Some("echo \"Hello\"".to_string()));
-        assert_eq!(runs.steps[1].shell, Some("bash".to_string()));
-    }
-
-    #[test]
-    fn test_parse_action_yml_docker_action() {
-        let yaml = r"
-name: Docker Action
-description: A Docker action
-runs:
-  using: docker
-  image: Dockerfile
-";
-        let result = parse_action_yml(yaml).unwrap();
-        assert!(result.runs.is_some());
-
-        let runs = result.runs.unwrap();
-        assert_eq!(runs.using, "docker");
-        assert_eq!(runs.image, Some("Dockerfile".to_string()));
-    }
-
-    #[test]
-    fn test_parse_action_yml_invalid_yaml() {
-        let yaml = "name: [invalid";
-        let result = parse_action_yml(yaml);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_parse_action_yml_preserves_raw() {
-        let yaml = "name: Test\ndescription: Test";
-        let result = parse_action_yml(yaml).unwrap();
-        assert_eq!(result.raw, yaml);
+        assert_eq!(result.semver_tags().len(), 1);
+        assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
     }
 }

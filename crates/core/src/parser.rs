@@ -103,13 +103,7 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
         });
     }
 
-    Ok(Some(ActionRef {
-        host,
-        owner,
-        repo,
-        subpath,
-        ref_str: ref_str.to_string(),
-    }))
+    Ok(Some(ActionRef::new(host, owner, repo, subpath, ref_str)))
 }
 
 /// Check if a string looks like a hostname
@@ -136,6 +130,7 @@ fn looks_like_host(s: &str) -> bool {
 ///
 /// Returns a list of (`line_number`, column, `uses_value`) tuples.
 /// Line numbers are 1-indexed.
+#[must_use]
 pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
     let mut results = Vec::new();
 
@@ -164,12 +159,12 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
             if !value.is_empty() {
                 // Calculate column (1-indexed): pos of "uses:" + 5 + whitespace + quote
                 let value_start = pos + 5 + leading_ws + quote_offset;
-                results.push(UsesLocation {
-                    line: line_num,
-                    column: value_start + 1,
-                    value: value.to_string(),
-                    raw_line: line.to_string(),
-                });
+                results.push(UsesLocation::new(
+                    line_num,
+                    value_start + 1,
+                    value.to_string(),
+                    line.to_string(),
+                ));
             }
         }
     }
@@ -181,13 +176,50 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UsesLocation {
     /// Line number (1-indexed)
-    pub line: usize,
+    line: usize,
     /// Column number (1-indexed)
-    pub column: usize,
+    column: usize,
     /// The uses value
-    pub value: String,
+    value: String,
     /// The full line (for context)
-    pub raw_line: String,
+    raw_line: String,
+}
+
+impl UsesLocation {
+    /// Create a new `UsesLocation`
+    #[must_use]
+    pub const fn new(line: usize, column: usize, value: String, raw_line: String) -> Self {
+        Self {
+            line,
+            column,
+            value,
+            raw_line,
+        }
+    }
+
+    /// Get the line number
+    #[must_use]
+    pub const fn line(&self) -> usize {
+        self.line
+    }
+
+    /// Get the column number
+    #[must_use]
+    pub const fn column(&self) -> usize {
+        self.column
+    }
+
+    /// Get the uses value
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
+    }
+
+    /// Get the raw line
+    #[must_use]
+    pub fn raw_line(&self) -> &str {
+        &self.raw_line
+    }
 }
 
 impl UsesLocation {
@@ -216,11 +248,11 @@ mod tests {
     #[test]
     fn test_parse_simple() {
         let result = parse_uses("actions/checkout@v4").unwrap().unwrap();
-        assert_eq!(result.owner, "actions");
-        assert_eq!(result.repo, "checkout");
-        assert_eq!(result.ref_str, "v4");
-        assert!(result.host.is_none());
-        assert!(result.subpath.is_none());
+        assert_eq!(result.owner(), "actions");
+        assert_eq!(result.repo(), "checkout");
+        assert_eq!(result.ref_str(), "v4");
+        assert!(result.host().is_none());
+        assert!(result.subpath().is_none());
     }
 
     #[test]
@@ -228,19 +260,19 @@ mod tests {
         let result = parse_uses("org/repo/.github/workflows/ci.yml@main")
             .unwrap()
             .unwrap();
-        assert_eq!(result.owner, "org");
-        assert_eq!(result.repo, "repo");
-        assert_eq!(result.subpath, Some(".github/workflows/ci.yml".to_string()));
-        assert_eq!(result.ref_str, "main");
+        assert_eq!(result.owner(), "org");
+        assert_eq!(result.repo(), "repo");
+        assert_eq!(result.subpath(), Some(".github/workflows/ci.yml"));
+        assert_eq!(result.ref_str(), "main");
     }
 
     #[test]
     fn test_parse_with_host() {
         let result = parse_uses("ghe.corp.com/org/action@v1").unwrap().unwrap();
-        assert_eq!(result.host, Some("ghe.corp.com".to_string()));
-        assert_eq!(result.owner, "org");
-        assert_eq!(result.repo, "action");
-        assert_eq!(result.ref_str, "v1");
+        assert_eq!(result.host(), Some("ghe.corp.com"));
+        assert_eq!(result.owner(), "org");
+        assert_eq!(result.repo(), "action");
+        assert_eq!(result.ref_str(), "v1");
     }
 
     #[test]
@@ -249,7 +281,7 @@ mod tests {
         let result = parse_uses(&format!("actions/checkout@{sha}"))
             .unwrap()
             .unwrap();
-        assert_eq!(result.ref_str, sha);
+        assert_eq!(result.ref_str(), &sha);
         assert!(result.is_sha());
     }
 

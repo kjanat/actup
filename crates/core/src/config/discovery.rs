@@ -49,6 +49,7 @@ pub fn iter_config_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_
 ///
 /// Returns the first existing config file found.
 #[must_use]
+#[allow(clippy::module_name_repetitions, reason = "clear naming")]
 pub fn find_repo_config(start_dir: &Path) -> Option<PathBuf> {
     let mut dir = start_dir.to_path_buf();
 

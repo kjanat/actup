@@ -1,5 +1,7 @@
 //! actup CLI - GitHub Actions version manager
 
+#![warn(missing_docs)]
+
 mod cli;
 mod commands;
 mod common;
@@ -8,8 +10,12 @@ mod output;
 
 use std::process::ExitCode;
 
-use actup_core::{CachingProvider, Config, ProviderRegistry};
+use actup_core::{CachingProvider, Config, provider};
+#[cfg(feature = "gitea")]
+use actup_provider_gitea::GiteaProvider;
 use actup_provider_github::GitHubProvider;
+#[cfg(feature = "gitlab")]
+use actup_provider_gitlab::GitLabProvider;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
@@ -21,7 +27,9 @@ async fn main() -> ExitCode {
 
     // Initialize tracing
     let filter = if cli.verbose {
-        EnvFilter::new("actup=debug,actup_core=debug,actup_provider_github=debug")
+        EnvFilter::new(
+            "actup=debug,actup_core=debug,actup_provider_github=debug,actup_provider_gitlab=debug,actup_provider_gitea=debug",
+        )
     } else {
         EnvFilter::new("actup=info")
     };
@@ -99,8 +107,8 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
-fn build_registry(config: &Config) -> actup_core::Result<ProviderRegistry> {
-    let mut registry = ProviderRegistry::new();
+fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
+    let mut registry = provider::Registry::new();
 
     // Set default host from config or fallback to github.com
     // (Core defaults are empty to remain provider-neutral)
@@ -111,11 +119,86 @@ fn build_registry(config: &Config) -> actup_core::Result<ProviderRegistry> {
     };
     registry.set_default_host(default_host);
 
-    // Add GitHub provider (wrapped with caching to deduplicate API requests)
-    let github_token = std::env::var("GITHUB_TOKEN").ok();
-    let github_provider = GitHubProvider::new(github_token.as_deref())?;
-    let cached_provider = CachingProvider::new(github_provider);
-    registry.register(Box::new(cached_provider));
+    let mut has_default_github_instance = false;
+
+    // Register configured provider instances
+    for instance in &config.providers.instances {
+        match instance.kind.as_str() {
+            "github" => {
+                if instance.host == default_host {
+                    has_default_github_instance = true;
+                }
+
+                let token = instance
+                    .token_env
+                    .as_ref()
+                    .and_then(|env_var| std::env::var(env_var).ok());
+
+                // Compute host-aware api_base: github.com uses api.github.com,
+                // GHES uses {host}/api/v3
+                let default_api_base = if instance.host.is_empty() || instance.host == "github.com"
+                {
+                    "https://api.github.com".to_string()
+                } else {
+                    format!("https://{}/api/v3", instance.host)
+                };
+                let api_base = instance.api_base.as_deref().unwrap_or(&default_api_base);
+
+                let provider =
+                    GitHubProvider::with_host(api_base, &instance.host, token.as_deref())?;
+                let cached = CachingProvider::new(provider);
+                registry.register(Box::new(cached));
+            }
+
+            #[cfg(feature = "gitlab")]
+            "gitlab" => {
+                let token = instance
+                    .token_env
+                    .as_ref()
+                    .and_then(|env_var| std::env::var(env_var).ok());
+
+                let default_base = format!("https://{}", instance.host);
+                let api_base = instance.api_base.as_deref().unwrap_or(&default_base);
+
+                let provider =
+                    GitLabProvider::with_host(api_base, &instance.host, token.as_deref())?;
+                let cached = CachingProvider::new(provider);
+                registry.register(Box::new(cached));
+            }
+
+            #[cfg(feature = "gitea")]
+            "gitea" | "forgejo" => {
+                let token = instance
+                    .token_env
+                    .as_ref()
+                    .and_then(|env_var| std::env::var(env_var).ok());
+
+                let default_base = format!("https://{}", instance.host);
+                let api_base = instance.api_base.as_deref().unwrap_or(&default_base);
+
+                let provider = GiteaProvider::new(api_base, &instance.host, token.as_deref())?;
+                let cached = CachingProvider::new(provider);
+                registry.register(Box::new(cached));
+            }
+
+            _ => {
+                tracing::warn!(
+                    kind = %instance.kind,
+                    host = %instance.host,
+                    "unknown provider kind in config, skipping"
+                );
+            }
+        }
+    }
+
+    // Register fallback GitHub provider after configured instances so configured
+    // github.com providers take precedence in registry lookups.
+    if !has_default_github_instance {
+        let github_token = std::env::var("GITHUB_TOKEN").ok();
+        let github_provider = GitHubProvider::new(github_token.as_deref())?;
+        let cached_provider = CachingProvider::new(github_provider);
+        registry.register(Box::new(cached_provider));
+    }
 
     Ok(registry)
 }

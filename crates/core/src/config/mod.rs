@@ -10,7 +10,7 @@
 pub mod discovery;
 
 use crate::Error;
-use crate::policy::{BranchPolicy, RefStyle, UpdatePolicy};
+use crate::policy;
 use figment::Figment;
 use figment::providers::{Env, Format, Json, Serialized, Toml, Yaml};
 use schemars::JsonSchema;
@@ -21,9 +21,9 @@ use std::num::NonZeroU8;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-pub use discovery::{
-    CONFIG_EXTENSIONS, find_repo_config, iter_config_candidates, user_config_path,
-};
+#[allow(clippy::module_name_repetitions)]
+pub use discovery::find_repo_config;
+pub use discovery::{CONFIG_EXTENSIONS, iter_config_candidates, user_config_path};
 
 /// # Actup configuration
 /// Configuration options for the GitHub Actions-like updater.
@@ -57,22 +57,39 @@ pub use discovery::{
 /// # After:
 /// # - uses: actions/checkout@v4.2.0
 /// ```
+///
+/// ```toml
+/// # .actup.toml - Selective ignore patterns
+/// ignore = [
+///   "actions/checkout",              # Ignore all refs of this action
+///   "my-org/*",                      # Ignore all actions from my-org
+///   "dtolnay/rust-toolchain@1.91.0", # Ignore specific MSRV version
+/// ]
+///
+/// # Result: dtolnay/rust-toolchain@stable is checked, @1.91.0 is ignored
+/// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
     /// Global update policy
-    pub update_policy: UpdatePolicy,
+    pub update_policy: policy::Update,
 
     /// How to format refs when updating
-    pub ref_style: RefStyle,
+    pub ref_style: policy::Style,
 
     /// How to handle branch references
-    pub branch_policy: BranchPolicy,
+    pub branch_policy: policy::Branch,
 
     /// Whether to consider prerelease versions
     pub allow_prerelease: bool,
 
-    /// Actions to ignore (owner/repo patterns)
+    /// Actions to ignore (supports owner/repo, owner/repo@ref, and owner/* patterns)
+    ///
+    /// Examples:
+    /// - `"actions/checkout"` - ignores all refs of this action
+    /// - `"actions/checkout@v2"` - ignores only the v2 ref
+    /// - `"my-org/*"` - ignores all actions from my-org
+    /// - `"tool/action@1.91.0"` - ignores specific version (e.g., MSRV pin)
     pub ignore: Vec<String>,
 
     /// Per-action policy overrides (keyed by "owner/repo")
@@ -80,12 +97,25 @@ pub struct Config {
     pub action_overrides: HashMap<String, ActionOverride>,
 
     /// Cache configuration
-    pub cache: CacheConfig,
+    pub cache: Cache,
 
     /// Provider configuration
-    pub providers: ProvidersConfig,
+    pub providers: Providers,
 
     /// Additional paths to scan (beyond defaults)
+    ///
+    /// By default, actup scans:
+    /// - `.github/workflows/**/*.{yml,yaml}` (workflows)
+    /// - `.github/actions/**/action.{yml,yaml}` (composite actions)
+    ///
+    /// Use `extra_paths` to scan additional locations:
+    ///
+    /// Examples:
+    /// - `".gitea/workflows"` - Gitea workflow directory
+    /// - `".woodpecker/*.yml"` - Woodpecker CI pipelines
+    /// - `"ci/pipelines/**/*.yaml"` - Custom CI directory
+    /// - `".drone.yml"` - Specific Drone CI config file
+    /// - `"infra/terraform/github-actions.tf"` - GitHub Actions in Terraform
     pub extra_paths: Vec<String>,
 
     /// Path this config was loaded from (if any)
@@ -118,10 +148,10 @@ pub struct Config {
 #[serde(default)]
 pub struct ActionOverride {
     /// Override update policy for this action
-    pub update_policy: Option<UpdatePolicy>,
+    pub update_policy: Option<policy::Update>,
 
     /// Override ref style for this action
-    pub ref_style: Option<RefStyle>,
+    pub ref_style: Option<policy::Style>,
 
     /// Whether to completely ignore this action
     pub ignore: bool,
@@ -130,7 +160,7 @@ pub struct ActionOverride {
 /// Cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
-pub struct CacheConfig {
+pub struct Cache {
     /// Cache time-to-live in seconds
     #[serde(
         serialize_with = "serialize_duration_secs",
@@ -146,7 +176,7 @@ pub struct CacheConfig {
     pub enabled: bool,
 }
 
-impl Default for CacheConfig {
+impl Default for Cache {
     fn default() -> Self {
         Self {
             ttl: Duration::from_secs(24 * 60 * 60), // 24 hours
@@ -184,13 +214,22 @@ pub enum ApiMode {
     Rest,
 }
 
+impl std::fmt::Display for ApiMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Graphql => write!(f, "graphql"),
+            Self::Rest => write!(f, "rest"),
+        }
+    }
+}
+
 /// # Provider configuration
 ///
 /// Default uses empty strings. The CLI layer sets actual defaults.
 /// Core must remain provider-neutral.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
-pub struct ProvidersConfig {
+pub struct Providers {
     /// Default provider kind
     pub default_kind: String,
 
@@ -214,7 +253,7 @@ pub const DEFAULT_MAX_TAGS_PER_REPO: NonZeroU8 = match NonZeroU8::new(10) {
     None => panic!("DEFAULT_MAX_TAGS_PER_REPO must be non-zero"),
 };
 
-impl Default for ProvidersConfig {
+impl Default for Providers {
     fn default() -> Self {
         Self {
             default_kind: String::new(),
@@ -340,7 +379,7 @@ impl Config {
 
     /// Get the effective update policy for an action
     #[must_use]
-    pub fn policy_for(&self, owner: &str, repo: &str) -> UpdatePolicy {
+    pub fn policy_for(&self, owner: &str, repo: &str) -> policy::Update {
         let key = format!("{owner}/{repo}");
         self.action_overrides
             .get(&key)
@@ -350,7 +389,7 @@ impl Config {
 
     /// Get the effective ref style for an action
     #[must_use]
-    pub fn ref_style_for(&self, owner: &str, repo: &str) -> RefStyle {
+    pub fn ref_style_for(&self, owner: &str, repo: &str) -> policy::Style {
         let key = format!("{owner}/{repo}");
         self.action_overrides
             .get(&key)
@@ -358,10 +397,16 @@ impl Config {
             .unwrap_or(self.ref_style)
     }
 
-    /// Check if an action should be ignored
+    /// Check if an action should be ignored.
+    ///
+    /// Supports multiple ignore patterns:
+    /// - `owner/repo` - ignores all refs for this action
+    /// - `owner/repo@ref` - ignores only this specific ref
+    /// - `owner/*` - ignores all repos from this owner
     #[must_use]
-    pub fn should_ignore(&self, owner: &str, repo: &str) -> bool {
+    pub fn should_ignore(&self, owner: &str, repo: &str, ref_str: &str) -> bool {
         let full = format!("{owner}/{repo}");
+        let full_with_ref = format!("{owner}/{repo}@{ref_str}");
 
         // Check explicit override
         if let Some(ovr) = self.action_overrides.get(&full)
@@ -372,13 +417,21 @@ impl Config {
 
         // Check ignore list
         self.ignore.iter().any(|pattern| {
-            // Simple matching: exact or owner/* glob
+            // Match specific ref: owner/repo@ref
+            if pattern.contains('@') && pattern == &full_with_ref {
+                return true;
+            }
+
+            // Match repo (all refs): owner/repo
             if pattern == &full {
                 return true;
             }
+
+            // Match owner wildcard: owner/*
             if let Some(owner_pattern) = pattern.strip_suffix("/*") {
                 return owner == owner_pattern;
             }
+
             false
         })
     }
@@ -393,9 +446,9 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.update_policy, UpdatePolicy::Latest);
-        assert_eq!(config.ref_style, RefStyle::Preserve);
-        assert_eq!(config.branch_policy, BranchPolicy::Ignore);
+        assert_eq!(config.update_policy, policy::Update::Latest);
+        assert_eq!(config.ref_style, policy::Style::Preserve);
+        assert_eq!(config.branch_policy, policy::Branch::Ignore);
         assert!(!config.allow_prerelease);
         assert!(config.ignore.is_empty());
         assert!(config.action_overrides.is_empty());
@@ -412,15 +465,15 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(config.should_ignore("actions", "checkout"));
-        assert!(config.should_ignore("my-org", "anything"));
-        assert!(!config.should_ignore("other", "repo"));
+        assert!(config.should_ignore("actions", "checkout", "v1"));
+        assert!(config.should_ignore("my-org", "anything", "v2"));
+        assert!(!config.should_ignore("other", "repo", "v1"));
     }
 
     #[test]
     fn test_should_ignore_empty() {
         let config = Config::default();
-        assert!(!config.should_ignore("any", "repo"));
+        assert!(!config.should_ignore("any", "repo", "v1"));
     }
 
     #[test]
@@ -430,9 +483,9 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(config.should_ignore("org", "repo1"));
-        assert!(config.should_ignore("org", "repo2"));
-        assert!(!config.should_ignore("other-org", "repo1"));
+        assert!(config.should_ignore("org", "repo1", "v1"));
+        assert!(config.should_ignore("org", "repo2", "v2"));
+        assert!(!config.should_ignore("other-org", "repo1", "v1"));
     }
 
     #[test]
@@ -442,8 +495,28 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(config.should_ignore("owner", "exact-repo"));
-        assert!(!config.should_ignore("owner", "other-repo"));
+        assert!(config.should_ignore("owner", "exact-repo", "v1"));
+        assert!(!config.should_ignore("owner", "other-repo", "v1"));
+    }
+
+    #[test]
+    fn test_should_ignore_specific_ref() {
+        let config = Config {
+            ignore: vec![
+                "owner/repo@v1.91.0".to_string(),
+                "another/action@main".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        // Specific refs should be ignored
+        assert!(config.should_ignore("owner", "repo", "v1.91.0"));
+        assert!(config.should_ignore("another", "action", "main"));
+
+        // Other refs for the same repo should NOT be ignored
+        assert!(!config.should_ignore("owner", "repo", "v2"));
+        assert!(!config.should_ignore("owner", "repo", "stable"));
+        assert!(!config.should_ignore("another", "action", "v1"));
     }
 
     // policy_for tests
@@ -451,35 +524,38 @@ mod tests {
     #[test]
     fn test_policy_override() {
         let config = Config {
-            update_policy: UpdatePolicy::Minor,
+            update_policy: policy::Update::Minor,
             action_overrides: std::collections::HashMap::from([(
                 "special/action".to_string(),
                 ActionOverride {
-                    update_policy: Some(UpdatePolicy::Patch),
+                    update_policy: Some(policy::Update::Patch),
                     ..Default::default()
                 },
             )]),
             ..Default::default()
         };
 
-        assert_eq!(config.policy_for("normal", "action"), UpdatePolicy::Minor);
-        assert_eq!(config.policy_for("special", "action"), UpdatePolicy::Patch);
+        assert_eq!(config.policy_for("normal", "action"), policy::Update::Minor);
+        assert_eq!(
+            config.policy_for("special", "action"),
+            policy::Update::Patch
+        );
     }
 
     #[test]
     fn test_policy_for_uses_default_when_no_override() {
         let config = Config {
-            update_policy: UpdatePolicy::Major,
+            update_policy: policy::Update::Major,
             ..Default::default()
         };
 
-        assert_eq!(config.policy_for("any", "action"), UpdatePolicy::Major);
+        assert_eq!(config.policy_for("any", "action"), policy::Update::Major);
     }
 
     #[test]
     fn test_policy_for_override_none_uses_default() {
         let config = Config {
-            update_policy: UpdatePolicy::Minor,
+            update_policy: policy::Update::Minor,
             action_overrides: std::collections::HashMap::from([(
                 "special/action".to_string(),
                 ActionOverride {
@@ -491,14 +567,17 @@ mod tests {
         };
 
         // Should use default since override is None
-        assert_eq!(config.policy_for("special", "action"), UpdatePolicy::Minor);
+        assert_eq!(
+            config.policy_for("special", "action"),
+            policy::Update::Minor
+        );
     }
 
-    // CacheConfig tests
+    // Cache tests
 
     #[test]
     fn test_cache_config_default() {
-        let cache = CacheConfig::default();
+        let cache = Cache::default();
         assert!(cache.enabled);
         assert_eq!(cache.ttl, Duration::from_secs(24 * 60 * 60));
         assert!(cache.path.is_none());
@@ -506,7 +585,7 @@ mod tests {
 
     #[test]
     fn test_cache_config_custom_ttl() {
-        let cache = CacheConfig {
+        let cache = Cache {
             ttl: Duration::from_secs(12 * 3600),
             ..Default::default()
         };
@@ -526,20 +605,20 @@ mod tests {
     #[test]
     fn test_action_override_full() {
         let override_cfg = ActionOverride {
-            update_policy: Some(UpdatePolicy::Patch),
-            ref_style: Some(RefStyle::Sha),
+            update_policy: Some(policy::Update::Patch),
+            ref_style: Some(policy::Style::Sha),
             ignore: true,
         };
-        assert_eq!(override_cfg.update_policy, Some(UpdatePolicy::Patch));
-        assert_eq!(override_cfg.ref_style, Some(RefStyle::Sha));
+        assert_eq!(override_cfg.update_policy, Some(policy::Update::Patch));
+        assert_eq!(override_cfg.ref_style, Some(policy::Style::Sha));
         assert!(override_cfg.ignore);
     }
 
-    // ProvidersConfig tests
+    // Providers tests
 
     #[test]
     fn test_providers_config_default() {
-        let providers = ProvidersConfig::default();
+        let providers = Providers::default();
         // Default is empty strings per AGENTS.md - CLI layer sets actual defaults
         assert!(providers.default_host.is_empty());
         assert!(providers.instances.is_empty());

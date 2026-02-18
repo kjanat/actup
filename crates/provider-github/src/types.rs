@@ -1,5 +1,6 @@
 //! GitHub-specific types for API responses
 
+use actup_providers::TagLike;
 use serde::Deserialize;
 
 /// A git tag from the GitHub API
@@ -17,6 +18,16 @@ pub struct GitHubTag {
 pub struct TagCommit {
     /// Commit SHA
     pub sha: String,
+}
+
+impl TagLike for GitHubTag {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sha(&self) -> &str {
+        &self.commit.sha
+    }
 }
 
 /// Repository info from GitHub API

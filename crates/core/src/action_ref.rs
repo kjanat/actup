@@ -16,20 +16,20 @@ use std::fmt;
 pub struct ActionRef {
     /// Optional explicit host (e.g., "github.com", "ghe.mycorp.internal")
     /// If None, uses the default provider's host
-    pub host: Option<String>,
+    host: Option<String>,
 
     /// Owner or organization (e.g., "actions", "my-org")
-    pub owner: String,
+    owner: String,
 
     /// Repository name (e.g., "checkout", "setup-node")
-    pub repo: String,
+    repo: String,
 
     /// Optional subpath within the repo (e.g., ".github/workflows/reusable.yml")
     /// Used for reusable workflows or actions in subdirectories
-    pub subpath: Option<String>,
+    subpath: Option<String>,
 
     /// The ref (version) - tag, branch, or commit SHA
-    pub ref_str: String,
+    ref_str: String,
 }
 
 impl ActionRef {
@@ -59,6 +59,36 @@ impl ActionRef {
         ref_str: impl Into<String>,
     ) -> Self {
         Self::new(None, owner, repo, None, ref_str)
+    }
+
+    /// Get the host as an optional string slice
+    #[must_use]
+    pub fn host(&self) -> Option<&str> {
+        self.host.as_deref()
+    }
+
+    /// Get the owner as a string slice
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Get the repo as a string slice
+    #[must_use]
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    /// Get the subpath as an optional string slice
+    #[must_use]
+    pub fn subpath(&self) -> Option<&str> {
+        self.subpath.as_deref()
+    }
+
+    /// Get the ref string as a string slice
+    #[must_use]
+    pub fn ref_str(&self) -> &str {
+        &self.ref_str
     }
 
     /// Returns true if this ref looks like a commit SHA (40 hex chars)
@@ -134,16 +164,16 @@ impl fmt::Display for ActionRef {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ActionRepoId {
     /// Optional explicit host
-    pub host: Option<String>,
+    host: Option<String>,
 
     /// Owner or organization
-    pub owner: String,
+    owner: String,
 
     /// Repository name
-    pub repo: String,
+    repo: String,
 
     /// Optional subpath (for composite actions in subdirs)
-    pub subpath: Option<String>,
+    subpath: Option<String>,
 }
 
 impl ActionRepoId {
@@ -167,6 +197,30 @@ impl ActionRepoId {
     #[must_use]
     pub fn simple(owner: impl Into<String>, repo: impl Into<String>) -> Self {
         Self::new(None, owner, repo, None)
+    }
+
+    /// Get the host as an optional string slice
+    #[must_use]
+    pub fn host(&self) -> Option<&str> {
+        self.host.as_deref()
+    }
+
+    /// Get the owner as a string slice
+    #[must_use]
+    pub fn owner(&self) -> &str {
+        &self.owner
+    }
+
+    /// Get the repo as a string slice
+    #[must_use]
+    pub fn repo(&self) -> &str {
+        &self.repo
+    }
+
+    /// Get the subpath as an optional string slice
+    #[must_use]
+    pub fn subpath(&self) -> Option<&str> {
+        self.subpath.as_deref()
     }
 
     /// Create a cache key string
@@ -215,21 +269,21 @@ mod tests {
             Some("v4".to_string()),
             "v4.1.0",
         );
-        assert_eq!(action.host, Some("github.com".to_string()));
-        assert_eq!(action.owner, "actions");
-        assert_eq!(action.repo, "checkout");
-        assert_eq!(action.subpath, Some("v4".to_string()));
-        assert_eq!(action.ref_str, "v4.1.0");
+        assert_eq!(action.host(), Some("github.com"));
+        assert_eq!(action.owner(), "actions");
+        assert_eq!(action.repo(), "checkout");
+        assert_eq!(action.subpath(), Some("v4"));
+        assert_eq!(action.ref_str(), "v4.1.0");
     }
 
     #[test]
     fn test_action_ref_simple() {
         let action = ActionRef::simple("actions", "checkout", "v4");
-        assert!(action.host.is_none());
-        assert_eq!(action.owner, "actions");
-        assert_eq!(action.repo, "checkout");
-        assert!(action.subpath.is_none());
-        assert_eq!(action.ref_str, "v4");
+        assert!(action.host().is_none());
+        assert_eq!(action.owner(), "actions");
+        assert_eq!(action.repo(), "checkout");
+        assert!(action.subpath().is_none());
+        assert_eq!(action.ref_str(), "v4");
     }
 
     // ActionRef::is_sha tests
@@ -313,10 +367,10 @@ mod tests {
         );
         let id = action.to_repo_id();
 
-        assert_eq!(id.host, Some("ghe.corp.com".to_string()));
-        assert_eq!(id.owner, "org");
-        assert_eq!(id.repo, "repo");
-        assert_eq!(id.subpath, Some("path/to/action".to_string()));
+        assert_eq!(id.host(), Some("ghe.corp.com"));
+        assert_eq!(id.owner(), "org");
+        assert_eq!(id.repo(), "repo");
+        assert_eq!(id.subpath(), Some("path/to/action"));
     }
 
     // ActionRef::to_uses_string tests
@@ -370,16 +424,16 @@ mod tests {
     #[test]
     fn test_action_repo_id_new() {
         let id = ActionRepoId::new(Some("github.com".to_string()), "actions", "checkout", None);
-        assert_eq!(id.host, Some("github.com".to_string()));
-        assert_eq!(id.owner, "actions");
-        assert_eq!(id.repo, "checkout");
+        assert_eq!(id.host(), Some("github.com"));
+        assert_eq!(id.owner(), "actions");
+        assert_eq!(id.repo(), "checkout");
     }
 
     #[test]
     fn test_action_repo_id_simple() {
         let id = ActionRepoId::simple("actions", "checkout");
-        assert!(id.host.is_none());
-        assert!(id.subpath.is_none());
+        assert!(id.host().is_none());
+        assert!(id.subpath().is_none());
     }
 
     #[test]

@@ -1,0 +1,22 @@
+#:schema schemas/actup-config.schema.json
+
+update_policy    = "latest"
+ref_style        = "preserve"
+branch_policy    = "ignore"
+allow_prerelease = false
+ignore           = ["dtolnay/rust-toolchain@1.91.0"]
+extra_paths      = []
+
+# [actions."dtolnay/rust-toolchain"]
+# ignore = true  # `ignore.versions` would be nice. or to be able to specify what to ignore.
+
+[cache]
+ttl     = 86400
+enabled = true
+
+[providers]
+default_kind      = ""
+default_host      = ""
+instances         = []
+api_mode          = "graphql"
+max_tags_per_repo = 100

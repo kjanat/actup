@@ -4,10 +4,6 @@
 set unstable := true
 set shell := ["bash", "-cu"]
 
-# List available recipes
-default:
-    @just --list --unsorted
-
 alias b := build
 alias t := test
 alias r := run
@@ -17,12 +13,16 @@ alias c := clippy
 schema_dir := "schemas"
 actup_config := "actup-config.schema.json"
 
+# List available recipes
+default:
+    @just --list --unsorted
+
 # Install
 
 # Install binary to ~/.cargo/bin
 [group('install')]
 install binary="actup":
-    cargo install --bin={{ binary }}
+    cargo install --bin={{ binary }} --path crates/{{ binary }}
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]

@@ -33,10 +33,30 @@ pub const DEFAULT_ACTION_PATTERNS: &[&str] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiscoveredFile {
     /// Absolute path to the file
-    pub path: PathBuf,
+    path: PathBuf,
 
     /// Type of file
-    pub kind: FileKind,
+    kind: FileKind,
+}
+
+impl DiscoveredFile {
+    /// Create a new discovered file
+    #[must_use]
+    pub const fn new(path: PathBuf, kind: FileKind) -> Self {
+        Self { path, kind }
+    }
+
+    /// Get the file path
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Get the file kind
+    #[must_use]
+    pub const fn kind(&self) -> FileKind {
+        self.kind
+    }
 }
 
 /// Type of discovered file
@@ -71,6 +91,7 @@ impl FileKind {
 /// - .github/workflows/*.yml and .yaml
 /// - .github/actions/*/action.yml and .yaml
 /// - Any `extra_paths` from config
+#[must_use]
 pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredFile> {
     let mut files = Vec::new();
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
@@ -81,10 +102,7 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
         if let Some(pattern_str) = full_pattern.to_str() {
             for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
                 if seen_paths.insert(entry.clone()) {
-                    files.push(DiscoveredFile {
-                        path: entry,
-                        kind: FileKind::Workflow,
-                    });
+                    files.push(DiscoveredFile::new(entry, FileKind::Workflow));
                 }
             }
         }
@@ -96,10 +114,7 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
         if let Some(pattern_str) = full_pattern.to_str() {
             for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
                 if seen_paths.insert(entry.clone()) {
-                    files.push(DiscoveredFile {
-                        path: entry,
-                        kind: FileKind::CompositeAction,
-                    });
+                    files.push(DiscoveredFile::new(entry, FileKind::CompositeAction));
                 }
             }
         }
@@ -112,10 +127,7 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
             for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
                 // Skip if already discovered (O(1) hash lookup)
                 if seen_paths.insert(entry.clone()) {
-                    files.push(DiscoveredFile {
-                        path: entry,
-                        kind: FileKind::Custom,
-                    });
+                    files.push(DiscoveredFile::new(entry, FileKind::Custom));
                 }
             }
         }

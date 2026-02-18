@@ -1,10 +1,14 @@
 # actup (CLI + LSP + MCP)
 
+WE ARE STILL NOT EVEN IN ALPHA. WE ARE FREE TO CHANGE SIGNATURES, PUBLIC INTERFACES, ETC.
+
 This repo contains **actup** (CLI), **actup-lsp** (Language Server), and **actup-mcp** (Model Context Protocol server) for checking/updating
 GitHub-compatible Actions `uses:` refs across workflows + composite actions. You are an AI agent working in this codebase. Your job is to
 make correct, reviewable changes that preserve user intent and don’t brick CI. Be paranoid and precise.
 
-If you use the Serena mcp server, activate project: `project_name: "actup-v2"`.
+Before every commit, run `just fmt`, or `dprint fmt`.
+
+<!--If you use the Serena mcp server, activate project: `project_name: "actup-v2"`.-->
 
 ## Prime directive
 
@@ -117,12 +121,12 @@ Provider crates implement a trait like:
 
 ```Rust
 trait ActionProvider {
-  kind() -> ProviderKind;
+  kind() -> provider::Kind;
   host() -> String;                 // resolved host this provider serves
   cache_namespace() -> String;       // e.g. "github", "gitlab", "gitea"
 
   // Version discovery
-  get_versions(ActionRepoId) -> VersionSet;           // tags (+commit), majors, default branch head
+  get_versions(ActionRepoId) -> version::Set;         // tags (+commit), majors, default branch head
   resolve_ref_to_sha(ActionRepoId, ref) -> Sha40;     // tag/branch -> full SHA
   get_default_branch(ActionRepoId) -> BranchName;
 
@@ -138,7 +142,7 @@ trait ActionProvider {
 
 ### Provider selection (“injection”)
 
-A `ProviderRegistry` lives in `actup-core` and resolves providers by host:
+A `provider::Registry` lives in `actup-core` and resolves providers by host:
 
 - If `ActionRef.host` is absent → use configured `default_provider` / `default_host`.
 - Else look up by host match:
@@ -407,6 +411,8 @@ Never rely on live network in tests.
   - `InvalidRef` / `NotFound` (user)
   - `Network` / `RateLimit` / `Auth` (environment)
 
+- No decorative comment separators (e.g., `// ========` or `// ------`). Use doc comments or blank lines instead.
+
 ---
 
 ## Commit message format
@@ -415,7 +421,7 @@ Use [Conventional Commits](https://www.conventionalcommits.org/) with these guid
 
 ### Structure
 
-```
+```gitcommit
 <type>(<scope>): <description>
 
 [optional body]
@@ -453,7 +459,7 @@ Add `!` after type/scope for breaking changes: `feat(policy)!: change default`
 
 ### Examples
 
-```
+```gitcommit
 feat(cache): add file-based persistence with TTL
 
 Store version data in ~/.cache/actup/ to avoid repeated API calls.
@@ -462,14 +468,14 @@ Uses JSON format with fetch timestamp for TTL validation.
 Closes #42
 ```
 
-```
+```gitcommit
 fix(provider): capture error from `GitHubProvider::new`
 
 Previously discarded the error silently, making auth issues hard to
 debug. Now logs with `tracing::error!` including the error message.
 ```
 
-```
+```gitcommit
 refactor(check): use `itertools::unique()` for repo deduplication
 
 Replaces verbose `collect::<HashSet<_>>().into_iter().collect()`

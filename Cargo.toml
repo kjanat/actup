@@ -14,7 +14,10 @@ publish    = true
 
 [workspace.dependencies]
 actup-core            = { path = "crates/core", version = "*" }
+actup-provider-gitea  = { path = "crates/provider-gitea", version = "*" }
 actup-provider-github = { path = "crates/provider-github", version = "*" }
+actup-provider-gitlab = { path = "crates/provider-gitlab", version = "*" }
+actup-providers       = { path = "crates/providers", version = "*" }
 base64                = "0.22"                                              # encoding
 clap_complete         = "4.5"                                               # completions
 console               = "0.16"                                              # terminal
@@ -26,6 +29,7 @@ glob                  = "0.3"                                               # pa
 human-panic           = "2"                                                 # panics
 indicatif             = "0.18"                                              # progress
 insta                 = { version = "1.42", features = ["yaml"] }           # snapshots
+itertools             = "0.14"                                              # iterator utilities
 json_comments         = "0.2"                                               # jsonc
 miette                = { version = "7.6", features = ["fancy"] }           # errors
 node-semver           = "2"                                                 # semver
@@ -36,7 +40,7 @@ sanitize-filename     = "0.6"                                               # fi
 schemars              = "1"                                                 # schema
 schemars_derive       = "1"                                                 # schema
 semver                = "1"                                                 # semver
-serde                 = { version = "1", features = ["derive"] }            # serialization
+serde                 = { version = "1", features = ["derive", "rc"] }      # serialization
 serde_json            = "1"                                                 # json
 serde_yaml_ng         = "0.10"                                              # yaml
 tempfile              = "3"                                                 # testing
@@ -47,6 +51,7 @@ tower-lsp-server      = "0.23"                                              # ls
 tracing               = "0.1"                                               # logging
 tracing-subscriber    = { version = "0.3", features = ["env-filter"] }      # logging
 url                   = "2"                                                 # urls
+urlencoding           = "2.1"                                               # url encoding
 walkdir               = "2"                                                 # filesystem
 wiremock              = "0.6"                                               # mocking
 
@@ -64,7 +69,6 @@ default-features = false
 features         = ["json", "rustls"]
 
 [workspace.lints.clippy]
-all                                = { level = "warn", priority = -1 }
 expect_used                        = "deny"
 identity_op                        = "deny"
 manual_clamp                       = "deny"
@@ -80,8 +84,8 @@ manual_retain                      = "deny"
 manual_strip                       = "deny"
 manual_try_fold                    = "deny"
 manual_unwrap_or                   = "deny"
-module_name_repetitions            = "allow"
-must_use_candidate                 = "allow"
+module_name_repetitions            = "warn"
+must_use_candidate                 = "deny"
 needless_borrow                    = "deny"
 needless_borrowed_reference        = "deny"
 needless_collect                   = "deny"
@@ -89,8 +93,6 @@ needless_late_init                 = "deny"
 needless_option_as_deref           = "deny"
 needless_question_mark             = "deny"
 needless_update                    = "deny"
-nursery                            = { level = "warn", priority = -1 }
-pedantic                           = { level = "warn", priority = -1 }
 redundant_clone                    = "deny"
 redundant_closure                  = "deny"
 redundant_closure_for_method_calls = "deny"
@@ -103,8 +105,21 @@ unnecessary_sort_by                = "deny"
 unnecessary_to_owned               = "deny"
 unwrap_used                        = "deny"
 
+[workspace.lints.clippy.all]
+level    = "warn"
+priority = -1
+
+[workspace.lints.clippy.nursery]
+level    = "warn"
+priority = -1
+
+[workspace.lints.clippy.pedantic]
+level    = "warn"
+priority = -1
+
 [workspace.lints.rust]
-unsafe_code = "forbid"
+missing_docs = "warn"
+unsafe_code  = "forbid"
 
 [workspace.lints.rustdoc]
 bare_urls                    = "deny"

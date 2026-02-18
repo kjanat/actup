@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use actup_core::{ActionRef, Config, ProviderRegistry};
+use actup_core::{ActionRef, Config, provider};
 use owo_colors::OwoColorize;
 
 use crate::cli::OutputFormat;
@@ -11,14 +11,14 @@ use crate::common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScan
 /// Get the prefix of an action ref (everything before @ref).
 fn action_prefix(action: &ActionRef) -> String {
     let mut s = String::new();
-    if let Some(h) = &action.host {
+    if let Some(h) = action.host() {
         s.push_str(h);
         s.push('/');
     }
-    s.push_str(&action.owner);
+    s.push_str(action.owner());
     s.push('/');
-    s.push_str(&action.repo);
-    if let Some(p) = &action.subpath {
+    s.push_str(action.repo());
+    if let Some(p) = action.subpath() {
         s.push('/');
         s.push_str(p);
     }
@@ -47,16 +47,16 @@ async fn resolve_sha(
 
     // Find version matching current ref
     if let Some(v) = versions
-        .semver_tags
+        .semver_tags()
         .iter()
-        .find(|v| v.version.to_string() == action_ref.ref_str)
+        .find(|v| v.version().to_string() == action_ref.ref_str())
     {
-        return Some(v.sha.clone());
+        return Some(v.sha().to_string());
     }
 
     // Try to resolve the ref directly (might be a branch)
     match provider
-        .resolve_ref_to_sha(&repo_id, &action_ref.ref_str)
+        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
         .await
     {
         Ok(sha40) => Some(sha40.as_str().to_string()),
@@ -68,12 +68,13 @@ async fn resolve_sha(
     }
 }
 
+/// Pin all workflow actions to their current commit SHA for reproducibility.
 pub async fn run(
     path: &Path,
     dry_run: bool,
     format: OutputFormat,
     config: &Config,
-    registry: &ProviderRegistry,
+    registry: &provider::Registry,
 ) -> i32 {
     let scanner = WorkflowScanner::new(path, config, registry, format);
     let discovered = scanner.discover();
@@ -93,9 +94,9 @@ pub async fn run(
         };
 
         let relative = scanner.relative_path(file);
-        let mut file_edits = FileEdits::new(file.path.clone(), content.clone());
+        let mut file_edits = FileEdits::new(file.path().to_path_buf(), content.clone());
 
-        for (loc, action_ref) in scanner.extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             // Skip already pinned (SHA)
             if action_ref.is_sha() {
                 continue;
@@ -112,11 +113,11 @@ pub async fn run(
             // Build the new uses value
             let prefix = action_prefix(&action_ref);
             let new_uses = format!("{prefix}@{sha}");
-            let comment = format!(" # {}", action_ref.ref_str);
+            let comment = format!(" # {}", action_ref.ref_str());
 
             // Create edit using value range for targeted replacement
             let range = loc.value_range();
-            let edit = PendingEdit::replace_range(loc.line, range, new_uses.clone())
+            let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
                 .with_comment(comment.clone());
 
             if !file_edits.add(edit) {
@@ -125,7 +126,7 @@ pub async fn run(
                     "{}: {}:{} - multiple actions on same line",
                     "Warning".yellow(),
                     relative,
-                    loc.line
+                    loc.line()
                 );
                 errors.record_user();
                 continue;
@@ -136,7 +137,7 @@ pub async fn run(
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
-                    loc.line,
+                    loc.line(),
                     action_ref.to_string().yellow(),
                     format!("{new_uses}{comment}").cyan()
                 );
@@ -188,13 +189,13 @@ mod tests {
         subpath: Option<&str>,
         ref_str: &str,
     ) -> ActionRef {
-        ActionRef {
-            host: host.map(String::from),
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            subpath: subpath.map(String::from),
-            ref_str: ref_str.to_string(),
-        }
+        ActionRef::new(
+            host.map(String::from),
+            owner,
+            repo,
+            subpath.map(String::from),
+            ref_str,
+        )
     }
 
     // action_prefix tests

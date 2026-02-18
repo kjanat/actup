@@ -121,6 +121,7 @@ pub enum OutputFormat {
     #[default]
     Human,
     Json,
+    Toml,
 }
 
 /// Exit codes per AGENTS.md specification

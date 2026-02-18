@@ -66,9 +66,9 @@ need_stdout = true
 
 [keybindings]
 c = "job:clippy"
-s = "job:clippy-strict"
+d = "job:clippy-strict"
 a = "job:check-all"
 n = "job:nextest"
 f = "job:fmt-check"
 r = "job:run"
-S = "job:self-check"
+z = "job:self-check"

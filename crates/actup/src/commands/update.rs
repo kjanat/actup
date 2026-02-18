@@ -3,8 +3,7 @@
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, ProviderRegistry, UsesLocation,
-    check_action as core_check_action,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action as core_check_action, provider,
 };
 use owo_colors::OwoColorize;
 
@@ -14,8 +13,14 @@ use crate::common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScan
 /// Create an edit for updating an action ref.
 fn create_edit(loc: &UsesLocation, action_ref: &ActionRef, new_ref: &str) -> PendingEdit {
     loc.ref_range().map_or_else(
-        || PendingEdit::replace_ref(loc.line, action_ref.ref_str.clone(), new_ref.to_string()),
-        |range| PendingEdit::replace_range(loc.line, range, new_ref.to_string()),
+        || {
+            PendingEdit::replace_ref(
+                loc.line(),
+                action_ref.ref_str().to_string(),
+                new_ref.to_string(),
+            )
+        },
+        |range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()),
     )
 }
 
@@ -39,7 +44,7 @@ pub async fn run(
     dry_run: bool,
     format: OutputFormat,
     config: &Config,
-    registry: &ProviderRegistry,
+    registry: &provider::Registry,
 ) -> i32 {
     let scanner = WorkflowScanner::new(path, config, registry, format);
     let discovered = scanner.discover();
@@ -59,9 +64,9 @@ pub async fn run(
         };
 
         let relative = scanner.relative_path(file);
-        let mut file_edits = FileEdits::new(file.path.clone(), content.clone());
+        let mut file_edits = FileEdits::new(file.path().to_path_buf(), content.clone());
 
-        for (loc, action_ref) in scanner.extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             // Skip SHAs - can't determine "latest" for a pinned ref
             if action_ref.is_sha() {
                 continue;
@@ -83,11 +88,11 @@ pub async fn run(
 
             // Use core check_action to determine if update needed
             let result = core_check_action(&action_ref, &versions, config);
-            let CheckStatus::Outdated { target, .. } = result.status else {
+            let CheckStatus::Outdated { target, .. } = result.status() else {
                 continue; // Not outdated, skip
             };
 
-            let new_ref = target.version.to_string();
+            let new_ref = target.version().to_string();
 
             let edit = create_edit(&loc, &action_ref, &new_ref);
 
@@ -96,7 +101,7 @@ pub async fn run(
                     "{}: {}:{} - multiple actions on same line",
                     "Warning".yellow(),
                     relative,
-                    loc.line
+                    loc.line()
                 );
                 errors.record_user();
                 continue;
@@ -106,8 +111,8 @@ pub async fn run(
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
-                    loc.line,
-                    action_ref.ref_str.red(),
+                    loc.line(),
+                    action_ref.ref_str().red(),
                     new_ref.green()
                 );
             }
@@ -136,13 +141,7 @@ mod tests {
     use super::*;
 
     fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
-        ActionRef {
-            owner: owner.to_string(),
-            repo: repo.to_string(),
-            ref_str: ref_str.to_string(),
-            host: None,
-            subpath: None,
-        }
+        ActionRef::simple(owner, repo, ref_str)
     }
 
     // Version resolution tests now live in actup-core::resolution module.
@@ -151,12 +150,12 @@ mod tests {
 
     #[test]
     fn test_create_edit_with_ref_range() {
-        let loc = UsesLocation {
-            line: 10,
-            column: 15,
-            value: "actions/checkout@v4".to_string(),
-            raw_line: "      - uses: actions/checkout@v4".to_string(),
-        };
+        let loc = UsesLocation::new(
+            10,
+            15,
+            "actions/checkout@v4".to_string(),
+            "      - uses: actions/checkout@v4".to_string(),
+        );
         let action_ref = make_action_ref("actions", "checkout", "v4");
         let edit = create_edit(&loc, &action_ref, "v5");
 
@@ -167,12 +166,12 @@ mod tests {
     #[test]
     fn test_create_edit_fallback_replace_ref() {
         // When ref_range returns None (no @), falls back to replace_ref
-        let loc = UsesLocation {
-            line: 5,
-            column: 15,
-            value: "./local-action".to_string(),
-            raw_line: "      - uses: ./local-action".to_string(),
-        };
+        let loc = UsesLocation::new(
+            5,
+            15,
+            "./local-action".to_string(),
+            "      - uses: ./local-action".to_string(),
+        );
         let action_ref = make_action_ref(".", "local-action", "");
         let edit = create_edit(&loc, &action_ref, "v1.0.0");
 
