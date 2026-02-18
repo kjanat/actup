@@ -98,3 +98,15 @@ Started: 2026-02-18
 - Removed `test_providers_config_default` (struct no longer exists)
 - Files changed: `crates/core/src/config/mod.rs`, `crates/actup/src/main.rs`, `crates/actup/src/commands/config.rs`, `.actup.toml`, `examples/multi-provider.actup.toml`
 - **Learnings:** `Providers` and `ProviderInstance` were NOT re-exported from `lib.rs` — only consumed by CLI crate directly via `config.providers.*`. JSON schema in `schemas/` still references old types but is auto-generated (separate `json-schema` PRD task). `docs/providers.md` and `AGENTS.md` still reference old `[[providers.instances]]` format — covered by `docs-update` task.
+
+## Task - github-registration
+
+- Exported `pub static REGISTRATION: Registration` from `actup_provider_github::lib`
+- Preset: `github.com` / `https://api.github.com` / `GITHUB_TOKEN`
+- `default_token_env: Some("GITHUB_TOKEN")`
+- `infer_api_base`: returns `None` for `github.com`, `Some("https://{host}/api/v3")` for GHE
+- Capabilities: `supports_graphql: true, supports_rest: true`
+- `create_github_provider` fn reads token from env via `config.token_env`, calls `GitHubProvider::with_host`
+- Added `#[allow(clippy::needless_pass_by_value)]` on `create_github_provider` — signature must match `Registration::create` fn pointer type
+- Files changed: `crates/provider-github/src/lib.rs`
+- **Learnings:** `Registration::create` fn pointer takes `ProviderConfig` by value, which triggers clippy `needless_pass_by_value` on the implementing function since not all fields are moved. Allow-lint is the correct fix since the signature is dictated by the trait. Named `fn` (not closure) required for `static` initializer — closures can't be used in static context even if they don't capture.

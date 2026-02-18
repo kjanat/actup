@@ -77,7 +77,7 @@
 			"depends": ["registration-types"],
 			"priority": "integration",
 			"overseerId": "task_01KHSANXR3Q404Q39PKDZ7JB5B",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "test-github-registration",
