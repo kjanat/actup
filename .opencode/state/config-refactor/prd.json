@@ -183,7 +183,7 @@
 			"depends": ["resolution-logic"],
 			"priority": "polish",
 			"overseerId": "task_01KHSANXZP3G48GCMTP1X16YFW",
-			"passes": false
+			"passes": true
 		}
 	]
 }

@@ -246,3 +246,16 @@ Started: 2026-02-18
 - Example configs (`.actup.toml`, `examples/multi-provider.actup.toml`) already use new format from `wire-config-fields` task
 - Files changed: `schemas/actup-config.schema.json`, `crates/actup/tests/cli_integration.rs`
 - **Learnings:** `schema_file_matches_generated` test with `include_str!` is the strongest drift guard — catches any struct/derive/serde change. `just schema` is the canonical regeneration command. Schema is derived from `schemars::JsonSchema` derive macro, so schema always reflects the Rust types — no manual editing needed.
+
+## Task - docs-update
+
+- Updated `docs/providers.md`: replaced all 6 `[[providers.instances]]` config blocks with `[hosts."hostname"]` format
+- Updated `docs/providers.md`: revised Provider Selection Algorithm to describe registration-based `effective_host()` flow
+- Updated `docs/providers.md`: added `REGISTRATION` items to Provider Quality Checklist
+- Updated `docs/providers.md`: added Migration from Old Config Format section with full mapping table
+- Updated `AGENTS.md`: replaced `[providers.default]` + `[[providers.instances]]` example with `default_host` + `[fetch]` + `[hosts]` structure
+- Updated `docs/implementing-providers.md`: added Step 6 (Export REGISTRATION) with full example code
+- Updated `docs/implementing-providers.md`: added REGISTRATION items to implementation checklist
+- No code changes — docs-only
+- Files changed: `docs/providers.md`, `AGENTS.md`, `docs/implementing-providers.md`
+- **Learnings:** Example configs (`.actup.toml`, `examples/multi-provider.actup.toml`) were already updated in the `wire-config-fields` task. `DESIGN.md` and `REFERENCE.md` had no old-format references. The spec file (`specs/config-refactor.md`) intentionally retains old format references in the migration table — that's the correct place for them.

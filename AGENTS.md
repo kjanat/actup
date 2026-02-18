@@ -196,31 +196,35 @@ Never let GitHub + GitHub Enterprise collide in cache.
 
 CLI flags override repo config override user config override defaults. LSP + MCP must match CLI resolution rules.
 
-### Provider config requirements
+### Provider config structure
 
-Config must support multiple provider instances (host/endpoints):
+Config uses `default_host` (top-level), `[fetch]` for global fetch settings, and `[hosts."hostname"]` for per-host overrides:
 
 ```toml
-[providers.default]
-kind = "github"
-host = "github.com"
+# Default host for bare `owner/repo` refs (preset hosts like github.com work with zero config)
+default_host = "github.com"
 
-[[providers.instances]]
+[fetch]
+api_mode          = "graphql"  # "graphql" | "rest"
+max_tags_per_repo = 10         # 1-255
+
+[hosts."ghe.mycorp.internal"]
 kind      = "github"
-host      = "ghe.mycorp.internal"
 api_base  = "https://ghe.mycorp.internal/api/v3"
 token_env = "GHE_TOKEN"
 
-[[providers.instances]]
+[hosts."gitlab.com"]
 kind      = "gitlab"
-host      = "gitlab.com"
 api_base  = "https://gitlab.com/api/v4"
 token_env = "GITLAB_TOKEN"
 ```
 
+Provider-specific knowledge (presets, api_base inference, capabilities) is supplied by provider crates via `Registration` statics. See
+`specs/config-refactor.md` for the full resolution algorithm.
+
 Also:
 
-- update policy + per-action overrides must match on **(provider?, host?, owner/repo, subpath?)**
+- update policy + per-action overrides must match on **(host?, owner/repo, subpath?)**
 - cache TTL + cache location strategy
 - branch handling per provider if needed
 

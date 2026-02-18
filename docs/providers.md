@@ -68,14 +68,10 @@ This ensures consistent behavior across all platforms.
 **Configuration**:
 
 ```toml
-[[providers.instances]]
+# github.com works out of the box with zero config (preset).
+# For GitHub Enterprise, add a [hosts] entry:
+[hosts."ghe.corp.com"]
 kind      = "github"
-host      = "github.com"
-token_env = "GITHUB_TOKEN"
-
-[[providers.instances]]
-kind      = "github"
-host      = "ghe.corp.com"
 api_base  = "https://ghe.corp.com/api/v3"
 token_env = "GHE_TOKEN"
 ```
@@ -97,14 +93,12 @@ token_env = "GHE_TOKEN"
 **Configuration**:
 
 ```toml
-[[providers.instances]]
+[hosts."gitlab.com"]
 kind      = "gitlab"
-host      = "gitlab.com"
 token_env = "GITLAB_TOKEN"
 
-[[providers.instances]]
+[hosts."gitlab.example.com"]
 kind      = "gitlab"
-host      = "gitlab.example.com"
 api_base  = "https://gitlab.example.com"
 token_env = "GITLAB_PRIVATE_TOKEN"
 ```
@@ -133,16 +127,14 @@ token_env = "GITLAB_PRIVATE_TOKEN"
 **Configuration**:
 
 ```toml
-[[providers.instances]]
+[hosts."gitea.example.com"]
 kind      = "gitea"
-host      = "gitea.example.com"
 api_base  = "https://gitea.example.com"
 token_env = "GITEA_TOKEN"
 
 # Forgejo is a soft fork of Gitea with identical API
-[[providers.instances]]
-kind      = "forgejo"                      # Alias for "gitea"
-host      = "forgejo.example.com"
+[hosts."forgejo.example.com"]
+kind      = "gitea"                        # Uses "gitea" kind
 api_base  = "https://forgejo.example.com"
 token_env = "FORGEJO_TOKEN"
 ```
@@ -205,14 +197,16 @@ Scanned 6 actions: 4 up to date, 0 ignored, 2 outdated
    - Explicit: `uses: gitlab.com/owner/repo@ref` → host = "gitlab.com"
    - Implicit: `uses: owner/repo@ref` → host = `default_host` from config
 
-2. **Find provider** in registry
-   - Exact match on host: `providers.find(Some("gitlab.com"))`
-   - If no explicit host, use default: `providers.find(None)` → uses `default_host`
-   - Fallback by kind: `providers.find_by_kind(Kind::GitLab)`
+2. **Resolve effective host config** via `effective_host(hostname)`
+   - Check preset index (built from provider `REGISTRATION` statics)
+   - Merge user `[hosts."hostname"]` overrides
+   - Look up registration by `kind`
+   - Fill defaults/inference (token_env, api_base)
+   - Validate required fields and api_mode capability
 
-3. **Call provider methods** with `ActionRepoId`
-   - Provider knows its own API structure
-   - Provider handles auth, pagination, encoding
+3. **Construct provider** via `(registration.create)(config)`
+   - Provider is registered in the host-to-provider registry
+   - Provider knows its own API structure, auth, pagination, encoding
    - Provider returns data in actup-core types
 
 ## Adding a New Provider
@@ -257,6 +251,8 @@ When implementing or reviewing a provider:
 - [ ] Auth errors provide helpful messages
 - [ ] Pagination implemented correctly (all tags fetched)
 - [ ] Base64 decoding handles newlines/whitespace
+- [ ] `REGISTRATION` static exported with presets, `infer_api_base`, and capabilities
+- [ ] `REGISTRATION` wired into `available_registrations()` behind feature gate
 - [ ] Tests cover happy path and error cases
 - [ ] Documentation includes usage examples
 - [ ] Follows Rust API guidelines (C-CASE, C-CONV, etc.)
@@ -282,6 +278,27 @@ When implementing or reviewing a provider:
 - **Independent versioning**: Providers can evolve separately
 - **Feature flags**: Users only compile what they need
 - **Testability**: Mock providers for testing core logic
+
+## Migration from Old Config Format
+
+The provider configuration was refactored from `[providers]` with `[[providers.instances]]` to the current `[fetch]` + `[hosts."hostname"]`
+structure.
+
+| Old                             | New                                  |
+| ------------------------------- | ------------------------------------ |
+| `[providers].api_mode`          | `[fetch].api_mode`                   |
+| `[providers].max_tags_per_repo` | `[fetch].max_tags_per_repo`          |
+| `[providers].default_host`      | `default_host` (top-level)           |
+| `[providers].default_kind`      | Removed (inferred from registration) |
+| `[[providers.instances]]`       | `[hosts."hostname"]`                 |
+| Instance `host` field           | Key of `[hosts]` table               |
+
+Key differences:
+
+- **Zero-config for preset hosts**: github.com works out of the box without any config entry (provider preset supplies all defaults)
+- **Hostname as key**: No more `host = "..."` field inside instances; the hostname is the TOML table key
+- **Flat structure**: `[hosts."ghe.corp.com"]` instead of deeply nested `[[providers.instances]]`
+- **Per-host fetch overrides**: `api_mode` and `max_tags_per_repo` can be set per-host in `[hosts]`, overriding `[fetch]` globals
 
 ## Next Steps
 
