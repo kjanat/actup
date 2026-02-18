@@ -347,4 +347,310 @@ mod tests {
         assert!(reg.presets.is_empty());
         assert_eq!(reg.default_token_env, None);
     }
+
+    #[test]
+    fn preset_is_copy() {
+        let p = Preset {
+            host: "github.com",
+            api_base: "https://api.github.com",
+            token_env: "GITHUB_TOKEN",
+        };
+        let p2 = p; // Copy
+        let p3 = p; // still usable after copy
+        assert_eq!(p2.host, p3.host);
+    }
+
+    #[test]
+    fn preset_clone_eq() {
+        let p = Preset {
+            host: "gitlab.com",
+            api_base: "https://gitlab.com/api/v4",
+            token_env: "GITLAB_TOKEN",
+        };
+        #[allow(clippy::clone_on_copy)]
+        let p2 = p.clone();
+        assert_eq!(p.host, p2.host);
+        assert_eq!(p.api_base, p2.api_base);
+        assert_eq!(p.token_env, p2.token_env);
+    }
+
+    #[test]
+    fn preset_debug_output() {
+        let p = Preset {
+            host: "gitea.example.com",
+            api_base: "https://gitea.example.com/api/v1",
+            token_env: "GITEA_TOKEN",
+        };
+        let debug = format!("{p:?}");
+        assert!(debug.contains("Preset"));
+        assert!(debug.contains("gitea.example.com"));
+        assert!(debug.contains("GITEA_TOKEN"));
+    }
+
+    #[test]
+    fn preset_gitlab_pattern() {
+        let p = Preset {
+            host: "gitlab.com",
+            api_base: "https://gitlab.com/api/v4",
+            token_env: "GITLAB_TOKEN",
+        };
+        assert_eq!(p.host, "gitlab.com");
+        assert!(p.api_base.ends_with("/v4"));
+    }
+
+    #[test]
+    fn preset_gitea_pattern() {
+        let p = Preset {
+            host: "gitea.example.com",
+            api_base: "https://gitea.example.com/api/v1",
+            token_env: "GITEA_TOKEN",
+        };
+        assert_eq!(p.host, "gitea.example.com");
+        assert!(p.api_base.ends_with("/v1"));
+    }
+
+    #[test]
+    fn capabilities_no_modes() {
+        let c = Capabilities {
+            supports_graphql: false,
+            supports_rest: false,
+        };
+        assert!(!c.supports_graphql);
+        assert!(!c.supports_rest);
+    }
+
+    #[test]
+    fn capabilities_is_copy() {
+        let c = Capabilities {
+            supports_graphql: true,
+            supports_rest: false,
+        };
+        let c2 = c; // Copy
+        let c3 = c; // still usable
+        assert_eq!(c2.supports_graphql, c3.supports_graphql);
+        assert_eq!(c2.supports_rest, c3.supports_rest);
+    }
+
+    #[test]
+    fn capabilities_debug_output() {
+        let c = Capabilities {
+            supports_graphql: true,
+            supports_rest: true,
+        };
+        let debug = format!("{c:?}");
+        assert!(debug.contains("Capabilities"));
+        assert!(debug.contains("supports_graphql: true"));
+        assert!(debug.contains("supports_rest: true"));
+    }
+
+    #[test]
+    fn provider_config_clone() {
+        let pc = ProviderConfig {
+            host: "ghe.corp.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://ghe.corp.com/api/v3".into(),
+            token_env: "GHE_TOKEN".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(25).unwrap(),
+        };
+        let pc2 = pc.clone();
+        assert_eq!(pc.host, pc2.host);
+        assert_eq!(pc.kind, pc2.kind);
+        assert_eq!(pc.api_base, pc2.api_base);
+        assert_eq!(pc.token_env, pc2.token_env);
+        assert_eq!(pc.api_mode, pc2.api_mode);
+        assert_eq!(pc.max_tags_per_repo, pc2.max_tags_per_repo);
+    }
+
+    #[test]
+    fn provider_config_debug_output() {
+        let pc = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://api.github.com".into(),
+            token_env: "GITHUB_TOKEN".into(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+        };
+        let debug = format!("{pc:?}");
+        assert!(debug.contains("ProviderConfig"));
+        assert!(debug.contains("github.com"));
+        assert!(debug.contains("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn provider_config_gitlab() {
+        let pc = ProviderConfig {
+            host: "gitlab.com".into(),
+            kind: HostKind::Gitlab,
+            api_base: "https://gitlab.com/api/v4".into(),
+            token_env: "GITLAB_TOKEN".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+        };
+        assert_eq!(pc.kind, HostKind::Gitlab);
+        assert_eq!(pc.api_mode, ApiMode::Rest);
+    }
+
+    #[test]
+    fn provider_config_gitea() {
+        let pc = ProviderConfig {
+            host: "gitea.example.com".into(),
+            kind: HostKind::Gitea,
+            api_base: "https://gitea.example.com/api/v1".into(),
+            token_env: "GITEA_TOKEN".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(5).unwrap(),
+        };
+        assert_eq!(pc.kind, HostKind::Gitea);
+        assert_eq!(pc.max_tags_per_repo.get(), 5);
+    }
+
+    #[test]
+    fn provider_config_max_tags_boundary() {
+        let pc = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://api.github.com".into(),
+            token_env: "GITHUB_TOKEN".into(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: NonZeroU8::new(255).unwrap(),
+        };
+        assert_eq!(pc.max_tags_per_repo.get(), 255);
+    }
+
+    #[test]
+    fn registration_debug_excludes_fn_pointers() {
+        let reg = Registration {
+            kind: HostKind::Github,
+            presets: &[],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let debug = format!("{reg:?}");
+        // `finish_non_exhaustive` produces `..` to indicate omitted fields
+        assert!(debug.contains(".."));
+        // fn pointer fields should NOT appear in debug output
+        assert!(!debug.contains("infer_api_base"));
+        assert!(!debug.contains("create"));
+    }
+
+    #[test]
+    fn registration_infer_always_none() {
+        let reg = Registration {
+            kind: HostKind::Gitlab,
+            presets: &[Preset {
+                host: "gitlab.com",
+                api_base: "https://gitlab.com/api/v4",
+                token_env: "GITLAB_TOKEN",
+            }],
+            default_token_env: Some("GITLAB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        // Non-preset host: inference returns None (requires user-supplied api_base)
+        assert_eq!((reg.infer_api_base)("self-hosted.corp.com"), None);
+        assert_eq!((reg.infer_api_base)("gitlab.com"), None);
+    }
+
+    #[test]
+    fn registration_gitea_infer_api_base() {
+        let reg = Registration {
+            kind: HostKind::Gitea,
+            presets: &[],
+            default_token_env: None,
+            infer_api_base: |host| Some(format!("https://{host}/api/v1")),
+            capabilities: Capabilities {
+                supports_graphql: false,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        assert_eq!(
+            (reg.infer_api_base)("gitea.example.com"),
+            Some("https://gitea.example.com/api/v1".into())
+        );
+        assert_eq!(
+            (reg.infer_api_base)("code.internal.org"),
+            Some("https://code.internal.org/api/v1".into())
+        );
+    }
+
+    #[test]
+    fn registration_create_receives_correct_config() {
+        fn capturing_create(config: ProviderConfig) -> crate::Result<Box<dyn Provider>> {
+            // Verify the config fields are passed through correctly
+            assert_eq!(config.host, "github.com");
+            assert_eq!(config.kind, HostKind::Github);
+            assert_eq!(config.api_base, "https://api.github.com");
+            assert_eq!(config.api_mode, ApiMode::Graphql);
+            Err(crate::Error::ProviderNotFound { host: config.host })
+        }
+
+        let reg = Registration {
+            kind: HostKind::Github,
+            presets: &[],
+            default_token_env: None,
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: capturing_create,
+        };
+
+        let config = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::Github,
+            api_base: "https://api.github.com".into(),
+            token_env: "GITHUB_TOKEN".into(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+        };
+
+        // create fn receives the full ProviderConfig
+        let result = (reg.create)(config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn registration_debug_includes_preset_details() {
+        let reg = Registration {
+            kind: HostKind::Github,
+            presets: &[
+                Preset {
+                    host: "github.com",
+                    api_base: "https://api.github.com",
+                    token_env: "GITHUB_TOKEN",
+                },
+                Preset {
+                    host: "ghe.corp.com",
+                    api_base: "https://ghe.corp.com/api/v3",
+                    token_env: "GHE_TOKEN",
+                },
+            ],
+            default_token_env: Some("GITHUB_TOKEN"),
+            infer_api_base: |_| None,
+            capabilities: Capabilities {
+                supports_graphql: true,
+                supports_rest: true,
+            },
+            create: mock_create,
+        };
+        let debug = format!("{reg:?}");
+        // Debug includes both presets and capabilities
+        assert!(debug.contains("github.com"));
+        assert!(debug.contains("ghe.corp.com"));
+        assert!(debug.contains("Capabilities"));
+        assert!(debug.contains("default_token_env"));
+    }
 }

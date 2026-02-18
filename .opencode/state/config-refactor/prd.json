@@ -57,7 +57,7 @@
 			"description": "Unit tests for Registration, Preset, Capabilities structs. Test Preset construction, Capabilities combinations, mock Registration with infer_api_base fn. Done when: tests pass, struct construction verified.",
 			"depends": ["registration-types"],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "wire-config-fields",

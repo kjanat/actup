@@ -69,3 +69,13 @@ Started: 2026-02-18
 - 9 tests: preset/capabilities/provider_config construction, registration construction + infer_api_base + create + debug + multiple/no presets
 - Files changed: `crates/core/src/config/registration.rs` (new), `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
 - **Learnings:** `fn` pointers don't implement `Debug`, so `Registration` needs a manual `Debug` impl; `finish_non_exhaustive()` is cleaner than omitting fn fields. Separate submodule keeps `config/mod.rs` from growing unboundedly
+
+## Task - test-registration-types
+
+- Added 18 new tests (12 existing → 30 total) for registration types
+- `Preset`: `Copy`/`Clone` semantics, `Debug` output, GitLab/Gitea preset patterns
+- `Capabilities`: no-modes edge case, `Copy` semantics, `Debug` output verification
+- `ProviderConfig`: `Clone`, `Debug` output, all three `HostKind` variants, `max_tags` boundary (255)
+- `Registration`: debug excludes fn pointers (verifies `..` marker), `infer_api_base` always-`None`, Gitea inference, `create` receives correct config, debug includes preset details
+- Files changed: `crates/core/src/config/registration.rs`
+- **Learnings:** `finish_non_exhaustive()` produces `..` in debug output; useful for asserting fn pointers are properly excluded
