@@ -134,7 +134,7 @@
 			"description": "Tests for effective_host: preset-only host, user override of preset, non-preset with kind, inference fallbacks, error cases (missing kind, unavailable provider, invalid api_mode). Done when: all 7 algorithm steps have test coverage.",
 			"depends": ["resolution-logic"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "cli-build-registry",
