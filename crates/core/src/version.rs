@@ -426,6 +426,16 @@ impl Set {
         self.fetched_at
     }
 
+    /// Check if a tag with this exact string exists in the known tags.
+    ///
+    /// Prevents false "up to date" when user writes `6` but only `v6` exists.
+    #[must_use]
+    pub fn has_exact_tag(&self, ref_str: &str) -> bool {
+        self.semver_tags
+            .iter()
+            .any(|t| t.version().as_str() == ref_str)
+    }
+
     /// Find the latest version that satisfies the given policy for a current version
     #[must_use]
     pub fn find_latest_for(
