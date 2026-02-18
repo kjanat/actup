@@ -188,7 +188,7 @@ impl Provider for YourProvider {
 
         Box::pin(async move {
             let tags = self.client.list_tags(&owner, &repo_name).await?;
-            let version_set = process_tags(tags); // See helper function below
+            let mut version_set = process_tags(tags); // See helper function below
 
             // Get default branch
             let repo_info = self.client.get_repo(&owner, &repo_name).await?;

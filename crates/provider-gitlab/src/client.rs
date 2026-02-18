@@ -61,7 +61,10 @@ impl GitLabClient {
     /// Returns an error if the HTTP client cannot be created or token is invalid.
     pub fn with_api_base(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
         let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("actup/0.1"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(concat!("actup/", env!("CARGO_PKG_VERSION"))),
+        );
 
         if let Some(t) = token {
             headers.insert(

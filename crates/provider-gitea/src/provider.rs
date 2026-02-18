@@ -155,13 +155,24 @@ impl Provider for GiteaProvider {
                 "README",
                 "README.txt",
             ] {
-                if let Ok(content) = self
+                match self
                     .client
                     .get_contents(&owner, &repo_name, filename, &ref_name)
                     .await
-                    && let Some(text) = decode_base64_file_text(&content)
                 {
-                    return Ok(Some(text));
+                    Ok(content) => {
+                        if let Some(text) = decode_base64_file_text(&content) {
+                            return Ok(Some(text));
+                        }
+                    }
+                    Err(actup_core::Error::NotFound { .. }) => {}
+                    Err(e) => {
+                        debug!(
+                            error = %e,
+                            filename = %filename,
+                            "error fetching README, continuing"
+                        );
+                    }
                 }
             }
 
