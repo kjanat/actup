@@ -5,8 +5,8 @@
 	"lineWidth": 140,
 	// Language specific
 	"typescript": {},
-	"json": { "object.preferSingleLine": true, "array.preferSingleLine": true, "associations": ["!config.json"] },
-	"markdown": { "textWrap": "always", "emphasisKind": "asterisks", "associations": [".rules", "*.md"] },
+	"json": { "object.preferSingleLine": true, "array.preferSingleLine": true },
+	"markdown": { "textWrap": "always", "emphasisKind": "asterisks" },
 	"malva": {},
 	"markup": {},
 	"yaml": { "indentBlockSequenceInMap": true, "flowMap.preferSingleLine": true },

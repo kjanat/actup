@@ -7,7 +7,7 @@
 	"prettier": { "allowed": false },
 	"wrap_guides": [140],
 	"languages": { "Rust": { "wrap_guides": [100] } },
-	"file_types": { "Markdown": [".rules"] },
+	"file_types": {},
 	"lsp": {
 		"rust-analyzer": {
 			"initialization_options": {
