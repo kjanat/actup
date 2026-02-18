@@ -125,7 +125,7 @@
 			"depends": ["available-registrations", "validation"],
 			"priority": "integration",
 			"overseerId": "task_01KHSANXV7C8QA2QZWJNH9JNF2",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "test-resolution-logic",
