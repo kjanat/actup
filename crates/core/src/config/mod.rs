@@ -250,6 +250,30 @@ impl std::fmt::Display for HostKind {
     }
 }
 
+/// Global fetch settings applied to all providers unless overridden per-host.
+///
+/// Controls how actup communicates with provider APIs. Per-host overrides
+/// in `HostConfig` take precedence over these values.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct FetchSettings {
+    /// API mode: `"graphql"` (batched, requires auth) or `"rest"` (parallel)
+    pub api_mode: ApiMode,
+
+    /// Maximum tags to fetch per repository (1–255).
+    /// Stops early when a stable release satisfying policy is found.
+    pub max_tags_per_repo: NonZeroU8,
+}
+
+impl Default for FetchSettings {
+    fn default() -> Self {
+        Self {
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: DEFAULT_MAX_TAGS_PER_REPO,
+        }
+    }
+}
+
 /// # Provider configuration
 ///
 /// Default uses empty strings. The CLI layer sets actual defaults.
@@ -703,5 +727,87 @@ mod tests {
         set.insert(HostKind::Gitea);
         set.insert(HostKind::Github); // duplicate
         assert_eq!(set.len(), 3);
+    }
+
+    // FetchSettings tests
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_default() {
+        let fs = FetchSettings::default();
+        assert_eq!(fs.api_mode, ApiMode::Graphql);
+        assert_eq!(fs.max_tags_per_repo.get(), 10);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_serde_roundtrip_defaults() {
+        let fs = FetchSettings::default();
+        let json = serde_json::to_string(&fs).unwrap();
+        let back: FetchSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.api_mode, ApiMode::Graphql);
+        assert_eq!(back.max_tags_per_repo.get(), 10);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_serde_custom_values() {
+        let json = r#"{"api_mode":"rest","max_tags_per_repo":50}"#;
+        let fs: FetchSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(fs.api_mode, ApiMode::Rest);
+        assert_eq!(fs.max_tags_per_repo.get(), 50);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_serde_partial_uses_defaults() {
+        // Only api_mode specified — max_tags_per_repo should default
+        let json = r#"{"api_mode":"rest"}"#;
+        let fs: FetchSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(fs.api_mode, ApiMode::Rest);
+        assert_eq!(fs.max_tags_per_repo.get(), 10);
+
+        // Only max_tags_per_repo — api_mode should default
+        let json = r#"{"max_tags_per_repo":25}"#;
+        let fs: FetchSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(fs.api_mode, ApiMode::Graphql);
+        assert_eq!(fs.max_tags_per_repo.get(), 25);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_serde_empty_uses_defaults() {
+        let json = "{}";
+        let fs: FetchSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(fs.api_mode, ApiMode::Graphql);
+        assert_eq!(fs.max_tags_per_repo.get(), 10);
+    }
+
+    #[test]
+    fn test_fetch_settings_rejects_zero_max_tags() {
+        let json = r#"{"max_tags_per_repo":0}"#;
+        let result = serde_json::from_str::<FetchSettings>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_fetch_settings_deny_unknown_fields() {
+        let json = r#"{"api_mode":"graphql","unknown_field":true}"#;
+        let result = serde_json::from_str::<FetchSettings>(json);
+        assert!(result.is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_max_tags_boundary() {
+        // NonZeroU8 max = 255
+        let json = r#"{"max_tags_per_repo":255}"#;
+        let fs: FetchSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(fs.max_tags_per_repo.get(), 255);
+
+        // 256 exceeds u8 range
+        let json = r#"{"max_tags_per_repo":256}"#;
+        let result = serde_json::from_str::<FetchSettings>(json);
+        assert!(result.is_err());
     }
 }

@@ -26,8 +26,8 @@ pub mod version;
 pub use action_ref::{ActionRef, ActionRepoId};
 pub use caching_provider::{CacheStats, CachingProvider};
 pub use config::{
-    ApiMode, CONFIG_EXTENSIONS, Config, HostKind, find_repo_config, iter_config_candidates,
-    user_config_path,
+    ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, HostKind, find_repo_config,
+    iter_config_candidates, user_config_path,
 };
 pub use discovery::{DiscoveredFile, FileKind, discover_files};
 pub use error::{Error, Result};

@@ -19,7 +19,7 @@
 			"description": "Add FetchSettings struct with api_mode (ApiMode) and max_tags_per_repo (NonZeroU8). Done when: struct compiles, default returns Graphql + 10.",
 			"priority": "architecture",
 			"overseerId": "task_01KHSANXM66YG36GGQZCF5J4ZP",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "host-config",

@@ -26,3 +26,13 @@ Started: 2026-02-18
 - Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
 - Tests: serde round-trip, display, rejects unknown, case-sensitive, hashable
 - **Learnings:** Added `Hash` beyond spec minimum since `HostKind` will be used as HashMap key in `hosts` map and registration lookup
+
+## Task - fetch-settings
+
+- Added `FetchSettings` struct with `api_mode: ApiMode` and `max_tags_per_repo: NonZeroU8`
+- `#[serde(default, deny_unknown_fields)]` per spec
+- `Default` impl returns `Graphql` + `10` (reuses existing `DEFAULT_MAX_TAGS_PER_REPO` const)
+- Re-exported from `actup_core::FetchSettings`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- Tests: default values, serde roundtrip, custom values, partial deserialization, empty object defaults, rejects zero, deny unknown fields, boundary (255/256)
+- **Learnings:** `deny_unknown_fields` works correctly with `serde_json`; `NonZeroU8` serde rejects 0 automatically
