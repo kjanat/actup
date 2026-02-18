@@ -9,6 +9,7 @@
 
 pub mod discovery;
 pub mod registration;
+pub mod validation;
 
 use crate::Error;
 use crate::policy;

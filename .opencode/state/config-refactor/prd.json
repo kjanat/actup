@@ -106,7 +106,7 @@
 			"depends": ["fetch-settings", "host-config"],
 			"priority": "integration",
 			"overseerId": "task_01KHSANXT4433ZWD0P0CMH3VCA",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "test-validation",
