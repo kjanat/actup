@@ -115,6 +115,18 @@ impl YourClient {
         self.handle_response(response, owner, repo).await
     }
 
+    /// Helper method to perform GET requests with configured headers
+    async fn get(&self, url: &str) -> Result<Response> {
+        self.client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| Error::Network {
+                operation: "HTTP GET".to_string(),
+                message: e.to_string(),
+            })
+    }
+
     async fn handle_response<T: serde::de::DeserializeOwned>(
         &self,
         response: Response,
@@ -265,10 +277,9 @@ impl Provider for YourProvider {
                     .await
                 {
                     Ok(content) => {
-                        // Decode base64 content
-                        if let Ok(text) = decode_base64_content(&content) {
-                            return Ok(Some(text));
-                        }
+                        // Decode base64 content - propagate decode errors
+                        let text = decode_base64_content(&content)?;
+                        return Ok(Some(text));
                     }
                     Err(Error::NotFound { .. }) => continue, // Try next filename
                     Err(e) => return Err(e), // Propagate auth/rate-limit/network errors
@@ -362,13 +373,13 @@ fn process_tags(tags: Vec<YourTag>) -> version::Set {
 /// Decode base64-encoded file content (e.g., from GitLab/GitHub file APIs)
 fn decode_base64_content(content: &str) -> Result<String> {
     use base64::{Engine, engine::general_purpose::STANDARD};
-    let bytes = STANDARD.decode(content).map_err(|e| Error::Parse {
+    let bytes = STANDARD.decode(content).map_err(|e| Error::Internal {
         context: "base64 decode".to_string(),
-        reason: e.to_string(),
+        message: e.to_string(),
     })?;
-    String::from_utf8(bytes).map_err(|e| Error::Parse {
+    String::from_utf8(bytes).map_err(|e| Error::Internal {
         context: "UTF-8 decode".to_string(),
-        reason: e.to_string(),
+        message: e.to_string(),
     })
 }
 

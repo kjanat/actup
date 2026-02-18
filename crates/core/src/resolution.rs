@@ -159,7 +159,12 @@ pub fn check_action(
     if !current.is_semver() {
         return CheckResult::new(
             action_ref.clone(),
-            status_for_non_semver(&current, config.branch_policy, versions),
+            status_for_non_semver(
+                &current,
+                config.branch_policy,
+                versions,
+                config.allow_prerelease,
+            ),
         );
     }
 
@@ -196,6 +201,7 @@ fn status_for_non_semver(
     current: &version::Version,
     branch_policy: policy::Branch,
     versions: &version::Set,
+    allow_prerelease: bool,
 ) -> CheckStatus {
     // TODO: Use `current` to provide smarter suggestions for non-semver refs,
     // e.g., comparing branch head commits or suggesting SHA pinning based on
@@ -207,15 +213,18 @@ fn status_for_non_semver(
             is_environment_error: false,
         },
         policy::Branch::Update => {
-            // Suggest pinning to latest version
-            versions.latest().map_or_else(
+            // Suggest pinning to latest version, respecting prerelease config
+            let latest = versions
+                .latest()
+                .filter(|v| allow_prerelease || !v.version().is_prerelease());
+            latest.map_or_else(
                 || CheckStatus::Unresolvable {
                     reason: "non-semver ref should be pinned to SHA".into(),
                     is_environment_error: false,
                 },
-                |latest| CheckStatus::Outdated {
+                |l| CheckStatus::Outdated {
                     current: current.to_string(),
-                    target: latest.clone(),
+                    target: l.clone(),
                 },
             )
         }

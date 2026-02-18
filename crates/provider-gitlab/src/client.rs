@@ -65,6 +65,7 @@ impl GitLabClient {
             USER_AGENT,
             HeaderValue::from_static(concat!("actup/", env!("CARGO_PKG_VERSION"))),
         );
+        headers.insert("Accept", HeaderValue::from_static("application/json"));
 
         if let Some(t) = token {
             headers.insert(
@@ -86,8 +87,8 @@ impl GitLabClient {
             })?;
 
         if api_base.trim().is_empty() {
-            return Err(Error::Network {
-                operation: "validate API configuration".to_string(),
+            return Err(Error::Internal {
+                context: "validate API configuration".to_string(),
                 message: "api_base must not be empty".to_string(),
             });
         }

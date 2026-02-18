@@ -76,20 +76,10 @@ fn check_action_with_versions(
             }
         }
         Some(Err(e)) => {
-            // Fetch failed - classify error as user error or environment error
-            let is_environment_error = matches!(
-                e,
-                actup_core::Error::Network { .. }
-                    | actup_core::Error::RateLimited { .. }
-                    | actup_core::Error::Auth { .. }
-                    | actup_core::Error::Forbidden { .. }
-                    | actup_core::Error::Internal { .. }
-                    | actup_core::Error::Cache { .. }
-                    | actup_core::Error::ProviderNotFound { .. }
-            );
+            // Fetch failed - use core's error classification
             FindingStatus::Unresolvable {
                 reason: e.to_string(),
-                is_environment_error,
+                is_environment_error: e.is_environment_error(),
             }
         }
         Some(Ok(versions)) => {
@@ -232,25 +222,27 @@ pub async fn run(
             continue;
         };
 
-        // Try to resolve the ref directly - if it exists, treat as up-to-date
-        // since we can't determine a better version without fetching all tags
+        // Try to resolve the ref directly - if it exists, mark as Unknown
+        // since we can verify the ref is valid but can't determine if it's outdated
         if provider
             .resolve_ref_to_sha(&action.repo_id, action.action_ref.ref_str())
             .await
             .is_ok()
         {
-            tracing::trace!(
+            tracing::debug!(
                 owner = %action.repo_id.owner(),
                 repo = %action.repo_id.repo(),
                 ref_str = %action.action_ref.ref_str(),
                 provider = %action.provider,
-                "fallback resolution: ref resolves, treating as up-to-date"
+                "fallback: ref exists but version comparison unavailable (likely beyond max_tags)"
             );
             finding = Finding::new(
                 action.file,
                 action.line,
                 action.action_ref,
-                FindingStatus::UpToDate,
+                FindingStatus::Unknown {
+                    reason: "ref exists but version comparison unavailable".to_string(),
+                },
                 action.provider,
             );
         }
@@ -863,5 +855,48 @@ mod tests {
         assert_eq!(collected.action_ref.repo(), "setup-node");
         assert_eq!(collected.repo_id.owner(), action_ref.owner());
         assert_eq!(collected.repo_id.repo(), action_ref.repo());
+    }
+
+    /// Test `FindingStatus::Unknown` is correctly created for fallback resolution.
+    #[test]
+    fn test_finding_status_unknown() {
+        use actup_core::ActionRef;
+
+        let action_ref = ActionRef::simple(
+            "taiki-e".to_string(),
+            "install-action".to_string(),
+            "v2".to_string(),
+        );
+
+        let finding = Finding::new(
+            "workflow.yml".to_string(),
+            10,
+            action_ref,
+            FindingStatus::Unknown {
+                reason: "ref exists but version comparison unavailable".to_string(),
+            },
+            "github".to_string(),
+        );
+
+        match finding.status() {
+            FindingStatus::Unknown { reason } => {
+                assert!(reason.contains("version comparison unavailable"));
+            }
+            _ => panic!("expected Unknown status"),
+        }
+    }
+
+    /// Test that `batch_fetch_versions` returns empty map for empty input.
+    #[tokio::test]
+    async fn test_batch_fetch_versions_empty_input() {
+        use actup_core::provider;
+
+        let config = Config::default();
+        let registry = provider::Registry::new();
+
+        let repos: Vec<ActionRepoId> = vec![];
+        let results = batch_fetch_versions(&repos, &config, &registry).await;
+
+        assert!(results.is_empty());
     }
 }

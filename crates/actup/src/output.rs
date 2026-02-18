@@ -71,6 +71,15 @@ impl From<&Finding> for JsonFinding {
                 tag.clone(),
                 None,
             ),
+            FindingStatus::Unknown { reason } => (
+                "unknown",
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(reason.clone()),
+            ),
             FindingStatus::Unresolvable {
                 reason,
                 is_environment_error,
@@ -186,6 +195,15 @@ pub enum FindingStatus {
     },
     /// Action is pinned to a specific SHA.
     Pinned { sha: String, tag: Option<String> },
+    /// Action ref exists but version comparison unavailable.
+    ///
+    /// This occurs when the ref resolves successfully but version information
+    /// couldn't be fetched (e.g., tags beyond `max_tags` limit). The ref is valid
+    /// but we can't determine if it's outdated.
+    Unknown {
+        /// Why version comparison is unavailable
+        reason: String,
+    },
     /// Action reference could not be resolved.
     Unresolvable {
         reason: String,
@@ -269,6 +287,14 @@ fn print_human(findings: &[Finding]) {
                     action_str,
                     format!("pinned to {}", &sha[..7.min(sha.len())]).cyan(),
                     tag_info.dimmed()
+                );
+            }
+            FindingStatus::Unknown { reason } => {
+                println!(
+                    "{}{}  {}",
+                    line_prefix.dimmed(),
+                    action_str.yellow(),
+                    format!("unknown: {reason}").yellow()
                 );
             }
             FindingStatus::Unresolvable {
