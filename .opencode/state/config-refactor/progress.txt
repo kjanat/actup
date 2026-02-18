@@ -9,8 +9,8 @@ Started: 2026-02-18
 - Crate dir is `crates/core/` (not `crates/actup-core/` as AGENTS.md suggests)
 - Enums use `#[serde(rename_all = "lowercase")]` for TOML/JSON serialization
 - Tests in same file via `#[cfg(test)] mod tests`, use `#[allow(clippy::unwrap_used)]`
-- `serde_json` available as dev-dep for round-trip tests
-- `deny_unknown_fields` not yet used but spec requires it on new config structs
+- `serde_json` + `toml` available as dev-deps for round-trip tests
+- `deny_unknown_fields` used on `FetchSettings` and `HostConfig`
 - `Hash` derive needed on `HostKind` for use as `HashMap` key in later tasks
 
 ---
@@ -45,3 +45,12 @@ Started: 2026-02-18
 - Re-exported from `actup_core::HostConfig`
 - Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
 - **Learnings:** `HostConfig` intentionally has no `Default` impl — all fields are `Option` overrides, not defaults. `deny_unknown_fields` without `default` means deserialization requires no extra fields but doesn't fill missing ones
+
+## Task - test-config-types
+
+- Added HostConfig tests: all fields, no fields, partial (kind-only, fetch-overrides-only), deny_unknown_fields, invalid kind, zero max_tags, serde roundtrip, each kind variant
+- Added TOML deserialization tests for all three types: HostKind, FetchSettings (full + empty), HostConfig (full + minimal + deny_unknown + hosts map)
+- Hosts map test validates realistic `[hosts."hostname"]` TOML with 2 entries
+- Added `toml` as dev-dep to `actup-core`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/Cargo.toml`
+- **Learnings:** `NonZeroU8::get` method reference preferred over `|n| n.get()` closure (clippy `redundant_closure_for_method_calls`); TOML deserialization of empty string into `#[serde(default)]` struct works same as `{}`

@@ -838,4 +838,225 @@ mod tests {
         let result = serde_json::from_str::<FetchSettings>(json);
         assert!(result.is_err());
     }
+
+    // HostConfig tests
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_all_fields() {
+        let json = r#"{
+            "kind": "github",
+            "api_base": "https://ghe.corp.com/api/v3",
+            "token_env": "GHE_TOKEN",
+            "api_mode": "rest",
+            "max_tags_per_repo": 50
+        }"#;
+        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(hc.kind, Some(HostKind::Github));
+        assert_eq!(hc.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
+        assert_eq!(hc.token_env.as_deref(), Some("GHE_TOKEN"));
+        assert_eq!(hc.api_mode, Some(ApiMode::Rest));
+        assert_eq!(hc.max_tags_per_repo.map(NonZeroU8::get), Some(50));
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_no_fields() {
+        let json = "{}";
+        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(hc.kind, None);
+        assert_eq!(hc.api_base, None);
+        assert_eq!(hc.token_env, None);
+        assert_eq!(hc.api_mode, None);
+        assert_eq!(hc.max_tags_per_repo, None);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_partial_kind_only() {
+        let json = r#"{"kind": "gitlab"}"#;
+        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(hc.kind, Some(HostKind::Gitlab));
+        assert_eq!(hc.api_base, None);
+        assert_eq!(hc.token_env, None);
+        assert_eq!(hc.api_mode, None);
+        assert_eq!(hc.max_tags_per_repo, None);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_partial_fetch_overrides_only() {
+        let json = r#"{"api_mode": "rest", "max_tags_per_repo": 25}"#;
+        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(hc.kind, None);
+        assert_eq!(hc.api_base, None);
+        assert_eq!(hc.api_mode, Some(ApiMode::Rest));
+        assert_eq!(hc.max_tags_per_repo.map(NonZeroU8::get), Some(25));
+    }
+
+    #[test]
+    fn test_hostconfig_deny_unknown_fields() {
+        let json = r#"{"kind": "github", "bogus": true}"#;
+        let result = serde_json::from_str::<HostConfig>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hostconfig_rejects_invalid_kind() {
+        let json = r#"{"kind": "bitbucket"}"#;
+        let result = serde_json::from_str::<HostConfig>(json);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_hostconfig_rejects_zero_max_tags() {
+        let json = r#"{"max_tags_per_repo": 0}"#;
+        let result = serde_json::from_str::<HostConfig>(json);
+        assert!(result.is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_serde_roundtrip() {
+        let hc = HostConfig {
+            kind: Some(HostKind::Gitea),
+            api_base: Some("https://gitea.local/api/v1".into()),
+            token_env: Some("GITEA_TOKEN".into()),
+            api_mode: Some(ApiMode::Rest),
+            max_tags_per_repo: NonZeroU8::new(100),
+        };
+        let json = serde_json::to_string(&hc).unwrap();
+        let back: HostConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, hc.kind);
+        assert_eq!(back.api_base, hc.api_base);
+        assert_eq!(back.token_env, hc.token_env);
+        assert_eq!(back.api_mode, hc.api_mode);
+        assert_eq!(back.max_tags_per_repo, hc.max_tags_per_repo);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_each_kind_variant() {
+        for (variant, name) in [
+            (HostKind::Github, "github"),
+            (HostKind::Gitlab, "gitlab"),
+            (HostKind::Gitea, "gitea"),
+        ] {
+            let json = format!(r#"{{"kind": "{name}"}}"#);
+            let hc: HostConfig = serde_json::from_str(&json).unwrap();
+            assert_eq!(hc.kind, Some(variant), "kind={name}");
+        }
+    }
+
+    // TOML deserialization tests (realistic config fragments)
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostkind_toml_deserialization() {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            kind: HostKind,
+        }
+        for (variant, name) in [
+            (HostKind::Github, "github"),
+            (HostKind::Gitlab, "gitlab"),
+            (HostKind::Gitea, "gitea"),
+        ] {
+            let toml_str = format!("kind = \"{name}\"");
+            let w: Wrapper = toml::from_str(&toml_str).unwrap();
+            assert_eq!(w.kind, variant, "TOML kind={name}");
+        }
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_toml_deserialization() {
+        let toml_str = r#"
+            api_mode = "rest"
+            max_tags_per_repo = 42
+        "#;
+        let fs: FetchSettings = toml::from_str(toml_str).unwrap();
+        assert_eq!(fs.api_mode, ApiMode::Rest);
+        assert_eq!(fs.max_tags_per_repo.get(), 42);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_fetch_settings_toml_empty_uses_defaults() {
+        let fs: FetchSettings = toml::from_str("").unwrap();
+        assert_eq!(fs.api_mode, ApiMode::Graphql);
+        assert_eq!(fs.max_tags_per_repo.get(), 10);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_toml_full() {
+        let toml_str = r#"
+            kind              = "github"
+            api_base          = "https://ghe.corp.com/api/v3"
+            token_env         = "GHE_TOKEN"
+            api_mode          = "rest"
+            max_tags_per_repo = 50
+        "#;
+        let hc: HostConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(hc.kind, Some(HostKind::Github));
+        assert_eq!(hc.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
+        assert_eq!(hc.token_env.as_deref(), Some("GHE_TOKEN"));
+        assert_eq!(hc.api_mode, Some(ApiMode::Rest));
+        assert_eq!(hc.max_tags_per_repo.map(NonZeroU8::get), Some(50));
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_toml_minimal() {
+        let toml_str = r#"kind = "gitea""#;
+        let hc: HostConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(hc.kind, Some(HostKind::Gitea));
+        assert_eq!(hc.api_base, None);
+        assert_eq!(hc.token_env, None);
+    }
+
+    #[test]
+    fn test_hostconfig_toml_deny_unknown_fields() {
+        let toml_str = r#"
+            kind = "github"
+            typo_field = "oops"
+        "#;
+        let result = toml::from_str::<HostConfig>(toml_str);
+        assert!(result.is_err());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_hostconfig_toml_in_hosts_map() {
+        // Test as it would appear in actual config: [hosts."hostname"]
+        #[derive(Deserialize)]
+        struct Outer {
+            hosts: HashMap<String, HostConfig>,
+        }
+        let toml_str = r#"
+            [hosts."ghe.corp.com"]
+            kind      = "github"
+            api_base  = "https://ghe.corp.com/api/v3"
+            token_env = "GHE_TOKEN"
+
+            [hosts."gitlab.internal"]
+            kind      = "gitlab"
+            api_base  = "https://gitlab.internal/api/v4"
+            token_env = "GITLAB_TOKEN"
+            api_mode  = "rest"
+        "#;
+        let outer: Outer = toml::from_str(toml_str).unwrap();
+        assert_eq!(outer.hosts.len(), 2);
+
+        let ghe = &outer.hosts["ghe.corp.com"];
+        assert_eq!(ghe.kind, Some(HostKind::Github));
+        assert_eq!(ghe.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
+        assert_eq!(ghe.token_env.as_deref(), Some("GHE_TOKEN"));
+        assert_eq!(ghe.api_mode, None);
+
+        let gl = &outer.hosts["gitlab.internal"];
+        assert_eq!(gl.kind, Some(HostKind::Gitlab));
+        assert_eq!(gl.api_mode, Some(ApiMode::Rest));
+    }
 }

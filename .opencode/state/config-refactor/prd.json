@@ -38,7 +38,7 @@
 			"description": "Unit tests for new config types: HostKind serde round-trip, FetchSettings default values, HostConfig TOML deserialization with all field combinations. Done when: cargo test passes, covers happy path + edge cases.",
 			"depends": ["hostkind-enum", "fetch-settings", "host-config"],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "registration-types",
