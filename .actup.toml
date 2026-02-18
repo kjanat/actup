@@ -27,6 +27,18 @@ default_host      = "github.com"
 api_mode          = "graphql"
 max_tags_per_repo = 100
 
-[[providers.instances]]
-kind = "gitea"
-host = "gitea.kajkowalski.nl"
+# [[providers.instances."gitea.kajkowalski.LOREM_IPSUM"]]
+# kind = "gitea"
+# host = "gitea.kajkowalski.nl"
+
+# [[providers.instances."github"]]
+# kind              = "github"
+# host              = "kjanat.com"
+# api_mode          = "graphql"
+# max_tags_per_repo = 100
+
+# [[providers.instances."ghe"]]
+# kind              = "github"
+# host              = "ghe.kjanat.com"
+# api_mode          = "graphql"
+# max_tags_per_repo = 100
