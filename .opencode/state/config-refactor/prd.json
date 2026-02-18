@@ -67,7 +67,7 @@
 			"depends": ["fetch-settings", "host-config"],
 			"priority": "architecture",
 			"overseerId": "task_01KHSANXQ0YQP5MS6MAZQ46XJJ",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "github-registration",

@@ -67,16 +67,26 @@ fn display_human(config: &Config, path: &Path) {
     }
     println!();
 
-    println!("{}:", "Providers".bold());
-    println!("  default_kind: {}", config.providers.default_kind);
-    println!("  default_host: {}", config.providers.default_host);
-    println!("  api_mode:     {}", config.providers.api_mode);
-    println!("  max_tags:     {}", config.providers.max_tags_per_repo);
-    if !config.providers.instances.is_empty() {
-        println!(
-            "  instances:    {} configured",
-            config.providers.instances.len()
-        );
+    println!("{}:", "Hosts".bold());
+    let default_host = config
+        .default_host
+        .as_deref()
+        .unwrap_or("(github.com via preset)");
+    println!("  default_host: {default_host}");
+    println!();
+
+    println!("{}:", "Fetch".bold());
+    println!("  api_mode:     {}", config.fetch.api_mode);
+    println!("  max_tags:     {}", config.fetch.max_tags_per_repo);
+    if !config.hosts.is_empty() {
+        println!();
+        println!("  {} host(s) configured:", config.hosts.len());
+        for (host, hc) in &config.hosts {
+            let kind = hc
+                .kind
+                .map_or_else(|| "(inherited)".into(), |k| k.to_string());
+            println!("    {host}: kind={kind}");
+        }
     }
     println!();
 

@@ -100,8 +100,15 @@ pub struct Config {
     /// Cache configuration
     pub cache: Cache,
 
-    /// Provider configuration
-    pub providers: Providers,
+    /// Default host for bare `owner/repo` refs.
+    /// If `None`, resolves via provider preset for `"github.com"` when present, else errors.
+    pub default_host: Option<String>,
+
+    /// Fetch settings (`api_mode`, `max_tags_per_repo`)
+    pub fetch: FetchSettings,
+
+    /// Per-host configuration (keyed by lowercase hostname)
+    pub hosts: HashMap<String, HostConfig>,
 
     /// Additional paths to scan (beyond defaults)
     ///
@@ -303,63 +310,11 @@ pub struct HostConfig {
     pub max_tags_per_repo: Option<NonZeroU8>,
 }
 
-/// # Provider configuration
-///
-/// Default uses empty strings. The CLI layer sets actual defaults.
-/// Core must remain provider-neutral.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct Providers {
-    /// Default provider kind
-    pub default_kind: String,
-
-    /// Default host (e.g., "github.com")
-    pub default_host: String,
-
-    /// Additional provider instances
-    pub instances: Vec<ProviderInstance>,
-
-    /// API mode: graphql (batched, requires token) or rest (parallel requests)
-    pub api_mode: ApiMode,
-
-    /// Maximum tags to fetch per repo (default: 10, minimum: 1)
-    /// Fetches up to this many tags, or stops early when a stable release is found
-    pub max_tags_per_repo: NonZeroU8,
-}
-
 /// Default maximum tags to fetch per repository
 pub const DEFAULT_MAX_TAGS_PER_REPO: NonZeroU8 = match NonZeroU8::new(10) {
     Some(v) => v,
     None => panic!("DEFAULT_MAX_TAGS_PER_REPO must be non-zero"),
 };
-
-impl Default for Providers {
-    fn default() -> Self {
-        Self {
-            default_kind: "github".into(),
-            default_host: "github.com".into(),
-            instances: Vec::new(),
-            api_mode: ApiMode::Graphql,
-            max_tags_per_repo: DEFAULT_MAX_TAGS_PER_REPO,
-        }
-    }
-}
-
-/// # A configured provider instance
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct ProviderInstance {
-    /// Provider kind (github, gitlab, gitea, etc.)
-    pub kind: String,
-
-    /// Host this instance serves
-    pub host: String,
-
-    /// API base URL (for enterprise/self-hosted)
-    pub api_base: Option<String>,
-
-    /// Environment variable name for token
-    pub token_env: Option<String>,
-}
 
 impl Config {
     /// Create a new config with defaults
@@ -534,6 +489,10 @@ mod tests {
         assert!(config.action_overrides.is_empty());
         assert!(config.extra_paths.is_empty());
         assert!(config.loaded_from.is_none());
+        assert!(config.default_host.is_none());
+        assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
+        assert_eq!(config.fetch.max_tags_per_repo.get(), 10);
+        assert!(config.hosts.is_empty());
     }
 
     // should_ignore tests
@@ -692,18 +651,6 @@ mod tests {
         assert_eq!(override_cfg.update_policy, Some(policy::Update::Patch));
         assert_eq!(override_cfg.ref_style, Some(policy::Style::Sha));
         assert!(override_cfg.ignore);
-    }
-
-    // Providers tests
-
-    #[test]
-    fn test_providers_config_default() {
-        let providers = Providers::default();
-        assert_eq!(providers.default_kind, "github");
-        assert_eq!(providers.default_host, "github.com");
-        assert!(providers.instances.is_empty());
-        assert_eq!(providers.api_mode, ApiMode::Graphql);
-        assert_eq!(providers.max_tags_per_repo, DEFAULT_MAX_TAGS_PER_REPO);
     }
 
     // HostKind tests
@@ -1059,5 +1006,81 @@ mod tests {
         let gl = &outer.hosts["gitlab.internal"];
         assert_eq!(gl.kind, Some(HostKind::Gitlab));
         assert_eq!(gl.api_mode, Some(ApiMode::Rest));
+    }
+
+    // Config-level TOML tests (new fields)
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_config_toml_new_fields() {
+        let toml_str = r#"
+            default_host = "github.com"
+
+            [fetch]
+            api_mode          = "rest"
+            max_tags_per_repo = 42
+
+            [hosts."ghe.corp.com"]
+            kind      = "github"
+            api_base  = "https://ghe.corp.com/api/v3"
+            token_env = "GHE_TOKEN"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_host.as_deref(), Some("github.com"));
+        assert_eq!(config.fetch.api_mode, ApiMode::Rest);
+        assert_eq!(config.fetch.max_tags_per_repo.get(), 42);
+        assert_eq!(config.hosts.len(), 1);
+        let ghe = &config.hosts["ghe.corp.com"];
+        assert_eq!(ghe.kind, Some(HostKind::Github));
+        assert_eq!(ghe.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_config_toml_empty_uses_defaults() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.default_host.is_none());
+        assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
+        assert_eq!(config.fetch.max_tags_per_repo.get(), 10);
+        assert!(config.hosts.is_empty());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_config_toml_only_fetch() {
+        let toml_str = r#"
+            [fetch]
+            api_mode = "graphql"
+            max_tags_per_repo = 100
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.default_host.is_none());
+        assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
+        assert_eq!(config.fetch.max_tags_per_repo.get(), 100);
+        assert!(config.hosts.is_empty());
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_config_toml_multiple_hosts() {
+        let toml_str = r#"
+            default_host = "ghe.corp.com"
+
+            [hosts."ghe.corp.com"]
+            kind      = "github"
+            api_base  = "https://ghe.corp.com/api/v3"
+            token_env = "GHE_TOKEN"
+            api_mode  = "rest"
+
+            [hosts."gitlab.internal"]
+            kind      = "gitlab"
+            api_base  = "https://gitlab.internal/api/v4"
+            token_env = "GITLAB_TOKEN"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
+        assert_eq!(config.hosts.len(), 2);
+        assert_eq!(config.hosts["ghe.corp.com"].api_mode, Some(ApiMode::Rest));
+        assert_eq!(config.hosts["gitlab.internal"].kind, Some(HostKind::Gitlab));
     }
 }

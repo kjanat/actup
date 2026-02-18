@@ -6,6 +6,7 @@ branch_policy    = "ignore"
 allow_prerelease = false
 ignore           = ["dtolnay/rust-toolchain@1.91.0"]
 extra_paths      = []
+default_host     = "github.com"
 
 # [actions]
 # [actions."dtolnay/rust-toolchain"]
@@ -21,24 +22,16 @@ extra_paths      = []
 ttl     = 86400
 enabled = true
 
-[providers]
-default_kind      = "github"
-default_host      = "github.com"
+[fetch]
 api_mode          = "graphql"
 max_tags_per_repo = 100
 
-# [[providers.instances."gitea.kajkowalski.LOREM_IPSUM"]]
+# [hosts."gitea.kajkowalski.nl"]
 # kind = "gitea"
-# host = "gitea.kajkowalski.nl"
 
-# [[providers.instances."github"]]
+# [hosts."ghe.kjanat.com"]
 # kind              = "github"
-# host              = "kjanat.com"
-# api_mode          = "graphql"
-# max_tags_per_repo = 100
-
-# [[providers.instances."ghe"]]
-# kind              = "github"
-# host              = "ghe.kjanat.com"
+# api_base          = "https://ghe.kjanat.com/api/v3"
+# token_env         = "GHE_TOKEN"
 # api_mode          = "graphql"
 # max_tags_per_repo = 100

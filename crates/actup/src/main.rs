@@ -110,76 +110,79 @@ async fn run(cli: Cli) -> i32 {
 fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
     let mut registry = provider::Registry::new();
 
-    // Set default host from config (defaults to "github.com" in core)
-    let default_host = config.providers.default_host.as_str();
+    // Set default host from config (falls back to "github.com" when None)
+    let default_host = config.default_host.as_deref().unwrap_or("github.com");
     registry.set_default_host(default_host);
 
     let mut has_default_github_instance = false;
 
-    // Register configured provider instances
-    for instance in &config.providers.instances {
-        match instance.kind.as_str() {
+    // Register configured host entries from [hosts."hostname"]
+    for (host, host_config) in &config.hosts {
+        let kind_str = host_config.kind.map_or("github", |k| match k {
+            actup_core::HostKind::Github => "github",
+            actup_core::HostKind::Gitlab => "gitlab",
+            actup_core::HostKind::Gitea => "gitea",
+        });
+
+        match kind_str {
             "github" => {
-                if instance.host == default_host {
+                if host == default_host {
                     has_default_github_instance = true;
                 }
 
-                let token = instance
+                let token = host_config
                     .token_env
                     .as_ref()
                     .and_then(|env_var| std::env::var(env_var).ok());
 
                 // Compute host-aware api_base: github.com uses api.github.com,
                 // GHES uses {host}/api/v3
-                let default_api_base = if instance.host.is_empty() || instance.host == "github.com"
-                {
+                let default_api_base = if host.is_empty() || host == "github.com" {
                     "https://api.github.com".to_string()
                 } else {
-                    format!("https://{}/api/v3", instance.host)
+                    format!("https://{host}/api/v3")
                 };
-                let api_base = instance.api_base.as_deref().unwrap_or(&default_api_base);
+                let api_base = host_config.api_base.as_deref().unwrap_or(&default_api_base);
 
-                let provider =
-                    GitHubProvider::with_host(api_base, &instance.host, token.as_deref())?;
+                let provider = GitHubProvider::with_host(api_base, host, token.as_deref())?;
                 let cached = CachingProvider::new(provider);
                 registry.register(Box::new(cached));
             }
 
             #[cfg(feature = "gitlab")]
             "gitlab" => {
-                let token = instance
+                let token = host_config
                     .token_env
                     .as_ref()
                     .and_then(|env_var| std::env::var(env_var).ok());
 
-                let default_base = format!("https://{}", instance.host);
-                let api_base = instance.api_base.as_deref().unwrap_or(&default_base);
+                let default_base = format!("https://{host}");
+                let api_base = host_config.api_base.as_deref().unwrap_or(&default_base);
 
-                let provider =
-                    GitLabProvider::with_host(api_base, &instance.host, token.as_deref())?;
+                let provider = GitLabProvider::with_host(api_base, host, token.as_deref())?;
                 let cached = CachingProvider::new(provider);
                 registry.register(Box::new(cached));
             }
 
             #[cfg(feature = "gitea")]
-            "gitea" | "forgejo" => {
-                let token = instance
+            "gitea" => {
+                let token = host_config
                     .token_env
                     .as_ref()
                     .and_then(|env_var| std::env::var(env_var).ok());
 
-                let default_base = format!("https://{}", instance.host);
-                let api_base = instance.api_base.as_deref().unwrap_or(&default_base);
+                let default_base = format!("https://{host}");
+                let api_base = host_config.api_base.as_deref().unwrap_or(&default_base);
 
-                let provider = GiteaProvider::new(api_base, &instance.host, token.as_deref())?;
+                let provider = GiteaProvider::new(api_base, host, token.as_deref())?;
                 let cached = CachingProvider::new(provider);
                 registry.register(Box::new(cached));
             }
 
             _ => {
                 tracing::warn!(
-                    kind = %instance.kind,
-                    host = %instance.host,
+                    kind = kind_str,
+                    host = %host,
                     "unknown provider kind in config, skipping"
                 );
             }

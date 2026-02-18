@@ -14,6 +14,10 @@ Started: 2026-02-18
 - `Hash` derive needed on `HostKind` for use as `HashMap` key in later tasks
 - Registration types in `config/registration.rs` submodule, re-exported from `lib.rs`
 - `Registration` uses `fn` pointer fields (`infer_api_base`, `create`); needs manual `Debug` impl with `finish_non_exhaustive()`
+- CLI `build_registry()` in `crates/actup/src/main.rs` — main consumer of config provider fields
+- Config display in `crates/actup/src/commands/config.rs` — human-readable config output
+- Example configs in `examples/` — must be kept in sync with config struct changes
+- `Config` has `#[serde(default)]` on the struct, so all new fields must either have `Default` or be `Option`
 
 ---
 
@@ -79,3 +83,18 @@ Started: 2026-02-18
 - `Registration`: debug excludes fn pointers (verifies `..` marker), `infer_api_base` always-`None`, Gitea inference, `create` receives correct config, debug includes preset details
 - Files changed: `crates/core/src/config/registration.rs`
 - **Learnings:** `finish_non_exhaustive()` produces `..` in debug output; useful for asserting fn pointers are properly excluded
+
+## Task - wire-config-fields
+
+- Replaced `providers: Providers` field in `Config` with `default_host: Option<String>`, `fetch: FetchSettings`, `hosts: HashMap<String, HostConfig>`
+- Removed `Providers` struct (with `default_kind`, `default_host`, `instances`, `api_mode`, `max_tags_per_repo`) and `ProviderInstance` struct
+- Kept `DEFAULT_MAX_TAGS_PER_REPO` const (still used by `FetchSettings::default()`)
+- Updated CLI `build_registry()`: iterates `config.hosts` instead of `config.providers.instances`, uses `config.default_host` instead of `config.providers.default_host`
+- Updated `config` command display: shows `Hosts` + `Fetch` sections instead of `Providers`
+- Updated `.actup.toml` from `[providers]` to `[fetch]` + `default_host` top-level
+- Updated `examples/multi-provider.actup.toml` from `[[providers.instances]]` to `[hosts."hostname"]`
+- Added 4 new Config-level TOML tests: full config, empty defaults, fetch-only, multiple hosts
+- Updated `test_config_default` to assert new fields
+- Removed `test_providers_config_default` (struct no longer exists)
+- Files changed: `crates/core/src/config/mod.rs`, `crates/actup/src/main.rs`, `crates/actup/src/commands/config.rs`, `.actup.toml`, `examples/multi-provider.actup.toml`
+- **Learnings:** `Providers` and `ProviderInstance` were NOT re-exported from `lib.rs` — only consumed by CLI crate directly via `config.providers.*`. JSON schema in `schemas/` still references old types but is auto-generated (separate `json-schema` PRD task). `docs/providers.md` and `AGENTS.md` still reference old `[[providers.instances]]` format — covered by `docs-update` task.
