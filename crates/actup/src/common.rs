@@ -9,8 +9,8 @@ use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use actup_core::{
-    ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, ProviderRegistry,
-    UsesLocation, discover_files, extract_uses_from_yaml, parse_uses,
+    ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, UsesLocation, discover_files,
+    extract_uses_from_yaml, parse_uses, provider,
 };
 use owo_colors::OwoColorize;
 
@@ -271,7 +271,7 @@ impl FileEdits {
 pub struct WorkflowScanner<'a> {
     path: &'a Path,
     config: &'a Config,
-    registry: &'a ProviderRegistry,
+    registry: &'a provider::Registry,
     format: OutputFormat,
 }
 
@@ -281,7 +281,7 @@ impl<'a> WorkflowScanner<'a> {
     pub const fn new(
         path: &'a Path,
         config: &'a Config,
-        registry: &'a ProviderRegistry,
+        registry: &'a provider::Registry,
         format: OutputFormat,
     ) -> Self {
         Self {
@@ -311,10 +311,10 @@ impl<'a> WorkflowScanner<'a> {
     /// Read a file's content, tracking errors in tally.
     #[allow(clippy::unused_self)]
     pub fn read_file(&self, file: &DiscoveredFile, errors: &mut ErrorTally) -> Option<String> {
-        match fs::read_to_string(&file.path) {
+        match fs::read_to_string(file.path()) {
             Ok(content) => Some(content),
             Err(e) => {
-                eprintln!("{}: {} - {}", "Warning".yellow(), file.path.display(), e);
+                eprintln!("{}: {} - {}", "Warning".yellow(), file.path().display(), e);
                 errors.record_env();
                 None
             }
@@ -324,35 +324,26 @@ impl<'a> WorkflowScanner<'a> {
     /// Get relative path for display.
     #[must_use]
     pub fn relative_path(&self, file: &DiscoveredFile) -> String {
-        file.path
+        file.path()
             .strip_prefix(self.path)
-            .unwrap_or(&file.path)
+            .unwrap_or_else(|_| file.path())
             .display()
             .to_string()
     }
 
     /// Extract action references from content, filtering as appropriate.
     ///
-    /// Yields `(UsesLocation, ActionRef)` pairs for non-local, non-ignored actions.
-    pub fn extract_actions<'b>(
-        &self,
-        content: &'b str,
-    ) -> impl Iterator<Item = (UsesLocation, ActionRef)> + 'b
-    where
-        'a: 'b,
-    {
-        let config = self.config;
+    /// Yields `(UsesLocation, ActionRef)` pairs for non-local actions.
+    ///
+    /// Note: Ignored actions are NOT filtered here - they flow through to the check
+    /// phase where they're marked with `CheckStatus::Ignored` for visibility.
+    pub fn extract_actions(content: &str) -> impl Iterator<Item = (UsesLocation, ActionRef)> + '_ {
         extract_uses_from_yaml(content)
             .into_iter()
-            .filter_map(move |loc| {
-                let Ok(Some(action_ref)) = parse_uses(&loc.value) else {
+            .filter_map(|loc| {
+                let Ok(Some(action_ref)) = parse_uses(loc.value()) else {
                     return None; // Local action or parse error
                 };
-
-                // Filter ignored actions
-                if config.should_ignore(&action_ref.owner, &action_ref.repo) {
-                    return None;
-                }
 
                 Some((loc, action_ref))
             })
@@ -361,7 +352,7 @@ impl<'a> WorkflowScanner<'a> {
     /// Look up provider for an action. Returns None if not found.
     #[must_use]
     pub fn provider_for(&self, action: &ActionRef) -> Option<&dyn Provider> {
-        self.registry.find(action.host.as_deref())
+        self.registry.find(action.host())
     }
 }
 

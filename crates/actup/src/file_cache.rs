@@ -5,7 +5,7 @@
 //! - macOS: `~/Library/Caches/actup/`
 //! - Windows: `%LOCALAPPDATA%\actup\cache\`
 
-use actup_core::cache::{Cache, CacheEntry, CacheError, CacheResult};
+use actup_core::cache::{self, Cache};
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -72,11 +72,11 @@ impl FileCache {
     }
 
     /// Ensure cache directory exists
-    async fn ensure_dir(&self) -> CacheResult<()> {
+    async fn ensure_dir(&self) -> cache::Result<()> {
         // create_dir_all is idempotent - no need to check exists() first
         tokio::fs::create_dir_all(&self.cache_dir)
             .await
-            .map_err(|e| CacheError::Io(format!("failed to create cache dir: {e}")))?;
+            .map_err(|e| cache::Error::Io(format!("failed to create cache dir: {e}")))?;
         Ok(())
     }
 }
@@ -104,12 +104,15 @@ pub fn default_cache_dir() -> PathBuf {
 }
 
 impl Cache for FileCache {
-    fn get(&self, key: &str) -> Pin<Box<dyn Future<Output = CacheResult<CacheEntry>> + Send + '_>> {
+    fn get(
+        &self,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = cache::Result<cache::Entry>> + Send + '_>> {
         let key = key.to_string();
 
         Box::pin(async move {
             if !self.enabled {
-                return Err(CacheError::Disabled);
+                return Err(cache::Error::Disabled);
             }
 
             let path = self.key_to_path(&key);
@@ -117,13 +120,13 @@ impl Cache for FileCache {
             let content = match tokio::fs::read_to_string(&path).await {
                 Ok(c) => c,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                    return Err(CacheError::NotFound);
+                    return Err(cache::Error::NotFound);
                 }
-                Err(e) => return Err(CacheError::Io(e.to_string())),
+                Err(e) => return Err(cache::Error::Io(e.to_string())),
             };
 
-            let entry: CacheEntry =
-                serde_json::from_str(&content).map_err(|e| CacheError::Serde(e.to_string()))?;
+            let entry: cache::Entry =
+                serde_json::from_str(&content).map_err(|e| cache::Error::Serde(e.to_string()))?;
 
             // Check TTL
             if entry.is_expired(self.ttl) {
@@ -132,7 +135,7 @@ impl Cache for FileCache {
                 if let Err(e) = tokio::fs::remove_file(&path).await {
                     debug!(key = %key, path = %path.display(), error = %e, "failed to remove expired cache entry");
                 }
-                return Err(CacheError::NotFound);
+                return Err(cache::Error::NotFound);
             }
 
             debug!(key = %key, age_secs = ?entry.age().map(|d| d.as_secs()), "cache hit");
@@ -143,8 +146,8 @@ impl Cache for FileCache {
     fn set(
         &self,
         key: &str,
-        entry: CacheEntry,
-    ) -> Pin<Box<dyn Future<Output = CacheResult<()>> + Send + '_>> {
+        entry: cache::Entry,
+    ) -> Pin<Box<dyn Future<Output = cache::Result<()>> + Send + '_>> {
         let key = key.to_string();
 
         Box::pin(async move {
@@ -156,18 +159,18 @@ impl Cache for FileCache {
 
             let path = self.key_to_path(&key);
             let content =
-                serde_json::to_string(&entry).map_err(|e| CacheError::Serde(e.to_string()))?;
+                serde_json::to_string(&entry).map_err(|e| cache::Error::Serde(e.to_string()))?;
 
             tokio::fs::write(&path, content)
                 .await
-                .map_err(|e| CacheError::Io(e.to_string()))?;
+                .map_err(|e| cache::Error::Io(e.to_string()))?;
 
             debug!(key = %key, path = %path.display(), "cache entry written");
             Ok(())
         })
     }
 
-    fn remove(&self, key: &str) -> Pin<Box<dyn Future<Output = CacheResult<()>> + Send + '_>> {
+    fn remove(&self, key: &str) -> Pin<Box<dyn Future<Output = cache::Result<()>> + Send + '_>> {
         let key = key.to_string();
 
         Box::pin(async move {
@@ -180,12 +183,12 @@ impl Cache for FileCache {
             match tokio::fs::remove_file(&path).await {
                 Ok(()) => Ok(()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(CacheError::Io(e.to_string())),
+                Err(e) => Err(cache::Error::Io(e.to_string())),
             }
         })
     }
 
-    fn clear(&self) -> Pin<Box<dyn Future<Output = CacheResult<()>> + Send + '_>> {
+    fn clear(&self) -> Pin<Box<dyn Future<Output = cache::Result<()>> + Send + '_>> {
         Box::pin(async move {
             if !self.enabled {
                 return Ok(());
@@ -194,19 +197,19 @@ impl Cache for FileCache {
             let mut entries = match tokio::fs::read_dir(&self.cache_dir).await {
                 Ok(e) => e,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                Err(e) => return Err(CacheError::Io(e.to_string())),
+                Err(e) => return Err(cache::Error::Io(e.to_string())),
             };
 
             let mut removed = 0;
             while let Some(entry) = entries
                 .next_entry()
                 .await
-                .map_err(|e| CacheError::Io(e.to_string()))?
+                .map_err(|e| cache::Error::Io(e.to_string()))?
             {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext == "json") {
                     tokio::fs::remove_file(&path).await.map_err(|e| {
-                        CacheError::Io(format!("failed to remove {}: {e}", path.display()))
+                        cache::Error::Io(format!("failed to remove {}: {e}", path.display()))
                     })?;
                     removed += 1;
                 }
@@ -226,7 +229,7 @@ impl Cache for FileCache {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use actup_core::VersionSet;
+    use actup_core::version;
     use tempfile::TempDir;
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
@@ -239,11 +242,11 @@ mod tests {
     async fn test_set_and_get() {
         let (cache, _temp) = make_test_cache(3600);
 
-        let entry = CacheEntry::new(VersionSet::default());
+        let entry = actup_core::cache::Entry::new(version::Set::default());
         cache.set("test_key", entry.clone()).await.unwrap();
 
         let retrieved = cache.get("test_key").await.unwrap();
-        assert!(retrieved.versions.semver_tags.is_empty());
+        assert!(retrieved.versions().semver_tags().is_empty());
     }
 
     #[tokio::test]
@@ -251,26 +254,26 @@ mod tests {
         let (cache, _temp) = make_test_cache(3600);
 
         let result = cache.get("nonexistent").await;
-        assert!(matches!(result, Err(CacheError::NotFound)));
+        assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
     }
 
     #[tokio::test]
     async fn test_expired_entry_returns_not_found() {
         let (cache, _temp) = make_test_cache(0); // 0 TTL = immediately expired
 
-        let entry = CacheEntry::new(VersionSet::default());
+        let entry = actup_core::cache::Entry::new(version::Set::default());
         cache.set("test_key", entry).await.unwrap();
 
         // Should be expired immediately
         let result = cache.get("test_key").await;
-        assert!(matches!(result, Err(CacheError::NotFound)));
+        assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
     }
 
     #[tokio::test]
     async fn test_remove() {
         let (cache, _temp) = make_test_cache(3600);
 
-        let entry = CacheEntry::new(VersionSet::default());
+        let entry = actup_core::cache::Entry::new(version::Set::default());
         cache.set("test_key", entry).await.unwrap();
 
         // Verify it exists
@@ -282,7 +285,7 @@ mod tests {
         // Verify it's gone
         assert!(matches!(
             cache.get("test_key").await,
-            Err(CacheError::NotFound)
+            Err(actup_core::cache::Error::NotFound)
         ));
     }
 
@@ -292,7 +295,7 @@ mod tests {
 
         // Add multiple entries
         for i in 0..5 {
-            let entry = CacheEntry::new(VersionSet::default());
+            let entry = actup_core::cache::Entry::new(version::Set::default());
             cache.set(&format!("key_{i}"), entry).await.unwrap();
         }
 
@@ -302,7 +305,7 @@ mod tests {
         // Verify all gone
         for i in 0..5 {
             let result = cache.get(&format!("key_{i}")).await;
-            assert!(matches!(result, Err(CacheError::NotFound)));
+            assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
         }
     }
 
@@ -313,12 +316,12 @@ mod tests {
         assert!(!cache.is_enabled());
 
         // Set should succeed silently
-        let entry = CacheEntry::new(VersionSet::default());
+        let entry = actup_core::cache::Entry::new(version::Set::default());
         assert!(cache.set("test_key", entry).await.is_ok());
 
         // Get should return Disabled
         let result = cache.get("test_key").await;
-        assert!(matches!(result, Err(CacheError::Disabled)));
+        assert!(matches!(result, Err(actup_core::cache::Error::Disabled)));
     }
 
     #[test]

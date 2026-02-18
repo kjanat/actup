@@ -21,6 +21,25 @@ struct CacheInfo {
     total_size_bytes: u64,
 }
 
+/// Output for cache clear when cache is disabled
+#[derive(Serialize)]
+struct DisabledOutput {
+    cleared: u64,
+    disabled: bool,
+}
+
+/// Output for cache clear operations
+#[derive(Serialize)]
+struct ClearedOutput {
+    cleared: u64,
+}
+
+/// Output for cache path command
+#[derive(Serialize)]
+struct PathOutput {
+    path: String,
+}
+
 /// Run the cache command
 pub async fn run(action: &CacheAction, format: OutputFormat, config: &Config) -> i32 {
     match action {
@@ -74,7 +93,23 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
             match serde_json::to_string_pretty(&info) {
                 Ok(json) => println!("{json}"),
                 Err(e) => {
-                    eprintln!("{}: {}", "Error serializing JSON".red(), e);
+                    eprintln!("{}: {}", "Error serializing output".red(), e);
+                    return 3; // Environment error
+                }
+            }
+        }
+        OutputFormat::Toml => {
+            let info = CacheInfo {
+                path: cache_dir.to_string_lossy().into_owned(),
+                enabled: config.cache.enabled,
+                ttl_secs: config.cache.ttl.as_secs(),
+                entry_count,
+                total_size_bytes: total_size,
+            };
+            match toml::to_string_pretty(&info) {
+                Ok(toml) => println!("{toml}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing output".red(), e);
                     return 3; // Environment error
                 }
             }
@@ -92,9 +127,26 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
             |path| FileCache::with_path(path.clone(), config.cache.ttl),
         )
     } else {
+        let output = DisabledOutput {
+            cleared: 0,
+            disabled: true,
+        };
         match format {
             OutputFormat::Human => println!("{}", "Cache is disabled".yellow()),
-            OutputFormat::Json => println!(r#"{{"cleared": 0, "disabled": true}}"#),
+            OutputFormat::Json => match serde_json::to_string(&output) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing output".red(), e);
+                    return 3;
+                }
+            },
+            OutputFormat::Toml => match toml::to_string_pretty(&output) {
+                Ok(toml) => println!("{toml}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing output".red(), e);
+                    return 3;
+                }
+            },
         }
         return 0;
     };
@@ -117,22 +169,50 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
     };
 
     if entry_count == 0 {
+        let output = ClearedOutput { cleared: 0 };
         match format {
             OutputFormat::Human => println!("{}", "Cache is already empty".dimmed()),
-            OutputFormat::Json => println!(r#"{{"cleared": 0}}"#),
+            OutputFormat::Json => match serde_json::to_string(&output) {
+                Ok(json) => println!("{json}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing output".red(), e);
+                    return 3;
+                }
+            },
+            OutputFormat::Toml => match toml::to_string_pretty(&output) {
+                Ok(toml) => println!("{toml}"),
+                Err(e) => {
+                    eprintln!("{}: {}", "Error serializing output".red(), e);
+                    return 3;
+                }
+            },
         }
         return 0;
     }
 
     match cache.clear().await {
         Ok(()) => {
+            let output = ClearedOutput {
+                cleared: entry_count as u64,
+            };
             match format {
                 OutputFormat::Human => {
                     println!("{} {} cache entries", "Cleared".green(), entry_count);
                 }
-                OutputFormat::Json => {
-                    println!(r#"{{"cleared": {entry_count}}}"#);
-                }
+                OutputFormat::Json => match serde_json::to_string(&output) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => {
+                        eprintln!("{}: {}", "Error serializing output".red(), e);
+                        return 3;
+                    }
+                },
+                OutputFormat::Toml => match toml::to_string_pretty(&output) {
+                    Ok(toml) => println!("{toml}"),
+                    Err(e) => {
+                        eprintln!("{}: {}", "Error serializing output".red(), e);
+                        return 3;
+                    }
+                },
             }
             0
         }
@@ -147,26 +227,28 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
 fn path(format: OutputFormat, config: &Config) -> i32 {
     let cache_dir = get_cache_dir(config);
 
+    let output = PathOutput {
+        path: cache_dir.to_string_lossy().into_owned(),
+    };
+
     match format {
         OutputFormat::Human => {
             println!("{}", cache_dir.display());
         }
-        OutputFormat::Json => {
-            #[derive(Serialize)]
-            struct PathOutput {
-                path: String,
+        OutputFormat::Json => match serde_json::to_string(&output) {
+            Ok(json) => println!("{json}"),
+            Err(e) => {
+                eprintln!("{}: {}", "Error serializing JSON".red(), e);
+                return 3; // Environment error
             }
-            let output = PathOutput {
-                path: cache_dir.to_string_lossy().into_owned(),
-            };
-            match serde_json::to_string(&output) {
-                Ok(json) => println!("{json}"),
-                Err(e) => {
-                    eprintln!("{}: {}", "Error serializing JSON".red(), e);
-                    return 3; // Environment error
-                }
+        },
+        OutputFormat::Toml => match toml::to_string_pretty(&output) {
+            Ok(toml) => println!("{toml}"),
+            Err(e) => {
+                eprintln!("{}: {}", "Error serializing TOML".red(), e);
+                return 3; // Environment error
             }
-        }
+        },
     }
 
     0

@@ -13,8 +13,8 @@ mod parser_tests {
         let uses = extract_uses_from_yaml(content);
 
         assert_eq!(uses.len(), 2);
-        assert_eq!(uses[0].value, "actions/checkout@v4");
-        assert_eq!(uses[1].value, "actions/setup-node@v4");
+        assert_eq!(uses[0].value(), "actions/checkout@v4");
+        assert_eq!(uses[1].value(), "actions/setup-node@v4");
     }
 
     #[test]
@@ -32,12 +32,12 @@ mod parser_tests {
         let uses = extract_uses_from_yaml(content);
 
         for loc in &uses {
-            let parsed = parse_uses(&loc.value).unwrap();
+            let parsed = parse_uses(loc.value()).unwrap();
             if let Some(action) = parsed {
                 assert!(
-                    action.ref_str == "v3",
+                    action.ref_str() == "v3",
                     "Expected v3, got {}",
-                    action.ref_str
+                    action.ref_str()
                 );
             }
         }
@@ -55,9 +55,13 @@ mod parser_tests {
         let uses = extract_uses_from_yaml(content);
 
         for loc in &uses {
-            let parsed = parse_uses(&loc.value).unwrap();
+            let parsed = parse_uses(loc.value()).unwrap();
             if let Some(action) = parsed {
-                assert!(action.is_sha(), "Expected SHA ref, got {}", action.ref_str);
+                assert!(
+                    action.is_sha(),
+                    "Expected SHA ref, got {}",
+                    action.ref_str()
+                );
             }
         }
     }
@@ -78,7 +82,7 @@ mod discovery_tests {
 
         let files = discover_files(temp.path(), &[]);
         assert_eq!(files.len(), 2);
-        assert!(files.iter().all(|f| f.kind == FileKind::Workflow));
+        assert!(files.iter().all(|f| f.kind() == FileKind::Workflow));
     }
 
     #[test]
@@ -90,7 +94,7 @@ mod discovery_tests {
 
         let files = discover_files(temp.path(), &[]);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].kind, FileKind::CompositeAction);
+        assert_eq!(files[0].kind(), FileKind::CompositeAction);
     }
 
     #[test]
@@ -110,7 +114,7 @@ mod discovery_tests {
         let extra = vec!["custom/*.yml".to_string()];
         let files = discover_files(temp.path(), &extra);
         assert_eq!(files.len(), 1);
-        assert_eq!(files[0].kind, FileKind::Custom);
+        assert_eq!(files[0].kind(), FileKind::Custom);
     }
 }
 
@@ -206,36 +210,27 @@ ignore = ["internal/*", "deprecated/action"]
         .unwrap();
 
         let config = Config::load(None, temp.path()).unwrap();
-        assert!(config.should_ignore("internal", "anything"));
-        assert!(config.should_ignore("deprecated", "action"));
-        assert!(!config.should_ignore("external", "action"));
+        assert!(config.should_ignore("internal", "anything", "v1"));
+        assert!(config.should_ignore("deprecated", "action", "v2"));
+        assert!(!config.should_ignore("external", "action", "v1"));
     }
 }
 
 mod version_tests {
-    use actup_core::{Version, VersionInfo, VersionSet};
+    use actup_core::version;
     use std::collections::HashMap;
+    use std::sync::Arc;
 
-    fn make_version_info(ver: &str, sha: &str) -> VersionInfo {
-        VersionInfo {
-            version: Version::parse(ver),
-            sha: sha.to_string(),
-        }
+    fn make_version_info(ver: &str, sha: &str) -> Arc<version::Info> {
+        Arc::new(version::Info::new(version::Version::parse(ver), sha))
     }
 
     fn make_version_set(
-        tags: Vec<VersionInfo>,
-        latest: Option<VersionInfo>,
-        latest_per_major: HashMap<u32, VersionInfo>,
-    ) -> VersionSet {
-        VersionSet {
-            semver_tags: tags,
-            latest_per_major,
-            major_tags: HashMap::new(),
-            latest,
-            default_branch: None,
-            fetched_at: None,
-        }
+        tags: Vec<Arc<version::Info>>,
+        latest: Option<Arc<version::Info>>,
+        latest_per_major: HashMap<u32, Arc<version::Info>>,
+    ) -> version::Set {
+        version::Set::build(tags, latest_per_major, HashMap::new(), latest)
     }
 
     #[test]
@@ -256,11 +251,11 @@ mod version_tests {
             latest_per_major,
         );
 
-        let current = Version::parse("v1.0.0");
+        let current = version::Version::parse("v1.0.0");
         let latest = versions.find_latest_for(&current, false, false);
 
         assert!(latest.is_some());
-        assert_eq!(latest.unwrap().version.to_string(), "v1.2.0");
+        assert_eq!(latest.unwrap().version().to_string(), "v1.2.0");
     }
 
     #[test]
@@ -276,23 +271,23 @@ mod version_tests {
             HashMap::new(),
         );
 
-        let current = Version::parse("v1.0.0");
+        let current = version::Version::parse("v1.0.0");
         let latest = versions.find_latest_for(&current, true, false);
 
         assert!(latest.is_some());
-        assert_eq!(latest.unwrap().version.to_string(), "v3.0.0");
+        assert_eq!(latest.unwrap().version().to_string(), "v3.0.0");
     }
 
     #[test]
     fn test_version_parse_major_only() {
-        let v = Version::parse("v4");
+        let v = version::Version::parse("v4");
         assert!(v.is_semver());
         assert_eq!(v.major(), Some(4));
     }
 
     #[test]
     fn test_version_is_sha() {
-        let sha = Version::parse("b4ffde65f46336ab88eb53be808477a3936bae11");
+        let sha = version::Version::parse("b4ffde65f46336ab88eb53be808477a3936bae11");
         assert!(sha.is_sha());
         assert!(!sha.is_semver());
     }
