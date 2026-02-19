@@ -10,7 +10,7 @@
 			"description": "Set up the basic LSP server infrastructure. Done when:\n- Cargo.toml has tower-lsp, dashmap, tokio, lsp-types dependencies\n- LspBackend struct implements LanguageServer trait\n- initialize/initialized/shutdown handlers work\n- textDocumentSync and codeActionProvider capabilities declared\n- Stdio transport entry point in main.rs\n- Server starts and responds to initialize request",
 			"depends": [],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "document-state",
@@ -19,7 +19,7 @@
 			"description": "Track open documents for diagnostic computation. Done when:\n- DashMap<Url, DocumentState> stores open documents\n- DocumentState contains: text, version, cached diagnostics\n- did_open stores document, did_close removes it\n- did_change (FULL sync mode) updates stored text\n- Files without 'uses:' keyword exit early (quiet mode)",
 			"depends": ["lsp-skeleton"],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "config-loading",
@@ -28,7 +28,7 @@
 			"description": "Integrate with actup-core config system. Done when:\n- On initialized, find workspace root from InitializeParams\n- Call find_repo_config to load actup.toml\n- Store resolved Config in backend state\n- Config respects update_policy, ignore_actions, pin_to\n- LSP initializationOptions can override config path",
 			"depends": ["document-state"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "provider-setup",
@@ -37,7 +37,7 @@
 			"description": "Initialize providers for version fetching. Done when:\n- provider::Registry created with GitHub provider (feature-gated GitLab/Gitea)\n- FileCache initialized at ~/.cache/actup/ (shared with CLI)\n- CachingProvider wraps base provider for in-memory dedup\n- Token loaded from GITHUB_TOKEN env var",
 			"depends": ["config-loading"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "diagnostic-extraction",
@@ -46,7 +46,7 @@
 			"description": "Core diagnostic logic using actup-core. Done when:\n- extract_uses_from_yaml parses document text\n- parse_uses converts to ActionRef (skip local refs)\n- check_action computes CheckStatus for each ref\n- CheckStatus maps to LSP Diagnostic with correct severity:\n  - Outdated -> Warning\n  - Unresolvable (user) -> Error\n  - Unresolvable (env) -> Information\n  - Pinned -> Hint\n- Diagnostic range points to ref portion after @",
 			"depends": ["provider-setup"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "async-diagnostics",
@@ -55,7 +55,7 @@
 			"description": "Non-blocking diagnostic updates. Done when:\n- did_open/did_save spawn background task for version checks\n- Debounce mechanism (300ms) prevents API spam on rapid edits\n- client.publish_diagnostics called when results ready\n- Document version tracked to avoid stale updates\n- Network errors don't block editor UI",
 			"depends": ["diagnostic-extraction"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "single-ref-codeaction",
@@ -64,7 +64,7 @@
 			"description": "Quick fixes for individual outdated refs. Done when:\n- textDocument/codeAction handler implemented\n- For Outdated diagnostic: returns 'Update to vX.Y.Z' action\n- For Unresolvable with close match: returns 'Change to vX.Y.Z'\n- CodeAction includes WorkspaceEdit with text replacement\n- Edit replaces only the ref portion (preserves formatting)\n- Diagnostic linked via CodeAction.diagnostics field",
 			"depends": ["async-diagnostics"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "fix-all-file",
@@ -73,7 +73,7 @@
 			"description": "Bulk fix for current file. Done when:\n- Source action with kind 'source.fixAll.actup' registered\n- Aggregates all Outdated diagnostics in file\n- Returns single WorkspaceEdit with all edits\n- Appears in editor's 'Source Action' menu\n- Edits applied atomically",
 			"depends": ["single-ref-codeaction"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "workspace-command",
@@ -82,7 +82,7 @@
 			"description": "Workspace-wide bulk update. Done when:\n- executeCommand 'actup.fixAllInWorkspace' registered\n- Uses discover_files from actup-core to find all workflows\n- Builds multi-file WorkspaceEdit\n- Calls client.apply_edit to apply changes\n- Progress reported via $/progress notifications\n- Handles partial failures gracefully",
 			"depends": ["fix-all-file"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "error-ux",
@@ -91,7 +91,7 @@
 			"description": "Better feedback for network/auth errors. Done when:\n- Rate limit error shows window/showMessage notification\n- Auth error suggests setting GITHUB_TOKEN\n- Per-ref diagnostics show '(check failed: reason)'\n- Aggregate status logged via MessageType::Log\n- Errors don't spam user (deduplicated per-session)",
 			"depends": ["async-diagnostics"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "tests-unit",
@@ -100,7 +100,7 @@
 			"description": "Test diagnostic generation and code actions. Done when:\n- Tests for CheckStatus -> Diagnostic severity mapping\n- Tests for code action generation from diagnostics\n- Tests for edit generation (preserves formatting)\n- Tests for quiet mode (no uses: = no diagnostics)\n- Mock provider responses, no network calls",
 			"depends": ["single-ref-codeaction"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "tests-integration",
@@ -109,7 +109,7 @@
 			"description": "End-to-end LSP protocol tests. Done when:\n- Test harness with mock LSP client\n- Test: initialize -> didOpen -> diagnostics published\n- Test: codeAction request returns expected fixes\n- Test: executeCommand applies workspace edit\n- Snapshot tests for YAML before/after edits",
 			"depends": ["tests-unit", "workspace-command"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "progress-reporting",
@@ -118,7 +118,7 @@
 			"description": "User feedback during workspace-wide operations. Done when:\n- $/progress notifications sent during workspace scan\n- Shows 'Scanning N files...', 'Checking M actions...'\n- Percentage progress during batch version fetches\n- Cancellable via WorkDoneProgressCancelParams\n- Progress token generated per-operation",
 			"depends": ["workspace-command"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "config-watching",
@@ -127,7 +127,7 @@
 			"description": "React to actup.toml modifications. Done when:\n- Register watcher for **/actup.toml via workspace/didChangeWatchedFiles\n- Re-load config when file changes\n- Re-publish diagnostics for all open documents\n- Handle workspace folder add/remove events\n- Invalidate cached diagnostics on policy change",
 			"depends": ["config-loading", "async-diagnostics"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "hover-provider",
@@ -136,7 +136,7 @@
 			"description": "Show action details on hover. Done when:\n- textDocument/hover handler implemented\n- Hovering uses: line shows current + latest version\n- Fetches action.yml description (cached)\n- Includes link to action repository\n- Shows deprecation warnings if input deprecated",
 			"depends": ["async-diagnostics"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "completion-provider",
@@ -145,7 +145,7 @@
 			"description": "Autocomplete for uses: values. Done when:\n- textDocument/completion handler implemented\n- After 'uses:' suggests popular actions (hardcoded + cached)\n- After 'owner/repo@' suggests available versions\n- CompletionItem includes description and documentation\n- Trigger characters: '/', '@'",
 			"depends": ["provider-setup"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		}
 	]
 }

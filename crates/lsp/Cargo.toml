@@ -2,12 +2,32 @@
 name                 = "actup-lsp"
 version.workspace    = true
 edition.workspace    = true
+description          = "Language Server Protocol implementation for actup"
 homepage.workspace   = true
 repository.workspace = true
 license.workspace    = true
-publish              = false        # stub - not yet implemented
+publish              = false
+
+[[bin]]
+name = "actup-lsp"
+path = "src/main.rs"
 
 [dependencies]
+actup-core            = { workspace = true }  # Core config + resolution engine
+actup-provider-github = { workspace = true }  # GitHub/GHE provider
+dashmap               = { workspace = true }  # Concurrent document state
+dirs                  = { workspace = true }  # OS cache directory
+serde                 = { workspace = true }  # initializationOptions deserialization
+serde_json            = { workspace = true }  # initializationOptions parsing
+tokio                 = { workspace = true }  # Async runtime
+tower-lsp-server      = { workspace = true }  # LSP framework
+tracing               = { workspace = true }  # Logging
+tracing-subscriber    = { workspace = true }  # Log formatting
+
+[dev-dependencies]
+futures  = { workspace = true }  # Stream/Sink for integration tests
+tempfile = { workspace = true }  # Temp dirs for cache tests
+tower    = { workspace = true }  # Service trait for integration tests
 
 [lints]
 workspace = true

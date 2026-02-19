@@ -22,28 +22,28 @@ Before every commit, run `just fmt`, or `dprint fmt`.
 
 ---
 
-## Repo layout (expected)
+## Repo layout
 
-Cargo workspace (Rust 2024):
+Cargo workspace (Rust 2024). Directory names strip the `actup-` prefix; crate names retain it.
 
-- `crates/actup-core/`\
-  Provider-neutral engine: parsing, discovery, policy, resolution orchestration, caching interface, patch planning.
-- `crates/actup-provider-github/`\
-  GitHub (and GitHub Enterprise) implementation: REST/GraphQL calls, ETag handling, rate limit parsing.
-- `crates/actup-provider-*/`\
-  Future providers (GitLab, Gitea, Bitbucket, local FS).
-- `crates/actup-cli/`\
-  CLI frontend: args, printing, JSON output, interactive prompts.
-- `crates/actup-lsp/`\
-  LSP server: diagnostics + code actions + bulk fixes.
-- `crates/actup-mcp/`\
-  MCP server: safe tools for AI agents to inspect and update.
-- `schemas/`\
-  JSON Schema / docs for config file(s).
-- `docs/`\
-  Design notes, release notes, contributor docs.
+```tree
+crates/
+  core/               # actup-core       — provider-neutral engine
+  providers/          # actup-providers  — shared provider utilities (TagLike, action.yml parsing)
+  provider-github/    # actup-provider-github — GitHub/GHE: REST, GraphQL, rate limits
+  provider-gitlab/    # actup-provider-gitlab — GitLab provider
+  provider-gitea/     # actup-provider-gitea  — Gitea/Forgejo provider
+  actup/              # actup (binary)   — CLI: check, update, pin, cache commands
+  lsp/                # actup-lsp        — LSP server: diagnostics, code actions, hover, completion
+  mcp/                # actup-mcp        — MCP server (stub, not yet implemented)
+schemas/              # JSON Schema for config
+docs/                 # Design notes, contributor docs
+specs/                # Implementation specs / RFCs
+examples/             # Example config files
+```
 
-If the layout differs, keep the same separation: **core is host-agnostic**, providers are host-specific.
+**Core is host-agnostic**, providers are host-specific. `actup-providers` (plural) is a shared utility layer between core and individual
+providers.
 
 ---
 
@@ -572,10 +572,13 @@ just self-check     # Run actup on this repo
 | Crate                   | Purpose                                                                |
 | ----------------------- | ---------------------------------------------------------------------- |
 | `actup-core`            | Provider-neutral engine: parsing, discovery, policy, caching interface |
+| `actup-providers`       | Shared provider utilities: `TagLike`, action.yml parsing, HTTP consts  |
 | `actup-provider-github` | GitHub/GHE implementation: REST, GraphQL, rate limiting                |
-| `actup-cli`             | CLI binary: check, update, pin, cache commands                         |
+| `actup-provider-gitlab` | GitLab/self-hosted implementation                                      |
+| `actup-provider-gitea`  | Gitea/Forgejo implementation                                           |
+| `actup` (CLI)           | CLI binary: check, update, pin, cache commands                         |
 | `actup-lsp`             | Language Server Protocol implementation                                |
-| `actup-mcp`             | Model Context Protocol server for AI agents                            |
+| `actup-mcp`             | Model Context Protocol server for AI agents (stub)                     |
 
 ### Performance notes
 

@@ -50,6 +50,3 @@ pub use types::{
 
 /// Default GitLab host
 pub const GITLAB_HOST: &str = "gitlab.com";
-
-/// Default GitLab API URL
-pub const GITLAB_API_URL: &str = "https://gitlab.com/api/v4";

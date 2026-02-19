@@ -7,6 +7,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 | Module          | Purpose                                  | Key Types/Functions               |
 | --------------- | ---------------------------------------- | --------------------------------- |
 | `cli.rs`        | Clap args, command enum                  | `Cli`, `Command`, `CliExitCode`   |
+| `main.rs`       | Entry point, registry bootstrap          | `run()`, `build_registry()`       |
 | `commands/`     | Subcommand implementations               | `check`, `update`, `cache`, `pin` |
 | `output.rs`     | Human/JSON formatting, colors            | `OutputFormat`, print helpers     |
 | `common.rs`     | Shared command logic, result aggregation | `process_files`, `aggregate`      |
@@ -32,6 +33,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 | Add new subcommand    | `commands/mod.rs` + new file          |
 | Modify exit codes     | `cli.rs` → `CliExitCode` enum         |
 | Change cache location | `file_cache.rs` + `actup-core` config |
+| Provider registration | `main.rs` → `build_registry()`        |
 
 ## Exit Codes
 
@@ -54,9 +56,20 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 - `--verbose` enables debug tracing
 - `--dry-run` for update/fix/pin shows changes without applying
 - Feature flags: `gitea`, `gitlab` for optional providers
+- `github` feature is a no-op; `actup-provider-github` is always compiled in
+
+## Provider Wiring
+
+`main.rs` builds the provider `Registry`:
+
+- GitHub: always registered (non-optional)
+- GitLab: `#[cfg(feature = "gitlab")]` (optional)
+- Gitea: `#[cfg(feature = "gitea")]` (optional)
+- All features enabled by default
 
 ## Tests
 
-- Integration tests in `tests/cli_integration.rs`
+- Integration tests in `tests/cli_integration.rs` (834 lines, 41 tests)
 - Fixtures in `tests/fixtures/` (workflow YAML samples)
 - Use `tempfile::TempDir` for filesystem tests
+- Schema regression test validates committed JSON schema matches generated
