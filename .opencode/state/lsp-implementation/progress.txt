@@ -1,0 +1,33 @@
+# Progress Log
+
+PRD: lsp-implementation
+Spec: specs/lsp-implementation.md
+Started: 2026-02-19
+
+## Codebase Patterns
+
+### Core Integration
+- Use `actup_core::extract_uses_from_yaml()` for parsing (returns `Vec<UsesLocation>`)
+- Use `actup_core::check_action()` for version resolution (returns `CheckResult`)
+- Use `actup_core::provider::Registry` for multi-provider support
+- Use `actup_core::Config` for policy/ignore settings
+
+### Edit Patterns (from CLI)
+- `PendingEdit::replace_ref(line, old_ref, new_ref)` for ref updates
+- `FileEdits` for accumulating edits per file
+- Preserve trailing newlines and formatting
+
+### Error Classification
+- `Error::is_environment_error()` distinguishes user vs env errors
+- User errors (NotFound, InvalidRef) -> Error severity
+- Env errors (Network, RateLimit, Auth) -> Information severity + status message
+
+### tower-lsp Patterns
+- Store `Client` handle in backend for async notifications
+- Use `DashMap` for concurrent document access
+- Spawn background tasks with `tokio::spawn`
+- Check client capabilities before using features
+
+---
+
+<!-- Task completion logs below - APPEND ONLY -->
