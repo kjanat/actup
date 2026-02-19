@@ -57,6 +57,13 @@ Started: 2026-02-19
 - On policy change: clear cached diagnostics, re-schedule all open documents with zero debounce
 - Workspace folder changes: update `workspace_root`, then reload config
 
+### Hover Pattern
+- `find_action_at_position()` matches cursor to `uses:` value via `extract_uses_from_yaml` + column range check
+- `value_range()` returns `Range` (exclusive end) — use `>=` for end boundary, `<` for start
+- `Provider::get_action_yml` / `get_readme` NOT cached by `CachingProvider` — cache in LSP via `DashMap<ActionMetaCacheKey, Arc<CachedActionMeta>>`
+- `ActionMetaCacheKey` keyed by (owner, repo, ref_str, host) — different refs get different cache entries
+- `ActionYml` accessors: `.name()`, `.description()`, `.author()`, `.inputs()`, `.runs()`; `ActionInput.deprecation_message()` for deprecated input warnings
+
 ### tower-lsp-server 0.23 Patterns
 - Crate re-exports `ls_types` (not `lsp_types`) — use `tower_lsp_server::ls_types::*`
 - Store `Client` handle in backend for async notifications
@@ -269,3 +276,20 @@ Started: 2026-02-19
 - 6 new tests: `Cancelled` flag lifecycle (start false, set, clone shares state), `build_workspace_edit` (empty + with changes), `FixAllResult` tracks `actions_checked` and `cancelled`
 - Files changed: `crates/lsp/src/workspace_commands.rs`, `crates/lsp/src/backend.rs`
 - **Learnings:** `OngoingProgress<Bounded, Cancellable>::report_with_message` takes 3 args (msg, pct, `Option<bool>` for cancel btn state); `with_cancel_button()` must be called before `.begin()` on the `Progress` builder; tower-lsp-server TODO at server.rs:1394 for `work_done_progress_cancel` — infrastructure is ready but callback not wired; clippy `too_many_lines` enforces 100-line limit — split async fns by extracting loop body and progress reporting into separate helpers
+
+## Task - hover-provider
+
+- Created `crates/lsp/src/hover.rs`: hover information module for `uses:` references
+- `find_action_at_position()`: locates which `uses:` ref the cursor is on by matching line + column against `extract_uses_from_yaml` results; range uses exclusive end (`[start, end)`)
+- `get_action_meta()`: fetches `action.yml` via `Provider::get_action_yml`, extracts name/description/author/deprecated inputs/runtime, caches in `DashMap<ActionMetaCacheKey, Arc<CachedActionMeta>>`
+- `CachedActionMeta`: in-memory cache since `CachingProvider` does NOT cache `get_action_yml` calls; keyed by (owner, repo, ref_str, host)
+- `build_hover_content()`: assembles markdown with header (action name or owner/repo), description, author, version table (current/latest/status), runtime, GitHub link, deprecated inputs section
+- `repo_url()`: constructs `https://{host}/{owner}/{repo}` — host from ActionRef, falls back to registry default_host, then "github.com"
+- `format_version_status()`: human-readable status strings for all `CheckStatus` variants
+- `compute_hover()`: entry point — finds action at position, fetches versions (file cache first), checks status, fetches action.yml metadata, builds hover markdown
+- Registered `hoverProvider: true` in `ServerCapabilities` in `initialize`
+- Added `hover` handler to `LanguageServer` impl: clones document text, snapshots config/registry/cache, delegates to `compute_hover`
+- `ActionMetaCache` stored in `LspBackend` as a `DashMap` for shared access
+- 20 new tests: position finding (on value, off value, wrong line, local ref, start/end boundaries), repo URL construction (default host, explicit host, fallback), version status formatting (all 7 variants), hover content assembly (with/without meta, outdated status), cache store/retrieve, cache key ref distinction
+- Files: `crates/lsp/src/hover.rs` (new), `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
+- **Learnings:** `value_range()` returns Rust `Range` (exclusive end) — hover boundary check needs `>=` for end, not `>`; `Provider::get_action_yml` and `get_readme` are NOT cached by `CachingProvider` — must cache in LSP layer; `ActionRef::new` with `.into()` on string literals causes ambiguous type inference in test code due to multiple `From<&str>` impls — use `String::from()` or `.to_owned()` explicitly; `ActionYml.runs().using()` gives runtime string (e.g. "node20", "composite")

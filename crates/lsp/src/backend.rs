@@ -16,10 +16,11 @@ use tower_lsp_server::ls_types::{
     DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
     ExecuteCommandOptions, ExecuteCommandParams, FileChangeType, FileSystemWatcher, GlobPattern,
-    InitializeParams, InitializeResult, InitializedParams, MessageType, OneOf, Registration,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
-    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
+    Hover, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+    InitializedParams, MessageType, OneOf, Registration, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions, WorkspaceFoldersServerCapabilities,
+    WorkspaceServerCapabilities,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -150,6 +151,11 @@ pub struct LspBackend {
     /// document before spawning a fresh one. This, combined with
     /// [`DEBOUNCE_DELAY`], prevents redundant version checks.
     in_flight: DashMap<Uri, AbortHandle>,
+    /// In-memory cache for `action.yml` metadata used by hover.
+    ///
+    /// Keyed by (owner, repo, ref) since `CachingProvider` does not cache
+    /// `get_action_yml` calls. Shared across all hover requests.
+    action_meta_cache: crate::hover::ActionMetaCache,
 }
 
 impl LspBackend {
@@ -166,6 +172,7 @@ impl LspBackend {
             registry: Arc::new(RwLock::new(None)),
             file_cache: Arc::new(RwLock::new(None)),
             in_flight: DashMap::new(),
+            action_meta_cache: crate::hover::new_action_meta_cache(),
         }
     }
 
@@ -339,6 +346,7 @@ impl LanguageServer for LspBackend {
                         ..Default::default()
                     },
                 )),
+                hover_provider: Some(HoverProviderCapability::Simple(true)),
                 code_action_provider: Some(CodeActionProviderCapability::Options(
                     CodeActionOptions {
                         code_action_kinds: Some(vec![
@@ -475,6 +483,43 @@ impl LanguageServer for LspBackend {
 
         tracing::debug!(uri = uri.as_str(), "document saved, refreshing diagnostics");
         self.schedule_diagnostics(uri, text, version, Duration::ZERO);
+    }
+
+    async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let doc = match self.documents.get(&uri) {
+            Some(doc) => doc.clone(),
+            None => return Ok(None),
+        };
+
+        if !has_uses_keyword(&doc.text) {
+            return Ok(None);
+        }
+
+        let config = self.config.read().await.clone();
+        let registry = self.registry.read().await.clone();
+        let file_cache = self.file_cache.read().await.clone();
+
+        let Some(registry) = registry else {
+            return Ok(None);
+        };
+
+        let file_cache =
+            file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
+
+        let hover = crate::hover::compute_hover(
+            &doc.text,
+            position,
+            &config,
+            &registry,
+            &file_cache,
+            &self.action_meta_cache,
+        )
+        .await;
+
+        Ok(hover)
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {

@@ -136,7 +136,7 @@
 			"description": "Show action details on hover. Done when:\n- textDocument/hover handler implemented\n- Hovering uses: line shows current + latest version\n- Fetches action.yml description (cached)\n- Includes link to action repository\n- Shows deprecation warnings if input deprecated",
 			"depends": ["async-diagnostics"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "completion-provider",
