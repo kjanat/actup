@@ -8,13 +8,31 @@ use std::path::{Path, PathBuf};
 #[command(name = "actup")]
 #[command(author, version, about = "GitHub Actions version manager")]
 #[command(propagate_version = true)]
+#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 
     /// Verbose output
     #[arg(short, long, global = true, env = "ACTUP_VERBOSE")]
     pub verbose: bool,
+
+    #[command(flatten)]
+    pub latest: LatestArgs,
+}
+
+/// Arguments for the default `actup <owner/repo[@ref]>` quick lookup.
+///
+/// When no subcommand is provided, actup treats the positional argument as
+/// an action reference and prints the latest version.
+#[derive(clap::Args)]
+pub struct LatestArgs {
+    /// Action to look up, e.g. `actions/checkout` or `actions/checkout@v4`
+    pub action: Option<String>,
+
+    /// Output format
+    #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+    pub format: OutputFormat,
 }
 
 impl Cli {
