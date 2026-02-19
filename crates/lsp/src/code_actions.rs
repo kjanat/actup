@@ -317,17 +317,23 @@ const fn position_le(a: Position, b: Position) -> bool {
 ///
 /// This is the cursor-based complement to diagnostic-based actions: it works
 /// on `UpToDate` and branch refs that have no diagnostic.
+///
+/// Entries whose `ref_range` matches a diagnostic range are skipped to avoid
+/// producing duplicate pin actions (diagnostic-based actions already cover
+/// those refs via [`code_actions_for_diagnostics`]).
 pub fn pin_actions_for_cursor(
     uri: &Uri,
     version: Option<i32>,
     cursor_range: &Range,
     entries: &[ActionCheckEntry],
+    diagnostic_ranges: &[Range],
     pin_comment: bool,
     supports_document_changes: bool,
 ) -> Vec<CodeActionOrCommand> {
     entries
         .iter()
         .filter(|e| ranges_overlap(cursor_range, &e.ref_range))
+        .filter(|e| !diagnostic_ranges.contains(&e.ref_range))
         .filter(|e| e.resolved_sha.is_some())
         .filter(|e| !is_sha(&e.ref_str))
         .map(|e| {
@@ -1158,7 +1164,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 32, 32); // cursor inside ref range
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -1189,7 +1196,8 @@ mod tests {
         );
         let cursor = make_range(7, 30, 30);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         assert!(actions.is_empty(), "SHA ref should not produce pin action");
     }
 
@@ -1199,7 +1207,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", None);
         let cursor = make_range(7, 32, 32);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         assert!(
             actions.is_empty(),
             "no resolved SHA should not produce pin action"
@@ -1212,7 +1221,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 10, 10); // cursor before ref range
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         assert!(
             actions.is_empty(),
             "cursor outside ref range should not produce action"
@@ -1225,7 +1235,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(8, 31, 33); // different line
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         assert!(
             actions.is_empty(),
             "cursor on different line should not match"
@@ -1238,7 +1249,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 31, 31); // at start boundary
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         assert_eq!(actions.len(), 1, "cursor at boundary should match");
     }
 
@@ -1249,8 +1261,15 @@ mod tests {
         let entry2 = make_entry(8, 35, 37, "v3", Some(test_utils::DUMMY_SHA_2));
         let cursor = make_range(8, 36, 36); // on line 8
 
-        let actions =
-            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry1, entry2], false, true);
+        let actions = pin_actions_for_cursor(
+            &uri,
+            TEST_VERSION,
+            &cursor,
+            &[entry1, entry2],
+            &[],
+            false,
+            true,
+        );
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -1270,7 +1289,8 @@ mod tests {
         let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(0, 11, 11);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1288,7 +1308,7 @@ mod tests {
         let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(0, 11, 11);
 
-        let actions = pin_actions_for_cursor(&uri, Some(5), &cursor, &[entry], false, false);
+        let actions = pin_actions_for_cursor(&uri, Some(5), &cursor, &[entry], &[], false, false);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1304,7 +1324,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let cursor = make_range(0, 0, 0);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[], false, true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[], &[], false, true);
         assert!(actions.is_empty());
     }
 
@@ -1583,7 +1603,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 32, 32);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], true, true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -1600,7 +1621,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 32, 32);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1725,7 +1747,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 32, 32);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], true, true);
         let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
 
         insta::assert_yaml_snapshot!("cursor_pin_with_comment", snaps);
@@ -1737,7 +1760,8 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 32, 32);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
         let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
 
         insta::assert_yaml_snapshot!("cursor_pin_without_comment", snaps);

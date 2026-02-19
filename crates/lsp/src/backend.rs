@@ -706,15 +706,23 @@ impl LanguageServer for LspBackend {
         // Cursor-based "Pin to SHA" refactor actions. Uses ActionCheckEntry
         // data (populated for ALL refs) to offer pinning on refs that have
         // no diagnostic (e.g. UpToDate, branch refs).
+        // Entries that already have a diagnostic are skipped to avoid
+        // duplicate pin actions (diagnostic-based actions cover those).
         if crate::code_actions::kind_allowed(
             only,
             &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
         ) {
+            let diagnostic_ranges: Vec<_> = context_diagnostics
+                .iter()
+                .filter(|d| d.source.as_deref() == Some(crate::diagnostics::DIAGNOSTIC_SOURCE))
+                .map(|d| d.range)
+                .collect();
             let pin_actions = crate::code_actions::pin_actions_for_cursor(
                 &uri,
                 doc_version,
                 &params.range,
                 &entries,
+                &diagnostic_ranges,
                 pin_comment,
                 supports_doc_changes,
             );

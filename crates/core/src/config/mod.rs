@@ -191,7 +191,7 @@ pub struct ActionOverride {
 /// ```
 #[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct PinConfig {
     /// Append `# {original_ref}` comment after SHA when pinning.
     ///

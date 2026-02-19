@@ -289,7 +289,8 @@
           "type": "boolean",
           "default": true
         }
-      }
+      },
+      "additionalProperties": false
     },
     "Style": {
       "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With ref_style: preserve - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With ref_style: tag - converts to version tags\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With ref_style: sha - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",
