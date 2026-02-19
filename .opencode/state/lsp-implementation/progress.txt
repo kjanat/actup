@@ -24,6 +24,20 @@ Started: 2026-02-19
 - `UsesLocation.ref_range()` gives byte range after `@` in the raw line (0-indexed); `.line()` is 1-indexed
 - `status_to_diagnostic()` for `CheckStatus` -> `Diagnostic` severity mapping
 
+### tower-lsp-server Progress API
+- `client.progress(token, title)` returns `Progress` builder (NOT a future)
+- `.with_percentage(0)` → bounded; `.with_message(msg)` → initial message
+- `.begin().await` → `OngoingProgress<Bounded, NotCancellable>`
+- `ongoing.report_with_message(msg, pct).await` for updates
+- `ongoing.finish_with_message(msg).await` to end
+- Must call `client.create_work_done_progress(token).await` first (may fail if client doesn't support it)
+
+### Workspace Commands
+- `executeCommand` provider registered in `ServerCapabilities.execute_command_provider`
+- Command handler in `LanguageServer::execute_command` dispatches by command string
+- `client.apply_edit(workspace_edit).await` returns `ApplyWorkspaceEditResponse` with `.applied` bool
+- Split large handler methods: keep trait impl thin, extract helpers to separate `impl` blocks
+
 ### Error Classification
 - `Error::is_environment_error()` distinguishes user vs env errors
 - User errors (NotFound, InvalidRef) -> Error severity
@@ -190,3 +204,19 @@ Started: 2026-02-19
 - 10 new tests: fix-all aggregation, threshold (< 2 = None), foreign/non-outdated skipping, kind_matches hierarchical logic, kind_allowed with None/exact/parent/partial-prefix/empty
 - Files changed: `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`
 - **Learnings:** `CodeActionKind::new(&'static str)` is const-capable — ideal for custom kind constants; `context.only` uses hierarchical prefix matching per LSP spec (dot-separated), not simple string prefix; `is_none_or` (Rust nightly/2024) preferred over `map_or(true, ...)` by clippy
+
+## Task - workspace-command
+
+- Created `crates/lsp/src/workspace_commands.rs`: workspace-wide fix-all command
+- `FIX_ALL_IN_WORKSPACE` constant: `"actup.fixAllInWorkspace"`
+- `fix_all_in_workspace()`: discovers files via `actup_core::discover_files`, reads each file, computes diagnostics, extracts outdated-ref edits, returns `FixAllResult` with multi-file `WorkspaceEdit`
+- `edits_from_diagnostics()`: helper extracting `TextEdit`s from diagnostics (only `Outdated`, not `Unresolvable`)
+- `process_file()`: helper processing a single discovered file (read, check uses:, compute diagnostics, extract edits)
+- Progress reporting via tower-lsp-server builder API: `client.create_work_done_progress` → `client.progress(token, title).with_percentage(0).begin().await` → `ongoing.report_with_message(msg, pct)` → `ongoing.finish_with_message(msg)`
+- `execute_command` handler on `LanguageServer` trait: dispatches by command name, snapshots state, calls `fix_all_in_workspace`, delegates result application to `apply_fix_all_result`
+- `apply_fix_all_result()`: separated helper on `LspBackend` that calls `client.apply_edit`, shows success/failure/rejection messages, logs partial file failures
+- `ExecuteCommandOptions` capability registered with `work_done_progress: true`
+- Graceful degradation: no workspace root → warning; no registry → warning; no progress support → silently skipped; partial read failures → logged but don't block
+- 6 new tests: command name stability, progress ID uniqueness, empty result, edit extraction from outdated diags, non-actup skip, unresolvable skip
+- Files: `crates/lsp/src/workspace_commands.rs` (new), `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
+- **Learnings:** tower-lsp-server 0.23 `client.progress()` is a builder (not a raw notification sender) — returns `Progress` struct, `.begin().await` returns `OngoingProgress` with type-state for bounded/unbounded/cancellable; `client.apply_edit(edit)` returns `ApplyWorkspaceEditResponse` with `.applied` bool and `.failure_reason`; clippy enforces 100-line limit per function — split large handlers into helper methods on separate impl blocks

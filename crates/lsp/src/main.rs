@@ -10,6 +10,7 @@ mod code_actions;
 mod diagnostics;
 mod file_cache;
 mod provider_setup;
+mod workspace_commands;
 
 use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;

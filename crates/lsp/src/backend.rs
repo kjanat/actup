@@ -13,9 +13,10 @@ use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
     CodeActionOptions, CodeActionParams, CodeActionProviderCapability, CodeActionResponse,
     Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
-    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
-    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
+    DidSaveTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, InitializeParams,
+    InitializeResult, InitializedParams, MessageType, ServerCapabilities, ServerInfo,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -341,6 +342,12 @@ impl LanguageServer for LspBackend {
                         resolve_provider: Some(false),
                     },
                 )),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![crate::workspace_commands::FIX_ALL_IN_WORKSPACE.to_owned()],
+                    work_done_progress_options: WorkDoneProgressOptions {
+                        work_done_progress: Some(true),
+                    },
+                }),
                 ..Default::default()
             },
         })
@@ -502,6 +509,60 @@ impl LanguageServer for LspBackend {
         }
     }
 
+    async fn execute_command(
+        &self,
+        params: ExecuteCommandParams,
+    ) -> Result<Option<serde_json::Value>> {
+        tracing::info!(command = %params.command, "execute_command");
+
+        if params.command != crate::workspace_commands::FIX_ALL_IN_WORKSPACE {
+            tracing::warn!(command = %params.command, "unknown command");
+            return Ok(None);
+        }
+
+        // Require workspace root — can't discover files without it.
+        let workspace_root = self.workspace_root.read().await.clone();
+        let Some(workspace_root) = workspace_root else {
+            self.client
+                .show_message(
+                    MessageType::WARNING,
+                    "actup: no workspace root; cannot scan for workflow files",
+                )
+                .await;
+            return Ok(None);
+        };
+
+        // Snapshot config, registry, and cache.
+        let config = self.config.read().await.clone();
+        let registry = self.registry.read().await.clone();
+        let file_cache = self.file_cache.read().await.clone();
+
+        let Some(registry) = registry else {
+            self.client
+                .show_message(
+                    MessageType::WARNING,
+                    "actup: no provider registry available; cannot check versions",
+                )
+                .await;
+            return Ok(None);
+        };
+
+        let file_cache =
+            file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
+
+        let result = crate::workspace_commands::fix_all_in_workspace(
+            self.client.clone(),
+            &workspace_root,
+            &config,
+            &registry,
+            &file_cache,
+        )
+        .await;
+
+        self.apply_fix_all_result(result).await;
+        Ok(None)
+    }
+
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         tracing::debug!(uri = uri.as_str(), "document closed");
@@ -514,6 +575,76 @@ impl LanguageServer for LspBackend {
         self.documents.remove(&uri);
         // Clear diagnostics for the closed document.
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
+    }
+}
+
+/// Post-command helpers (separate impl block to keep `LanguageServer` methods focused).
+impl LspBackend {
+    /// Apply a [`FixAllResult`] to the workspace and notify the user.
+    async fn apply_fix_all_result(&self, result: crate::workspace_commands::FixAllResult) {
+        if result.refs_updated == 0 {
+            self.client
+                .show_message(
+                    MessageType::INFO,
+                    format!(
+                        "actup: all action refs are up to date ({} files scanned)",
+                        result.files_scanned,
+                    ),
+                )
+                .await;
+            return;
+        }
+
+        match self.client.apply_edit(result.edit).await {
+            Ok(response) if response.applied => {
+                let msg = format!(
+                    "actup: updated {} refs in {} files",
+                    result.refs_updated, result.files_changed
+                );
+                self.client.show_message(MessageType::INFO, &msg).await;
+                tracing::info!(%msg);
+            }
+            Ok(response) => {
+                let reason = response
+                    .failure_reason
+                    .as_deref()
+                    .unwrap_or("unknown reason");
+                tracing::warn!(reason, "workspace edit rejected by client");
+                self.client
+                    .show_message(
+                        MessageType::WARNING,
+                        format!("actup: edit rejected by editor: {reason}"),
+                    )
+                    .await;
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "failed to apply workspace edit");
+                self.client
+                    .show_message(
+                        MessageType::ERROR,
+                        format!("actup: failed to apply edit: {e}"),
+                    )
+                    .await;
+            }
+        }
+
+        if !result.failures.is_empty() {
+            let count = result.failures.len();
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!(
+                        "actup: {count} file(s) could not be checked: {}",
+                        result
+                            .failures
+                            .iter()
+                            .map(|(p, e)| format!("{p}: {e}"))
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    ),
+                )
+                .await;
+        }
     }
 }
 

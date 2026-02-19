@@ -82,7 +82,7 @@
 			"description": "Workspace-wide bulk update. Done when:\n- executeCommand 'actup.fixAllInWorkspace' registered\n- Uses discover_files from actup-core to find all workflows\n- Builds multi-file WorkspaceEdit\n- Calls client.apply_edit to apply changes\n- Progress reported via $/progress notifications\n- Handles partial failures gracefully",
 			"depends": ["fix-all-file"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "error-ux",
