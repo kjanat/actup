@@ -164,7 +164,6 @@ pub fn effective_host(
     }
 
     // Resolve api_mode: per-host override > [fetch] > default
-    let host_config = config.hosts.get(hostname);
     let api_mode = host_config
         .and_then(|hc| hc.api_mode)
         .unwrap_or(fetch.api_mode);
