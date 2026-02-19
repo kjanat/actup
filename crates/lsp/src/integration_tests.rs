@@ -23,10 +23,11 @@ use tower::Service as _;
 use tower_lsp_server::jsonrpc::{Id, Request, Response};
 use tower_lsp_server::ls_types::{
     ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    DidChangeTextDocumentParams, DidChangeWatchedFilesClientCapabilities,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
-    InitializedParams, PartialResultParams, Position, PublishDiagnosticsParams, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem, TextEdit, Uri,
+    CompletionContext, CompletionParams, CompletionTriggerKind, DidChangeTextDocumentParams,
+    DidChangeWatchedFilesClientCapabilities, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    ExecuteCommandParams, HoverParams, InitializeParams, InitializeResult, InitializedParams,
+    PartialResultParams, Position, PublishDiagnosticsParams, Range, TextDocumentContentChangeEvent,
+    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, TextEdit, Uri,
     VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceClientCapabilities,
     WorkspaceFolder,
 };
@@ -121,6 +122,57 @@ fn shutdown_request(id: i64) -> Request {
 
 fn exit_notification() -> Request {
     Request::build("exit").finish()
+}
+
+fn hover_request(id: i64, uri: &Uri, position: Position) -> Request {
+    let params = HoverParams {
+        text_document_position_params: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+    };
+    Request::build("textDocument/hover")
+        .id(id)
+        .params(serde_json::to_value(params).unwrap())
+        .finish()
+}
+
+fn completion_request(
+    id: i64,
+    uri: &Uri,
+    position: Position,
+    trigger_char: Option<&str>,
+) -> Request {
+    let context = trigger_char.map(|ch| CompletionContext {
+        trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+        trigger_character: Some(ch.to_owned()),
+    });
+    let params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier { uri: uri.clone() },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context,
+    };
+    Request::build("textDocument/completion")
+        .id(id)
+        .params(serde_json::to_value(params).unwrap())
+        .finish()
+}
+
+fn execute_command_request(id: i64, command: &str, args: Vec<serde_json::Value>) -> Request {
+    let params = ExecuteCommandParams {
+        command: command.to_owned(),
+        arguments: args,
+        work_done_progress_params: WorkDoneProgressParams::default(),
+    };
+    Request::build("workspace/executeCommand")
+        .id(id)
+        .params(serde_json::to_value(params).unwrap())
+        .finish()
 }
 
 /// Collected server→client messages.
@@ -539,6 +591,243 @@ async fn full_lifecycle_open_change_close() {
 }
 
 // ---------------------------------------------------------------------------
+// Hover protocol tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn hover_on_uses_line_returns_response() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/hover.yml").unwrap();
+    let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
+
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    // Wait for diagnostics to ensure the document is fully processed.
+    harness
+        .wait_for_diagnostics(&uri, Duration::from_secs(3))
+        .await;
+
+    // Hover on the `uses:` value (line 6, middle of "actions/checkout@v4").
+    let position = Position {
+        line: 6,
+        character: 20,
+    };
+    let resp = harness.request(hover_request(10, &uri, position)).await;
+    let resp = resp.expect("hover should return a response");
+    let (_, body) = resp.into_parts();
+
+    // The response should be Ok — either Some(Hover) or null.
+    // We just validate the protocol works; the actual content depends on
+    // whether the provider can resolve (no token = likely error/null).
+    assert!(body.is_ok(), "hover should not return a JSON-RPC error");
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn hover_on_non_uses_line_returns_null() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/hover-null.yml").unwrap();
+    let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
+
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Hover on a non-uses line (line 0 = "name: CI").
+    let position = Position {
+        line: 0,
+        character: 3,
+    };
+    let resp = harness.request(hover_request(11, &uri, position)).await;
+    let resp = resp.expect("hover should return a response");
+    let (_, body) = resp.into_parts();
+    let value = body.unwrap();
+
+    assert!(
+        value.is_null(),
+        "hover on non-uses line should return null, got: {value}"
+    );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn hover_without_open_document_returns_null() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    // Request hover on a document that was never opened.
+    let uri = Uri::from_file_path("/test/not-opened.yml").unwrap();
+    let position = Position {
+        line: 0,
+        character: 0,
+    };
+    let resp = harness.request(hover_request(12, &uri, position)).await;
+    let resp = resp.expect("hover should return a response");
+    let (_, body) = resp.into_parts();
+    let value = body.unwrap();
+
+    assert!(
+        value.is_null(),
+        "hover on unopened document should return null"
+    );
+
+    harness.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// Completion protocol tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn completion_on_uses_line_returns_response() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/completion.yml").unwrap();
+    let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@\n";
+
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Trigger completion after "@" (line 6, after "actions/checkout@").
+    let position = Position {
+        line: 6,
+        character: 34,
+    };
+    let resp = harness
+        .request(completion_request(20, &uri, position, Some("@")))
+        .await;
+    let resp = resp.expect("completion should return a response");
+    let (_, body) = resp.into_parts();
+
+    // Protocol validation: the response should be Ok, not a JSON-RPC error.
+    assert!(
+        body.is_ok(),
+        "completion should not return a JSON-RPC error"
+    );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn completion_on_non_uses_line_returns_null() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/completion-null.yml").unwrap();
+    let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
+
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    // Trigger completion on a non-uses line.
+    let position = Position {
+        line: 0,
+        character: 5,
+    };
+    let resp = harness
+        .request(completion_request(21, &uri, position, None))
+        .await;
+    let resp = resp.expect("completion should return a response");
+    let (_, body) = resp.into_parts();
+    let value = body.unwrap();
+
+    assert!(
+        value.is_null(),
+        "completion on non-uses line should return null, got: {value}"
+    );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn completion_without_open_document_returns_null() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/completion-missing.yml").unwrap();
+    let position = Position {
+        line: 0,
+        character: 0,
+    };
+    let resp = harness
+        .request(completion_request(22, &uri, position, None))
+        .await;
+    let resp = resp.expect("completion should return a response");
+    let (_, body) = resp.into_parts();
+    let value = body.unwrap();
+
+    assert!(
+        value.is_null(),
+        "completion on unopened document should return null"
+    );
+
+    harness.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
+// executeCommand protocol tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn execute_command_fix_all_returns_response() {
+    let mut harness = TestHarness::new();
+
+    // Use a temp dir as workspace root to avoid touching real files.
+    let temp = tempfile::tempdir().unwrap();
+    let workspace_root = temp.path().to_str().unwrap();
+
+    harness.initialize(Some(workspace_root)).await;
+
+    let resp = harness
+        .request(execute_command_request(
+            30,
+            "actup.fixAllInWorkspace",
+            vec![],
+        ))
+        .await;
+    let resp = resp.expect("executeCommand should return a response");
+    let (_, body) = resp.into_parts();
+
+    // Protocol validation: the handler should not produce a JSON-RPC error.
+    assert!(
+        body.is_ok(),
+        "executeCommand should not return a JSON-RPC error"
+    );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn execute_command_unknown_command_returns_null() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let resp = harness
+        .request(execute_command_request(
+            31,
+            "actup.nonExistentCommand",
+            vec![],
+        ))
+        .await;
+    let resp = resp.expect("executeCommand should return a response");
+    let (_, body) = resp.into_parts();
+    let value = body.unwrap();
+
+    // Unknown commands return Ok(None) → JSON null (logged as warning).
+    assert!(
+        value.is_null(),
+        "unknown command should return null, got: {value}"
+    );
+
+    harness.shutdown().await;
+}
+
+// ---------------------------------------------------------------------------
 // Snapshot tests: YAML before/after edits
 // ---------------------------------------------------------------------------
 
@@ -628,7 +917,7 @@ jobs:
 #[test]
 fn snapshot_sha_pin_edit() {
     let original = "      - uses: actions/checkout@v4\n";
-    let sha = "abc1234567890abcdef1234567890abcdef123456";
+    let sha = "abc1234567890abcdef1234567890abcdef12345";
     let expected = format!("      - uses: actions/checkout@{sha}\n");
 
     let edit = TextEdit {
