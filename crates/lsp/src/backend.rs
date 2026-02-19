@@ -629,10 +629,10 @@ impl LanguageServer for LspBackend {
 
         let mut actions = Vec::new();
 
-        // Snapshot the document version for versioned edits. If the document
-        // isn't tracked (shouldn't happen in normal flow), default to 0 so
-        // the edit still works but clients won't enforce version matching.
-        let doc_version = self.documents.get(&uri).map_or(0, |doc| doc.version);
+        // Snapshot the document version for versioned edits. `None` if the
+        // document isn't tracked (shouldn't happen in normal flow).
+        let doc_version = self.documents.get(&uri).map(|doc| doc.version);
+        let supports_doc_changes = self.supports_document_changes().await;
 
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
         if crate::code_actions::kind_allowed(
@@ -645,12 +645,18 @@ impl LanguageServer for LspBackend {
                     .get(&uri)
                     .map(|doc| doc.diagnostics.clone())
                     .unwrap_or_default();
-                crate::code_actions::code_actions_for_diagnostics(&uri, doc_version, &cached)
+                crate::code_actions::code_actions_for_diagnostics(
+                    &uri,
+                    doc_version,
+                    &cached,
+                    supports_doc_changes,
+                )
             } else {
                 crate::code_actions::code_actions_for_diagnostics(
                     &uri,
                     doc_version,
                     context_diagnostics,
+                    supports_doc_changes,
                 )
             };
             actions.extend(quickfixes);
@@ -665,9 +671,12 @@ impl LanguageServer for LspBackend {
                 .get(&uri)
                 .map(|doc| doc.diagnostics.clone())
                 .unwrap_or_default();
-            if let Some(fix_all) =
-                crate::code_actions::fix_all_in_file(&uri, doc_version, &all_diagnostics)
-            {
+            if let Some(fix_all) = crate::code_actions::fix_all_in_file(
+                &uri,
+                doc_version,
+                &all_diagnostics,
+                supports_doc_changes,
+            ) {
                 actions.push(fix_all);
             }
         }
@@ -721,6 +730,7 @@ impl LanguageServer for LspBackend {
             file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
         let encoding = self.position_encoding.get().copied().unwrap_or_default();
+        let supports_doc_changes = self.supports_document_changes().await;
         let cancelled = crate::workspace_commands::Cancelled::new();
         let result = crate::workspace_commands::fix_all_in_workspace(
             self.client.clone(),
@@ -730,6 +740,7 @@ impl LanguageServer for LspBackend {
             &file_cache,
             &self.documents,
             &cancelled,
+            supports_doc_changes,
             encoding,
         )
         .await;
@@ -800,6 +811,22 @@ impl LanguageServer for LspBackend {
         self.documents.remove(&uri);
         // Clear diagnostics for the closed document.
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
+    }
+}
+
+/// Capability inspection helpers.
+impl LspBackend {
+    /// Check whether the client advertised `workspace.workspaceEdit.documentChanges`.
+    ///
+    /// When `true`, edits use `WorkspaceEdit.document_changes` with versioned
+    /// document identifiers. When `false`, edits fall back to the unversioned
+    /// `WorkspaceEdit.changes` map.
+    async fn supports_document_changes(&self) -> bool {
+        let caps = self.client_capabilities.read().await;
+        caps.workspace
+            .as_ref()
+            .and_then(|ws| ws.workspace_edit.as_ref())
+            .is_some_and(|we| we.document_changes == Some(true))
     }
 }
 

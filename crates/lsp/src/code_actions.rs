@@ -8,6 +8,8 @@
 //! - [`code_actions_for_diagnostics`]: per-diagnostic quickfixes
 //! - [`fix_all_in_file`]: aggregated source action for all outdated refs
 
+use std::collections::HashMap;
+
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Diagnostic, DocumentChanges, OneOf,
     OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
@@ -21,25 +23,45 @@ use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};
 /// "Source Action" menu. Hierarchically under `source.fixAll` per LSP spec.
 pub const SOURCE_FIX_ALL_ACTUP: CodeActionKind = CodeActionKind::new("source.fixAll.actup");
 
-/// Build a versioned [`WorkspaceEdit`] using `documentChanges`.
+/// Build a [`WorkspaceEdit`] for a single file, choosing between versioned
+/// `documentChanges` and unversioned `changes` based on client capability.
 ///
-/// Uses [`OptionalVersionedTextDocumentIdentifier`] so clients can reject
-/// edits that target a stale document version.
-fn versioned_edit(uri: &Uri, version: i32, edits: Vec<TextEdit>) -> WorkspaceEdit {
-    WorkspaceEdit {
-        document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
-            text_document: OptionalVersionedTextDocumentIdentifier::new(uri.clone(), version),
-            edits: edits.into_iter().map(OneOf::Left).collect(),
-        }])),
-        ..Default::default()
+/// When `supports_document_changes` is `true`, uses
+/// [`OptionalVersionedTextDocumentIdentifier`] with the document `version`
+/// so clients can reject edits targeting a stale document.
+///
+/// When `false`, falls back to the `changes` map (no version tracking).
+fn make_edit(
+    uri: &Uri,
+    version: Option<i32>,
+    edits: Vec<TextEdit>,
+    supports_document_changes: bool,
+) -> WorkspaceEdit {
+    if supports_document_changes {
+        WorkspaceEdit {
+            document_changes: Some(DocumentChanges::Edits(vec![TextDocumentEdit {
+                text_document: OptionalVersionedTextDocumentIdentifier {
+                    uri: uri.clone(),
+                    version,
+                },
+                edits: edits.into_iter().map(OneOf::Left).collect(),
+            }])),
+            ..Default::default()
+        }
+    } else {
+        let mut changes = HashMap::new();
+        changes.insert(uri.clone(), edits);
+        WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }
     }
 }
 
 /// Build code actions from a slice of diagnostics.
 ///
 /// For each `Outdated` diagnostic, produces a quickfix "Update to vX.Y.Z"
-/// action with a versioned [`WorkspaceEdit`] that replaces only the ref
-/// portion.
+/// action with a [`WorkspaceEdit`] that replaces only the ref portion.
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
@@ -47,12 +69,16 @@ fn versioned_edit(uri: &Uri, version: i32, edits: Vec<TextEdit>) -> WorkspaceEdi
 /// Diagnostics without embedded [`DiagnosticData`] or from other sources
 /// are silently skipped.
 ///
-/// `version` is the document version from [`DocumentState`] so clients can
-/// reject edits if the document changed since diagnosis.
+/// `version` is the document version from `DocumentState` — `Some(n)` for
+/// tracked documents, `None` for untracked (shouldn't happen in normal flow).
+///
+/// `supports_document_changes` gates whether the edit uses versioned
+/// `documentChanges` or falls back to unversioned `changes`.
 pub fn code_actions_for_diagnostics(
     uri: &Uri,
-    version: i32,
+    version: Option<i32>,
     diagnostics: &[Diagnostic],
+    supports_document_changes: bool,
 ) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
 
@@ -81,7 +107,12 @@ pub fn code_actions_for_diagnostics(
                     title: format!("Update to {target_ref}"),
                     kind: Some(CodeActionKind::QUICKFIX),
                     diagnostics: Some(vec![diag.clone()]),
-                    edit: Some(versioned_edit(uri, version, vec![edit])),
+                    edit: Some(make_edit(
+                        uri,
+                        version,
+                        vec![edit],
+                        supports_document_changes,
+                    )),
                     is_preferred: Some(true),
                     ..Default::default()
                 }));
@@ -98,7 +129,12 @@ pub fn code_actions_for_diagnostics(
                     title: format!("Change to {suggested}"),
                     kind: Some(CodeActionKind::QUICKFIX),
                     diagnostics: Some(vec![diag.clone()]),
-                    edit: Some(versioned_edit(uri, version, vec![edit])),
+                    edit: Some(make_edit(
+                        uri,
+                        version,
+                        vec![edit],
+                        supports_document_changes,
+                    )),
                     is_preferred: Some(false),
                     ..Default::default()
                 }));
@@ -114,19 +150,23 @@ pub fn code_actions_for_diagnostics(
 
 /// Build a single "Fix all outdated actions" source action for the file.
 ///
-/// Aggregates all `Outdated` diagnostics into one versioned [`WorkspaceEdit`]
-/// with multiple [`TextEdit`]s. Returns `None` if there are fewer than 2
+/// Aggregates all `Outdated` diagnostics into one [`WorkspaceEdit`] with
+/// multiple [`TextEdit`]s. Returns `None` if there are fewer than 2
 /// actionable diagnostics (single-ref quickfixes already cover that case).
 ///
 /// The action uses [`SOURCE_FIX_ALL_ACTUP`] kind so it appears in the
 /// editor's "Source Action" menu and responds to `source.fixAll` requests.
 ///
-/// `version` is the document version from [`DocumentState`] so clients can
-/// reject edits if the document changed since diagnosis.
+/// `version` is the document version from `DocumentState` — `Some(n)` for
+/// tracked documents, `None` for untracked.
+///
+/// `supports_document_changes` gates whether the edit uses versioned
+/// `documentChanges` or falls back to unversioned `changes`.
 pub fn fix_all_in_file(
     uri: &Uri,
-    version: i32,
+    version: Option<i32>,
     diagnostics: &[Diagnostic],
+    supports_document_changes: bool,
 ) -> Option<CodeActionOrCommand> {
     let mut edits = Vec::new();
     let mut fixed_diagnostics = Vec::new();
@@ -163,7 +203,7 @@ pub fn fix_all_in_file(
         title: format!("Fix all outdated actions ({count} refs)"),
         kind: Some(SOURCE_FIX_ALL_ACTUP),
         diagnostics: Some(fixed_diagnostics),
-        edit: Some(versioned_edit(uri, version, edits)),
+        edit: Some(make_edit(uri, version, edits, supports_document_changes)),
         is_preferred: Some(false),
         ..Default::default()
     }))
@@ -195,7 +235,7 @@ mod tests {
     use crate::test_utils;
 
     /// Document version used across all code-action tests.
-    const TEST_VERSION: i32 = 5;
+    const TEST_VERSION: Option<i32> = Some(5);
 
     fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
         test_utils::make_range(line, col_start, col_end)
@@ -218,7 +258,11 @@ mod tests {
 
     /// Extract [`TextEdit`]s from a versioned [`WorkspaceEdit`], asserting
     /// the edit uses `document_changes` with the expected URI and version.
-    fn extract_text_edits<'a>(edit: &'a WorkspaceEdit, expected_uri: &Uri) -> Vec<&'a TextEdit> {
+    fn extract_text_edits<'a>(
+        edit: &'a WorkspaceEdit,
+        expected_uri: &Uri,
+        expected_version: Option<i32>,
+    ) -> Vec<&'a TextEdit> {
         assert!(
             edit.changes.is_none(),
             "versioned edits must not use unversioned `changes`"
@@ -233,7 +277,7 @@ mod tests {
         assert_eq!(doc_edits.len(), 1, "expected one TextDocumentEdit");
         let doc_edit = &doc_edits[0];
         assert_eq!(&doc_edit.text_document.uri, expected_uri);
-        assert_eq!(doc_edit.text_document.version, Some(TEST_VERSION));
+        assert_eq!(doc_edit.text_document.version, expected_version);
 
         doc_edit
             .edits
@@ -250,7 +294,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -260,7 +304,7 @@ mod tests {
         assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
         assert_eq!(action.is_preferred, Some(true));
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "v4.2.0");
         assert_eq!(edits[0].range, make_range(7, 31, 33));
@@ -271,7 +315,8 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, std::slice::from_ref(&diag));
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, std::slice::from_ref(&diag), true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -288,7 +333,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -303,7 +348,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), None);
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert!(actions.is_empty());
     }
 
@@ -316,7 +361,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert!(actions.is_empty());
     }
 
@@ -330,7 +375,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert!(actions.is_empty());
     }
 
@@ -342,7 +387,7 @@ mod tests {
         let diag2 =
             make_outdated_diagnostic(make_range(8, 31, 33), "actions/setup-node@v3", "v4.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag1, diag2]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag1, diag2], true);
         assert_eq!(actions.len(), 2);
 
         // Each action targets its own diagnostic.
@@ -392,13 +437,13 @@ mod tests {
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         // Single outdated ref — quickfix already covers this, no fix-all needed.
-        assert!(fix_all_in_file(&uri, TEST_VERSION, &[diag]).is_none());
+        assert!(fix_all_in_file(&uri, TEST_VERSION, &[diag], true).is_none());
     }
 
     #[test]
     fn fix_all_returns_none_for_empty_diagnostics() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
-        assert!(fix_all_in_file(&uri, TEST_VERSION, &[]).is_none());
+        assert!(fix_all_in_file(&uri, TEST_VERSION, &[], true).is_none());
     }
 
     #[test]
@@ -408,7 +453,7 @@ mod tests {
         let diag2 = make_unresolvable_diagnostic(make_range(5, 10, 15), None);
 
         // Only unresolvable diagnostics — fix-all only handles Outdated.
-        assert!(fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2]).is_none());
+        assert!(fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).is_none());
     }
 
     #[test]
@@ -420,7 +465,7 @@ mod tests {
             make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
         let diag3 = make_outdated_diagnostic(make_range(12, 20, 22), "actions/cache@v2", "v4.1.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3]).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3], true).unwrap();
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
@@ -429,7 +474,7 @@ mod tests {
         assert_eq!(action.kind, Some(SOURCE_FIX_ALL_ACTUP));
         assert_eq!(action.is_preferred, Some(false));
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 3);
         assert_eq!(edits[0].new_text, "v4.2.0");
         assert_eq!(edits[1].new_text, "v4.0.0");
@@ -458,6 +503,7 @@ mod tests {
             &uri,
             TEST_VERSION,
             &[outdated1, foreign, unresolvable, outdated2],
+            true,
         )
         .unwrap();
         let CodeActionOrCommand::CodeAction(action) = action else {
@@ -465,7 +511,7 @@ mod tests {
         };
 
         // Only the 2 outdated refs are in the edit.
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 2);
         assert_eq!(action.diagnostics.as_ref().unwrap().len(), 2);
     }
@@ -511,12 +557,12 @@ mod tests {
         // Range covers just "v3" (2 chars), not the entire `uses:` line.
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 1);
 
         // Only the ref portion is replaced, not the whole line.
@@ -532,12 +578,12 @@ mod tests {
         // Replacing "v3" (2 chars) with "v4.2.0" (6 chars).
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         // The range stays the same (2 chars), but the new_text is longer.
         // LSP handles the expansion — we just provide the replacement text.
         assert_eq!(edits[0].range, make_range(0, 10, 12));
@@ -553,12 +599,12 @@ mod tests {
             make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
         let diag3 = make_outdated_diagnostic(make_range(12, 20, 22), "actions/cache@v2", "v4.1.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3]).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3], true).unwrap();
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
 
         // Each edit preserves its specific range — no overlap or combined ranges.
         assert_eq!(edits[0].range, make_range(7, 31, 33));
@@ -572,7 +618,7 @@ mod tests {
         let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v2.0.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2]).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).unwrap();
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
@@ -584,13 +630,13 @@ mod tests {
         let uri = Uri::from_file_path("/project/.github/workflows/ci.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 0, 2), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
 
         // extract_text_edits already asserts URI matches.
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 1);
     }
 
@@ -605,6 +651,7 @@ mod tests {
             &uri,
             TEST_VERSION,
             &[outdated, suggestion, no_suggestion],
+            true,
         );
         assert_eq!(actions.len(), 2); // outdated + suggestion, NOT the no_suggestion
 
@@ -633,12 +680,12 @@ mod tests {
         let diag1 = make_outdated_diagnostic(make_range(12, 20, 22), "a/c@v2", "v4.1.0");
         let diag2 = make_outdated_diagnostic(make_range(7, 31, 33), "a/b@v3", "v4.2.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2]).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).unwrap();
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri);
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 2);
         assert_eq!(edits[0].range.start.line, 12);
         assert_eq!(edits[1].range.start.line, 7);
@@ -658,7 +705,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, 42, &[diag]);
+        let actions = code_actions_for_diagnostics(&uri, Some(42), &[diag], true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -673,5 +720,59 @@ mod tests {
             panic!("expected Edits");
         };
         assert_eq!(doc_edits[0].text_document.version, Some(42));
+    }
+
+    #[test]
+    fn fallback_to_unversioned_changes_when_not_supported() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
+
+        let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], false);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edit = action.edit.as_ref().unwrap();
+
+        // Must use unversioned changes, not document_changes.
+        assert!(edit.document_changes.is_none());
+        let changes = edit.changes.as_ref().expect("expected changes map");
+        let file_edits = changes.get(&uri).expect("expected edits for URI");
+        assert_eq!(file_edits.len(), 1);
+        assert_eq!(file_edits[0].new_text, "v2.0.0");
+    }
+
+    #[test]
+    fn fix_all_fallback_to_unversioned_changes() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
+        let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v3.0.0");
+
+        let action = fix_all_in_file(&uri, Some(5), &[diag1, diag2], false).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+        let edit = action.edit.as_ref().unwrap();
+
+        assert!(edit.document_changes.is_none());
+        let changes = edit.changes.as_ref().expect("expected changes map");
+        let file_edits = changes.get(&uri).expect("expected edits for URI");
+        assert_eq!(file_edits.len(), 2);
+    }
+
+    #[test]
+    fn none_version_for_untracked_document() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
+
+        let actions = code_actions_for_diagnostics(&uri, None, &[diag], true);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edit = action.edit.as_ref().unwrap();
+        let DocumentChanges::Edits(doc_edits) = edit.document_changes.as_ref().unwrap() else {
+            panic!("expected Edits");
+        };
+        // Untracked document should have version None (null).
+        assert_eq!(doc_edits[0].text_document.version, None);
     }
 }

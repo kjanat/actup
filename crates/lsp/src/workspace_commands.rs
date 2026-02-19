@@ -260,6 +260,7 @@ pub async fn fix_all_in_workspace(
     file_cache: &FileCache,
     documents: &DashMap<Uri, DocumentState>,
     cancelled: &Cancelled,
+    supports_document_changes: bool,
     encoding: crate::position::PositionEncoding,
 ) -> FixAllResult {
     let token = NumberOrString::String(format!("actup-workspace-{}", progress_id()));
@@ -300,6 +301,7 @@ pub async fn fix_all_in_workspace(
         file_cache,
         documents,
         cancelled,
+        supports_document_changes,
         progress.as_ref(),
         encoding,
     )
@@ -332,6 +334,7 @@ async fn scan_files(
     file_cache: &FileCache,
     documents: &DashMap<Uri, DocumentState>,
     cancelled: &Cancelled,
+    supports_document_changes: bool,
     progress: Option<
         &tower_lsp_server::OngoingProgress<
             tower_lsp_server::Bounded,
@@ -356,7 +359,7 @@ async fn scan_files(
             );
             let files_changed = all_edits.len();
             return FixAllResult {
-                edit: build_workspace_edit(all_edits),
+                edit: build_workspace_edit(all_edits, supports_document_changes),
                 total_files: file_count,
                 files_scanned: files_completed,
                 files_changed,
@@ -403,7 +406,7 @@ async fn scan_files(
 
     let files_changed = all_edits.len();
     FixAllResult {
-        edit: build_workspace_edit(all_edits),
+        edit: build_workspace_edit(all_edits, supports_document_changes),
         total_files: file_count,
         files_scanned: file_count,
         files_changed,
@@ -447,17 +450,23 @@ async fn report_file_progress(
     p.report_with_message(msg, pct.min(95), None).await;
 }
 
-/// Build a versioned [`WorkspaceEdit`] from accumulated per-file changes.
+/// Build a [`WorkspaceEdit`] from accumulated per-file changes.
 ///
-/// Uses [`DocumentChanges::Edits`] with [`OptionalVersionedTextDocumentIdentifier`]
+/// When `supports_document_changes` is `true`, uses
+/// [`DocumentChanges::Edits`] with [`OptionalVersionedTextDocumentIdentifier`]
 /// so clients can reject edits that target a stale document version. Files
 /// open in the editor carry `version: Some(n)` (snapshotted at read time);
 /// files read from disk use `version: None` (null), which per LSP spec means
 /// "content on disk is the master."
-fn build_workspace_edit(file_edits: Vec<VersionedFileEdits>) -> WorkspaceEdit {
+///
+/// When `false`, falls back to the unversioned `changes` map.
+fn build_workspace_edit(
+    file_edits: Vec<VersionedFileEdits>,
+    supports_document_changes: bool,
+) -> WorkspaceEdit {
     if file_edits.is_empty() {
         WorkspaceEdit::default()
-    } else {
+    } else if supports_document_changes {
         let doc_edits = file_edits
             .into_iter()
             .map(|fe| TextDocumentEdit {
@@ -470,6 +479,15 @@ fn build_workspace_edit(file_edits: Vec<VersionedFileEdits>) -> WorkspaceEdit {
             .collect();
         WorkspaceEdit {
             document_changes: Some(DocumentChanges::Edits(doc_edits)),
+            ..Default::default()
+        }
+    } else {
+        let mut changes = std::collections::HashMap::new();
+        for fe in file_edits {
+            changes.insert(fe.uri, fe.edits);
+        }
+        WorkspaceEdit {
+            changes: Some(changes),
             ..Default::default()
         }
     }
@@ -591,7 +609,7 @@ mod tests {
 
     #[test]
     fn build_workspace_edit_empty_returns_default() {
-        let edit = build_workspace_edit(Vec::new());
+        let edit = build_workspace_edit(Vec::new(), true);
         assert!(edit.changes.is_none());
         assert!(edit.document_changes.is_none());
     }
@@ -607,7 +625,7 @@ mod tests {
                 new_text: "v4".into(),
             }],
         }];
-        let edit = build_workspace_edit(edits);
+        let edit = build_workspace_edit(edits, true);
         assert!(edit.changes.is_none(), "must not use unversioned changes");
         let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
             panic!("expected DocumentChanges::Edits");
@@ -629,7 +647,7 @@ mod tests {
                 new_text: "v4".into(),
             }],
         }];
-        let edit = build_workspace_edit(edits);
+        let edit = build_workspace_edit(edits, true);
         let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
             panic!("expected DocumentChanges::Edits");
         };
@@ -658,7 +676,7 @@ mod tests {
                 }],
             },
         ];
-        let edit = build_workspace_edit(edits);
+        let edit = build_workspace_edit(edits, true);
         let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
             panic!("expected DocumentChanges::Edits");
         };
@@ -795,5 +813,27 @@ mod tests {
         flag.cancel();
         flag.cancel();
         assert!(flag.is_cancelled());
+    }
+
+    #[test]
+    fn build_workspace_edit_fallback_to_unversioned_changes() {
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let edits = vec![VersionedFileEdits {
+            uri: uri.clone(),
+            version: Some(7),
+            edits: vec![TextEdit {
+                range: make_range(0, 0, 2),
+                new_text: "v4".into(),
+            }],
+        }];
+        let edit = build_workspace_edit(edits, false);
+        assert!(
+            edit.document_changes.is_none(),
+            "must not use documentChanges when unsupported"
+        );
+        let changes = edit.changes.unwrap();
+        let file_edits = &changes[&uri];
+        assert_eq!(file_edits.len(), 1);
+        assert_eq!(file_edits[0].new_text, "v4");
     }
 }

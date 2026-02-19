@@ -29,7 +29,8 @@ use tower_lsp_server::ls_types::{
     InitializedParams, OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range,
     TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
     TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
-    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder,
+    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+    WorkspaceFolder,
 };
 use tower_lsp_server::{ClientSocket, LspService};
 
@@ -50,6 +51,10 @@ fn initialize_request(id: i64, workspace_root: Option<&str>) -> Request {
             workspace: Some(WorkspaceClientCapabilities {
                 did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                     dynamic_registration: Some(true),
+                    ..Default::default()
+                }),
+                workspace_edit: Some(WorkspaceEditClientCapabilities {
+                    document_changes: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
