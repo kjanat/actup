@@ -13,7 +13,7 @@
     "directory": "extensions/vscode"
   },
   "license": "MIT OR Apache-2.0",
-  "publisher": "Kaj Kowalski <info@kajkowalski.nl>",
+  "publisher": "kjanat",
   "main": "./out/extension.js",
   "scripts": {
     "compile": "tsc -p ./",
