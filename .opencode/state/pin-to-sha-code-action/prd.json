@@ -55,7 +55,7 @@
 			"description": "Add 'Pin {current} to SHA' code action for Outdated diagnostics using resolved_sha from cursor-based entries. Uses CodeActionKind::REFACTOR. Done when: action lets user pin current outdated ref to its SHA without updating.",
 			"depends": ["diagnostic-data-target-sha", "action-check-entry"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "pin-comment-config",

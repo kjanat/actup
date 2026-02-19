@@ -17,6 +17,8 @@ Started: 2026-02-19
 - `UsesLocation::value_range()` = byte range of full value; `ref_range()` = byte range after `@`. Both need `byte_to_col` conversion for LSP.
 - `ActionCheckEntry` stored in `DocumentState.entries` alongside `diagnostics` — populated for ALL refs (not just diagnostic-producing ones).
 - `DiagnosticResult.entries` is the transport from `compute_diagnostics` to `DocumentState`.
+- Cross-referencing diagnostics with entries: match by exact `ref_range` equality (both computed from same `LocatedAction`). Use `entries.iter().find(|e| e.ref_range == diag.range)`.
+- Adding `entries` param to `code_actions_for_diagnostics` is backward-compatible: existing callers pass `&[]` for no pin-current behavior.
 
 ---
 
@@ -77,3 +79,17 @@ Started: 2026-02-19
 - 5 new tests: `update_pin_action_replaces_ref_with_target_sha`, `update_pin_action_title_contains_short_sha`, `update_pin_action_links_diagnostic`, `update_pin_absent_when_no_target_sha`, `update_pin_uses_unversioned_changes_when_not_supported`
 - Files: `crates/lsp/src/code_actions.rs`
 - **Learnings:** Adding a second action per diagnostic changes action count in ALL existing tests that count actions from Outdated diagnostics. The `make_outdated_diagnostic` helper always sets `target_sha: Some(DUMMY_SHA)`, so every Outdated diagnostic now yields 2 actions.
+
+## Task - pin-current-code-action
+
+- Added `entries: &[ActionCheckEntry]` parameter to `code_actions_for_diagnostics()` — backward-compatible since existing callers pass `&[]`
+- In the `Outdated` arm, after existing actions, cross-references diagnostic range with entries to find current ref's `resolved_sha`
+- Emits "Pin {ref_str} to SHA ({short}...)" REFACTOR action when: matching entry found, `resolved_sha` is `Some`, ref is not already a SHA
+- Uses Rust 2024 let-chain syntax: `if let Some(entry) = ... && let Some(sha) = ... && !is_sha(...)` — collapsed per clippy `collapsible_if`
+- Updated `backend.rs` code_action handler: reads `(doc_version, entries)` in a single destructure from `DocumentState`, passes `&entries` to both `code_actions_for_diagnostics` and `pin_actions_for_cursor` (removed duplicate entries read)
+- Updated `diagnostics.rs`: `ActionCheckEntry.value_range` dead_code comment now says "D7" (was "D5/D6")
+- Added `#[allow(clippy::too_many_lines)]` on `code_actions_for_diagnostics` (now 106 lines, limit is 100)
+- All existing tests unaffected — pass `&[]` for entries, no pin-current action emitted
+- 9 new tests: `pin_current_action_replaces_ref_with_resolved_sha`, `pin_current_action_title_contains_current_ref_and_short_sha`, `pin_current_action_is_refactor_not_preferred`, `pin_current_action_links_diagnostic`, `pin_current_absent_when_no_matching_entry`, `pin_current_absent_when_no_resolved_sha`, `pin_current_absent_when_ref_already_sha`, `pin_current_absent_with_empty_entries`, `pin_current_uses_resolved_sha_not_target_sha`
+- Files: `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/diagnostics.rs`
+- **Learnings:** Cross-reference by exact `ref_range` equality is reliable since both diagnostic range and entry `ref_range` derive from the same `LocatedAction`. Adding `entries` param doesn't break existing tests that pass `&[]`. Consolidating document state reads (version + entries) into one destructure avoids duplicate `DashMap::get` calls.

@@ -640,9 +640,14 @@ impl LanguageServer for LspBackend {
 
         let mut actions = Vec::new();
 
-        // Snapshot the document version for versioned edits. `None` if the
-        // document isn't tracked (shouldn't happen in normal flow).
-        let doc_version = self.documents.get(&uri).map(|doc| doc.version);
+        // Snapshot the document version and entries for versioned edits.
+        // `None` version if the document isn't tracked (shouldn't happen in
+        // normal flow). Entries are needed for "Pin current to SHA" actions.
+        let (doc_version, entries) = self
+            .documents
+            .get(&uri)
+            .map(|doc| (Some(doc.version), doc.entries.clone()))
+            .unwrap_or_default();
         let supports_doc_changes = self.supports_document_changes().await;
 
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
@@ -660,6 +665,7 @@ impl LanguageServer for LspBackend {
                     &uri,
                     doc_version,
                     &cached,
+                    &entries,
                     supports_doc_changes,
                 )
             } else {
@@ -667,6 +673,7 @@ impl LanguageServer for LspBackend {
                     &uri,
                     doc_version,
                     context_diagnostics,
+                    &entries,
                     supports_doc_changes,
                 )
             };
@@ -699,11 +706,6 @@ impl LanguageServer for LspBackend {
             only,
             &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
         ) {
-            let entries = self
-                .documents
-                .get(&uri)
-                .map(|doc| doc.entries.clone())
-                .unwrap_or_default();
             let pin_actions = crate::code_actions::pin_actions_for_cursor(
                 &uri,
                 doc_version,
