@@ -1,0 +1,20 @@
+#:schema /home/kjanat/projects/zed-editor/crates/extension_api/schemas/extension.schema.json
+
+name           = "Actup"
+id             = "actup"
+schema_version = 1
+version        = "0.1.0"
+description    = "A Zed extension for actup"
+authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
+repository     = "https://github.com/kjanat/actup-v2"
+
+[language_servers.actup-lsp]
+languages = ["GitHub Actions", "YAML"]
+
+[language_servers.actup-lsp.language_ids]
+"GitHub Actions" = "github-actions"
+"YAML"           = "yaml"
+
+[grammars.yaml]
+repository = "https://github.com/zed-industries/tree-sitter-yaml"
+rev        = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
