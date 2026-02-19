@@ -19,3 +19,9 @@ args    = []
 [grammars.yaml]
 repository = "https://github.com/zed-industries/tree-sitter-yaml"
 rev        = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+
+# [context_servers.actup-mcp]
+
+[slash_commands."actions:update"]
+description       = "Update GitHub Actions uses: refs to the latest version"
+requires_argument = false
