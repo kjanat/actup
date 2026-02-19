@@ -1,0 +1,5 @@
+{
+	"actup.server.extraArgs": [],
+	"actup.server.path": "/home/kjanat/projects/actup-v2/target/debug/actup-lsp",
+	"actup.trace.server": "verbose"
+}
