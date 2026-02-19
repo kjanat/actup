@@ -442,6 +442,45 @@ fn parse_action_yml(raw: &str) -> Result<ActionYml> {
 }
 ```
 
+### 6. Export REGISTRATION
+
+Each provider crate must export a static `REGISTRATION` that supplies presets, inference logic, and a factory function. This enables
+zero-config for preset hosts and automatic `api_base` inference for self-hosted instances.
+
+```rust
+use actup_core::{Capabilities, HostKind, Preset, ProviderConfig, Registration};
+
+pub static REGISTRATION: Registration = Registration {
+    kind: HostKind::YourPlatform,
+    presets: &[Preset {
+        host: "yourplatform.com",
+        api_base: "https://api.yourplatform.com",
+        token_env: "YOURPLATFORM_TOKEN",
+    }],
+    default_token_env: Some("YOURPLATFORM_TOKEN"),
+    infer_api_base: |host| {
+        if host == "yourplatform.com" {
+            None // Preset already covers this
+        } else {
+            Some(format!("https://{host}/api/v1"))
+        }
+    },
+    capabilities: Capabilities {
+        supports_graphql: false,
+        supports_rest: true,
+    },
+    create: create_provider,
+};
+
+fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn actup_core::Provider>> {
+    let token = std::env::var(&config.token_env).ok();
+    let provider = YourProvider::new(&config.api_base, &config.host, token.as_deref())?;
+    Ok(Box::new(provider))
+}
+```
+
+Then add the provider to `available_registrations()` in the CLI crate behind a feature gate.
+
 ## Common Patterns
 
 ### Error Handling
@@ -697,6 +736,8 @@ if encoding == "base64" {
 - [ ] `parse_action_yml` is module-level function (not method)
 - [ ] Error handling uses proper `actup_core::Error` variants
 - [ ] SHAs validated with `Sha40::new()`
+- [ ] `REGISTRATION` static exported with presets, inference, and capabilities
+- [ ] `REGISTRATION` wired into `available_registrations()` behind feature gate
 - [ ] Tests added to `tests/integration.rs`
 - [ ] Documentation includes usage examples
 - [ ] Added to workspace `Cargo.toml` members

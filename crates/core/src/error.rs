@@ -34,7 +34,6 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`YamlParse`]: Error::YamlParse
 #[derive(Debug)]
 pub enum Error {
-    // === User Errors (fixable by user) ===
     /// Invalid `uses:` reference syntax
     InvalidRef {
         /// The malformed reference string
@@ -104,7 +103,6 @@ pub enum Error {
         reason: String,
     },
 
-    // === Environment Errors (external factors) ===
     /// Network request failed
     Network {
         /// What we were trying to do

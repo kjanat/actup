@@ -28,23 +28,42 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
   test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix: { os: [ubuntu-latest, macos-latest, windows-latest] }
+    name: Test
+    runs-on: ubuntu-latest
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
-      - name: Run tests
-        run: cargo nextest run --workspace --all-features --profile ci
-      - name: Run tests (no default features)
-        run: cargo nextest run --workspace --no-default-features --profile ci
-      - name: Run doctests
-        run: cargo test --doc --workspace --all-features
+      - run: cargo nextest run --workspace --all-features --profile ci
+      - run: cargo nextest run --workspace --no-default-features --profile ci
+      - run: cargo test --doc --workspace --all-features
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
+        uses: codecov/codecov-action@v5
+        with:
+          files: target/nextest/ci/junit.xml
+          report_type: test_results
+          fail_ci_if_error: false
+          token: ${{ env.CODECOV_TOKEN }}
+
+  test-platforms:
+    name: Test (${{ matrix.os }})
+    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full')
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: { os: [macos-latest, windows-latest] }
+    env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run --workspace --all-features --profile ci
+      - run: cargo nextest run --workspace --no-default-features --profile ci
+      - run: cargo test --doc --workspace --all-features
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@v5
@@ -100,14 +119,16 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, doc, deny, coverage]
+    needs: [fmt, clippy, test, test-platforms, doc, deny, coverage]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
         run: |
+          # test-platforms may be skipped on PRs without ci:full label
           if [[ "${{ needs.fmt.result }}" != "success" ]] || \
              [[ "${{ needs.clippy.result }}" != "success" ]] || \
              [[ "${{ needs.test.result }}" != "success" ]] || \
+             [[ "${{ needs.test-platforms.result }}" == "failure" ]] || \
              [[ "${{ needs.doc.result }}" != "success" ]] || \
              [[ "${{ needs.deny.result }}" != "success" ]] || \
              [[ "${{ needs.coverage.result }}" != "success" ]]; then

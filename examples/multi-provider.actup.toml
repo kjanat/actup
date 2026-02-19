@@ -7,51 +7,44 @@ update_policy    = "minor"
 ref_style        = "preserve"
 branch_policy    = "warn"
 allow_prerelease = false
+default_host     = "github.com"
 
 [cache]
 ttl     = 86400
 enabled = true
 
-[providers]
-# Default provider (used when no host specified in action ref)
-default_kind = "github"
-default_host = "github.com"
+[fetch]
+api_mode          = "graphql"
+max_tags_per_repo = 10
 
-# Configure multiple provider instances
-# Each instance can serve a different host or the same host with different credentials
+# Per-host configurations (keyed by hostname)
 
 # GitHub Enterprise instance
-[[providers.instances]]
+[hosts."github.enterprise.com"]
 kind      = "github"
-host      = "github.enterprise.com"
 api_base  = "https://github.enterprise.com/api/v3"
-token_env = "GHE_TOKEN"                             # Read token from this environment variable
+token_env = "GHE_TOKEN"
 
 # GitLab.com (requires gitlab feature)
-[[providers.instances]]
+[hosts."gitlab.com"]
 kind      = "gitlab"
-host      = "gitlab.com"
-# api_base is optional, defaults to https://gitlab.com/api/v4
 token_env = "GITLAB_TOKEN"
 
 # Self-hosted GitLab instance
-[[providers.instances]]
+[hosts."gitlab.example.com"]
 kind      = "gitlab"
-host      = "gitlab.example.com"
-api_base  = "https://gitlab.example.com"  # Will append /api/v4
+api_base  = "https://gitlab.example.com"
 token_env = "GITLAB_PRIVATE_TOKEN"
 
 # Gitea instance (requires gitea feature)
-[[providers.instances]]
+[hosts."gitea.example.com"]
 kind      = "gitea"
-host      = "gitea.example.com"
-api_base  = "https://gitea.example.com"  # Will append /api/v1
+api_base  = "https://gitea.example.com"
 token_env = "GITEA_TOKEN"
 
 # Forgejo instance (uses Gitea provider - same API)
-[[providers.instances]]
-kind      = "forgejo"                      # Alias for "gitea"
-host      = "forgejo.example.com"
+[hosts."forgejo.example.com"]
+kind      = "gitea"
 api_base  = "https://forgejo.example.com"
 token_env = "FORGEJO_TOKEN"
 

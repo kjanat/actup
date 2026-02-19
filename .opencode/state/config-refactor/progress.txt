@@ -1,0 +1,261 @@
+# Progress Log
+
+PRD: config-refactor
+Started: 2026-02-18
+
+## Codebase Patterns
+
+- Config types live in `crates/core/src/config/mod.rs`, re-exported via `crates/core/src/lib.rs`
+- Crate dir is `crates/core/` (not `crates/actup-core/` as AGENTS.md suggests)
+- Enums use `#[serde(rename_all = "lowercase")]` for TOML/JSON serialization
+- Tests in same file via `#[cfg(test)] mod tests`, use `#[allow(clippy::unwrap_used)]`
+- `serde_json` + `toml` available as dev-deps for round-trip tests
+- `deny_unknown_fields` used on `FetchSettings` and `HostConfig`
+- `Hash` derive needed on `HostKind` for use as `HashMap` key in later tasks
+- Registration types in `config/registration.rs` submodule, re-exported from `lib.rs`
+- `Registration` uses `fn` pointer fields (`infer_api_base`, `create`); needs manual `Debug` impl with `finish_non_exhaustive()`
+- CLI `build_registry()` in `crates/actup/src/main.rs` — main consumer of config provider fields; calls `available_registrations()` for early preset validation
+- `available_registrations()` in `crates/actup/src/main.rs` — feature-gated provider assembly; can't live in `actup-providers` due to circular deps
+- Validation functions in `config/validation.rs` submodule, re-exported from `lib.rs`
+- Validation errors use `Error::InvalidConfig { path: context, reason }` — `path` field doubles as context string (e.g. `"hosts"`, `"default_host"`, `"host \"ghe.corp.com\""`)
+- `validate_api_base` returns normalized `String` (trailing `/` stripped) — caller should use returned value
+- Config display in `crates/actup/src/commands/config.rs` — human-readable config output; `run()` takes `&[&'static Registration]` to resolve effective host configs
+- Example configs in `examples/` — must be kept in sync with config struct changes
+- `Config` has `#[serde(default)]` on the struct, so all new fields must either have `Default` or be `Option`
+- Resolution logic in `config/resolution.rs` submodule — `effective_host()` is the entry point for hostname-to-`ProviderConfig` resolution; `resolve_default_host()` handles `default_host` fallback to `"github.com"` preset
+- `effective_host()` takes `&Config`, `&[&Registration]`, and `&FetchSettings` — re-exported from `actup_core`; CLI calls it per-host in `build_registry()`
+- `build_registry()` uses `resolve_and_register()` helper: `effective_host()` → find registration by kind → `(registration.create)(config)` → `registry.register(provider)`
+- `Registration::create` returns `Box<dyn Provider>` — can't wrap in `CachingProvider<P>` without blanket `impl Provider for Box<dyn Provider>` (follow-up improvement)
+- CLI no longer directly imports provider types (`GitHubProvider`, etc.) — only references `REGISTRATION` statics via `available_registrations()`
+- `HostConfig` has no `Default` impl — must construct with explicit `None` fields or helper fn; `..Default::default()` will not compile
+- JSON schema generated from `Config` via `schemars::schema_for!` macro — run `just schema` after config struct changes; `schema_file_matches_generated` integration test catches drift
+
+---
+
+<!-- Task logs below - APPEND ONLY -->
+
+## Task - hostkind-enum
+
+- Added `HostKind` enum with `Github`, `Gitlab`, `Gitea` variants
+- Derives: `Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema`
+- `#[serde(rename_all = "lowercase")]` + `Display` impl
+- Re-exported from `actup_core::HostKind`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- Tests: serde round-trip, display, rejects unknown, case-sensitive, hashable
+- **Learnings:** Added `Hash` beyond spec minimum since `HostKind` will be used as HashMap key in `hosts` map and registration lookup
+
+## Task - fetch-settings
+
+- Added `FetchSettings` struct with `api_mode: ApiMode` and `max_tags_per_repo: NonZeroU8`
+- `#[serde(default, deny_unknown_fields)]` per spec
+- `Default` impl returns `Graphql` + `10` (reuses existing `DEFAULT_MAX_TAGS_PER_REPO` const)
+- Re-exported from `actup_core::FetchSettings`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- Tests: default values, serde roundtrip, custom values, partial deserialization, empty object defaults, rejects zero, deny unknown fields, boundary (255/256)
+- **Learnings:** `deny_unknown_fields` works correctly with `serde_json`; `NonZeroU8` serde rejects 0 automatically
+
+## Task - host-config
+
+- Added `HostConfig` struct with all-`Option` fields: `kind`, `api_base`, `token_env`, `api_mode`, `max_tags_per_repo`
+- `#[serde(deny_unknown_fields)]` for typo protection, NO `#[serde(default)]` since fields are explicit overrides
+- `#[allow(clippy::module_name_repetitions)]` needed (same as `Config` struct)
+- Re-exported from `actup_core::HostConfig`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- **Learnings:** `HostConfig` intentionally has no `Default` impl — all fields are `Option` overrides, not defaults. `deny_unknown_fields` without `default` means deserialization requires no extra fields but doesn't fill missing ones
+
+## Task - test-config-types
+
+- Added HostConfig tests: all fields, no fields, partial (kind-only, fetch-overrides-only), deny_unknown_fields, invalid kind, zero max_tags, serde roundtrip, each kind variant
+- Added TOML deserialization tests for all three types: HostKind, FetchSettings (full + empty), HostConfig (full + minimal + deny_unknown + hosts map)
+- Hosts map test validates realistic `[hosts."hostname"]` TOML with 2 entries
+- Added `toml` as dev-dep to `actup-core`
+- Files changed: `crates/core/src/config/mod.rs`, `crates/core/Cargo.toml`
+- **Learnings:** `NonZeroU8::get` method reference preferred over `|n| n.get()` closure (clippy `redundant_closure_for_method_calls`); TOML deserialization of empty string into `#[serde(default)]` struct works same as `{}`
+
+## Task - registration-types
+
+- Added `config/registration.rs` submodule with `Preset`, `Capabilities`, `ProviderConfig`, `Registration` types
+- `Preset`: `&'static str` fields (host, api_base, token_env) — zero-cost for static registration
+- `Capabilities`: `supports_graphql` + `supports_rest` bools for api_mode validation
+- `ProviderConfig`: fully-resolved host config (all required fields non-Option) — passed to `Registration::create`
+- `Registration`: kind, presets slice, default_token_env, `infer_api_base` fn, capabilities, `create` fn
+- Custom `Debug` impl on `Registration` (fn pointers not Debug-derivable), uses `finish_non_exhaustive()`
+- Re-exported from `actup_core::{Capabilities, Preset, ProviderConfig, Registration}`
+- 9 tests: preset/capabilities/provider_config construction, registration construction + infer_api_base + create + debug + multiple/no presets
+- Files changed: `crates/core/src/config/registration.rs` (new), `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- **Learnings:** `fn` pointers don't implement `Debug`, so `Registration` needs a manual `Debug` impl; `finish_non_exhaustive()` is cleaner than omitting fn fields. Separate submodule keeps `config/mod.rs` from growing unboundedly
+
+## Task - test-registration-types
+
+- Added 18 new tests (12 existing → 30 total) for registration types
+- `Preset`: `Copy`/`Clone` semantics, `Debug` output, GitLab/Gitea preset patterns
+- `Capabilities`: no-modes edge case, `Copy` semantics, `Debug` output verification
+- `ProviderConfig`: `Clone`, `Debug` output, all three `HostKind` variants, `max_tags` boundary (255)
+- `Registration`: debug excludes fn pointers (verifies `..` marker), `infer_api_base` always-`None`, Gitea inference, `create` receives correct config, debug includes preset details
+- Files changed: `crates/core/src/config/registration.rs`
+- **Learnings:** `finish_non_exhaustive()` produces `..` in debug output; useful for asserting fn pointers are properly excluded
+
+## Task - wire-config-fields
+
+- Replaced `providers: Providers` field in `Config` with `default_host: Option<String>`, `fetch: FetchSettings`, `hosts: HashMap<String, HostConfig>`
+- Removed `Providers` struct (with `default_kind`, `default_host`, `instances`, `api_mode`, `max_tags_per_repo`) and `ProviderInstance` struct
+- Kept `DEFAULT_MAX_TAGS_PER_REPO` const (still used by `FetchSettings::default()`)
+- Updated CLI `build_registry()`: iterates `config.hosts` instead of `config.providers.instances`, uses `config.default_host` instead of `config.providers.default_host`
+- Updated `config` command display: shows `Hosts` + `Fetch` sections instead of `Providers`
+- Updated `.actup.toml` from `[providers]` to `[fetch]` + `default_host` top-level
+- Updated `examples/multi-provider.actup.toml` from `[[providers.instances]]` to `[hosts."hostname"]`
+- Added 4 new Config-level TOML tests: full config, empty defaults, fetch-only, multiple hosts
+- Updated `test_config_default` to assert new fields
+- Removed `test_providers_config_default` (struct no longer exists)
+- Files changed: `crates/core/src/config/mod.rs`, `crates/actup/src/main.rs`, `crates/actup/src/commands/config.rs`, `.actup.toml`, `examples/multi-provider.actup.toml`
+- **Learnings:** `Providers` and `ProviderInstance` were NOT re-exported from `lib.rs` — only consumed by CLI crate directly via `config.providers.*`. JSON schema in `schemas/` still references old types but is auto-generated (separate `json-schema` PRD task). `docs/providers.md` and `AGENTS.md` still reference old `[[providers.instances]]` format — covered by `docs-update` task.
+
+## Task - github-registration
+
+- Exported `pub static REGISTRATION: Registration` from `actup_provider_github::lib`
+- Preset: `github.com` / `https://api.github.com` / `GITHUB_TOKEN`
+- `default_token_env: Some("GITHUB_TOKEN")`
+- `infer_api_base`: returns `None` for `github.com`, `Some("https://{host}/api/v3")` for GHE
+- Capabilities: `supports_graphql: true, supports_rest: true`
+- `create_github_provider` fn reads token from env via `config.token_env`, calls `GitHubProvider::with_host`
+- Added `#[allow(clippy::needless_pass_by_value)]` on `create_github_provider` — signature must match `Registration::create` fn pointer type
+- Files changed: `crates/provider-github/src/lib.rs`
+- **Learnings:** `Registration::create` fn pointer takes `ProviderConfig` by value, which triggers clippy `needless_pass_by_value` on the implementing function since not all fields are moved. Allow-lint is the correct fix since the signature is dictated by the trait. Named `fn` (not closure) required for `static` initializer — closures can't be used in static context even if they don't capture.
+
+## Task - test-github-registration
+
+- Added 15 tests to `crates/provider-github/src/lib.rs` in `#[cfg(test)] mod tests`
+- Preset verification: host, api_base, token_env values, count (1 preset), kind
+- `default_token_env` matches preset
+- Capabilities: both `supports_graphql` and `supports_rest` true
+- `infer_api_base`: returns `None` for `github.com`, `https://{host}/api/v3` for GHE hosts (tested 3 variants: standard, subdomain, short hostname)
+- `create` fn: succeeds for both github.com and GHE with nonexistent token env var (unauthenticated mode)
+- Preset values cross-checked against module constants (`GITHUB_HOST`, `GITHUB_API_HOST`)
+- Debug output verified: includes kind/presets/token, excludes fn pointers
+- Files changed: `crates/provider-github/src/lib.rs`
+- **Learnings:** Tests against the real `REGISTRATION` static (not mocks) give stronger guarantees — verifies the actual wiring. `create` fn works without token env set since `GitHubProvider::with_host` accepts `None` token.
+
+## Task - available-registrations
+
+- Added `validate_no_duplicate_presets()` to `crates/core/src/config/registration.rs` — panics on duplicate preset hostnames across registrations
+- Re-exported `validate_no_duplicate_presets` from `actup_core`
+- Added `available_registrations()` to `crates/actup/src/main.rs` — feature-gated assembly of provider registrations
+- GitHub always included (non-optional dep); GitLab/Gitea gated by `#[cfg(feature = "...")]` (commented until providers export `REGISTRATION`)
+- Wired into `build_registry()` for early preset validation (prevents dead_code warning)
+- 9 tests for `validate_no_duplicate_presets`: empty, single, disjoint, no-presets, duplicate across kinds, duplicate within kind, multiple presets per registration, panic message content
+- 7 tests for `available_registrations`: includes_github, nonempty, no_duplicate_presets, github_preset_host, all_have_capabilities, is_deterministic, expected_count
+- Files changed: `crates/core/src/config/registration.rs`, `crates/core/src/lib.rs`, `crates/actup/src/main.rs`
+- **Learnings:** `pub(crate)` on functions in binary crates triggers dead_code warning even if tests use it (tests compile as separate target). Plain `fn` + `super::*` in test module works without the warning. `_registrations` binding silences `#[must_use]` on the return value. `actup-providers` crate can't host `available_registrations()` due to circular deps (provider crates depend on it).
+
+## Task - validation
+
+- Added `config/validation.rs` submodule with three public validation functions
+- `validate_hostname(hostname, context)`: rejects empty, uppercase, schemes, paths, ports, whitespace
+- `validate_api_base(api_base, context)`: requires `http://` or `https://` scheme, rejects `?`/`#`, strips trailing `/`, returns normalized `String`
+- `validate_provider_config(config)`: post-merge check that `api_base` and `token_env` are non-empty, delegates to `validate_api_base` for URL shape
+- All return `Error::InvalidConfig` with descriptive messages including the hostname/context
+- Re-exported from `actup_core::{validate_hostname, validate_api_base, validate_provider_config}`
+- 27 tests: 16 hostname (valid simple/subdomain/short/hyphens, rejects empty/uppercase/caps/https/http/path/port/leading-trailing-internal-whitespace/tab, context propagation), 7 api_base (valid https/http/path, strips trailing slashes, rejects empty/no-scheme/ftp/query/fragment, context propagation), 8 provider_config (valid github/ghe, rejects empty api_base/token_env/invalid api_base, host in error, query/fragment rejected)
+- Files changed: `crates/core/src/config/validation.rs` (new), `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- **Learnings:** `Error::InvalidConfig.path` field works well as a generic context string (not just file paths). `validate_api_base` returns the normalized value rather than mutating — functional style fits better with the resolution pipeline where the caller will build `ProviderConfig`. `kind` validation (required after merge) is deferred to `effective_host()` in the resolution-logic task since it requires registration lookup.
+
+## Task - test-validation
+
+- Expanded validation test suite from 27 → 60 tests (33 new tests)
+- Hostname: added newline rejection, numeric IP-like hostnames, single-char valid, uppercase suggestion in error message, scheme-without-slashes (`:` → port error), `hosts` context propagation, validation priority ordering (case check before scheme)
+- api_base: added `ssh://` rejection, port-in-URL valid, `http://localhost:3000` valid, path-with-trailing-slash normalization, GitLab `/api/v4` valid, Gitea `/api/v1` valid, query-with-path rejection, fragment-with-path rejection, bare hostname rejection
+- ProviderConfig: added GitLab/Gitea kind variants, trailing-slash-through-delegation, empty-before-shape error ordering, token_env-after-api_base ordering, both-empty-api_base-wins priority, error format host prefix, max/min tags boundary (255/1)
+- Files changed: `crates/core/src/config/validation.rs`
+- **Learnings:** Validation error ordering matters for UX — empty checks before shape checks gives clearer messages. The `validate_provider_config` delegates to `validate_api_base` but doesn't expose the normalized return value — that's intentional since the caller already has a `ProviderConfig` with a concrete `api_base` string. Hostname validation runs case check before scheme check, so `https://GitHub.com` gets a "lowercase" error, not "scheme" — correct priority since fixing case first is more actionable.
+
+## Task - resolution-logic
+
+- Added `config/resolution.rs` submodule with `effective_host()` and `resolve_default_host()` public functions
+- `effective_host()` implements 7-step spec algorithm: preset lookup -> user override merge -> kind validation -> registration lookup by kind -> defaults/inference (token_env, api_base) -> required field validation + api_base normalization -> api_mode capability check
+- `resolve_default_host()` validates `config.default_host` resolves (preset or hosts entry), falls back to `"github.com"` preset
+- Extracted `build_and_validate()` and `validate_api_mode_capability()` helpers to keep `effective_host` under 100 lines (clippy `too_many_lines`)
+- `build_preset_index()` builds `HashMap<&str, (&Registration, &Preset)>` for O(1) hostname lookups
+- `find_registration_by_kind()` for step 4 kind-to-registration dispatch
+- `capability_list()` formats human-readable supported modes for error messages
+- Re-exported `effective_host` and `resolve_default_host` from `actup_core`
+- 36 tests covering all 7 algorithm steps + error paths + precedence + normalization
+- Files changed: `crates/core/src/config/resolution.rs` (new), `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`
+- **Learnings:** `effective_host` naturally grows past 100 lines with 7 spec steps — extract validation into separate fns. `Capabilities` is `Copy` so `capability_list` takes by value per clippy `trivially_copy_pass_by_ref`. Tests that set `Config::default_host` should use struct literal with `..Default::default()` not `mut` + reassign (clippy `field_reassign_with_default`). `PresetIndex` type alias keeps the `HashMap<&str, (&Registration, &Preset)>` readable.
+
+## Task - test-resolution-logic
+
+- Expanded resolution test suite from 36 → 77 tests (41 new tests)
+- Step 1 (preset): `preset_populates_all_fields_from_registration`, `non_preset_host_starts_empty`
+- Step 2 (merge): `user_overrides_all_preset_fields_simultaneously`, `user_none_fields_preserve_preset_values`, `preset_token_env_preserved_when_user_sets_other_fields`
+- Step 3 (kind required): `error_kind_required_message_includes_hostname`, `non_preset_no_hosts_entry_errors_kind_required`
+- Step 4 (registration lookup): `error_no_registrations_at_all`, `error_kind_not_compiled_lists_all_available`, `find_registration_empty_list`, `find_registration_returns_first_match`
+- Step 5 (defaults/inference): `default_token_env_used_when_not_in_preset_or_user`, `user_token_env_overrides_default_token_env`, `infer_api_base_called_when_not_preset_and_not_user`, `user_api_base_overrides_inference`, `inference_returns_none_and_no_user_api_base_errors`
+- Step 6 (validation): `error_invalid_api_base_shape_via_user_override`, `error_api_base_with_query_string`, `multiple_trailing_slashes_stripped`
+- Step 7 (capability): `graphql_only_provider_rejects_rest`, `rest_only_provider_succeeds_with_rest_mode`, `both_modes_supported_allows_graphql`, `both_modes_supported_allows_rest`, `host_api_mode_override_checked_against_capability`, `capability_list_graphql_only`
+- Precedence: `host_max_tags_overrides_fetch`, `max_tags_boundary_255`, `max_tags_boundary_1`
+- Hostname validation integration: `error_empty_hostname`, `error_hostname_with_whitespace`, `error_hostname_with_path`, `error_hostname_with_port`
+- Multi-registration: `three_registrations_all_resolve_own_presets`, `non_preset_gitea_with_all_three_registrations`
+- `resolve_default_host`: `resolve_default_host_with_multiple_registrations`, `resolve_default_host_explicit_gitlab`, `resolve_default_host_empty_registrations_no_default`, `resolve_default_host_explicit_but_invalid_hostname`, `resolve_default_host_hosts_entry_without_preset`
+- Helpers: `preset_index_skips_registration_without_presets`
+- Idempotency: `effective_host_idempotent`
+- Files changed: `crates/core/src/config/resolution.rs`
+- **Learnings:** Clippy `similar_names` triggers on `gh_result`/`gl_result` — use full `github_result`/`gitlab_result`. Single-char string patterns should use `char` (`'?'` not `"?"`). Hypothetical registrations with unusual capabilities (graphql-only) are useful for testing error paths that don't exist with real providers yet.
+
+## Task - cli-build-registry
+
+- Replaced manual kind-matching `build_registry()` with registration-based approach
+- New `resolve_and_register()` helper: calls `effective_host()` to get `ProviderConfig`, finds registration by kind, calls `(registration.create)(config)`, registers provider
+- `build_registry()` now: (1) `resolve_default_host()` for validated default, (2) resolves all explicit `config.hosts` entries, (3) ensures default host always registered even without explicit entry
+- Removed direct provider type imports (`GitHubProvider`, `GitLabProvider`, `GiteaProvider`) — CLI only references `REGISTRATION` statics now
+- Removed `CachingProvider` wrapping since `Registration::create` returns `Box<dyn Provider>` and `CachingProvider<P>` requires concrete `P: Provider`
+- Removed ~95 lines of manual provider construction (kind matching, api_base inference, token reading) — all delegated to `effective_host()` + registration `create` fn
+- Files changed: `crates/actup/src/main.rs`
+- **Learnings:** `CachingProvider<P: Provider>` can't wrap `Box<dyn Provider>` without a blanket impl. This is a follow-up improvement — either add `impl Provider for Box<dyn Provider>` in core, or have `Registration::create` return a wrapped type. The in-memory dedup is an optimization, not correctness; providers still work without it. `resolve_default_host()` properly validates the default and falls back to `"github.com"` preset — eliminates the old hardcoded `unwrap_or("github.com")` pattern.
+
+## Task - test-cli-integration
+
+- Added 11 `build_registry` unit tests in `main.rs`: empty config uses github.com preset, explicit default_host, default_host always registered, hosts entry dedup, GHE requires kind, GHE with github kind succeeds, invalid hostname errors, invalid default_host errors, invalid api_base errors, fetch settings propagated, multiple hosts
+- Added 13 integration tests in `cli_integration.rs` `new_config_format_tests` module: empty config defaults, `[fetch]` overrides, `[hosts]` loading, `default_host` loading, multiple hosts, per-host fetch overrides, full new-format config, JSON/TOML serialize roundtrip, config JSON/TOML output field verification, invalid unknown fields in hosts/fetch, invalid host kind
+- Helper fns `host_config_with_kind()` and `host_config_empty()` for constructing `HostConfig` without `Default` impl
+- Files changed: `crates/actup/src/main.rs`, `crates/actup/tests/cli_integration.rs`
+- **Learnings:** `HostConfig` intentionally has no `Default` — helper fns or explicit construction needed in tests. Integration tests in `tests/` need `#![allow(clippy::unwrap_used, clippy::expect_used)]` at module level since workspace-level clippy denies both. Existing `test_support` module with `ok_or_panic`/`some_or_panic` is the established pattern for integration tests.
+
+## Task - config-command
+
+- Refactored `config::run()` to accept `&[&'static Registration]` alongside `&Config`
+- Updated `main.rs` call site: `Command::Config` now calls `available_registrations()` before `config::run()`
+- Restructured human display: separated `Fetch` (global settings) from `Hosts` (per-host resolved config)
+- Added `display_hosts()`: resolves default host via `resolve_default_host()`, shows preset vs explicit annotation
+- Added `display_effective_host()`: calls `effective_host()` per host, shows fully resolved `ProviderConfig` fields with source annotations: `(preset)`, `(user override)`, `(inferred)`, `(host override)`, `(from [fetch])`, `(default)`
+- Default host displayed first if not in explicit `[hosts]` entries; hosts sorted alphabetically
+- Error case: unresolvable hosts show red error with `(no config entry)` suffix when applicable
+- Added `source_label()` helper for consistent annotation formatting using `owo_colors::OwoColorize::dimmed()`
+- JSON/TOML output unchanged (serializes raw `Config` struct — effective resolution is a display concern)
+- Files changed: `crates/actup/src/commands/config.rs`, `crates/actup/src/main.rs`
+- **Learnings:** `config::run()` needs registrations to resolve effective config, but JSON/TOML output should stay raw (users may want to see what's in their config file, not the resolved values). `sort_unstable()` preferred over `sort()` for `&str` slices (clippy `stable_sort_primitive`). Source annotation logic is inherently per-field — no good way to generalize without overcomplicating.
+
+## Task - json-schema
+
+- Regenerated `schemas/actup-config.schema.json` via `just schema` (`cargo run --bin actup -- schema`)
+- Old types removed from schema: `Providers`, `ProviderInstance`, `providers` property
+- New types present: `FetchSettings`, `HostConfig`, `HostKind`, `default_host`, `fetch`, `hosts`
+- `HostConfig` and `FetchSettings` correctly have `"additionalProperties": false` (deny_unknown_fields)
+- `HostKind` has `oneOf` with `github`, `gitlab`, `gitea` consts
+- `hosts` is `object` with `additionalProperties` referencing `$defs/HostConfig`
+- Added 8 schema drift-detection tests in `cli_integration.rs::schema_tests`: file-matches-generated, has-new-types, no-old-types, top-level-properties, fetch-deny-unknown, host-deny-unknown, hostkind-variants, hosts-keyed-by-hostname
+- Example configs (`.actup.toml`, `examples/multi-provider.actup.toml`) already use new format from `wire-config-fields` task
+- Files changed: `schemas/actup-config.schema.json`, `crates/actup/tests/cli_integration.rs`
+- **Learnings:** `schema_file_matches_generated` test with `include_str!` is the strongest drift guard — catches any struct/derive/serde change. `just schema` is the canonical regeneration command. Schema is derived from `schemars::JsonSchema` derive macro, so schema always reflects the Rust types — no manual editing needed.
+
+## Task - docs-update
+
+- Updated `docs/providers.md`: replaced all 6 `[[providers.instances]]` config blocks with `[hosts."hostname"]` format
+- Updated `docs/providers.md`: revised Provider Selection Algorithm to describe registration-based `effective_host()` flow
+- Updated `docs/providers.md`: added `REGISTRATION` items to Provider Quality Checklist
+- Updated `docs/providers.md`: added Migration from Old Config Format section with full mapping table
+- Updated `AGENTS.md`: replaced `[providers.default]` + `[[providers.instances]]` example with `default_host` + `[fetch]` + `[hosts]` structure
+- Updated `docs/implementing-providers.md`: added Step 6 (Export REGISTRATION) with full example code
+- Updated `docs/implementing-providers.md`: added REGISTRATION items to implementation checklist
+- No code changes — docs-only
+- Files changed: `docs/providers.md`, `AGENTS.md`, `docs/implementing-providers.md`
+- **Learnings:** Example configs (`.actup.toml`, `examples/multi-provider.actup.toml`) were already updated in the `wire-config-fields` task. `DESIGN.md` and `REFERENCE.md` had no old-format references. The spec file (`specs/config-refactor.md`) intentionally retains old format references in the migration table — that's the correct place for them.

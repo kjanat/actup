@@ -25,8 +25,14 @@ pub mod version;
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};
 pub use caching_provider::{CacheStats, CachingProvider};
+pub use config::registration::{
+    Capabilities, Preset, ProviderConfig, Registration, validate_no_duplicate_presets,
+};
+pub use config::resolution::{effective_host, resolve_default_host};
+pub use config::validation::{validate_api_base, validate_hostname, validate_provider_config};
 pub use config::{
-    ApiMode, CONFIG_EXTENSIONS, Config, find_repo_config, iter_config_candidates, user_config_path,
+    ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, HostConfig, HostKind, find_repo_config,
+    iter_config_candidates, user_config_path,
 };
 pub use discovery::{DiscoveredFile, FileKind, discover_files};
 pub use error::{Error, Result};
