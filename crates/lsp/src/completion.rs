@@ -22,66 +22,68 @@ use crate::file_cache::FileCache;
 /// These are the most commonly used actions in the ecosystem. The list is
 /// intentionally small and hardcoded — it serves as a convenience for common
 /// workflows, not a comprehensive registry.
+///
+/// Last updated: February 2026
 const POPULAR_ACTIONS: &[PopularAction] = &[
     PopularAction {
         owner: "actions",
         repo: "checkout",
         description: "Check out a repository",
-        default_ref: "v4",
+        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-node",
         description: "Set up Node.js environment",
-        default_ref: "v4",
+        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-python",
         description: "Set up Python environment",
-        default_ref: "v5",
+        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "cache",
         description: "Cache dependencies and build outputs",
-        default_ref: "v4",
+        default_ref: "v5",
     },
     PopularAction {
         owner: "actions",
         repo: "upload-artifact",
         description: "Upload build artifacts",
-        default_ref: "v4",
+        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "download-artifact",
         description: "Download build artifacts",
-        default_ref: "v4",
+        default_ref: "v7",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-go",
         description: "Set up Go environment",
-        default_ref: "v5",
+        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-java",
         description: "Set up Java JDK environment",
-        default_ref: "v4",
+        default_ref: "v5",
     },
     PopularAction {
         owner: "actions",
         repo: "github-script",
         description: "Run JavaScript in workflow with GitHub API",
-        default_ref: "v7",
+        default_ref: "v8",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-dotnet",
         description: "Set up .NET SDK environment",
-        default_ref: "v4",
+        default_ref: "v5",
     },
     PopularAction {
         owner: "docker",
@@ -582,7 +584,7 @@ mod tests {
         let items = action_completions("actions/checkout");
         assert_eq!(items.len(), 1);
         let item = &items[0];
-        assert_eq!(item.insert_text.as_deref(), Some("actions/checkout@v4"));
+        assert_eq!(item.insert_text.as_deref(), Some("actions/checkout@v6"));
     }
 
     #[test]
