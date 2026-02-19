@@ -76,7 +76,7 @@ fn make_edit(
 /// Diagnostics without embedded [`DiagnosticData`] or from other sources
 /// are silently skipped.
 ///
-/// `entries` supplies per-ref metadata (from [`DocumentState`]) used to
+/// `entries` supplies per-ref metadata (from `DocumentState`) used to
 /// cross-reference the current ref's SHA. Entries are matched to diagnostics
 /// by exact `ref_range` equality.
 ///
@@ -84,7 +84,7 @@ fn make_edit(
 /// tracked documents, `None` for untracked (shouldn't happen in normal flow).
 ///
 /// `pin_comment` controls whether SHA replacement text includes a trailing
-/// `# {ref}` YAML comment (from [`Config::pin.comment`]).
+/// `# {ref}` YAML comment (from `Config::pin.comment`).
 ///
 /// `supports_document_changes` gates whether the edit uses versioned
 /// `documentChanges` or falls back to unversioned `changes`.
