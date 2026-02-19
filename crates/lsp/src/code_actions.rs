@@ -65,10 +65,10 @@ fn make_edit(
 ///
 /// For each `Outdated` diagnostic, produces:
 /// - A quickfix "Update to vX.Y.Z" that replaces only the ref portion
-/// - A refactor "Update & pin to SHA (abcdef1...)" when `target_sha` is
-///   available, replacing the ref with the target's resolved commit SHA
-/// - A refactor "Pin {current} to SHA (abcdef1...)" when a matching
-///   [`ActionCheckEntry`] provides `resolved_sha` for the current ref
+/// - A refactor "Update & pin to SHA ({full_sha})" when `target_sha` is
+///   a valid 40-char SHA, replacing the ref with the target's resolved commit SHA
+/// - A refactor "Pin {current} to SHA ({full_sha})" when a matching
+///   [`ActionCheckEntry`] provides a valid 40-char `resolved_sha` for the current ref
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
@@ -139,14 +139,15 @@ pub fn code_actions_for_diagnostics(
 
                 // "Update & pin to SHA" — replaces ref with the target's
                 // resolved commit SHA instead of its tag name.
-                if let Some(sha) = &target_sha {
-                    let short = sha.get(..7).unwrap_or(sha);
+                if let Some(sha) = &target_sha
+                    && is_sha(sha)
+                {
                     let pin_edit = TextEdit {
                         range: diag.range,
                         new_text: format_pin_text(sha, &target_ref, pin_comment),
                     };
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                        title: format!("Update & pin to SHA ({short}...)"),
+                        title: format!("Update & pin to SHA ({sha})"),
                         kind: Some(CodeActionKind::REFACTOR),
                         diagnostics: Some(vec![diag.clone()]),
                         edit: Some(make_edit(
@@ -165,15 +166,15 @@ pub fn code_actions_for_diagnostics(
                 // Requires cross-referencing with `ActionCheckEntry` data.
                 if let Some(entry) = entries.iter().find(|e| e.ref_range == diag.range)
                     && let Some(sha) = &entry.resolved_sha
+                    && is_sha(sha)
                     && !is_sha(&entry.ref_str)
                 {
-                    let short = sha.get(..7).unwrap_or(sha);
                     let pin_edit = TextEdit {
                         range: diag.range,
                         new_text: format_pin_text(sha, &entry.ref_str, pin_comment),
                     };
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                        title: format!("Pin {} to SHA ({short}...)", entry.ref_str),
+                        title: format!("Pin {} to SHA ({sha})", entry.ref_str),
                         kind: Some(CodeActionKind::REFACTOR),
                         diagnostics: Some(vec![diag.clone()]),
                         edit: Some(make_edit(
@@ -513,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn update_pin_action_title_contains_short_sha() {
+    fn update_pin_action_title_contains_full_sha() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
@@ -521,17 +522,11 @@ mod tests {
         let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
             panic!("expected CodeAction");
         };
-        assert!(
-            pin.title.starts_with("Update & pin to SHA ("),
-            "title: {}",
+        assert_eq!(
             pin.title,
+            format!("Update & pin to SHA ({})", test_utils::DUMMY_SHA),
+            "title should contain full 40-char SHA",
         );
-        assert!(
-            pin.title.contains(&test_utils::DUMMY_SHA[..7]),
-            "title should contain short SHA, got: {}",
-            pin.title,
-        );
-        assert!(pin.title.ends_with("...)"));
     }
 
     #[test]
@@ -624,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn pin_current_action_title_contains_current_ref_and_short_sha() {
+    fn pin_current_action_title_contains_current_ref_and_full_sha() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let range = make_range(0, 10, 12);
         let diag = make_outdated_diagnostic(range, "o/r@v1", "v2.0.0");
@@ -635,17 +630,11 @@ mod tests {
         let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
             panic!("expected CodeAction");
         };
-        assert!(
-            pin_current.title.starts_with("Pin v1 to SHA ("),
-            "title: {}",
+        assert_eq!(
             pin_current.title,
+            format!("Pin v1 to SHA ({})", test_utils::DUMMY_SHA_2),
+            "title should contain full 40-char SHA",
         );
-        assert!(
-            pin_current.title.contains(&test_utils::DUMMY_SHA_2[..7]),
-            "title should contain short SHA, got: {}",
-            pin_current.title,
-        );
-        assert!(pin_current.title.ends_with("...)"));
     }
 
     #[test]
