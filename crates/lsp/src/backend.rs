@@ -569,12 +569,14 @@ impl LanguageServer for LspBackend {
         let file_cache =
             file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
+        let cancelled = crate::workspace_commands::Cancelled::new();
         let result = crate::workspace_commands::fix_all_in_workspace(
             self.client.clone(),
             &workspace_root,
             &config,
             &registry,
             &file_cache,
+            &cancelled,
         )
         .await;
 
@@ -651,13 +653,28 @@ impl LanguageServer for LspBackend {
 impl LspBackend {
     /// Apply a [`FixAllResult`] to the workspace and notify the user.
     async fn apply_fix_all_result(&self, result: crate::workspace_commands::FixAllResult) {
+        if result.cancelled && result.refs_updated == 0 {
+            self.client
+                .show_message(
+                    MessageType::INFO,
+                    format!(
+                        "actup: cancelled ({}/{} files scanned, {} actions checked)",
+                        result.files_scanned,
+                        result.files_scanned, // partial — only scanned portion known
+                        result.actions_checked,
+                    ),
+                )
+                .await;
+            return;
+        }
+
         if result.refs_updated == 0 {
             self.client
                 .show_message(
                     MessageType::INFO,
                     format!(
-                        "actup: all action refs are up to date ({} files scanned)",
-                        result.files_scanned,
+                        "actup: all action refs are up to date ({} files scanned, {} actions checked)",
+                        result.files_scanned, result.actions_checked,
                     ),
                 )
                 .await;
@@ -666,9 +683,10 @@ impl LspBackend {
 
         match self.client.apply_edit(result.edit).await {
             Ok(response) if response.applied => {
+                let cancelled_suffix = if result.cancelled { " (cancelled)" } else { "" };
                 let msg = format!(
-                    "actup: updated {} refs in {} files",
-                    result.refs_updated, result.files_changed
+                    "actup: updated {} refs in {} files ({} actions checked){cancelled_suffix}",
+                    result.refs_updated, result.files_changed, result.actions_checked,
                 );
                 self.client.show_message(MessageType::INFO, &msg).await;
                 tracing::info!(%msg);

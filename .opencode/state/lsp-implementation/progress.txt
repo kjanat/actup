@@ -27,10 +27,13 @@ Started: 2026-02-19
 ### tower-lsp-server Progress API
 - `client.progress(token, title)` returns `Progress` builder (NOT a future)
 - `.with_percentage(0)` → bounded; `.with_message(msg)` → initial message
-- `.begin().await` → `OngoingProgress<Bounded, NotCancellable>`
-- `ongoing.report_with_message(msg, pct).await` for updates
+- `.with_cancel_button()` → shows cancel button (type-state: `Progress<B, Cancellable>`)
+- `.begin().await` → `OngoingProgress<Bounded, Cancellable>` (or `NotCancellable`)
+- `Cancellable` variant: `ongoing.report_with_message(msg, pct, Option<bool>).await` — third arg toggles cancel button
+- `NotCancellable` variant: `ongoing.report_with_message(msg, pct).await` — only 2 args
 - `ongoing.finish_with_message(msg).await` to end
 - Must call `client.create_work_done_progress(token).await` first (may fail if client doesn't support it)
+- `window/workDoneProgress/cancel` NOT implemented in tower-lsp-server 0.23 — use cooperative cancellation (e.g. `AtomicBool`)
 
 ### Workspace Commands
 - `executeCommand` provider registered in `ServerCapabilities.execute_command_provider`
@@ -247,3 +250,22 @@ Started: 2026-02-19
 - 9 new tests: config path matching/rejection, watcher count/patterns/event kinds, policy diff detection (policy, ignore, prerelease changes), same-config no-diff, cache-only no-diff
 - Files changed: `crates/lsp/src/backend.rs`
 - **Learnings:** `ls_types::Pattern` is `type Pattern = String` (not a newtype struct) — use `String` directly in `GlobPattern::String`; `ActionOverride` lacks `PartialEq` — compare via serde JSON; `WorkspaceFoldersServerCapabilities.change_notifications` takes `OneOf<bool, String>` where `Left(true)` means "use auto-generated ID"; `Cow::into_owned` preferred over closure per `clippy::redundant_closure_for_method_calls`
+
+## Task - progress-reporting
+
+- Enhanced `fix_all_in_workspace` with granular progress reporting and cancellation support
+- Progress now uses `with_cancel_button()` on the `Bounded` progress builder — shows cancel button in editor UI
+- Added `Cancelled` type: `Arc<AtomicBool>` wrapper for cooperative cancellation between files in the scan loop
+- Progress messages now include action counts: "Checking ci.yml... (15 actions in 3/8 files)"
+- Added `actions_checked` field to `FixAllResult` for tracking total actions inspected
+- Added `cancelled` field to `FixAllResult` for tracking early termination
+- Added `FixAllResult::empty()` and `FixAllResult::summary()` helpers
+- Refactored `fix_all_in_workspace` into 3 functions to stay under clippy's 100-line limit:
+  - `fix_all_in_workspace`: progress setup + discovery + delegation
+  - `scan_files`: per-file loop with cancellation checks
+  - `report_file_progress`: progress notification helper
+- `apply_fix_all_result` in backend now shows action counts and cancelled state in user messages
+- tower-lsp-server 0.23 does NOT support `window/workDoneProgress/cancel` notification yet (TODO in their code) — cancel button is shown but server-side handler awaits upstream support
+- 6 new tests: `Cancelled` flag lifecycle (start false, set, clone shares state), `build_workspace_edit` (empty + with changes), `FixAllResult` tracks `actions_checked` and `cancelled`
+- Files changed: `crates/lsp/src/workspace_commands.rs`, `crates/lsp/src/backend.rs`
+- **Learnings:** `OngoingProgress<Bounded, Cancellable>::report_with_message` takes 3 args (msg, pct, `Option<bool>` for cancel btn state); `with_cancel_button()` must be called before `.begin()` on the `Progress` builder; tower-lsp-server TODO at server.rs:1394 for `work_done_progress_cancel` — infrastructure is ready but callback not wired; clippy `too_many_lines` enforces 100-line limit — split async fns by extracting loop body and progress reporting into separate helpers

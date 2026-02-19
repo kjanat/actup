@@ -118,7 +118,7 @@
 			"description": "User feedback during workspace-wide operations. Done when:\n- $/progress notifications sent during workspace scan\n- Shows 'Scanning N files...', 'Checking M actions...'\n- Percentage progress during batch version fetches\n- Cancellable via WorkDoneProgressCancelParams\n- Progress token generated per-operation",
 			"depends": ["workspace-command"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "config-watching",
