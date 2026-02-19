@@ -38,8 +38,7 @@ Then launch VS Code with the extension loaded:
 code --extensionDevelopmentPath="$(pwd)"
 ```
 
-Or press `F5` inside VS Code (with this folder open) to launch an Extension
-Development Host.
+Or press `F5` inside VS Code (with this folder open) to launch an Extension Development Host.
 
 ## Configuration
 
@@ -47,14 +46,17 @@ All settings live under the `actup` namespace.
 
 ### `actup.server.path`
 
-Absolute path to the `actup-lsp` binary. If unset, the extension searches
-`PATH`.
+Absolute path to the `actup-lsp` binary. If unset, the extension searches `PATH`.
 
-```json
+<!--dprint-ignore-start-->
+
+```jsonc
 {
   "actup.server.path": "/home/you/projects/actup-v2/target/debug/actup-lsp"
 }
 ```
+
+<!--dprint-ignore-end-->
 
 ### `actup.server.extraArgs`
 
@@ -62,29 +64,27 @@ Extra arguments passed to `actup-lsp`. Default: `[]`.
 
 ### `actup.trace.server`
 
-Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`.
-Default: `"off"`. Output goes to the "actup (trace)" output channel.
+Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`. Default: `"off"`. Output goes to the "actup (trace)" output channel.
 
 ## Commands
 
-| Command                             | Palette title                      |
-| ----------------------------------- | ---------------------------------- |
-| `actup.fixAllInWorkspace`           | actup: Fix All in Workspace        |
-| `actup.restartServer`               | actup: Restart Language Server     |
+| Command                   | Palette title                  |
+| ------------------------- | ------------------------------ |
+| `actup.fixAllInWorkspace` | actup: Fix All in Workspace    |
+| `actup.restartServer`     | actup: Restart Language Server |
 
 ## Features
 
-| Feature       | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| Diagnostics   | Warning on outdated refs, error on unresolvable refs |
-| Code actions  | Quick-fix to update single ref or all refs in file   |
-| Hover         | Version status, README excerpt, action.yml summary   |
-| Completion    | Tag/version completion triggered by `@`              |
+| Feature      | Description                                          |
+| ------------ | ---------------------------------------------------- |
+| Diagnostics  | Warning on outdated refs, error on unresolvable refs |
+| Code actions | Quick-fix to update single ref or all refs in file   |
+| Hover        | Version status, README excerpt, action.yml summary   |
+| Completion   | Tag/version completion triggered by `@`              |
 
 ## Activation
 
-The extension activates when a YAML file is opened. The LSP client only
-sends documents matching these patterns to the server:
+The extension activates when a YAML file is opened. The LSP client only sends documents matching these patterns to the server:
 
 - `**/.github/**` (workflows, composite actions)
 - `**/action.yml`, `**/action.yaml` (action repo roots)
@@ -113,10 +113,8 @@ npm run watch     # recompile on save
 
 ### Debug
 
-Open this folder in VS Code and press `F5`. This launches an Extension
-Development Host with the extension loaded. When running in debug mode,
-`RUST_LOG=actup_lsp=debug` is set so the server produces verbose logs
-(visible in the "actup" output channel).
+Open this folder in VS Code and press `F5`. This launches an Extension Development Host with the extension loaded. When running in debug
+mode, `RUST_LOG=actup_lsp=debug` is set so the server produces verbose logs (visible in the "actup" output channel).
 
 ### Package
 
@@ -126,7 +124,5 @@ npm run package   # produces actup-vscode-0.1.0.vsix
 
 ### How it works
 
-The extension is a standard VS Code LSP client. It spawns `actup-lsp` as a
-child process over stdio. All LSP logic lives in `crates/lsp/` -- the
-extension is just the glue. Settings changes to `actup.server.*` auto-restart
-the language server.
+The extension is a standard VS Code LSP client. It spawns `actup-lsp` as a child process over stdio. All LSP logic lives in `crates/lsp/` --
+the extension is just the glue. Settings changes to `actup.server.*` auto-restart the language server.

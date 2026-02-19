@@ -30,17 +30,17 @@ Once published, search "actup" in Zed's extension panel and install.
 2. Run **zed: install dev extension**
 3. Select the `extensions/zed/` directory
 
-Zed will compile the WASM extension and load it. Repeat this step after
-editing extension source to pick up changes.
+Zed will compile the WASM extension and load it. Repeat this step after editing extension source to pick up changes.
 
 ## Configuration
 
 ### Binary path override
 
-If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings
-(`~/.config/zed/settings.json`):
+If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings (`~/.config/zed/settings.json`):
 
-```json
+<!--dprint-ignore-start-->
+
+```jsonc
 {
   "lsp": {
     "actup-lsp": {
@@ -52,13 +52,16 @@ If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings
 }
 ```
 
+<!--dprint-ignore-end-->
+
 ### File type detection
 
-Zed does not auto-detect GitHub Actions files by path. Add this to your
-settings so workflow files use the "GitHub Actions" language (which this
-extension defines):
+Zed does not auto-detect GitHub Actions files by path. Add this to your settings so workflow files use the "GitHub Actions" language (which
+this extension defines):
 
-```json
+<!--dprint-ignore-start-->
+
+```jsonc
 {
   "file_types": {
     "GitHub Actions": [
@@ -69,21 +72,22 @@ extension defines):
 }
 ```
 
-Files detected as plain YAML also work -- the extension attaches the LSP to
-both "GitHub Actions" and "YAML" languages.
+<!--dprint-ignore-end-->
+
+Files detected as plain YAML also work -- the extension attaches the LSP to both "GitHub Actions" and "YAML" languages.
 
 ## Features
 
-| Feature       | Description                                          |
-| ------------- | ---------------------------------------------------- |
-| Diagnostics   | Warning on outdated refs, error on unresolvable refs |
-| Code actions  | Quick-fix to update single ref or all refs in file   |
-| Hover         | Version status, README excerpt, action.yml summary   |
-| Completion    | Tag/version completion triggered by `@`              |
+| Feature      | Description                                          |
+| ------------ | ---------------------------------------------------- |
+| Diagnostics  | Warning on outdated refs, error on unresolvable refs |
+| Code actions | Quick-fix to update single ref or all refs in file   |
+| Hover        | Version status, README excerpt, action.yml summary   |
+| Completion   | Tag/version completion triggered by `@`              |
 
 ## Extension structure
 
-```
+```tree
 extensions/zed/
   Cargo.toml                            # cdylib crate, wasm32-wasip1 target
   extension.toml                        # Zed extension manifest
@@ -108,6 +112,5 @@ rustup target add wasm32-wasip1
 
 ### How it works
 
-The extension is a thin WASM shim. It does not bundle `actup-lsp` -- it
-locates the binary on the host system (via `PATH` or user settings) and
-tells Zed to spawn it over stdio. All LSP logic lives in `crates/lsp/`.
+The extension is a thin WASM shim. It does not bundle `actup-lsp` -- it locates the binary on the host system (via `PATH` or user settings)
+and tells Zed to spawn it over stdio. All LSP logic lives in `crates/lsp/`.
