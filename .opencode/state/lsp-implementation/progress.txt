@@ -43,6 +43,17 @@ Started: 2026-02-19
 - User errors (NotFound, InvalidRef) -> Error severity
 - Env errors (Network, RateLimit, Auth) -> Information severity + status message
 
+### Config Watching Pattern
+- Dynamic watcher registration via `client.register_capability` in `initialized` (not `initialize`)
+- Gate on `caps.workspace.did_change_watched_files.dynamic_registration == Some(true)`
+- `Registration { id, method: "workspace/didChangeWatchedFiles", register_options: serde_json::to_value(opts) }`
+- `DidChangeWatchedFilesRegistrationOptions { watchers: Vec<FileSystemWatcher> }` with `GlobPattern::String(pattern)`
+- `is_actup_config_path` checks URI filename component (after last `/`) — covers `actup.toml` and `.actup.toml`
+- Policy comparison on reload: compare `update_policy`, `ref_style`, `branch_policy`, `allow_prerelease`, `ignore`, `action_overrides`
+- `ActionOverride` lacks `PartialEq` — compare via JSON serialization
+- On policy change: clear cached diagnostics, re-schedule all open documents with zero debounce
+- Workspace folder changes: update `workspace_root`, then reload config
+
 ### tower-lsp-server 0.23 Patterns
 - Crate re-exports `ls_types` (not `lsp_types`) — use `tower_lsp_server::ls_types::*`
 - Store `Client` handle in backend for async notifications
@@ -220,3 +231,19 @@ Started: 2026-02-19
 - 6 new tests: command name stability, progress ID uniqueness, empty result, edit extraction from outdated diags, non-actup skip, unresolvable skip
 - Files: `crates/lsp/src/workspace_commands.rs` (new), `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
 - **Learnings:** tower-lsp-server 0.23 `client.progress()` is a builder (not a raw notification sender) — returns `Progress` struct, `.begin().await` returns `OngoingProgress` with type-state for bounded/unbounded/cancellable; `client.apply_edit(edit)` returns `ApplyWorkspaceEditResponse` with `.applied` bool and `.failure_reason`; clippy enforces 100-line limit per function — split large handlers into helper methods on separate impl blocks
+
+## Task - config-watching
+
+- Implemented `did_change_watched_files` handler to detect actup config file changes and trigger reload
+- Implemented `did_change_workspace_folders` handler to update workspace root on folder add/remove
+- Dynamic watcher registration in `initialized`: registers `**/actup.toml`, `**/.actup.toml`, `**/.config/actup.toml` glob patterns via `client.register_capability`, gated by `did_change_watched_files.dynamic_registration` client capability
+- Config reload (`reload_config`): loads config from workspace root, compares policy-relevant fields, rebuilds provider registry and file cache, refreshes all open document diagnostics if policy changed
+- `refresh_all_diagnostics`: clears cached diagnostics for all open documents and re-schedules diagnostic computation with zero debounce
+- `configs_differ_for_diagnostics`: compares `update_policy`, `ref_style`, `branch_policy`, `allow_prerelease`, `ignore`, `action_overrides`; ignores cache-only changes
+- `action_overrides_differ`: compares via JSON serialization since `ActionOverride` lacks `PartialEq`
+- `is_actup_config_path`: URI-based check for config filenames
+- Declared `workspace.workspace_folders` capability with `change_notifications: true`
+- Stored `ClientCapabilities` in `LspBackend` for gating dynamic registration
+- 9 new tests: config path matching/rejection, watcher count/patterns/event kinds, policy diff detection (policy, ignore, prerelease changes), same-config no-diff, cache-only no-diff
+- Files changed: `crates/lsp/src/backend.rs`
+- **Learnings:** `ls_types::Pattern` is `type Pattern = String` (not a newtype struct) — use `String` directly in `GlobPattern::String`; `ActionOverride` lacks `PartialEq` — compare via serde JSON; `WorkspaceFoldersServerCapabilities.change_notifications` takes `OneOf<bool, String>` where `Left(true)` means "use auto-generated ID"; `Cow::into_owned` preferred over closure per `clippy::redundant_closure_for_method_calls`

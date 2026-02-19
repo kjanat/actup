@@ -11,12 +11,15 @@ use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
-    CodeActionOptions, CodeActionParams, CodeActionProviderCapability, CodeActionResponse,
-    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, ExecuteCommandOptions, ExecuteCommandParams, InitializeParams,
-    InitializeResult, InitializedParams, MessageType, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
+    ClientCapabilities, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
+    CodeActionResponse, Diagnostic, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    ExecuteCommandOptions, ExecuteCommandParams, FileChangeType, FileSystemWatcher, GlobPattern,
+    InitializeParams, InitializeResult, InitializedParams, MessageType, OneOf, Registration,
+    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
+    WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -125,6 +128,8 @@ pub struct LspBackend {
     documents: Arc<DashMap<Uri, DocumentState>>,
     /// Resolved workspace root path (set during `initialize`).
     workspace_root: RwLock<Option<PathBuf>>,
+    /// Client capabilities from `initialize`, used to gate dynamic registration.
+    client_capabilities: RwLock<ClientCapabilities>,
     /// Loaded actup configuration (set during `initialize`, may be refreshed
     /// on config file changes).
     config: Arc<RwLock<Config>>,
@@ -156,6 +161,7 @@ impl LspBackend {
             client,
             documents: Arc::new(DashMap::new()),
             workspace_root: RwLock::new(None),
+            client_capabilities: RwLock::new(ClientCapabilities::default()),
             config: Arc::new(RwLock::new(Config::default())),
             registry: Arc::new(RwLock::new(None)),
             file_cache: Arc::new(RwLock::new(None)),
@@ -255,6 +261,9 @@ impl LanguageServer for LspBackend {
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         tracing::info!("actup-lsp initializing");
 
+        // Store client capabilities for dynamic registration checks.
+        *self.client_capabilities.write().await = params.capabilities.clone();
+
         // Extract workspace root from params.
         let workspace_root = extract_workspace_root(&params);
         let config_path = extract_config_path(&params);
@@ -348,6 +357,13 @@ impl LanguageServer for LspBackend {
                         work_done_progress: Some(true),
                     },
                 }),
+                workspace: Some(WorkspaceServerCapabilities {
+                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                        supported: Some(true),
+                        change_notifications: Some(OneOf::Left(true)),
+                    }),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
         })
@@ -371,6 +387,9 @@ impl LanguageServer for LspBackend {
             )
             .await;
         tracing::info!(?policy, ignored, has_registry, "actup-lsp initialized");
+
+        // Register file watchers for actup config files (dynamic registration).
+        self.register_config_watchers().await;
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -563,6 +582,56 @@ impl LanguageServer for LspBackend {
         Ok(None)
     }
 
+    async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
+        let is_config_change = params.changes.iter().any(|event| {
+            let path = event.uri.as_str();
+            is_actup_config_path(path) && event.typ != FileChangeType::DELETED
+        });
+        let is_config_deleted = params.changes.iter().any(|event| {
+            is_actup_config_path(event.uri.as_str()) && event.typ == FileChangeType::DELETED
+        });
+
+        if !is_config_change && !is_config_deleted {
+            return;
+        }
+
+        tracing::info!("actup config file changed, reloading");
+        self.reload_config().await;
+    }
+
+    async fn did_change_workspace_folders(&self, params: DidChangeWorkspaceFoldersParams) {
+        let event = params.event;
+        let added = event.added.len();
+        let removed = event.removed.len();
+        tracing::info!(added, removed, "workspace folders changed");
+
+        // Update workspace root: prefer first added folder, or keep existing if only removing.
+        if let Some(folder) = event.added.first()
+            && let Some(path) = folder.uri.to_file_path()
+        {
+            let new_root = path.into_owned();
+            tracing::info!(root = %new_root.display(), "updated workspace root");
+            *self.workspace_root.write().await = Some(new_root);
+        } else if !event.removed.is_empty() {
+            // If the current workspace root was removed, clear it.
+            let current = self.workspace_root.read().await.clone();
+            let removed_paths: Vec<_> = event
+                .removed
+                .iter()
+                .filter_map(|f| f.uri.to_file_path().map(std::borrow::Cow::into_owned))
+                .collect();
+            if let Some(ref current_root) = current
+                && removed_paths.iter().any(|p| p == current_root)
+            {
+                tracing::warn!("workspace root removed, clearing");
+                *self.workspace_root.write().await = None;
+            }
+        }
+
+        // Reload config from new workspace root and refresh diagnostics.
+        self.reload_config().await;
+    }
+
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         tracing::debug!(uri = uri.as_str(), "document closed");
@@ -646,6 +715,199 @@ impl LspBackend {
                 .await;
         }
     }
+}
+
+/// Config file watching and reload helpers.
+impl LspBackend {
+    /// Dynamically register file watchers for actup config files.
+    ///
+    /// Requires the client to support `workspace/didChangeWatchedFiles` with
+    /// dynamic registration. Silently skips if not supported.
+    async fn register_config_watchers(&self) {
+        let caps = self.client_capabilities.read().await;
+        let supports_watch = caps
+            .workspace
+            .as_ref()
+            .and_then(|ws| ws.did_change_watched_files.as_ref())
+            .is_some_and(|w| w.dynamic_registration == Some(true));
+        drop(caps);
+
+        if !supports_watch {
+            tracing::debug!("client does not support dynamic file watcher registration");
+            return;
+        }
+
+        let watch_options = DidChangeWatchedFilesRegistrationOptions {
+            watchers: config_file_watchers(),
+        };
+
+        let registration = Registration {
+            id: "actup-config-watcher".to_owned(),
+            method: "workspace/didChangeWatchedFiles".to_owned(),
+            register_options: serde_json::to_value(watch_options).ok(),
+        };
+
+        match self.client.register_capability(vec![registration]).await {
+            Ok(()) => tracing::info!("registered config file watchers"),
+            Err(e) => tracing::warn!(error = %e, "failed to register config file watchers"),
+        }
+    }
+
+    /// Reload config from workspace root and rebuild providers.
+    ///
+    /// Called when a config file changes or workspace folders change.
+    /// Compares old and new policy to decide whether diagnostics need refreshing.
+    async fn reload_config(&self) {
+        let workspace_root = self.workspace_root.read().await.clone();
+        let start_dir = workspace_root
+            .as_deref()
+            .unwrap_or_else(|| std::path::Path::new("."));
+
+        let old_config = self.config.read().await.clone();
+
+        let new_config = match Config::load(None, start_dir) {
+            Ok(c) => {
+                if let Some(from) = &c.loaded_from {
+                    tracing::info!(path = %from.display(), "reloaded config");
+                } else {
+                    tracing::info!("reloaded defaults (no config file found)");
+                }
+                c
+            }
+            Err(e) => {
+                tracing::warn!("failed to reload config: {e}");
+                self.client
+                    .log_message(
+                        MessageType::WARNING,
+                        format!("actup: failed to reload config: {e}"),
+                    )
+                    .await;
+                return;
+            }
+        };
+
+        let policy_changed = configs_differ_for_diagnostics(&old_config, &new_config);
+
+        // Update stored config.
+        *self.config.write().await = new_config.clone();
+
+        // Rebuild provider registry (config may change hosts/tokens).
+        match provider_setup::build_registry(&new_config) {
+            Ok(r) => {
+                *self.registry.write().await = Some(Arc::new(r));
+            }
+            Err(e) => {
+                tracing::error!("failed to rebuild provider registry: {e}");
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("actup: failed to rebuild providers: {e}"),
+                    )
+                    .await;
+            }
+        }
+
+        // Rebuild file cache (TTL or path may have changed).
+        let file_cache = Arc::new(provider_setup::build_file_cache(&new_config));
+        *self.file_cache.write().await = Some(file_cache);
+
+        if policy_changed {
+            tracing::info!("policy changed, refreshing diagnostics for all open documents");
+            self.client
+                .log_message(
+                    MessageType::INFO,
+                    "actup: config changed, refreshing diagnostics",
+                )
+                .await;
+            self.refresh_all_diagnostics().await;
+        } else {
+            tracing::debug!("config reloaded but policy unchanged, skipping diagnostic refresh");
+        }
+    }
+
+    /// Re-trigger diagnostics for all currently open documents.
+    ///
+    /// Clears cached diagnostics first (since policy may have changed what is
+    /// considered outdated/ignored), then schedules fresh computation for each.
+    async fn refresh_all_diagnostics(&self) {
+        let entries: Vec<(Uri, String, i32)> = self
+            .documents
+            .iter()
+            .map(|entry| {
+                let uri = entry.key().clone();
+                let text = entry.value().text.clone();
+                let version = entry.value().version;
+                (uri, text, version)
+            })
+            .collect();
+
+        for (uri, text, version) in entries {
+            // Clear cached diagnostics so stale results aren't served to code actions.
+            if let Some(mut doc) = self.documents.get_mut(&uri) {
+                doc.diagnostics.clear();
+            }
+            if has_uses_keyword(&text) {
+                self.schedule_diagnostics(uri, text, version, Duration::ZERO);
+            } else {
+                // No uses: keyword — publish empty diagnostics to clear any stale ones.
+                self.client
+                    .publish_diagnostics(uri, Vec::new(), Some(version))
+                    .await;
+            }
+        }
+    }
+}
+
+/// Returns `true` if the path (as a URI string) refers to an actup config file.
+fn is_actup_config_path(uri_str: &str) -> bool {
+    // Check the filename component of the URI.
+    let path = uri_str.rsplit('/').next().unwrap_or("");
+    path == "actup.toml" || path == ".actup.toml"
+}
+
+/// Build the set of [`FileSystemWatcher`] entries for actup config files.
+///
+/// Watches for creation, change, and deletion of all config file patterns
+/// that actup discovers: `actup.toml`, `.actup.toml`, `.config/actup.toml`.
+fn config_file_watchers() -> Vec<FileSystemWatcher> {
+    let patterns = ["**/actup.toml", "**/.actup.toml", "**/.config/actup.toml"];
+    patterns
+        .into_iter()
+        .map(|p| FileSystemWatcher {
+            glob_pattern: GlobPattern::String(p.to_owned()),
+            kind: None, // None = watch all events (create + change + delete)
+        })
+        .collect()
+}
+
+/// Returns `true` if two configs differ in ways that affect diagnostic output.
+///
+/// Compares policy-relevant fields: update policy, ref style, branch policy,
+/// prerelease setting, ignore list, and per-action overrides. Changes to
+/// cache settings or host config don't directly affect diagnostics (though
+/// host config changes are handled by provider rebuild).
+fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
+    old.update_policy != new.update_policy
+        || old.ref_style != new.ref_style
+        || old.branch_policy != new.branch_policy
+        || old.allow_prerelease != new.allow_prerelease
+        || old.ignore != new.ignore
+        || action_overrides_differ(&old.action_overrides, &new.action_overrides)
+}
+
+/// Compare action override maps by serialized form since [`ActionOverride`]
+/// doesn't implement `PartialEq`.
+fn action_overrides_differ(
+    old: &std::collections::HashMap<String, actup_core::config::ActionOverride>,
+    new: &std::collections::HashMap<String, actup_core::config::ActionOverride>,
+) -> bool {
+    if old.len() != new.len() {
+        return true;
+    }
+    // Compare via JSON serialization (ActionOverride derives Serialize).
+    let old_json = serde_json::to_string(old).unwrap_or_default();
+    let new_json = serde_json::to_string(new).unwrap_or_default();
+    old_json != new_json
 }
 
 #[cfg(test)]
@@ -822,5 +1084,93 @@ mod tests {
         // Document not in map (was closed).
         let should_publish = documents.get(&uri).is_some();
         assert!(!should_publish);
+    }
+
+    #[test]
+    fn is_actup_config_path_matches_config_files() {
+        assert!(is_actup_config_path("file:///home/user/project/actup.toml"));
+        assert!(is_actup_config_path(
+            "file:///home/user/project/.actup.toml"
+        ));
+        assert!(is_actup_config_path(
+            "file:///home/user/project/.config/actup.toml"
+        ));
+    }
+
+    #[test]
+    fn is_actup_config_path_rejects_non_config_files() {
+        assert!(!is_actup_config_path(
+            "file:///home/user/project/Cargo.toml"
+        ));
+        assert!(!is_actup_config_path(
+            "file:///home/user/project/.github/workflows/ci.yml"
+        ));
+        assert!(!is_actup_config_path(
+            "file:///home/user/project/actup.yaml"
+        ));
+    }
+
+    #[test]
+    fn config_file_watchers_returns_three_patterns() {
+        let watchers = config_file_watchers();
+        assert_eq!(watchers.len(), 3);
+
+        let patterns: Vec<_> = watchers
+            .iter()
+            .filter_map(|w| match &w.glob_pattern {
+                GlobPattern::String(s) => Some(s.as_str()),
+                GlobPattern::Relative(_) => None,
+            })
+            .collect();
+        assert!(patterns.contains(&"**/actup.toml"));
+        assert!(patterns.contains(&"**/.actup.toml"));
+        assert!(patterns.contains(&"**/.config/actup.toml"));
+    }
+
+    #[test]
+    fn config_file_watchers_watch_all_events() {
+        for watcher in config_file_watchers() {
+            // kind: None means watch all events (create + change + delete)
+            assert!(watcher.kind.is_none());
+        }
+    }
+
+    #[test]
+    fn configs_differ_detects_policy_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.update_policy = actup_core::policy::Update::Major;
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn configs_differ_detects_ignore_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.ignore.push("actions/checkout".to_owned());
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn configs_differ_same_configs_returns_false() {
+        let base = Config::default();
+        let same = base.clone();
+        assert!(!configs_differ_for_diagnostics(&base, &same));
+    }
+
+    #[test]
+    fn configs_differ_detects_prerelease_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.allow_prerelease = !base.allow_prerelease;
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn configs_differ_ignores_cache_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.cache.ttl = base.cache.ttl + Duration::from_secs(1000);
+        assert!(!configs_differ_for_diagnostics(&base, &changed));
     }
 }

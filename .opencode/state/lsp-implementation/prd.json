@@ -127,7 +127,7 @@
 			"description": "React to actup.toml modifications. Done when:\n- Register watcher for **/actup.toml via workspace/didChangeWatchedFiles\n- Re-load config when file changes\n- Re-publish diagnostics for all open documents\n- Handle workspace folder add/remove events\n- Invalidate cached diagnostics on policy change",
 			"depends": ["config-loading", "async-diagnostics"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "hover-provider",
