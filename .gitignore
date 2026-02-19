@@ -239,6 +239,3 @@ Temporary Items
 *.icloud
 
 # End of https://gitignore.kjanat.com/api/rust,rust-analyzer,node,linux,windows,macos
-
-# TODO: Remove before merge!!!
-extensions/
