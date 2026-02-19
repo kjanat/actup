@@ -25,7 +25,7 @@
     "url": "https://github.com/kjanat/actup-v2",
     "directory": "extensions/vscode"
   },
-  "license": "MIT OR Apache-2.0",
+  "license": "SEE LICENSE IN LICENSE",
   "publisher": "kjanat",
   "main": "./out/extension.js",
   "scripts": {
