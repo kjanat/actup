@@ -84,7 +84,15 @@ struct LocatedActionForHover {
 /// Find the action reference at the given cursor position in the document.
 ///
 /// Returns `None` if the cursor is not on a `uses:` value.
-fn find_action_at_position(text: &str, position: Position) -> Option<LocatedActionForHover> {
+///
+/// Column positions are converted from byte offsets to the negotiated
+/// LSP position encoding for comparison with the incoming cursor position
+/// and for use in the returned hover range.
+fn find_action_at_position(
+    text: &str,
+    position: Position,
+    encoding: crate::position::PositionEncoding,
+) -> Option<LocatedActionForHover> {
     let locations = extract_uses_from_yaml(text);
 
     for loc in locations {
@@ -96,14 +104,11 @@ fn find_action_at_position(text: &str, position: Position) -> Option<LocatedActi
             continue;
         }
 
-        // Check if cursor is within the value range.
-        // LSP positions use UTF-16 code units, but `uses:` values are
-        // ASCII-only (`owner/repo@ref`), so byte offsets == UTF-16 offsets.
+        // Convert byte offsets to the negotiated LSP encoding.
+        let raw_line = loc.raw_line();
         let value_range = loc.value_range();
-        #[allow(clippy::cast_possible_truncation)]
-        let col_start = value_range.start as u32;
-        #[allow(clippy::cast_possible_truncation)]
-        let col_end = value_range.end as u32;
+        let col_start = crate::position::byte_to_col(raw_line, value_range.start, encoding);
+        let col_end = crate::position::byte_to_col(raw_line, value_range.end, encoding);
 
         if position.character < col_start || position.character >= col_end {
             continue;
@@ -309,8 +314,9 @@ pub async fn compute_hover(
     registry: &provider::Registry,
     file_cache: &FileCache,
     meta_cache: &ActionMetaCache,
+    encoding: crate::position::PositionEncoding,
 ) -> Option<Hover> {
-    let located = find_action_at_position(text, position)?;
+    let located = find_action_at_position(text, position, encoding)?;
 
     // Fetch version info via shared cache-then-fetch helper.
     let repo_id = located.action_ref.to_repo_id();
@@ -388,7 +394,8 @@ mod tests {
             line: 0,
             character: 20,
         };
-        let located = find_action_at_position(yaml, pos).unwrap();
+        let located =
+            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).unwrap();
         assert_eq!(located.action_ref.owner(), "actions");
         assert_eq!(located.action_ref.repo(), "checkout");
         assert_eq!(located.action_ref.ref_str(), "v4");
@@ -402,7 +409,9 @@ mod tests {
             line: 0,
             character: 5,
         };
-        assert!(find_action_at_position(yaml, pos).is_none());
+        assert!(
+            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).is_none()
+        );
     }
 
     #[test]
@@ -412,7 +421,9 @@ mod tests {
             line: 0,
             character: 20,
         };
-        assert!(find_action_at_position(yaml, pos).is_none());
+        assert!(
+            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).is_none()
+        );
     }
 
     #[test]
@@ -422,7 +433,9 @@ mod tests {
             line: 0,
             character: 18,
         };
-        assert!(find_action_at_position(yaml, pos).is_none());
+        assert!(
+            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).is_none()
+        );
     }
 
     #[test]
@@ -435,7 +448,7 @@ mod tests {
         };
         // Should still be within bounds (inclusive end).
         // value is "actions/checkout@v4" = 19 chars, starts at col 14, ends at 33
-        let located = find_action_at_position(yaml, pos);
+        let located = find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16);
         // 33 == value_col_end, we use `>` not `>=` for end check
         assert!(located.is_none());
     }
@@ -447,7 +460,8 @@ mod tests {
             line: 0,
             character: 14, // start of value
         };
-        let located = find_action_at_position(yaml, pos).unwrap();
+        let located =
+            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).unwrap();
         assert_eq!(located.action_ref.repo(), "checkout");
     }
 
@@ -652,8 +666,16 @@ mod tests {
             character: 20,
         };
 
-        let hover =
-            compute_hover(text, position, &config, &registry, &file_cache, &meta_cache).await;
+        let hover = compute_hover(
+            text,
+            position,
+            &config,
+            &registry,
+            &file_cache,
+            &meta_cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
         let hover = hover.unwrap();
 
         match &hover.contents {
@@ -683,8 +705,16 @@ mod tests {
             character: 10,
         };
 
-        let hover =
-            compute_hover(text, position, &config, &registry, &file_cache, &meta_cache).await;
+        let hover = compute_hover(
+            text,
+            position,
+            &config,
+            &registry,
+            &file_cache,
+            &meta_cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
         assert!(hover.is_none(), "expected no hover for non-uses line");
     }
 
@@ -706,9 +736,17 @@ mod tests {
             character: 20,
         };
 
-        let hover = compute_hover(text, position, &config, &registry, &file_cache, &meta_cache)
-            .await
-            .unwrap();
+        let hover = compute_hover(
+            text,
+            position,
+            &config,
+            &registry,
+            &file_cache,
+            &meta_cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await
+        .unwrap();
 
         match &hover.contents {
             HoverContents::Markup(mc) => {

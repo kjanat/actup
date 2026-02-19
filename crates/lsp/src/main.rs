@@ -12,6 +12,7 @@ mod diagnostics;
 mod error_ux;
 mod file_cache;
 mod hover;
+mod position;
 mod provider_setup;
 mod workspace_commands;
 

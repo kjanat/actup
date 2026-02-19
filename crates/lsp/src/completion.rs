@@ -134,8 +134,18 @@ enum CompletionContext {
 /// Analyzes the line text at the cursor position to decide whether to
 /// suggest action names or version refs. The cursor must be within or
 /// after the `uses:` value area for completion to activate.
-fn detect_completion_context(text: &str, position: Position) -> Option<CompletionContext> {
+///
+/// The incoming `position.character` is in the negotiated LSP encoding;
+/// it is converted to a byte offset for internal string operations.
+fn detect_completion_context(
+    text: &str,
+    position: Position,
+    encoding: crate::position::PositionEncoding,
+) -> Option<CompletionContext> {
     let line_str = text.lines().nth(position.line as usize)?;
+
+    // Convert incoming cursor column (negotiated encoding) to byte offset.
+    let cursor_byte = crate::position::col_to_byte(line_str, position.character, encoding);
 
     // Find `uses:` on this line.
     let uses_idx = line_str.find("uses:")?;
@@ -158,9 +168,8 @@ fn detect_completion_context(text: &str, position: Position) -> Option<Completio
 
     let content_col = value_col + quote_offset;
 
-    // Cursor must be at or after the content start.
-    let cursor_col = position.character as usize;
-    if cursor_col < content_col {
+    // Cursor must be at or after the content start (both in byte offsets now).
+    if cursor_byte < content_col {
         return None;
     }
 
@@ -171,13 +180,7 @@ fn detect_completion_context(text: &str, position: Position) -> Option<Completio
         .trim_end_matches('\'');
 
     // Extract the portion from content start up to and including the cursor.
-    // In LSP, `character` is the 0-based column. The character at cursor_col
-    // is either the last typed character or just past the end of input.
-    //
-    // LSP positions use UTF-16 code units, but `uses:` values are ASCII-only
-    // (`owner/repo@ref`), so byte offsets == UTF-16 offsets. Guard against
-    // multi-byte boundary panics defensively.
-    let offset_in_value = cursor_col - content_col;
+    let offset_in_value = cursor_byte - content_col;
     let typed = if offset_in_value < value_clean.len() {
         // Ensure we don't slice inside a multi-byte character (defensive).
         let end = offset_in_value + 1;
@@ -382,8 +385,9 @@ pub async fn compute_completions(
     position: Position,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    encoding: crate::position::PositionEncoding,
 ) -> Option<CompletionResponse> {
-    let context = detect_completion_context(text, position)?;
+    let context = detect_completion_context(text, position, encoding)?;
 
     match context {
         CompletionContext::ActionName { prefix } => {
@@ -423,6 +427,8 @@ pub async fn compute_completions(
 mod tests {
     use super::*;
 
+    const ENC: crate::position::PositionEncoding = crate::position::PositionEncoding::Utf16;
+
     #[test]
     fn detect_context_empty_after_uses() {
         let text = "      - uses: \n";
@@ -430,7 +436,7 @@ mod tests {
             line: 0,
             character: 14,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::ActionName {
@@ -446,7 +452,7 @@ mod tests {
             line: 0,
             character: 23,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::ActionName {
@@ -462,7 +468,7 @@ mod tests {
             line: 0,
             character: 31,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -480,7 +486,7 @@ mod tests {
             line: 0,
             character: 30,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -498,7 +504,7 @@ mod tests {
             line: 0,
             character: 32,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -516,7 +522,7 @@ mod tests {
             line: 0,
             character: 15,
         };
-        assert!(detect_completion_context(text, pos).is_none());
+        assert!(detect_completion_context(text, pos, ENC).is_none());
     }
 
     #[test]
@@ -526,7 +532,7 @@ mod tests {
             line: 0,
             character: 5,
         };
-        assert!(detect_completion_context(text, pos).is_none());
+        assert!(detect_completion_context(text, pos, ENC).is_none());
     }
 
     #[test]
@@ -673,7 +679,7 @@ mod tests {
             character: 14,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache).await;
+        let result = compute_completions(text, position, &registry, &file_cache, ENC).await;
         let response = result.unwrap();
         match response {
             CompletionResponse::List(list) => {
@@ -702,7 +708,7 @@ mod tests {
             character: 15,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache).await;
+        let result = compute_completions(text, position, &registry, &file_cache, ENC).await;
         assert!(
             result.is_none(),
             "expected no completions for non-uses line"
@@ -725,7 +731,7 @@ mod tests {
             character: 30,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache).await;
+        let result = compute_completions(text, position, &registry, &file_cache, ENC).await;
         let response = result.unwrap();
         match response {
             CompletionResponse::List(list) => {
@@ -752,7 +758,7 @@ mod tests {
             line: 6,
             character: 30,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -770,7 +776,7 @@ mod tests {
             line: 0,
             character: 32,
         };
-        let ctx = detect_completion_context(text, pos).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {

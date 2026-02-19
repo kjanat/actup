@@ -1,7 +1,7 @@
 //! LSP backend implementing the [`LanguageServer`] trait.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use actup_core::cache::Cache as _;
@@ -170,6 +170,12 @@ pub struct LspBackend {
     /// `--config` flag). If the file disappears, reload falls back to
     /// normal discovery but keeps the path for future reloads.
     config_path: RwLock<Option<PathBuf>>,
+    /// Negotiated position encoding for `Position::character` columns.
+    ///
+    /// Set once during `initialize` based on client capabilities.
+    /// Defaults to UTF-16 per LSP spec if the client doesn't advertise
+    /// encoding support.
+    position_encoding: OnceLock<crate::position::PositionEncoding>,
 }
 
 impl LspBackend {
@@ -189,6 +195,7 @@ impl LspBackend {
             action_meta_cache: crate::hover::new_action_meta_cache(),
             error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
             config_path: RwLock::new(None),
+            position_encoding: OnceLock::new(),
         }
     }
 
@@ -217,6 +224,7 @@ impl LspBackend {
         let registry = Arc::clone(&self.registry);
         let file_cache = Arc::clone(&self.file_cache);
         let error_dedup = Arc::clone(&self.error_dedup);
+        let encoding = self.position_encoding.get().copied().unwrap_or_default();
         let task_uri = uri.clone();
 
         let handle = tokio::spawn(async move {
@@ -248,6 +256,7 @@ impl LspBackend {
                 &config,
                 &registry,
                 &file_cache,
+                encoding,
             )
             .await;
 
@@ -289,8 +298,14 @@ impl LspBackend {
 }
 
 impl LanguageServer for LspBackend {
+    #[allow(clippy::too_many_lines)]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         tracing::info!("actup-lsp initializing");
+
+        // Negotiate position encoding before anything else.
+        let encoding = crate::position::PositionEncoding::negotiate(&params.capabilities);
+        let _ = self.position_encoding.set(encoding);
+        tracing::info!(encoding = ?encoding, "position encoding negotiated");
 
         // Store client capabilities for dynamic registration checks.
         *self.client_capabilities.write().await = params.capabilities.clone();
@@ -363,6 +378,7 @@ impl LanguageServer for LspBackend {
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
             capabilities: ServerCapabilities {
+                position_encoding: Some(encoding.to_lsp()),
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
                     TextDocumentSyncOptions {
                         open_close: Some(true),
@@ -550,6 +566,7 @@ impl LanguageServer for LspBackend {
         let file_cache =
             file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
+        let encoding = self.position_encoding.get().copied().unwrap_or_default();
         let hover = crate::hover::compute_hover(
             &doc.text,
             position,
@@ -557,6 +574,7 @@ impl LanguageServer for LspBackend {
             &registry,
             &file_cache,
             &self.action_meta_cache,
+            encoding,
         )
         .await;
 
@@ -586,9 +604,15 @@ impl LanguageServer for LspBackend {
         let file_cache =
             file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
-        let result =
-            crate::completion::compute_completions(&doc.text, position, &registry, &file_cache)
-                .await;
+        let encoding = self.position_encoding.get().copied().unwrap_or_default();
+        let result = crate::completion::compute_completions(
+            &doc.text,
+            position,
+            &registry,
+            &file_cache,
+            encoding,
+        )
+        .await;
 
         Ok(result)
     }
@@ -685,6 +709,7 @@ impl LanguageServer for LspBackend {
         let file_cache =
             file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
+        let encoding = self.position_encoding.get().copied().unwrap_or_default();
         let cancelled = crate::workspace_commands::Cancelled::new();
         let result = crate::workspace_commands::fix_all_in_workspace(
             self.client.clone(),
@@ -693,6 +718,7 @@ impl LanguageServer for LspBackend {
             &registry,
             &file_cache,
             &cancelled,
+            encoding,
         )
         .await;
 

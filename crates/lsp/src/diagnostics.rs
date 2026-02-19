@@ -63,7 +63,13 @@ struct LocatedAction {
 /// Skips local (`./`) and docker (`docker://`) references, and logs
 /// parse errors without propagating them (a malformed ref in one line
 /// should not block diagnostics for other lines).
-fn extract_located_actions(text: &str) -> Vec<LocatedAction> {
+///
+/// Column positions are converted from byte offsets to the negotiated
+/// LSP position encoding.
+fn extract_located_actions(
+    text: &str,
+    encoding: crate::position::PositionEncoding,
+) -> Vec<LocatedAction> {
     let locations = extract_uses_from_yaml(text);
     let mut actions = Vec::with_capacity(locations.len());
 
@@ -71,17 +77,22 @@ fn extract_located_actions(text: &str) -> Vec<LocatedAction> {
         match parse_uses(loc.value()) {
             Ok(Some(action_ref)) => {
                 // ref_range gives byte range of just the ref after @; fall back to full value.
-                // Truncation is safe: YAML lines are bounded well within u32::MAX.
-                //
-                // LSP positions use UTF-16 code units, but `uses:` values are
-                // ASCII-only (`owner/repo@ref`), so byte offsets == UTF-16 offsets.
-                #[allow(clippy::cast_possible_truncation)]
+                // Convert byte offsets to the negotiated LSP encoding.
+                let raw_line = loc.raw_line();
                 let (col_start, col_end) = loc.ref_range().map_or_else(
                     || {
                         let r = loc.value_range();
-                        (r.start as u32, r.end as u32)
+                        (
+                            crate::position::byte_to_col(raw_line, r.start, encoding),
+                            crate::position::byte_to_col(raw_line, r.end, encoding),
+                        )
                     },
-                    |r| (r.start as u32, r.end as u32),
+                    |r| {
+                        (
+                            crate::position::byte_to_col(raw_line, r.start, encoding),
+                            crate::position::byte_to_col(raw_line, r.end, encoding),
+                        )
+                    },
                 );
 
                 #[allow(clippy::cast_possible_truncation)]
@@ -274,8 +285,9 @@ pub async fn compute_diagnostics(
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    encoding: crate::position::PositionEncoding,
 ) -> DiagnosticResult {
-    let actions = extract_located_actions(text);
+    let actions = extract_located_actions(text, encoding);
     if actions.is_empty() {
         return DiagnosticResult {
             diagnostics: Vec::new(),
@@ -583,7 +595,7 @@ jobs:
       - uses: actions/setup-node@v3
       - uses: ./local-action
 ";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].action_ref.owner(), "actions");
         assert_eq!(actions[0].action_ref.repo(), "checkout");
@@ -596,7 +608,7 @@ jobs:
     #[test]
     fn extract_located_actions_ref_range_points_after_at() {
         let yaml = "      - uses: actions/checkout@v4\n";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].col_start, 31);
         assert_eq!(actions[0].col_end, 33);
@@ -609,7 +621,7 @@ jobs:
       - uses: ./my-action
       - uses: actions/checkout@v4
 ";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_ref.repo(), "checkout");
     }
@@ -617,7 +629,7 @@ jobs:
     #[test]
     fn extract_located_actions_handles_subpath_refs() {
         let yaml = "      - uses: owner/repo/.github/workflows/reusable.yml@v1\n";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_ref.owner(), "owner");
         assert_eq!(actions[0].action_ref.repo(), "repo");
@@ -627,7 +639,7 @@ jobs:
     #[test]
     fn extract_located_actions_empty_yaml_returns_empty() {
         let yaml = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert!(actions.is_empty());
     }
 
@@ -642,7 +654,7 @@ jobs:
       - uses: docker/build-push-action@v5
       - uses: ./local
 ";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 3);
         assert_eq!(actions[0].action_ref.repo(), "checkout");
         assert_eq!(actions[1].action_ref.repo(), "setup-node");
@@ -652,7 +664,7 @@ jobs:
     #[test]
     fn extract_preserves_uses_value_string() {
         let yaml = "      - uses: actions/checkout@v4.1.2\n";
-        let actions = extract_located_actions(yaml);
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].uses_value, "actions/checkout@v4.1.2");
     }
@@ -697,8 +709,15 @@ jobs:
         let config = Config::default();
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
-        let result =
-            compute_diagnostics("name: CI\non: push\n", &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            "name: CI\non: push\n",
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
         assert!(result.diagnostics.is_empty());
         assert!(!result.errors.has_errors());
     }
@@ -714,7 +733,15 @@ jobs:
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
         let yaml = "    - uses: actions/checkout@v3\n";
-        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(
@@ -735,7 +762,15 @@ jobs:
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
         let yaml = "    - uses: actions/checkout@v4.0.0\n";
-        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         assert!(
             result.diagnostics.is_empty(),
@@ -764,7 +799,15 @@ jobs:
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
         let yaml = "    - uses: actions/checkout@v4\n";
-        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(
@@ -787,7 +830,15 @@ jobs:
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v2\n";
-        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         // Both refs should produce diagnostics (both outdated).
         assert_eq!(result.diagnostics.len(), 2);
@@ -806,7 +857,15 @@ jobs:
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/setup-node@v4.0.0\n";
-        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         // checkout@v3 is outdated (v4.2.0 available), setup-node@v4.0.0 is up to date.
         let warnings: Vec<_> = result
@@ -827,7 +886,15 @@ jobs:
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
 
         let yaml = "    - uses: ./local-action\n    - uses: docker://node:16\n";
-        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         assert!(result.diagnostics.is_empty());
     }
@@ -906,7 +973,15 @@ jobs:
 
         // Use a full 40-char SHA as the ref to trigger the Pinned code path.
         let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA}\n");
-        let result = compute_diagnostics(&yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            &yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(
@@ -938,7 +1013,15 @@ jobs:
 
         // Use DUMMY_SHA_2 which doesn't match any tag in the version set.
         let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA_2}\n");
-        let result = compute_diagnostics(&yaml, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            &yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
 
         assert_eq!(result.diagnostics.len(), 1);
         assert_eq!(
@@ -963,7 +1046,15 @@ jobs:
         let uri = Uri::from_file_path("/test/readme.md").unwrap();
 
         let text = "# README\nThis is not a workflow file.\n";
-        let result = compute_diagnostics(text, &uri, &config, &registry, &cache).await;
+        let result = compute_diagnostics(
+            text,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
         assert!(result.diagnostics.is_empty());
     }
 }

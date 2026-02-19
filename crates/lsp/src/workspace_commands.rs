@@ -159,6 +159,7 @@ async fn process_file(
     registry: &provider::Registry,
     file_cache: &FileCache,
     failures: &mut Vec<(String, String)>,
+    encoding: crate::position::PositionEncoding,
 ) -> FileOutcome {
     let path = file.path();
     let rel = path
@@ -195,7 +196,8 @@ async fn process_file(
         };
     };
 
-    let result = diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache).await;
+    let result =
+        diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache, encoding).await;
     let actions_checked = result.refs_checked;
     let edits = edits_from_diagnostics(&result.diagnostics);
 
@@ -232,6 +234,7 @@ pub async fn fix_all_in_workspace(
     registry: &provider::Registry,
     file_cache: &FileCache,
     cancelled: &Cancelled,
+    encoding: crate::position::PositionEncoding,
 ) -> FixAllResult {
     let token = NumberOrString::String(format!("actup-workspace-{}", progress_id()));
     let progress = match client.create_work_done_progress(token.clone()).await {
@@ -271,6 +274,7 @@ pub async fn fix_all_in_workspace(
         file_cache,
         cancelled,
         progress.as_ref(),
+        encoding,
     )
     .await;
 
@@ -284,6 +288,7 @@ pub async fn fix_all_in_workspace(
 /// Scan discovered files, compute diagnostics, and collect edits.
 ///
 /// Reports per-file progress and checks cancellation between files.
+#[allow(clippy::too_many_arguments)]
 async fn scan_files(
     discovered: &[DiscoveredFile],
     workspace_root: &Path,
@@ -297,6 +302,7 @@ async fn scan_files(
             tower_lsp_server::Cancellable,
         >,
     >,
+    encoding: crate::position::PositionEncoding,
 ) -> FixAllResult {
     let file_count = discovered.len();
     let mut all_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
@@ -332,6 +338,7 @@ async fn scan_files(
             registry,
             file_cache,
             &mut failures,
+            encoding,
         )
         .await;
 
