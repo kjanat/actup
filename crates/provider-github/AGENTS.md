@@ -2,15 +2,18 @@
 
 GitHub and GitHub Enterprise provider. Implements `actup-core::Provider`.
 
+Only provider that exports a `REGISTRATION` static for the provider registry system.
+
 ## Module Map
 
-| Module        | Purpose                                | Key Types                        |
-| ------------- | -------------------------------------- | -------------------------------- |
-| `provider.rs` | `Provider` trait implementation        | `GitHubProvider`                 |
-| `client.rs`   | HTTP client, auth, rate limit handling | `GitHubClient`, response parsing |
-| `graphql.rs`  | GraphQL queries for batch fetching     | `BatchQuery`, tag fetching       |
-| `batch.rs`    | Multi-repo batching orchestration      | `BatchFetcher`, parallelism      |
-| `types.rs`    | GitHub API response types              | `GitHubTag`, `GitHubRepo`, etc.  |
+| Module        | Purpose                                | Key Types                         |
+| ------------- | -------------------------------------- | --------------------------------- |
+| `lib.rs`      | `REGISTRATION` static + `create` fn    | `REGISTRATION`, preset for GH/GHE |
+| `provider.rs` | `Provider` trait implementation        | `GitHubProvider`                  |
+| `client.rs`   | HTTP client, auth, rate limit handling | `GitHubClient`, response parsing  |
+| `graphql.rs`  | GraphQL queries for batch fetching     | `BatchQuery`, tag fetching        |
+| `batch.rs`    | Multi-repo batching orchestration      | `BatchFetcher`, parallelism       |
+| `types.rs`    | GitHub API response types              | `GitHubTag`, `GitHubRepo`, etc.   |
 
 ## Where to Look
 
@@ -21,6 +24,7 @@ GitHub and GitHub Enterprise provider. Implements `actup-core::Provider`.
 | Modify rate limit handling | `client.rs` → `handle_response`   |
 | Add batch operation        | `batch.rs`                        |
 | Change auth header         | `client.rs` → `GitHubClient::new` |
+| Modify provider preset     | `lib.rs` → `REGISTRATION`         |
 
 ## Performance: Batch Fetching
 
@@ -28,13 +32,12 @@ GitHub and GitHub Enterprise provider. Implements `actup-core::Provider`.
 2. **REST fallback**: Parallel requests via `tokio::spawn`
 3. **In-memory dedup**: `CachingProvider` wraps this provider
 
-GraphQL batching in `graphql.rs:583` lines - most complex file.
-
 ## Anti-Patterns (This Crate)
 
 - **Never use generic error fields**: Use provider-specific error types
 - **Always validate SHAs**: Use `Sha40::new()` from `actup-core`
 - **Never log tokens**: Auth header set but never printed
+- **Rate limit detection**: Check header VALUES not just presence (`x-ratelimit-remaining == "0"`)
 
 ## Conventions
 
@@ -42,6 +45,7 @@ GraphQL batching in `graphql.rs:583` lines - most complex file.
 - ETag support for conditional requests
 - Timeouts: 30s default, configurable
 - User-Agent: `actup/{version}`
+- `#![forbid(unsafe_code)]`
 
 ## API Endpoints Used
 
@@ -54,6 +58,7 @@ GraphQL batching in `graphql.rs:583` lines - most complex file.
 
 ## Tests
 
-- Mock HTTP with `wiremock` in `tests/integration.rs`
+- Mock HTTP with `wiremock` in `tests/integration.rs` (5 tests)
 - Fixtures in `tests/fixtures/` (JSON API responses)
+- `insta` listed as dev-dependency but no `.snap` files yet
 - Never rely on live network in tests
