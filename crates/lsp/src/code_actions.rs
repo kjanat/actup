@@ -586,4 +586,40 @@ mod tests {
         assert_eq!(a0.is_preferred, Some(true));
         assert_eq!(a1.is_preferred, Some(false));
     }
+
+    #[test]
+    fn kind_allowed_with_multiple_kinds() {
+        let only = vec![CodeActionKind::QUICKFIX, CodeActionKind::SOURCE_FIX_ALL];
+        assert!(kind_allowed(Some(&only), &SOURCE_FIX_ALL_ACTUP));
+        assert!(kind_allowed(Some(&only), &CodeActionKind::QUICKFIX));
+    }
+
+    #[test]
+    fn fix_all_preserves_diagnostic_order() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 = make_outdated_diagnostic(make_range(12, 20, 22), "a/c@v2", "v4.1.0");
+        let diag2 = make_outdated_diagnostic(make_range(7, 31, 33), "a/b@v3", "v4.2.0");
+
+        let action = fix_all_in_file(&uri, &[diag1, diag2]).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let edits = &changes[&uri];
+
+        assert_eq!(edits.len(), 2);
+        assert_eq!(edits[0].range.start.line, 12);
+        assert_eq!(edits[1].range.start.line, 7);
+    }
+
+    #[test]
+    fn diagnostic_data_json_has_kind_field() {
+        let data = DiagnosticData::Outdated {
+            target_ref: "v2.0.0".into(),
+        };
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json.get("kind").unwrap().as_str(), Some("outdated"));
+    }
 }

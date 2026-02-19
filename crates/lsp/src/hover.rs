@@ -808,4 +808,66 @@ mod tests {
         assert!(cache.get(&key_v3).is_some());
         assert!(cache.get(&key_v4).is_none());
     }
+
+    #[test]
+    fn find_action_at_position_returns_none_for_empty_doc() {
+        let pos = Position {
+            line: 0,
+            character: 0,
+        };
+        assert!(
+            find_action_at_position("", pos, crate::position::PositionEncoding::Utf16).is_none()
+        );
+    }
+
+    #[test]
+    fn build_hover_content_handles_minimal_meta() {
+        let action_ref = ActionRef::simple("test", "action", "v1");
+        let meta = CachedActionMeta {
+            name: None,
+            description: None,
+            author: None,
+            deprecated_inputs: vec![],
+            runtime: None,
+        };
+        let content = build_hover_content(
+            &action_ref,
+            Some(&meta),
+            &CheckStatus::UpToDate,
+            None,
+            Some("github.com"),
+        );
+        assert!(content.contains("### test/action"));
+        assert!(content.contains("Up to date"));
+    }
+
+    #[test]
+    fn action_meta_cache_key_distinguishes_hosts() {
+        let cache = new_action_meta_cache();
+        let key_github = ActionMetaCacheKey {
+            owner: "actions".into(),
+            repo: "checkout".into(),
+            ref_str: "v4".into(),
+            host: None,
+        };
+        let key_ghe = ActionMetaCacheKey {
+            owner: "actions".into(),
+            repo: "checkout".into(),
+            ref_str: "v4".into(),
+            host: Some("ghe.corp.com".into()),
+        };
+
+        let meta = Arc::new(CachedActionMeta {
+            name: Some("Test".into()),
+            description: None,
+            author: None,
+            deprecated_inputs: vec![],
+            runtime: None,
+        });
+
+        cache.insert(key_github.clone(), Arc::clone(&meta));
+
+        assert!(cache.get(&key_github).is_some());
+        assert!(cache.get(&key_ghe).is_none());
+    }
 }

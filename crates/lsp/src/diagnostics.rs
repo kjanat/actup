@@ -1045,4 +1045,59 @@ jobs:
         .await;
         assert!(result.diagnostics.is_empty());
     }
+
+    #[test]
+    fn status_to_diagnostic_uptodate_returns_none() {
+        let status = CheckStatus::UpToDate;
+        assert!(status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").is_none());
+    }
+
+    #[test]
+    fn status_to_diagnostic_ignored_returns_none() {
+        let status = CheckStatus::Ignored;
+        assert!(status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").is_none());
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_counts_refs_checked() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v4.2.0\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        // Both refs are checked even though one is up-to-date.
+        assert_eq!(result.refs_checked, 2);
+    }
+
+    #[tokio::test]
+    async fn batch_fetch_versions_handles_provider_not_found() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+
+        let repo = ActionRepoId::new(
+            Some("gitlab.com".to_string()),
+            "owner".to_string(),
+            "repo".to_string(),
+            None,
+        );
+        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+
+        assert!(results.contains_key(&repo));
+        assert!(results[&repo].is_err());
+    }
 }

@@ -271,4 +271,46 @@ mod tests {
         let caps = ClientCapabilities::default();
         assert_eq!(PositionEncoding::negotiate(&caps), PositionEncoding::Utf16);
     }
+
+    #[test]
+    fn byte_to_col_empty_string_returns_zero() {
+        assert_eq!(byte_to_col("", 0, PositionEncoding::Utf8), 0);
+        assert_eq!(byte_to_col("", 0, PositionEncoding::Utf16), 0);
+    }
+
+    #[test]
+    fn col_to_byte_empty_string_returns_zero() {
+        assert_eq!(col_to_byte("", 0, PositionEncoding::Utf8), 0);
+        assert_eq!(col_to_byte("", 100, PositionEncoding::Utf8), 0);
+    }
+
+    #[test]
+    fn position_encoding_default_is_utf16() {
+        assert_eq!(PositionEncoding::default(), PositionEncoding::Utf16);
+    }
+
+    #[test]
+    fn to_lsp_conversion() {
+        assert_eq!(PositionEncoding::Utf8.to_lsp(), PositionEncodingKind::UTF8);
+        assert_eq!(
+            PositionEncoding::Utf16.to_lsp(),
+            PositionEncodingKind::UTF16
+        );
+    }
+
+    #[test]
+    fn utf16_handles_multiple_non_bmp_chars() {
+        let line = "🎉🚀✨";
+        let after_first = '🎉'.len_utf8();
+        let after_second = after_first + '🚀'.len_utf8();
+
+        assert_eq!(
+            byte_to_col(line, after_first, PositionEncoding::Utf16),
+            2 // 🎉 = 2 UTF-16 code units (surrogate pair)
+        );
+        assert_eq!(
+            byte_to_col(line, after_second, PositionEncoding::Utf16),
+            4 // 🎉(2) + 🚀(2) = 4 UTF-16 code units
+        );
+    }
 }

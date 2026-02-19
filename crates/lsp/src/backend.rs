@@ -1441,14 +1441,20 @@ mod tests {
     }
 
     #[test]
-    fn action_overrides_differ_detects_addition() {
+    fn hosts_differ_different_lengths() {
         let a = std::collections::HashMap::new();
         let mut b = std::collections::HashMap::new();
         b.insert(
-            "actions/checkout".to_owned(),
-            serde_json::from_value(serde_json::json!({"update_policy": "minor"})).unwrap(),
+            "github.com".to_owned(),
+            actup_core::HostConfig {
+                kind: Some(actup_core::HostKind::GitHub),
+                api_base: None,
+                token_env: None,
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
         );
-        assert!(action_overrides_differ(&a, &b));
+        assert!(hosts_differ(&a, &b));
     }
 
     #[test]
@@ -1471,5 +1477,40 @@ mod tests {
         cloned.version = 2;
         assert_eq!(state.text, "original");
         assert_eq!(state.version, 1);
+    }
+
+    #[test]
+    fn extract_config_path_handles_non_string_value() {
+        let params = InitializeParams {
+            initialization_options: Some(serde_json::json!({ "configPath": 123 })),
+            ..Default::default()
+        };
+        assert!(extract_config_path(&params).is_none());
+    }
+
+    #[test]
+    fn has_uses_keyword_case_sensitive() {
+        assert!(!has_uses_keyword("USES: actions/checkout@v4"));
+        assert!(has_uses_keyword("uses: actions/checkout@v4"));
+    }
+
+    #[test]
+    fn is_actup_config_path_handles_empty_string() {
+        assert!(!is_actup_config_path(""));
+    }
+
+    #[test]
+    fn configs_differ_detects_default_host_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.default_host = Some("ghe.corp.com".to_owned());
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn hosts_differ_empty_maps_equal() {
+        let a = std::collections::HashMap::new();
+        let b = std::collections::HashMap::new();
+        assert!(!hosts_differ(&a, &b));
     }
 }

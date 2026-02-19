@@ -786,4 +786,56 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn detect_context_cursor_at_colon() {
+        let text = "      - uses: actions/checkout@v4\n";
+        let pos = Position {
+            line: 0,
+            character: 13, // right at the colon
+        };
+        assert!(detect_completion_context(text, pos, ENC).is_none());
+    }
+
+    #[test]
+    fn action_completion_has_module_kind() {
+        let items = action_completions("actions/checkout");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].kind, Some(CompletionItemKind::MODULE));
+    }
+
+    #[test]
+    fn version_completion_item_has_value_kind() {
+        let item = version_completion_item("v1.0.0", Some("semver"), "abc1234", false, 0);
+        assert_eq!(item.kind, Some(CompletionItemKind::VALUE));
+    }
+
+    #[test]
+    fn version_completion_item_truncates_long_sha() {
+        let long_sha = "abc1234567890abcdef1234567890abcdef123456";
+        let item = version_completion_item("v1.0.0", None, long_sha, false, 0);
+        let detail = item.label_details.as_ref().unwrap();
+        // Should show first 7 chars of SHA.
+        assert!(detail.detail.as_ref().unwrap().contains("abc1234"));
+        assert!(!detail.detail.as_ref().unwrap().contains("567890"));
+    }
+
+    #[test]
+    fn action_completions_returns_sorted_by_index() {
+        let items = action_completions("");
+        assert_eq!(items[0].sort_text.as_deref(), Some("000"));
+        assert_eq!(items[1].sort_text.as_deref(), Some("001"));
+        assert_eq!(items[2].sort_text.as_deref(), Some("002"));
+    }
+
+    #[test]
+    fn detect_context_trailing_spaces_after_at() {
+        let text = "      - uses: actions/checkout@   \n";
+        let pos = Position {
+            line: 0,
+            character: 32,
+        };
+        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        assert!(matches!(ctx, CompletionContext::VersionRef { .. }));
+    }
 }

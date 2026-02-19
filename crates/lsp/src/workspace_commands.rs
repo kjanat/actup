@@ -650,4 +650,36 @@ mod tests {
         let flag = Cancelled::default();
         assert!(!flag.is_cancelled());
     }
+
+    #[test]
+    fn fix_all_result_empty_has_no_edits() {
+        let result = FixAllResult::empty();
+        assert_eq!(result.total_files, 0);
+        assert_eq!(result.refs_updated, 0);
+        assert!(!result.cancelled);
+        assert!(result.failures.is_empty());
+    }
+
+    #[test]
+    fn edits_from_diagnostics_preserves_order() {
+        let diags = vec![
+            make_outdated_diagnostic(make_range(10, 31, 33), "v2.0.0"),
+            make_outdated_diagnostic(make_range(5, 31, 33), "v3.0.0"),
+            make_outdated_diagnostic(make_range(15, 31, 33), "v4.0.0"),
+        ];
+        let edits = edits_from_diagnostics(&diags);
+        assert_eq!(edits.len(), 3);
+        assert_eq!(edits[0].range.start.line, 10);
+        assert_eq!(edits[1].range.start.line, 5);
+        assert_eq!(edits[2].range.start.line, 15);
+    }
+
+    #[test]
+    fn cancelled_multiple_cancels_idempotent() {
+        let flag = Cancelled::new();
+        flag.cancel();
+        flag.cancel();
+        flag.cancel();
+        assert!(flag.is_cancelled());
+    }
 }

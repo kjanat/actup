@@ -384,4 +384,37 @@ mod tests {
         });
         assert!(!errors.has_errors());
     }
+
+    #[test]
+    fn diagnostic_errors_iter_yields_all() {
+        let mut errors = DiagnosticErrors::default();
+        errors.record(&CoreError::RateLimited {
+            provider: "github".into(),
+            retry_after: None,
+        });
+        errors.record(&CoreError::Auth {
+            provider: "github".into(),
+            reason: "bad token".into(),
+        });
+
+        assert_eq!(errors.iter().count(), 2);
+    }
+
+    #[test]
+    fn deduplicator_handles_concurrent_access() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dedup = Arc::new(ErrorDeduplicator::new());
+        let dedup_clone = Arc::clone(&dedup);
+
+        let handle = thread::spawn(move || dedup_clone.should_notify(ErrorCategory::RateLimit));
+
+        let result1 = dedup.should_notify(ErrorCategory::Auth);
+        let result2 = handle.join().unwrap();
+
+        // Both should succeed without panic; different categories are independent.
+        assert!(result1);
+        assert!(result2);
+    }
 }

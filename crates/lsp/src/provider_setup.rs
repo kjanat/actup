@@ -185,4 +185,34 @@ mod tests {
         let cache = build_file_cache(&config);
         assert!(cache.is_enabled());
     }
+
+    #[test]
+    fn build_registry_multiple_hosts() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "ghe1.corp.com".to_string(),
+            HostConfig {
+                kind: Some(HostKind::GitHub),
+                api_base: None,
+                token_env: None,
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+        config.hosts.insert(
+            "ghe2.corp.com".to_string(),
+            HostConfig {
+                kind: Some(HostKind::GitHub),
+                api_base: None,
+                token_env: None,
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+
+        let registry = build_registry(&config).unwrap();
+        assert!(registry.find(Some("github.com")).is_some());
+        assert!(registry.find(Some("ghe1.corp.com")).is_some());
+        assert!(registry.find(Some("ghe2.corp.com")).is_some());
+    }
 }

@@ -415,4 +415,42 @@ mod tests {
             "expected 'actup' in path, got: {dir_str}"
         );
     }
+
+    #[tokio::test]
+    async fn set_creates_directory_if_missing() {
+        let temp = TempDir::new().unwrap();
+        let cache_path = temp.path().join("nested").join("dirs");
+        let cache = FileCache::with_path(cache_path.clone(), Duration::from_secs(3600));
+
+        let entry = cache::Entry::new(version::Set::default());
+        cache.set("test_key", entry).await.unwrap();
+
+        assert!(cache_path.exists());
+    }
+
+    #[tokio::test]
+    async fn expired_entry_is_removed_from_disk() {
+        let (cache, _temp) = make_test_cache(0);
+        let entry = cache::Entry::new(version::Set::default());
+        cache.set("expire_test", entry).await.unwrap();
+
+        let result = cache.get("expire_test").await;
+        assert!(matches!(result, Err(cache::Error::NotFound)));
+
+        // The expired file should have been removed from disk.
+        let path = cache.key_to_path("expire_test");
+        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn atomic_write_leaves_no_tmp_file() {
+        let (cache, _temp) = make_test_cache(3600);
+        let entry = cache::Entry::new(version::Set::default());
+
+        cache.set("atomic_test", entry).await.unwrap();
+
+        let path = cache.key_to_path("atomic_test");
+        let tmp_path = path.with_extension("json.tmp");
+        assert!(!tokio::fs::try_exists(&tmp_path).await.unwrap());
+    }
 }
