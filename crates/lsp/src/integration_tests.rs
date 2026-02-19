@@ -138,7 +138,16 @@ struct CollectedMessages {
 struct TestHarness {
     service: LspService<LspBackend>,
     collected: Arc<Mutex<CollectedMessages>>,
-    _socket_task: tokio::task::JoinHandle<()>,
+    socket_task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for TestHarness {
+    fn drop(&mut self) {
+        // Abort the background socket drain task to prevent it from lingering
+        // after the test completes. Without this, the task runs until the
+        // socket stream closes naturally, which may outlive the test runtime.
+        self.socket_task.abort();
+    }
 }
 
 impl TestHarness {
@@ -155,7 +164,7 @@ impl TestHarness {
         Self {
             service,
             collected,
-            _socket_task: socket_task,
+            socket_task,
         }
     }
 
@@ -405,22 +414,28 @@ async fn code_action_returns_quickfix_for_outdated() {
     let (_, body) = resp.into_parts();
     let value = body.unwrap();
 
-    if !value.is_null() {
-        let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value).unwrap();
-        assert!(!actions.is_empty());
+    // The response must be non-null: our outdated diagnostic should produce
+    // at least one quickfix code action. A null response means the diagnostic
+    // data wasn't round-tripped correctly.
+    assert!(
+        !value.is_null(),
+        "expected non-null code action response for outdated diagnostic"
+    );
 
-        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
-            panic!("expected CodeAction, got Command");
-        };
-        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
-        assert!(action.title.contains("v4.2.0"));
+    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value).unwrap();
+    assert!(!actions.is_empty());
 
-        let edit = action.edit.as_ref().unwrap();
-        let changes = edit.changes.as_ref().unwrap();
-        assert!(changes.contains_key(&uri));
-        assert_eq!(changes[&uri].len(), 1);
-        assert_eq!(changes[&uri][0].new_text, "v4.2.0");
-    }
+    let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+        panic!("expected CodeAction, got Command");
+    };
+    assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+    assert!(action.title.contains("v4.2.0"));
+
+    let edit = action.edit.as_ref().unwrap();
+    let changes = edit.changes.as_ref().unwrap();
+    assert!(changes.contains_key(&uri));
+    assert_eq!(changes[&uri].len(), 1);
+    assert_eq!(changes[&uri][0].new_text, "v4.2.0");
 
     harness.shutdown().await;
 }

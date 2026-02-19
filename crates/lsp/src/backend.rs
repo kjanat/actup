@@ -431,6 +431,18 @@ impl LanguageServer for LspBackend {
 
     async fn shutdown(&self) -> Result<()> {
         tracing::info!("actup-lsp shutting down");
+
+        // Abort all in-flight diagnostic tasks so they don't race with
+        // resource teardown or attempt to publish after the client disconnects.
+        let count = self.in_flight.len();
+        self.in_flight.retain(|_uri, handle| {
+            handle.abort();
+            false // remove all entries
+        });
+        if count > 0 {
+            tracing::debug!(count, "aborted in-flight diagnostic tasks");
+        }
+
         Ok(())
     }
 
@@ -1010,6 +1022,13 @@ impl LspBackend {
 }
 
 /// Returns `true` if the path (as a URI string) refers to an actup config file.
+///
+/// This intentionally matches any file named `actup.toml` or `.actup.toml`
+/// regardless of directory depth. This is broader than strictly necessary
+/// (e.g. it would match `node_modules/.../actup.toml`), but false positives
+/// only trigger a config reload attempt that will either succeed (correct)
+/// or find no config (harmless no-op). The simplicity outweighs the cost
+/// of a rare spurious reload.
 fn is_actup_config_path(uri_str: &str) -> bool {
     // Check the filename component of the URI.
     let path = uri_str.rsplit('/').next().unwrap_or("");

@@ -9,7 +9,6 @@
 //!
 //! Trigger characters: `@` (for version completion after typing the `@`).
 
-use actup_core::cache::Cache as _;
 use actup_core::provider;
 use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,
@@ -275,38 +274,16 @@ pub async fn version_completions(
     file_cache: &FileCache,
 ) -> Vec<CompletionItem> {
     let repo_id = actup_core::ActionRepoId::new(None, owner.to_owned(), repo.to_owned(), None);
-    let Some(provider) = registry.find_for_repo(&repo_id) else {
-        return Vec::new();
-    };
 
-    let default_host = registry.default_host().unwrap_or("github.com");
-    let cache_key = repo_id.cache_key(provider.cache_namespace(), default_host);
-
-    // Try file cache first.
-    let versions = if let Ok(entry) = file_cache.get(&cache_key).await {
-        entry.versions().clone()
-    } else {
-        // Fetch from provider.
-        match provider.get_versions(&repo_id).await {
-            Ok(v) => {
-                // Write back to cache (best effort).
-                let entry = actup_core::cache::Entry::new(v.clone());
-                if let Err(e) = file_cache.set(&cache_key, entry).await {
-                    tracing::debug!(error = %e, "failed to write cache from completion");
-                }
-                v
-            }
-            Err(e) => {
-                tracing::debug!(
-                    owner,
-                    repo,
-                    error = %e,
-                    "failed to fetch versions for completion"
-                );
+    let versions =
+        match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
+            Some(Ok(v)) => v,
+            Some(Err(e)) => {
+                tracing::debug!(owner, repo, error = %e, "failed to fetch versions for completion");
                 return Vec::new();
             }
-        }
-    };
+            None => return Vec::new(),
+        };
 
     let prefix_lower = version_prefix.to_lowercase();
     let mut items = Vec::new();

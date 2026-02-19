@@ -9,6 +9,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use actup_core::cache::{self, Cache};
+use actup_core::{ActionRepoId, provider, version};
 
 /// File-based cache implementation that persists version data to disk.
 ///
@@ -54,9 +55,17 @@ impl FileCache {
     }
 
     /// Convert a cache key to a filesystem path.
+    ///
+    /// Uses hex-encoded SHA-256 of the key to avoid collisions that
+    /// `sanitize_filename` can cause (e.g. `a::b/c` and `a__b_c` mapping
+    /// to the same sanitized filename). The hash is deterministic and
+    /// filesystem-safe on all platforms.
     fn key_to_path(&self, key: &str) -> PathBuf {
-        let safe_key = sanitize_filename::sanitize(key);
-        self.cache_dir.join(format!("{safe_key}.json"))
+        use std::hash::{DefaultHasher, Hash, Hasher};
+        let mut hasher = DefaultHasher::new();
+        key.hash(&mut hasher);
+        let hash = hasher.finish();
+        self.cache_dir.join(format!("{hash:016x}.json"))
     }
 
     /// Ensure the cache directory exists.
@@ -80,6 +89,41 @@ pub fn default_cache_dir() -> PathBuf {
             base
         },
     )
+}
+
+/// Fetch versions for a single repo, checking file cache first.
+///
+/// Shared helper used by hover and completion to avoid duplicating the
+/// cache-check → provider-fetch → cache-write pattern.
+///
+/// Returns `None` if no provider is available for the repo. Returns
+/// `Some(Err(_))` if the provider fetch fails (caller decides how to handle).
+pub async fn fetch_versions_cached(
+    repo_id: &ActionRepoId,
+    registry: &provider::Registry,
+    file_cache: &FileCache,
+) -> Option<Result<version::Set, actup_core::Error>> {
+    let provider = registry.find_for_repo(repo_id)?;
+    let default_host = registry.default_host().unwrap_or("github.com");
+    let cache_key = repo_id.cache_key(provider.cache_namespace(), default_host);
+
+    // Try file cache first.
+    if let Ok(entry) = file_cache.get(&cache_key).await {
+        return Some(Ok(entry.versions().clone()));
+    }
+
+    // Fetch from provider.
+    match provider.get_versions(repo_id).await {
+        Ok(versions) => {
+            // Write back to cache (best effort).
+            let entry = actup_core::cache::Entry::new(versions.clone());
+            if let Err(e) = file_cache.set(&cache_key, entry).await {
+                tracing::debug!(error = %e, "failed to write version cache");
+            }
+            Some(Ok(versions))
+        }
+        Err(e) => Some(Err(e)),
+    }
 }
 
 impl Cache for FileCache {
@@ -136,9 +180,16 @@ impl Cache for FileCache {
             let content =
                 serde_json::to_string(&entry).map_err(|e| cache::Error::Serde(e.to_string()))?;
 
-            tokio::fs::write(&path, content)
+            // Write to a temporary file then atomically rename to avoid
+            // readers seeing partial/corrupt JSON if the process is
+            // interrupted mid-write.
+            let tmp_path = path.with_extension("json.tmp");
+            tokio::fs::write(&tmp_path, content)
                 .await
                 .map_err(|e| cache::Error::Io(e.to_string()))?;
+            tokio::fs::rename(&tmp_path, &path)
+                .await
+                .map_err(|e| cache::Error::Io(format!("atomic rename failed: {e}")))?;
 
             tracing::debug!(key = %key, "cache entry written");
             Ok(())
@@ -252,16 +303,33 @@ mod tests {
     }
 
     #[test]
-    fn key_to_path_sanitizes_special_chars() {
+    fn key_to_path_produces_filesystem_safe_hash() {
         let (cache, _temp) = make_test_cache(3600);
         let path = cache.key_to_path("github::github.com/actions/checkout");
         let filename = path.file_name().unwrap().to_str().unwrap();
-        assert!(!filename.contains("::"));
-        assert!(!filename.contains('/'));
+        // Hash filename should be hex digits + .json extension.
         assert!(
             std::path::Path::new(filename)
                 .extension()
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+        );
+        let stem = filename.strip_suffix(".json").unwrap();
+        assert!(stem.len() == 16, "expected 16-char hex hash, got: {stem}");
+        assert!(
+            stem.chars().all(|c| c.is_ascii_hexdigit()),
+            "expected hex chars, got: {stem}"
+        );
+    }
+
+    #[test]
+    fn key_to_path_avoids_collisions() {
+        let (cache, _temp) = make_test_cache(3600);
+        // These two keys would collide under sanitize_filename but not under hashing.
+        let path_a = cache.key_to_path("github::github.com/actions/checkout");
+        let path_b = cache.key_to_path("github__github.com_actions_checkout");
+        assert_ne!(
+            path_a, path_b,
+            "different keys must produce different paths"
         );
     }
 

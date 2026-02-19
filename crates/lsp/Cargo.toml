@@ -17,7 +17,6 @@ actup-core            = { workspace = true }  # Core config + resolution engine
 actup-provider-github = { workspace = true }  # GitHub/GHE provider
 dashmap               = { workspace = true }  # Concurrent document state
 dirs                  = { workspace = true }  # OS cache directory
-sanitize-filename     = { workspace = true }  # Cache key sanitization
 serde                 = { workspace = true }  # initializationOptions deserialization
 serde_json            = { workspace = true }  # initializationOptions parsing
 tokio                 = { workspace = true }  # Async runtime

@@ -6,7 +6,6 @@
 use std::fmt::Write as _;
 use std::sync::Arc;
 
-use actup_core::cache::Cache as _;
 use actup_core::resolution::CheckStatus;
 use actup_core::{ActionRef, Config, check_action, extract_uses_from_yaml, parse_uses, provider};
 use dashmap::DashMap;
@@ -56,6 +55,12 @@ impl ActionMetaCacheKey {
 }
 
 /// In-memory cache for action.yml metadata used by hover.
+///
+/// This cache is unbounded, but in practice grows slowly: one entry per
+/// unique (owner, repo, ref) triple the user hovers over in a session.
+/// A typical session might see 10–50 distinct actions, so memory impact
+/// is negligible. If this ever becomes a concern, an LRU wrapper could
+/// be added with minimal API change.
 pub type ActionMetaCache = DashMap<ActionMetaCacheKey, Arc<CachedActionMeta>>;
 
 /// Create a new empty action metadata cache.
@@ -307,36 +312,17 @@ pub async fn compute_hover(
 ) -> Option<Hover> {
     let located = find_action_at_position(text, position)?;
 
-    // Fetch version info (use same batch logic as diagnostics but for single ref).
+    // Fetch version info via shared cache-then-fetch helper.
     let repo_id = located.action_ref.to_repo_id();
-    let provider = registry.find_for_repo(&repo_id);
-
-    let versions = if let Some(provider) = provider {
-        // Try file cache first.
-        let default_host = registry.default_host().unwrap_or("github.com");
-        let cache_key = repo_id.cache_key(provider.cache_namespace(), default_host);
-
-        if let Ok(entry) = file_cache.get(&cache_key).await {
-            Some(entry.versions().clone())
-        } else {
-            match provider.get_versions(&repo_id).await {
-                Ok(v) => {
-                    // Write back to cache (best effort).
-                    let entry = actup_core::cache::Entry::new(v.clone());
-                    if let Err(e) = file_cache.set(&cache_key, entry).await {
-                        tracing::debug!(error = %e, "failed to write version cache from hover");
-                    }
-                    Some(v)
-                }
-                Err(e) => {
-                    tracing::debug!(error = %e, "failed to fetch versions for hover");
-                    None
-                }
+    let versions =
+        match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
+            Some(Ok(v)) => Some(v),
+            Some(Err(e)) => {
+                tracing::debug!(error = %e, "failed to fetch versions for hover");
+                None
             }
-        }
-    } else {
-        None
-    };
+            None => None,
+        };
 
     // Check status
     let status = versions.as_ref().map_or_else(
