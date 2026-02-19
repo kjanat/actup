@@ -32,6 +32,7 @@ Started: 2026-02-19
 - Check client capabilities before using features
 - `InitializeResult` has only 2 non-feature-gated fields: `capabilities` + `server_info`
 - Tracing must write to stderr (stdout is the LSP transport)
+- `Uri` has no `Display` — use `uri.as_str()` in tracing fields, not `%uri`
 
 ---
 
@@ -48,3 +49,15 @@ Started: 2026-02-19
 - Smoke-tested: server responds to LSP `initialize` with correct capabilities
 - Files: `crates/lsp/Cargo.toml`, `crates/lsp/src/main.rs`, `crates/lsp/src/backend.rs`
 - **Learnings:** `ls_types` module (not `lsp_types`); `InitializeResult` only has 2 fields without `proposed` feature; clippy requires `const fn` on constructors that qualify
+
+## Task - document-state
+
+- Added `DocumentState` struct: `text: String`, `version: i32`, `diagnostics: Vec<Diagnostic>`
+- `DashMap<Uri, DocumentState>` in `LspBackend` tracks open documents
+- `did_open`: stores document, early-exits if no `uses:` keyword (clears diagnostics)
+- `did_change`: FULL sync — takes first content change, updates state, early-exits if no `uses:`
+- `did_close`: removes from map, clears diagnostics for closed doc
+- `has_uses_keyword()` helper for quiet mode (skips non-workflow files)
+- 3 unit tests for `has_uses_keyword` and `DocumentState` initialization
+- Files changed: `crates/lsp/src/backend.rs`
+- **Learnings:** `ls_types::Uri` has no `Display` impl — use `uri.as_str()` for tracing fields (not `%uri`); `Uri` derefs to `fluent_uri::Uri<String>`

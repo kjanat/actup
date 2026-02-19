@@ -19,7 +19,7 @@
 			"description": "Track open documents for diagnostic computation. Done when:\n- DashMap<Url, DocumentState> stores open documents\n- DocumentState contains: text, version, cached diagnostics\n- did_open stores document, did_close removes it\n- did_change (FULL sync mode) updates stored text\n- Files without 'uses:' keyword exit early (quiet mode)",
 			"depends": ["lsp-skeleton"],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "config-loading",
