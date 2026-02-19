@@ -11,9 +11,10 @@ repository     = "https://github.com/kjanat/actup-v2"
 [language_servers.actup-lsp]
 languages = ["YAML", "GitHub Actions"]
 
-[language_servers.actup-lsp.language_ids]
-"GitHub Actions" = "yaml"
-"YAML"           = "yaml"
+[[capabilities]]
+kind    = "process:exec"
+command = "actup-lsp"
+args    = []
 
 [grammars.yaml]
 repository = "https://github.com/zed-industries/tree-sitter-yaml"
