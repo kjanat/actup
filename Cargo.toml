@@ -57,7 +57,7 @@ wiremock              = "0.6"                                               # mo
 
 [workspace.dependencies.clap]  # CLI
 version  = "4.5"
-features = ["deprecated", "derive", "env", "unicode", "wrap_help"]
+features = ["derive"]
 
 [workspace.dependencies.figment]  # Configuration
 version  = "0.10"
