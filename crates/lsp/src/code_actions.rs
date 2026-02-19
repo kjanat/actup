@@ -1,21 +1,24 @@
-//! Code action generation for `uses:` reference diagnostics.
+//! Code action generation for `uses:` reference diagnostics and cursor-based
+//! pin-to-SHA refactors.
 //!
-//! Produces [`CodeAction`]s from diagnostics, enabling:
-//! - Single-ref quick fixes (e.g. "Update to vX.Y.Z") for outdated refs
-//! - Fix-all-in-file source action that updates every outdated ref at once
+//! Produces [`CodeAction`]s from two sources:
+//! - **Diagnostic-based**: quickfixes for outdated/unresolvable refs
+//! - **Cursor-based**: "Pin to SHA" refactors for any non-SHA ref the cursor overlaps
 //!
 //! Entry points:
 //! - [`code_actions_for_diagnostics`]: per-diagnostic quickfixes
 //! - [`fix_all_in_file`]: aggregated source action for all outdated refs
+//! - [`pin_actions_for_cursor`]: cursor-based "Pin to SHA" refactors
 
 use std::collections::HashMap;
 
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Diagnostic, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+    OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit, Uri,
+    WorkspaceEdit,
 };
 
-use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};
+use crate::diagnostics::{ActionCheckEntry, DIAGNOSTIC_SOURCE, DiagnosticData};
 
 /// Custom [`CodeActionKind`] for actup's fix-all source action.
 ///
@@ -207,6 +210,69 @@ pub fn fix_all_in_file(
         is_preferred: Some(false),
         ..Default::default()
     }))
+}
+
+/// Returns `true` if `ref_str` looks like a full commit SHA (40 hex chars).
+fn is_sha(ref_str: &str) -> bool {
+    ref_str.len() == 40 && ref_str.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// Returns `true` if two LSP [`Range`]s overlap (share at least one position).
+///
+/// Uses `<=` for start/end comparisons so that a zero-width cursor at a
+/// range boundary still counts as overlapping.
+const fn ranges_overlap(a: &Range, b: &Range) -> bool {
+    position_le(a.start, b.end) && position_le(b.start, a.end)
+}
+
+/// Position ordering: `a <= b`.
+const fn position_le(a: Position, b: Position) -> bool {
+    a.line < b.line || (a.line == b.line && a.character <= b.character)
+}
+
+/// Build cursor-based "Pin to SHA" code actions from [`ActionCheckEntry`]s.
+///
+/// For each entry where the cursor overlaps `ref_range`, `resolved_sha` is
+/// available, and the ref is not already a SHA, produces a `REFACTOR` code
+/// action that replaces the ref with the resolved SHA.
+///
+/// This is the cursor-based complement to diagnostic-based actions: it works
+/// on `UpToDate` and branch refs that have no diagnostic.
+pub fn pin_actions_for_cursor(
+    uri: &Uri,
+    version: Option<i32>,
+    cursor_range: &Range,
+    entries: &[ActionCheckEntry],
+    supports_document_changes: bool,
+) -> Vec<CodeActionOrCommand> {
+    entries
+        .iter()
+        .filter(|e| ranges_overlap(cursor_range, &e.ref_range))
+        .filter(|e| e.resolved_sha.is_some())
+        .filter(|e| !is_sha(&e.ref_str))
+        .map(|e| {
+            // SAFETY: filtered for `is_some()` above.
+            let Some(sha) = &e.resolved_sha else {
+                unreachable!()
+            };
+            let short = sha.get(..7).unwrap_or(sha);
+            let edit = TextEdit {
+                range: e.ref_range,
+                new_text: sha.clone(),
+            };
+            CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Pin to SHA ({short}...)"),
+                kind: Some(CodeActionKind::REFACTOR),
+                edit: Some(make_edit(
+                    uri,
+                    version,
+                    vec![edit],
+                    supports_document_changes,
+                )),
+                ..Default::default()
+            })
+        })
+        .collect()
 }
 
 /// Returns `true` if `requested` is a parent kind of `candidate`.
@@ -682,6 +748,262 @@ mod tests {
         let only = vec![CodeActionKind::QUICKFIX, CodeActionKind::SOURCE_FIX_ALL];
         assert!(kind_allowed(Some(&only), &SOURCE_FIX_ALL_ACTUP));
         assert!(kind_allowed(Some(&only), &CodeActionKind::QUICKFIX));
+    }
+
+    #[test]
+    fn kind_allowed_refactor() {
+        let only = vec![CodeActionKind::REFACTOR];
+        assert!(kind_allowed(Some(&only), &CodeActionKind::REFACTOR));
+        assert!(!kind_allowed(Some(&only), &CodeActionKind::QUICKFIX));
+    }
+
+    #[test]
+    fn kind_allowed_none_includes_refactor() {
+        assert!(kind_allowed(None, &CodeActionKind::REFACTOR));
+    }
+
+    // --- Pin to SHA cursor-based actions ---
+
+    fn make_entry(
+        line: u32,
+        ref_col_start: u32,
+        ref_col_end: u32,
+        ref_str: &str,
+        resolved_sha: Option<&str>,
+    ) -> ActionCheckEntry {
+        ActionCheckEntry {
+            ref_range: make_range(line, ref_col_start, ref_col_end),
+            value_range: make_range(line, ref_col_start.saturating_sub(18), ref_col_end),
+            ref_str: ref_str.into(),
+            resolved_sha: resolved_sha.map(String::from),
+        }
+    }
+
+    #[test]
+    fn pin_action_for_cursor_on_tag_ref() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 32, 32); // cursor inside ref range
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        assert_eq!(actions.len(), 1);
+
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        assert!(
+            action.title.starts_with("Pin to SHA ("),
+            "title: {}",
+            action.title,
+        );
+        assert_eq!(action.kind, Some(CodeActionKind::REFACTOR));
+
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, test_utils::DUMMY_SHA);
+        assert_eq!(edits[0].range, make_range(7, 31, 33));
+    }
+
+    #[test]
+    fn pin_action_skips_already_sha_ref() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(
+            7,
+            27,
+            67,
+            test_utils::DUMMY_SHA,
+            Some(test_utils::DUMMY_SHA),
+        );
+        let cursor = make_range(7, 30, 30);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        assert!(actions.is_empty(), "SHA ref should not produce pin action");
+    }
+
+    #[test]
+    fn pin_action_skips_no_resolved_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", None);
+        let cursor = make_range(7, 32, 32);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        assert!(
+            actions.is_empty(),
+            "no resolved SHA should not produce pin action"
+        );
+    }
+
+    #[test]
+    fn pin_action_cursor_outside_ref_range_no_action() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 10, 10); // cursor before ref range
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        assert!(
+            actions.is_empty(),
+            "cursor outside ref range should not produce action"
+        );
+    }
+
+    #[test]
+    fn pin_action_cursor_on_different_line_no_action() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(8, 31, 33); // different line
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        assert!(
+            actions.is_empty(),
+            "cursor on different line should not match"
+        );
+    }
+
+    #[test]
+    fn pin_action_cursor_at_ref_boundary_includes_action() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 31, 31); // at start boundary
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        assert_eq!(actions.len(), 1, "cursor at boundary should match");
+    }
+
+    #[test]
+    fn pin_action_multiple_entries_cursor_matches_one() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry1 = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let entry2 = make_entry(8, 35, 37, "v3", Some(test_utils::DUMMY_SHA_2));
+        let cursor = make_range(8, 36, 36); // on line 8
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry1, entry2], true);
+        assert_eq!(actions.len(), 1);
+
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(
+            edits[0].new_text,
+            test_utils::DUMMY_SHA_2,
+            "should match entry on line 8"
+        );
+    }
+
+    #[test]
+    fn pin_action_title_contains_short_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(0, 11, 11);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        assert!(
+            action.title.contains(&test_utils::DUMMY_SHA[..7]),
+            "title should contain short SHA, got: {}",
+            action.title,
+        );
+        assert!(action.title.ends_with("...)"));
+    }
+
+    #[test]
+    fn pin_action_uses_unversioned_changes_when_not_supported() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(0, 11, 11);
+
+        let actions = pin_actions_for_cursor(&uri, Some(5), &cursor, &[entry], false);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edit = action.edit.as_ref().unwrap();
+        assert!(edit.document_changes.is_none());
+        let changes = edit.changes.as_ref().expect("expected changes map");
+        let file_edits = changes.get(&uri).expect("expected edits for URI");
+        assert_eq!(file_edits[0].new_text, test_utils::DUMMY_SHA);
+    }
+
+    #[test]
+    fn pin_action_empty_entries_returns_empty() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let cursor = make_range(0, 0, 0);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[], true);
+        assert!(actions.is_empty());
+    }
+
+    // --- ranges_overlap ---
+
+    #[test]
+    fn ranges_overlap_same_range() {
+        assert!(ranges_overlap(
+            &make_range(5, 10, 20),
+            &make_range(5, 10, 20),
+        ));
+    }
+
+    #[test]
+    fn ranges_overlap_partial() {
+        assert!(ranges_overlap(
+            &make_range(5, 10, 20),
+            &make_range(5, 15, 25),
+        ));
+    }
+
+    #[test]
+    fn ranges_overlap_point_cursor_inside() {
+        assert!(ranges_overlap(
+            &make_range(5, 15, 15),
+            &make_range(5, 10, 20),
+        ));
+    }
+
+    #[test]
+    fn ranges_overlap_point_cursor_at_boundary() {
+        assert!(ranges_overlap(
+            &make_range(5, 10, 10),
+            &make_range(5, 10, 20),
+        ));
+    }
+
+    #[test]
+    fn ranges_no_overlap_different_lines() {
+        assert!(!ranges_overlap(
+            &make_range(5, 10, 20),
+            &make_range(6, 10, 20),
+        ));
+    }
+
+    #[test]
+    fn ranges_no_overlap_same_line_disjoint() {
+        assert!(!ranges_overlap(
+            &make_range(5, 10, 15),
+            &make_range(5, 20, 25),
+        ));
+    }
+
+    // --- is_sha ---
+
+    #[test]
+    fn is_sha_recognizes_40_hex() {
+        assert!(is_sha(test_utils::DUMMY_SHA));
+    }
+
+    #[test]
+    fn is_sha_rejects_short_sha() {
+        assert!(!is_sha(&test_utils::DUMMY_SHA[..7]));
+    }
+
+    #[test]
+    fn is_sha_rejects_tag() {
+        assert!(!is_sha("v4.2.0"));
+    }
+
+    #[test]
+    fn is_sha_rejects_branch() {
+        assert!(!is_sha("main"));
     }
 
     #[test]

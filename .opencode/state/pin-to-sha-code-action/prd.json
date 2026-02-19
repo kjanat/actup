@@ -37,7 +37,7 @@
 			"description": "Implement cursor-based 'Pin to SHA' code action using ActionCheckEntry data. Fires for any non-SHA ref where cursor overlaps ref_range and resolved_sha is available. Uses CodeActionKind::REFACTOR. Done when: code action appears for up-to-date and branch refs, replaces ref with SHA.",
 			"depends": ["action-check-entry"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "update-pin-code-action",

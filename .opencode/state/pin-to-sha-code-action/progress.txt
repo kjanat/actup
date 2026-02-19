@@ -53,3 +53,16 @@ Started: 2026-02-19
 - 8 new tests: value range computation, entries for all refs (incl. up-to-date), ref_str, resolved_sha, range relationships, count parity, empty case, provider error case
 - Files: `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/backend.rs`
 - **Learnings:** `UsesLocation::value_range()` gives byte range for full value; `ref_range()` gives ref after `@`. Compute both in extraction, store both in `LocatedAction` for downstream use.
+
+## Task - pin-cursor-code-action
+
+- Added `pin_actions_for_cursor()` in `code_actions.rs`: cursor-based "Pin to SHA" code action generation
+- Added `ranges_overlap()` + `position_le()` helper functions (both `const fn`)
+- Added `is_sha()` private helper for ref string SHA detection
+- Registered `CodeActionKind::REFACTOR` in server capabilities (`backend.rs` initialize)
+- Wired cursor-based actions into `code_action` handler: reads `doc.entries` from `DocumentState`, calls `pin_actions_for_cursor` with `params.range`
+- Removed `#[allow(dead_code)]` from `ActionCheckEntry` struct (now consumed by `pin_actions_for_cursor`)
+- Kept `#[allow(dead_code)]` on `value_range` field (consumed by D5/D6)
+- 14 new tests: pin action generation (tag, SHA-skip, no-SHA-skip, cursor-outside, different-line, boundary, multiple-entries, title format, unversioned fallback, empty entries), ranges_overlap (4 tests), is_sha (4 tests), kind_allowed for REFACTOR (2 tests)
+- Files: `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/diagnostics.rs`
+- **Learnings:** `Position` and `Range` are `Copy` in `tower-lsp-server` — pass `Position` by value per clippy `trivially_copy_pass_by_ref`. `Range` is 16 bytes (passed by ref). `ranges_overlap` can be `const fn` since it only uses `const fn` helpers.

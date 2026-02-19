@@ -58,11 +58,14 @@ pub enum DiagnosticData {
 /// This enables cursor-based "Pin to SHA" code actions on refs that have
 /// no diagnostic.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields consumed by cursor-based code actions (D4)
 pub struct ActionCheckEntry {
     /// Range of the ref portion (after `@`) in the document.
     pub ref_range: Range,
     /// Range of the full `uses:` value (e.g. `actions/checkout@v4`).
+    ///
+    /// Used by "Pin current to SHA" (D6) and comment-aware code actions
+    /// that need end-of-value context.
+    #[allow(dead_code)] // Consumed by D5/D6 code actions (next tasks)
     pub value_range: Range,
     /// The original ref string (e.g. `v4`, `v4.2.0`, `main`).
     pub ref_str: String,

@@ -406,6 +406,7 @@ impl LanguageServer for LspBackend {
                     CodeActionOptions {
                         code_action_kinds: Some(vec![
                             tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
+                            tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
                             crate::code_actions::SOURCE_FIX_ALL_ACTUP,
                         ]),
                         work_done_progress_options: WorkDoneProgressOptions {
@@ -689,6 +690,28 @@ impl LanguageServer for LspBackend {
             ) {
                 actions.push(fix_all);
             }
+        }
+
+        // Cursor-based "Pin to SHA" refactor actions. Uses ActionCheckEntry
+        // data (populated for ALL refs) to offer pinning on refs that have
+        // no diagnostic (e.g. UpToDate, branch refs).
+        if crate::code_actions::kind_allowed(
+            only,
+            &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
+        ) {
+            let entries = self
+                .documents
+                .get(&uri)
+                .map(|doc| doc.entries.clone())
+                .unwrap_or_default();
+            let pin_actions = crate::code_actions::pin_actions_for_cursor(
+                &uri,
+                doc_version,
+                &params.range,
+                &entries,
+                supports_doc_changes,
+            );
+            actions.extend(pin_actions);
         }
 
         if actions.is_empty() {
