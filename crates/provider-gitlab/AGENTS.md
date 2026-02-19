@@ -14,7 +14,7 @@ feature-gated support ready for when registration is added.
 | `provider.rs` | `Provider` trait implementation | `GitLabProvider`                   |
 | `client.rs`   | HTTP client for GitLab REST API | `GitLabClient` (427 lines)         |
 | `types.rs`    | GitLab API response types       | `GitLabTag`, `GitLabProject`, etc. |
-| `lib.rs`      | Constants + re-exports          | `GITLAB_HOST`, `GITLAB_API_URL`    |
+| `lib.rs`      | Constants + re-exports          | `GITLAB_HOST`                      |
 
 ## Where to Look
 

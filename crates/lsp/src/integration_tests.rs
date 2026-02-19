@@ -208,6 +208,9 @@ impl Drop for TestHarness {
 }
 
 impl TestHarness {
+    // TODO: TestHarness uses the real LspBackend, so CI-provided GITHUB_TOKEN
+    // can cause live network calls during didOpen → diagnostics. Refactor to
+    // inject a mock provider registry or clear auth env vars before construction.
     fn new() -> Self {
         let (service, socket) = LspService::new(LspBackend::new);
         let collected = Arc::new(Mutex::new(CollectedMessages::default()));

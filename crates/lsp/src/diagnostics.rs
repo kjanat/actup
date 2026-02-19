@@ -37,6 +37,8 @@ pub enum DiagnosticData {
         target_ref: String,
     },
     /// The ref is unresolvable — includes a suggested ref if available.
+    // TODO: implement closest-tag suggestion for typos (e.g. "v4.0" → "v4.0.0")
+    // and attach this variant via `data:` in `status_to_diagnostic` once populated.
     #[serde(rename = "unresolvable")]
     Unresolvable {
         /// Optional suggested replacement (e.g. closest matching tag).
@@ -141,8 +143,8 @@ async fn batch_fetch_versions(
         uncached.push((repo.clone(), cache_key));
     }
 
-    // Phase 2: fetch uncached from providers (sequentially to avoid overwhelming the API;
-    // could be parallelized later with semaphore-bounded concurrency)
+    // Phase 2: fetch uncached from providers sequentially.
+    // TODO: parallelize with semaphore-bounded concurrency (tokio::sync::Semaphore).
     for (repo, cache_key) in &uncached {
         let Some(provider) = registry.find_for_repo(repo) else {
             let host = repo.host().map_or_else(|| "(default)".into(), String::from);
@@ -234,6 +236,10 @@ fn status_to_diagnostic(
             } else {
                 format!("{uses_value}: {reason}")
             };
+            // TODO: attach `DiagnosticData::Unresolvable { suggested_ref }` via
+            // `data:` once closest-tag suggestion logic is implemented (like
+            // the Outdated branch does). Without it, the code action handler in
+            // `code_actions.rs` cannot offer "Change to ..." quickfixes.
             Some(Diagnostic {
                 range,
                 severity: Some(severity),

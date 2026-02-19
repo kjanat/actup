@@ -187,6 +187,10 @@ impl Cache for FileCache {
             // Write to a temporary file then atomically rename to avoid
             // readers seeing partial/corrupt JSON if the process is
             // interrupted mid-write.
+            // TODO: tmp_path is deterministic per key, so concurrent set() calls
+            // for the same key race on the same tmp file. Current callers are
+            // sequential, but if parallelized (see diagnostics.rs Phase 2 TODO),
+            // either randomize the tmp suffix or add per-key locking.
             let tmp_path = path.with_extension("json.tmp");
             tokio::fs::write(&tmp_path, content)
                 .await

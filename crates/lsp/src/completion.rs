@@ -665,8 +665,6 @@ mod tests {
         }
     }
 
-    // --- compute_completions async tests ---
-
     #[tokio::test]
     async fn compute_completions_returns_actions_for_empty_uses() {
         let provider = crate::test_utils::MockProvider::new("github.com");
