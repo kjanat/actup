@@ -24,13 +24,30 @@ pub struct CheckResult {
     action_ref: ActionRef,
     /// The check status
     status: CheckStatus,
+    /// SHA of the current ref, when resolvable from `version::Set` or provider.
+    ///
+    /// Populated for tags and default branch in the sync path (`check_action`),
+    /// and for all resolvable refs (including non-default branches) in the async
+    /// path (`check_action_remote`).
+    resolved_sha: Option<String>,
 }
 
 impl CheckResult {
-    /// Create a new check result
+    /// Create a new check result (with no resolved SHA)
     #[must_use]
     pub const fn new(action_ref: ActionRef, status: CheckStatus) -> Self {
-        Self { action_ref, status }
+        Self {
+            action_ref,
+            status,
+            resolved_sha: None,
+        }
+    }
+
+    /// Builder: attach a resolved SHA to this result
+    #[must_use]
+    pub fn with_resolved_sha(mut self, sha: Option<String>) -> Self {
+        self.resolved_sha = sha;
+        self
     }
 
     /// Get the action reference
@@ -43,6 +60,12 @@ impl CheckResult {
     #[must_use]
     pub const fn status(&self) -> &CheckStatus {
         &self.status
+    }
+
+    /// Get the resolved SHA of the current ref, if available
+    #[must_use]
+    pub fn resolved_sha(&self) -> Option<&str> {
+        self.resolved_sha.as_deref()
     }
 }
 
@@ -123,6 +146,57 @@ fn status_for_no_target(current: &version::Version) -> CheckStatus {
     }
 }
 
+/// Look up the SHA for a ref string from already-fetched version data.
+///
+/// Checks semver tags, major tags, and default branch. Returns `None` for
+/// non-default branches, unusual tag formats, or refs not found in the set.
+fn resolve_current_sha(ref_str: &str, versions: &version::Set) -> Option<String> {
+    let parsed = version::Version::parse(ref_str);
+    match &parsed {
+        // Full semver (v1.2.3): find exact match in semver_tags
+        version::Version::Semver {
+            minor: Some(_),
+            patch: Some(_),
+            ..
+        } => versions
+            .semver_tags()
+            .iter()
+            .find(|info| info.version() == &parsed)
+            .map(|info| info.sha().to_string()),
+
+        // Major-only (v4): look up in major_tags
+        version::Version::Semver {
+            major,
+            minor: None,
+            patch: None,
+            prerelease: None,
+            ..
+        } => versions
+            .major_tags()
+            .get(major)
+            .map(|info| info.sha().to_string()),
+
+        // Minor-only (v4.2): find exact match in semver_tags
+        version::Version::Semver {
+            minor: Some(_),
+            patch: None,
+            ..
+        } => versions
+            .semver_tags()
+            .iter()
+            .find(|info| info.version() == &parsed)
+            .map(|info| info.sha().to_string()),
+
+        // Branch or Other: check default_branch by name
+        version::Version::Branch { name } | version::Version::Other { tag: name } => versions
+            .default_branch()
+            .filter(|b| b.name() == name)
+            .map(|b| b.sha().to_string()),
+
+        _ => None,
+    }
+}
+
 /// Check action against already-fetched versions.
 ///
 /// This is the synchronous version for when you already have the [`version::Set`].
@@ -153,6 +227,10 @@ pub fn check_action(
         );
     }
 
+    // Resolve SHA for the current ref from version data (tags + default branch).
+    // Async path fills in the gap for non-default branches via resolve_ref_to_sha.
+    let resolved_sha = resolve_current_sha(action_ref.ref_str(), versions);
+
     let current = version::Version::parse(action_ref.ref_str());
 
     // Non-semver refs (branches like "stable", "main", "nightly") respect branch_policy
@@ -165,7 +243,8 @@ pub fn check_action(
                 versions,
                 config.allow_prerelease,
             ),
-        );
+        )
+        .with_resolved_sha(resolved_sha);
     }
 
     // Find target version
@@ -194,13 +273,18 @@ pub fn check_action(
                         target: t,
                     },
                 ),
-            );
+            )
+            .with_resolved_sha(resolved_sha);
         }
-        return CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
+        return CheckResult::new(action_ref.clone(), CheckStatus::UpToDate)
+            .with_resolved_sha(resolved_sha);
     }
 
     target.map_or_else(
-        || CheckResult::new(action_ref.clone(), status_for_no_target(&current)),
+        || {
+            CheckResult::new(action_ref.clone(), status_for_no_target(&current))
+                .with_resolved_sha(resolved_sha.clone())
+        },
         |t| {
             CheckResult::new(
                 action_ref.clone(),
@@ -209,6 +293,7 @@ pub fn check_action(
                     target: t,
                 },
             )
+            .with_resolved_sha(resolved_sha.clone())
         },
     )
 }
@@ -304,7 +389,7 @@ pub async fn check_action_remote(
         })?;
 
     let versions = provider.get_versions(&action_ref.to_repo_id()).await?;
-    let result = check_action(action_ref, &versions, config);
+    let mut result = check_action(action_ref, &versions, config);
 
     // Fallback: if batch fetch returned no versions but the ref actually exists,
     // treat as up-to-date. This handles edge cases like:
@@ -313,14 +398,29 @@ pub async fn check_action_remote(
     //
     // Trade-off: We can't determine if there's a newer version without fetching
     // all tags, so we optimistically assume up-to-date.
-    let no_versions_but_ref_exists = matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
-        && provider
+    let needs_no_versions_fallback = matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON);
+
+    if needs_no_versions_fallback {
+        if let Ok(sha) = provider
             .resolve_ref_to_sha(&action_ref.to_repo_id(), action_ref.ref_str())
             .await
-            .is_ok();
+        {
+            return Ok(CheckResult::new(action_ref.clone(), CheckStatus::UpToDate)
+                .with_resolved_sha(Some(sha.to_string())));
+        }
+        // ref doesn't exist either — return original Unresolvable result
+        return Ok(result);
+    }
 
-    if no_versions_but_ref_exists {
-        return Ok(CheckResult::new(action_ref.clone(), CheckStatus::UpToDate));
+    // Fill in resolved_sha for refs where the sync path couldn't determine it
+    // (e.g., non-default branches). Skip if already resolved or ref is a SHA.
+    if result.resolved_sha().is_none()
+        && !action_ref.is_sha()
+        && let Ok(sha) = provider
+            .resolve_ref_to_sha(&action_ref.to_repo_id(), action_ref.ref_str())
+            .await
+    {
+        result = result.with_resolved_sha(Some(sha.to_string()));
     }
 
     Ok(result)
@@ -786,6 +886,189 @@ mod tests {
                 );
             }
             other => panic!("Expected Outdated, got {other:?}"),
+        }
+    }
+
+    mod resolved_sha {
+        use super::*;
+
+        #[test]
+        fn full_semver_resolves_sha() {
+            let action = make_action_ref("actions", "checkout", "v4.2.0");
+            let v4_2 = make_version_info("v4.2.0", "abc123def456abc123def456abc123def456abcd");
+            let mut latest_per_major = HashMap::new();
+            latest_per_major.insert(4, v4_2.clone());
+            let versions = make_version_set(
+                vec![v4_2.clone()],
+                Some(v4_2),
+                latest_per_major,
+                HashMap::new(),
+            );
+            let config = Config::default();
+
+            let result = check_action(&action, &versions, &config);
+            assert_eq!(
+                result.resolved_sha(),
+                Some("abc123def456abc123def456abc123def456abcd"),
+            );
+        }
+
+        #[test]
+        fn major_only_resolves_from_major_tags() {
+            let action = make_action_ref("actions", "checkout", "v4");
+            let v4_tag = make_version_info("v4", "major_sha_aaa111bbb222ccc333ddd444eee");
+            let v4_2 = make_version_info("v4.2.0", "full_sha_000");
+            let mut latest_per_major = HashMap::new();
+            latest_per_major.insert(4, v4_2.clone());
+            let mut major_tags = HashMap::new();
+            major_tags.insert(4, v4_tag.clone());
+            let versions = make_version_set(
+                vec![v4_tag, v4_2.clone()],
+                Some(v4_2),
+                latest_per_major,
+                major_tags,
+            );
+            let config = Config::default();
+
+            let result = check_action(&action, &versions, &config);
+            assert_eq!(
+                result.resolved_sha(),
+                Some("major_sha_aaa111bbb222ccc333ddd444eee"),
+            );
+        }
+
+        #[test]
+        fn default_branch_resolves_sha() {
+            let action = make_action_ref("actions", "checkout", "main");
+            let versions =
+                make_version_set(vec![], None, HashMap::new(), HashMap::new()).with_default_branch(
+                    version::BranchInfo::new("main", "branch_sha_aaa111bbb222ccc333ddd444e"),
+                );
+            let config = Config {
+                branch_policy: policy::Branch::Ignore,
+                ..Default::default()
+            };
+
+            let result = check_action(&action, &versions, &config);
+            assert_eq!(
+                result.resolved_sha(),
+                Some("branch_sha_aaa111bbb222ccc333ddd444e"),
+            );
+        }
+
+        #[test]
+        fn non_default_branch_returns_none() {
+            let action = make_action_ref("actions", "checkout", "develop");
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new())
+                .with_default_branch(version::BranchInfo::new("main", "sha_main"));
+            let config = Config {
+                branch_policy: policy::Branch::Ignore,
+                ..Default::default()
+            };
+
+            let result = check_action(&action, &versions, &config);
+            // "develop" != "main", so sync path can't resolve
+            assert_eq!(result.resolved_sha(), None);
+        }
+
+        #[test]
+        fn sha_ref_has_no_resolved_sha() {
+            // Already-pinned SHA refs don't need resolved_sha
+            let sha = "abc123def456abc123def456abc123def456abcd";
+            let action = make_action_ref("actions", "checkout", sha);
+            let v4 = make_version_info("v4.0.0", sha);
+            let versions =
+                make_version_set(vec![v4.clone()], Some(v4), HashMap::new(), HashMap::new());
+            let config = Config::default();
+
+            let result = check_action(&action, &versions, &config);
+            assert!(matches!(result.status(), CheckStatus::Pinned { .. }));
+            assert_eq!(result.resolved_sha(), None);
+        }
+
+        #[test]
+        fn ignored_action_has_no_resolved_sha() {
+            let action = make_action_ref("ignored", "action", "v1.0.0");
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+            let config = Config {
+                ignore: vec!["ignored/action".into()],
+                ..Default::default()
+            };
+
+            let result = check_action(&action, &versions, &config);
+            assert!(matches!(result.status(), CheckStatus::Ignored));
+            assert_eq!(result.resolved_sha(), None);
+        }
+
+        #[test]
+        fn outdated_ref_still_has_resolved_sha() {
+            let action = make_action_ref("actions", "checkout", "v4.0.0");
+            let v4_0 = make_version_info("v4.0.0", "sha_old_aaa111bbb222ccc333ddd444eee");
+            let v4_2 = make_version_info("v4.2.0", "sha_new");
+            let mut latest_per_major = HashMap::new();
+            latest_per_major.insert(4, v4_2.clone());
+            let versions = make_version_set(
+                vec![v4_0, v4_2.clone()],
+                Some(v4_2),
+                latest_per_major,
+                HashMap::new(),
+            );
+            let config = Config::default();
+
+            let result = check_action(&action, &versions, &config);
+            assert!(matches!(result.status(), CheckStatus::Outdated { .. }));
+            assert_eq!(
+                result.resolved_sha(),
+                Some("sha_old_aaa111bbb222ccc333ddd444eee"),
+            );
+        }
+
+        #[test]
+        fn resolve_current_sha_helper_full_semver() {
+            let v1 = make_version_info("v1.2.3", "sha_v1_2_3");
+            let v2 = make_version_info("v2.0.0", "sha_v2_0_0");
+            let versions = make_version_set(vec![v1, v2], None, HashMap::new(), HashMap::new());
+            assert_eq!(
+                resolve_current_sha("v1.2.3", &versions),
+                Some("sha_v1_2_3".into()),
+            );
+            assert_eq!(
+                resolve_current_sha("v2.0.0", &versions),
+                Some("sha_v2_0_0".into()),
+            );
+            assert_eq!(resolve_current_sha("v9.9.9", &versions), None);
+        }
+
+        #[test]
+        fn resolve_current_sha_helper_major_only() {
+            let mut major_tags = HashMap::new();
+            major_tags.insert(4, make_version_info("v4", "sha_v4_major"));
+            let versions = make_version_set(vec![], None, HashMap::new(), major_tags);
+            assert_eq!(
+                resolve_current_sha("v4", &versions),
+                Some("sha_v4_major".into()),
+            );
+            assert_eq!(resolve_current_sha("v5", &versions), None);
+        }
+
+        #[test]
+        fn resolve_current_sha_helper_default_branch() {
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new())
+                .with_default_branch(version::BranchInfo::new("main", "sha_main_head"));
+            assert_eq!(
+                resolve_current_sha("main", &versions),
+                Some("sha_main_head".into()),
+            );
+            assert_eq!(resolve_current_sha("develop", &versions), None);
+        }
+
+        #[test]
+        fn resolve_current_sha_helper_sha_ref_returns_none() {
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+            assert_eq!(
+                resolve_current_sha("abc123def456abc123def456abc123def456abcd", &versions,),
+                None,
+            );
         }
     }
 }

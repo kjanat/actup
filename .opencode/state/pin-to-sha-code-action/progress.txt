@@ -1,0 +1,27 @@
+# Progress Log
+
+PRD: pin-to-sha-code-action
+Started: 2026-02-19
+
+## Codebase Patterns
+
+- `CheckResult` uses builder pattern: `CheckResult::new(...).with_resolved_sha(sha)`
+- `version::Version::parse("main")` → `Other { tag }`, NOT `Branch`. Handle both `Branch` and `Other` when checking default_branch.
+- No `is_full_semver()` on Version — pattern match `Semver { minor: Some(_), patch: Some(_), .. }` instead.
+- `Sha40` type wraps validated 40-char hex; use `.to_string()` to get `String` for `resolved_sha`.
+- `resolve_ref_to_sha` returns `Result<Sha40>` — async provider call, use sparingly.
+- Sync SHA resolution: check `semver_tags` (exact version match), `major_tags` (major-only), `default_branch` (name match).
+- Async SHA resolution: `resolve_ref_to_sha` fills gaps (non-default branches, unusual tags).
+
+---
+
+## Task - resolved-sha-field
+
+- Added `resolved_sha: Option<String>` to `CheckResult` with `None` default in `new()`
+- Added `with_resolved_sha()` builder and `resolved_sha()` accessor
+- Added `resolve_current_sha()` helper: looks up ref in version::Set (full semver → semver_tags, major-only → major_tags, branch/other → default_branch)
+- `check_action` (sync): resolves SHA from version::Set, attaches to all return paths except Ignored/Pinned
+- `check_action_remote` (async): captures SHA from `resolve_ref_to_sha` in no-versions fallback; fills gap for non-default branches when sync path returned None
+- 11 new tests in `resolution::tests::resolved_sha` module
+- Files: `crates/core/src/resolution.rs`
+- **Learnings:** `Version::parse` never produces `Branch` variant (defaults to `Other`), so `resolve_current_sha` must match both `Branch { name }` and `Other { tag: name }` for default_branch lookup.

@@ -1,0 +1,88 @@
+{
+	"prdName": "pin-to-sha-code-action",
+	"spec": "specs/pin-to-sha-code-action.md",
+	"description": "Pin to SHA: code actions + resolution engine for LSP, CLI update ref_style=sha support",
+	"tasks": [
+		{
+			"id": "resolved-sha-field",
+			"phase": 1,
+			"title": "Add resolved_sha to CheckResult + populate in check_action/check_action_remote",
+			"description": "Add `resolved_sha: Option<String>` to CheckResult. Add resolve_current_sha() helper that looks up ref in version::Set (semver_tags, major_tags, default_branch). Populate in check_action (sync) and check_action_remote (async). Done when: field exists, populated for tags+default branch in sync path, all refs in async path, existing tests pass.",
+			"depends": [],
+			"priority": "architecture",
+			"passes": true
+		},
+		{
+			"id": "diagnostic-data-target-sha",
+			"phase": 1,
+			"title": "Add target_sha to DiagnosticData::Outdated + populate in status_to_diagnostic",
+			"description": "Extend DiagnosticData::Outdated to carry target_sha: Option<String>. Populate from CheckResult's suggested target's SHA during status_to_diagnostic. Done when: DiagnosticData serializes/deserializes with target_sha, existing diagnostic tests pass.",
+			"depends": ["resolved-sha-field"],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "action-check-entry",
+			"phase": 1,
+			"title": "Add ActionCheckEntry to DocumentState + populate during compute_diagnostics",
+			"description": "Add ActionCheckEntry struct (ref_range, value_range, ref_str, resolved_sha) and store Vec<ActionCheckEntry> in DocumentState. Populate for ALL uses: refs during diagnostic computation. Done when: entries stored, accessible from code action handler.",
+			"depends": ["resolved-sha-field"],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "pin-cursor-code-action",
+			"phase": 2,
+			"title": "Pin to SHA cursor-based code action (UpToDate + branch refs)",
+			"description": "Implement cursor-based 'Pin to SHA' code action using ActionCheckEntry data. Fires for any non-SHA ref where cursor overlaps ref_range and resolved_sha is available. Uses CodeActionKind::REFACTOR. Done when: code action appears for up-to-date and branch refs, replaces ref with SHA.",
+			"depends": ["action-check-entry"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "update-pin-code-action",
+			"phase": 2,
+			"title": "Update & pin to SHA diagnostic-based code action (Outdated refs)",
+			"description": "Add 'Update & pin to SHA (abcdef1...)' code action for Outdated diagnostics, using target_sha from DiagnosticData. Uses CodeActionKind::REFACTOR. Done when: action appears alongside existing update action for outdated refs.",
+			"depends": ["diagnostic-data-target-sha"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "pin-current-code-action",
+			"phase": 2,
+			"title": "Pin current to SHA diagnostic-based code action (Outdated refs)",
+			"description": "Add 'Pin {current} to SHA' code action for Outdated diagnostics using resolved_sha from cursor-based entries. Uses CodeActionKind::REFACTOR. Done when: action lets user pin current outdated ref to its SHA without updating.",
+			"depends": ["diagnostic-data-target-sha", "action-check-entry"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "pin-comment-config",
+			"phase": 2,
+			"title": "Config key [pin] comment = true + wire into code actions and CLI pin",
+			"description": "Add [pin] section to config with comment bool (default true). When true, SHA edits append '# {ref}' comment. Wire into LSP code actions and CLI pin command. Done when: config parses, comment appended when enabled, omitted when disabled.",
+			"depends": [],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "cli-update-ref-style-sha",
+			"phase": 3,
+			"title": "CLI update honors ref_style = sha",
+			"description": "When ref_style = sha in config, CLI update emits SHA refs instead of tags. Reuses resolve_sha logic from pin command. Respects pin.comment config. Done when: actup update with ref_style=sha produces SHA refs with optional comments.",
+			"depends": ["resolved-sha-field", "pin-comment-config"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "tests-snapshot",
+			"phase": 3,
+			"title": "Tests: snapshot edits, code action generation, config interaction",
+			"description": "Snapshot tests for: SHA resolution in check_action, code action generation (all 3 types), comment insertion, config interaction. Done when: tests cover happy paths and edge cases, no network calls.",
+			"depends": ["pin-cursor-code-action", "update-pin-code-action", "pin-current-code-action", "cli-update-ref-style-sha"],
+			"priority": "polish",
+			"passes": false
+		}
+	]
+}
