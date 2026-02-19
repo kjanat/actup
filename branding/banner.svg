@@ -1,23 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 2560 640">
-	<path fill="#0d1117" d="M0 0h2560v640H0z" />
+	<path fill="#0d1117" d="M0 0h2560v640H0z"/>
 	<defs>
 		<linearGradient id="b" x1="0%" x2="100%" y1="0%" y2="100%">
-			<stop offset="0%" style="stop-color: #7b2ff7; stop-opacity: 1" />
-			<stop offset="100%" style="stop-color: #2188ff; stop-opacity: 1" />
+			<stop offset="0%" style="stop-color:#7b2ff7;stop-opacity:1"/>
+			<stop offset="100%" style="stop-color:#2188ff;stop-opacity:1"/>
 		</linearGradient>
 		<pattern id="a" width="100" height="100" patternUnits="userSpaceOnUse">
-			<path stroke="#30363d" d="M100 0H0v100" />
+			<path stroke="#30363d" d="M100 0H0v100"/>
 		</pattern>
 	</defs>
-	<path fill="url(#a)" d="M0 0h2560v640H0z" />
-	<path stroke="url(#b)" stroke-width="4" d="M0 320q640-220 1280 0t1280 0" opacity=".3" />
-	<path stroke="#2188ff" stroke-width="2" d="M0 420q640-220 1280 0t1280 0" opacity=".2" />
+	<path fill="url(#a)" d="M0 0h2560v640H0z"/>
+	<path stroke="url(#b)" stroke-width="4" d="M0 320q640-220 1280 0t1280 0" opacity=".3"/>
+	<path stroke="#2188ff" stroke-width="2" d="M0 420q640-220 1280 0t1280 0" opacity=".2"/>
 	<g transform="translate(680 120)">
-		<circle cx="200" cy="200" r="160" fill="url(#b)" />
-		<path fill="#fff" d="m200 110 60 60-18 18-29-29v111h-26V159l-29 29-18-18z" />
-		<path stroke="#fff" stroke-linecap="round" stroke-width="12" d="M280 200c0 44.183-35.817 80-80 80s-80-35.817-80-80" opacity=".6" />
+		<circle cx="200" cy="200" r="160" fill="url(#b)"/>
+		<path fill="#fff" d="m200 110 60 60-18 18-29-29v111h-26V159l-29 29-18-18z"/>
+		<path stroke="#fff" stroke-linecap="round" stroke-width="12" d="M280 200c0 44.183-35.817 80-80 80s-80-35.817-80-80" opacity=".6"/>
 		<text x="400" y="240" fill="#fff" font-family="Inter, sans-serif, Arial" font-size="200" font-weight="bold">actup</text>
-		<text x="400" y="320" fill="#8b949e" font-family="Inter, sans-serif, Arial" font-size="50"
-		>A CLI &amp; LSP Tool for Updating GitHub Actions</text>
+		<text x="400" y="320" fill="#8b949e" font-family="Inter, sans-serif, Arial" font-size="50">A CLI &amp; LSP Tool for Updating GitHub Actions</text>
 	</g>
 </svg>
