@@ -47,6 +47,12 @@ async fn main() -> ExitCode {
 async fn run(cli: Cli) -> i32 {
     // Handle completions early (no config/registry needed)
     if let Command::Completions { shell } = cli.command {
+        let Some(shell) = shell.or_else(Cli::detect_shell) else {
+            eprintln!(
+                "Could not detect shell from $SHELL. Specify one: bash, zsh, fish, elvish, powershell"
+            );
+            return CliExitCode::EnvironmentError.into();
+        };
         Cli::print_completions(shell);
         return CliExitCode::Success.into();
     }

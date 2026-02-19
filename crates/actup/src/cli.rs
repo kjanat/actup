@@ -2,7 +2,7 @@
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "actup")]
@@ -21,6 +21,22 @@ impl Cli {
     /// Generate shell completions and write to stdout
     pub fn print_completions(shell: Shell) {
         clap_complete::generate(shell, &mut Self::command(), "actup", &mut std::io::stdout());
+    }
+
+    /// Detect shell from SHELL environment variable
+    #[must_use]
+    pub fn detect_shell() -> Option<Shell> {
+        let shell_path = std::env::var("SHELL").ok()?;
+        let shell_name = Path::new(&shell_path).file_name()?.to_str()?;
+
+        match shell_name {
+            "bash" => Some(Shell::Bash),
+            "zsh" => Some(Shell::Zsh),
+            "fish" => Some(Shell::Fish),
+            "elvish" => Some(Shell::Elvish),
+            "pwsh" | "powershell" => Some(Shell::PowerShell),
+            _ => None,
+        }
     }
 }
 
@@ -112,9 +128,9 @@ pub enum Command {
 
     /// Generate shell completions
     Completions {
-        /// Shell to generate completions for
+        /// Shell to generate completions for (auto-detected from $SHELL if omitted)
         #[arg(value_enum)]
-        shell: Shell,
+        shell: Option<Shell>,
     },
 }
 

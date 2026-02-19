@@ -106,17 +106,16 @@ token_env = "GITLAB_TOKEN"
 
 ## Shell Completions
 
+Shell is auto-detected from `$SHELL` if omitted:
+
 ```sh
-# Bash
+# Auto-detect shell
+actup completions > completions.sh
+
+# Or specify explicitly
 actup completions bash > ~/.local/share/bash-completion/completions/actup
-
-# Zsh
 actup completions zsh > ~/.zfunc/_actup
-
-# Fish
 actup completions fish > ~/.config/fish/completions/actup.fish
-
-# PowerShell
 actup completions powershell >> $PROFILE
 ```
 
