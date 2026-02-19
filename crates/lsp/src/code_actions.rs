@@ -63,8 +63,10 @@ fn make_edit(
 
 /// Build code actions from a slice of diagnostics.
 ///
-/// For each `Outdated` diagnostic, produces a quickfix "Update to vX.Y.Z"
-/// action with a [`WorkspaceEdit`] that replaces only the ref portion.
+/// For each `Outdated` diagnostic, produces:
+/// - A quickfix "Update to vX.Y.Z" that replaces only the ref portion
+/// - A refactor "Update & pin to SHA (abcdef1...)" when `target_sha` is
+///   available, replacing the ref with the target's resolved commit SHA
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
@@ -100,7 +102,10 @@ pub fn code_actions_for_diagnostics(
         };
 
         match data {
-            DiagnosticData::Outdated { target_ref, .. } => {
+            DiagnosticData::Outdated {
+                target_ref,
+                target_sha,
+            } => {
                 let edit = TextEdit {
                     range: diag.range,
                     new_text: target_ref.clone(),
@@ -119,6 +124,29 @@ pub fn code_actions_for_diagnostics(
                     is_preferred: Some(true),
                     ..Default::default()
                 }));
+
+                // "Update & pin to SHA" — replaces ref with the target's
+                // resolved commit SHA instead of its tag name.
+                if let Some(sha) = &target_sha {
+                    let short = sha.get(..7).unwrap_or(sha);
+                    let pin_edit = TextEdit {
+                        range: diag.range,
+                        new_text: sha.clone(),
+                    };
+                    actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                        title: format!("Update & pin to SHA ({short}...)"),
+                        kind: Some(CodeActionKind::REFACTOR),
+                        diagnostics: Some(vec![diag.clone()]),
+                        edit: Some(make_edit(
+                            uri,
+                            version,
+                            vec![pin_edit],
+                            supports_document_changes,
+                        )),
+                        is_preferred: Some(false),
+                        ..Default::default()
+                    }));
+                }
             }
             DiagnosticData::Unresolvable {
                 suggested_ref: Some(suggested),
@@ -356,24 +384,31 @@ mod tests {
     }
 
     #[test]
-    fn outdated_diagnostic_produces_quickfix() {
+    fn outdated_diagnostic_produces_quickfix_and_pin() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
-        assert_eq!(actions.len(), 1);
+        // Quickfix "Update to v4.2.0" + refactor "Update & pin to SHA".
+        assert_eq!(actions.len(), 2);
 
-        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+        let CodeActionOrCommand::CodeAction(quickfix) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        assert_eq!(action.title, "Update to v4.2.0");
-        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
-        assert_eq!(action.is_preferred, Some(true));
+        assert_eq!(quickfix.title, "Update to v4.2.0");
+        assert_eq!(quickfix.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(quickfix.is_preferred, Some(true));
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(quickfix.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "v4.2.0");
         assert_eq!(edits[0].range, make_range(7, 31, 33));
+
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+        assert_eq!(pin.kind, Some(CodeActionKind::REFACTOR));
+        assert_eq!(pin.is_preferred, Some(false));
     }
 
     #[test]
@@ -392,6 +427,105 @@ mod tests {
         assert_eq!(linked.len(), 1);
         assert_eq!(linked[0].range, diag.range);
         assert_eq!(linked[0].message, diag.message);
+    }
+
+    // --- Update & pin to SHA (diagnostic-based) ---
+
+    #[test]
+    fn update_pin_action_replaces_ref_with_target_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
+        // Second action is the "Update & pin to SHA" refactor.
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(pin.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0].new_text, test_utils::DUMMY_SHA);
+        assert_eq!(edits[0].range, make_range(7, 31, 33));
+    }
+
+    #[test]
+    fn update_pin_action_title_contains_short_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+        assert!(
+            pin.title.starts_with("Update & pin to SHA ("),
+            "title: {}",
+            pin.title,
+        );
+        assert!(
+            pin.title.contains(&test_utils::DUMMY_SHA[..7]),
+            "title should contain short SHA, got: {}",
+            pin.title,
+        );
+        assert!(pin.title.ends_with("...)"));
+    }
+
+    #[test]
+    fn update_pin_action_links_diagnostic() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, std::slice::from_ref(&diag), true);
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+
+        let linked = pin.diagnostics.as_ref().unwrap();
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].range, diag.range);
+    }
+
+    #[test]
+    fn update_pin_absent_when_no_target_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        // Build a diagnostic with target_sha = None.
+        let data = DiagnosticData::Outdated {
+            target_ref: "v2.0.0".into(),
+            target_sha: None,
+        };
+        let diag = Diagnostic {
+            range: make_range(0, 10, 12),
+            severity: Some(tower_lsp_server::ls_types::DiagnosticSeverity::WARNING),
+            source: Some(DIAGNOSTIC_SOURCE.into()),
+            message: "o/r@v1 -> v2.0.0".into(),
+            data: serde_json::to_value(data).ok(),
+            ..Default::default()
+        };
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
+        // Only the quickfix, no pin action.
+        assert_eq!(actions.len(), 1);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+    }
+
+    #[test]
+    fn update_pin_uses_unversioned_changes_when_not_supported() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
+
+        let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], false);
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+        let edit = pin.edit.as_ref().unwrap();
+        assert!(edit.document_changes.is_none());
+        let changes = edit.changes.as_ref().expect("expected changes map");
+        let file_edits = changes.get(&uri).expect("expected edits for URI");
+        assert_eq!(file_edits[0].new_text, test_utils::DUMMY_SHA);
     }
 
     #[test]
@@ -454,13 +588,14 @@ mod tests {
             make_outdated_diagnostic(make_range(8, 31, 33), "actions/setup-node@v3", "v4.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag1, diag2], true);
-        assert_eq!(actions.len(), 2);
+        // 2 diagnostics × 2 actions each (quickfix + pin) = 4
+        assert_eq!(actions.len(), 4);
 
-        // Each action targets its own diagnostic.
+        // Quickfix + pin for first diagnostic, then quickfix + pin for second.
         let CodeActionOrCommand::CodeAction(a1) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        let CodeActionOrCommand::CodeAction(a2) = &actions[1] else {
+        let CodeActionOrCommand::CodeAction(a2) = &actions[2] else {
             panic!("expected CodeAction");
         };
         assert_eq!(a1.title, "Update to v4.2.0");
@@ -729,7 +864,8 @@ mod tests {
             &[outdated, suggestion, no_suggestion],
             true,
         );
-        assert_eq!(actions.len(), 2); // outdated + suggestion, NOT the no_suggestion
+        // outdated produces quickfix + pin (2), suggestion produces quickfix (1) = 3
+        assert_eq!(actions.len(), 3);
 
         let CodeActionOrCommand::CodeAction(a0) = &actions[0] else {
             panic!("expected CodeAction");
@@ -737,10 +873,15 @@ mod tests {
         let CodeActionOrCommand::CodeAction(a1) = &actions[1] else {
             panic!("expected CodeAction");
         };
+        let CodeActionOrCommand::CodeAction(a2) = &actions[2] else {
+            panic!("expected CodeAction");
+        };
         assert!(a0.title.starts_with("Update to"));
-        assert!(a1.title.starts_with("Change to"));
+        assert!(a1.title.starts_with("Update & pin to SHA"));
+        assert!(a2.title.starts_with("Change to"));
         assert_eq!(a0.is_preferred, Some(true));
         assert_eq!(a1.is_preferred, Some(false));
+        assert_eq!(a2.is_preferred, Some(false));
     }
 
     #[test]

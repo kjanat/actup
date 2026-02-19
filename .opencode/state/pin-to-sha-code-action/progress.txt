@@ -66,3 +66,14 @@ Started: 2026-02-19
 - 14 new tests: pin action generation (tag, SHA-skip, no-SHA-skip, cursor-outside, different-line, boundary, multiple-entries, title format, unversioned fallback, empty entries), ranges_overlap (4 tests), is_sha (4 tests), kind_allowed for REFACTOR (2 tests)
 - Files: `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/diagnostics.rs`
 - **Learnings:** `Position` and `Range` are `Copy` in `tower-lsp-server` — pass `Position` by value per clippy `trivially_copy_pass_by_ref`. `Range` is 16 bytes (passed by ref). `ranges_overlap` can be `const fn` since it only uses `const fn` helpers.
+
+## Task - update-pin-code-action
+
+- Added "Update & pin to SHA ({short}...)" REFACTOR code action in `code_actions_for_diagnostics()` Outdated arm
+- Conditionally emitted when `target_sha` is `Some` — graceful no-op for older diagnostics without it
+- Destructured `target_sha` from `DiagnosticData::Outdated` (was previously `..`)
+- Action links to triggering diagnostic, uses `is_preferred: Some(false)` (quickfix remains preferred)
+- Updated existing tests: `outdated_diagnostic_produces_quickfix` → `outdated_diagnostic_produces_quickfix_and_pin` (2 actions), `multiple_diagnostics_produce_multiple_actions` (4 actions), `mixed_diagnostics_produce_correct_action_types` (3 actions)
+- 5 new tests: `update_pin_action_replaces_ref_with_target_sha`, `update_pin_action_title_contains_short_sha`, `update_pin_action_links_diagnostic`, `update_pin_absent_when_no_target_sha`, `update_pin_uses_unversioned_changes_when_not_supported`
+- Files: `crates/lsp/src/code_actions.rs`
+- **Learnings:** Adding a second action per diagnostic changes action count in ALL existing tests that count actions from Outdated diagnostics. The `make_outdated_diagnostic` helper always sets `target_sha: Some(DUMMY_SHA)`, so every Outdated diagnostic now yields 2 actions.

@@ -46,7 +46,7 @@
 			"description": "Add 'Update & pin to SHA (abcdef1...)' code action for Outdated diagnostics, using target_sha from DiagnosticData. Uses CodeActionKind::REFACTOR. Done when: action appears alongside existing update action for outdated refs.",
 			"depends": ["diagnostic-data-target-sha"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "pin-current-code-action",
