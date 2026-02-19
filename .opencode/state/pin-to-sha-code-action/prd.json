@@ -82,7 +82,7 @@
 			"description": "Snapshot tests for: SHA resolution in check_action, code action generation (all 3 types), comment insertion, config interaction. Done when: tests cover happy paths and edge cases, no network calls.",
 			"depends": ["pin-cursor-code-action", "update-pin-code-action", "pin-current-code-action", "cli-update-ref-style-sha"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		}
 	]
 }

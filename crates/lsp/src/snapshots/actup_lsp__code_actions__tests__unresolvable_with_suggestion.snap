@@ -1,0 +1,10 @@
+---
+source: crates/lsp/src/code_actions.rs
+expression: snaps
+---
+- title: Change to v2.1.0
+  kind: quickfix
+  is_preferred: false
+  edit_text: v2.1.0
+  edit_range: "3:10-3:15"
+  diagnostics_count: 1

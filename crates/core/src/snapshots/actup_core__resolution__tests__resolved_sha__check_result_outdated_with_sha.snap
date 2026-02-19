@@ -1,0 +1,8 @@
+---
+source: crates/core/src/resolution.rs
+expression: snap
+---
+status: outdated
+resolved_sha: sha_old_aaa111bbb222ccc333ddd444eee
+target_version: v4.2.0
+target_sha: sha_new_fff999eee888ddd777ccc666bb

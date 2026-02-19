@@ -155,6 +155,8 @@ pub async fn run(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
@@ -295,5 +297,83 @@ mod tests {
             config.ref_style_for("actions", "setup-node"),
             policy::Style::Preserve
         );
+    }
+
+    // --- Snapshot tests: capture CLI edit output shapes ---
+
+    #[test]
+    fn snapshot_sha_edit_with_comment() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha)
+            .with_comment(" # v4.2.0".to_string());
+
+        let result = edit.apply(line).unwrap();
+        insta::assert_snapshot!("sha_edit_with_comment", result);
+    }
+
+    #[test]
+    fn snapshot_sha_edit_without_comment() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha);
+
+        let result = edit.apply(line).unwrap();
+        insta::assert_snapshot!("sha_edit_without_comment", result);
+    }
+
+    #[test]
+    fn snapshot_tag_edit_preserves_format() {
+        let line = "      - uses: actions/checkout@v3";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v3".to_string(), line.to_string());
+        let edit = create_edit(
+            &loc,
+            &make_action_ref("actions", "checkout", "v3"),
+            "v4.2.0",
+        );
+
+        let result = edit.apply(line).unwrap();
+        insta::assert_snapshot!("tag_edit_preserves_format", result);
+    }
+
+    #[test]
+    fn snapshot_sha_edit_existing_comment_preserved() {
+        let line = "      - uses: actions/checkout@v4 # pinned for security";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha)
+            .with_comment(" # v4.2.0".to_string());
+
+        let result = edit.apply(line).unwrap();
+        insta::assert_snapshot!("sha_edit_existing_comment_preserved", result);
+    }
+
+    #[test]
+    fn snapshot_multi_edit_file() {
+        use crate::common::FileEdits;
+
+        let content = "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v3\n      - uses: actions/setup-node@v2\n";
+        let mut fe = FileEdits::new(PathBuf::from("/test.yml"), content.to_string());
+
+        // First edit: tag-style update
+        fe.add(PendingEdit::replace_ref(
+            8,
+            "v3".to_string(),
+            "v4.2.0".to_string(),
+        ));
+        // Second edit: SHA-style pin
+        fe.add(
+            PendingEdit::replace_ref(
+                9,
+                "v2".to_string(),
+                "b4ffde65f46336ab88eb53be808477a3936bae11".to_string(),
+            )
+            .with_comment(" # v4.0.0".to_string()),
+        );
+
+        let result = fe.apply().unwrap();
+        insta::assert_snapshot!("multi_edit_file", result);
     }
 }

@@ -1624,4 +1624,185 @@ mod tests {
         // Quickfix always produces the tag, never SHA+comment.
         assert_eq!(edits[0].new_text, "v2.0.0");
     }
+
+    // --- Snapshot tests: capture full code action shapes ---
+
+    /// Simplified code action representation for readable snapshots.
+    #[derive(serde::Serialize)]
+    struct ActionSnapshot {
+        title: String,
+        kind: String,
+        is_preferred: Option<bool>,
+        edit_text: String,
+        edit_range: String,
+        diagnostics_count: usize,
+    }
+
+    /// Simplified fix-all snapshot with multiple edits.
+    #[derive(serde::Serialize)]
+    struct FixAllSnapshot {
+        title: String,
+        kind: String,
+        is_preferred: Option<bool>,
+        edits: Vec<EditSnapshot>,
+        diagnostics_count: usize,
+    }
+
+    /// Single edit within a fix-all snapshot.
+    #[derive(serde::Serialize)]
+    struct EditSnapshot {
+        new_text: String,
+        range: String,
+    }
+
+    fn snapshot_action(action: &CodeAction, uri: &Uri, version: Option<i32>) -> ActionSnapshot {
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), uri, version);
+        let edit = &edits[0];
+        ActionSnapshot {
+            title: action.title.clone(),
+            kind: action
+                .kind
+                .as_ref()
+                .map_or_else(|| "none".into(), |k| k.as_str().to_string()),
+            is_preferred: action.is_preferred,
+            edit_text: edit.new_text.clone(),
+            edit_range: format!(
+                "{}:{}-{}:{}",
+                edit.range.start.line,
+                edit.range.start.character,
+                edit.range.end.line,
+                edit.range.end.character,
+            ),
+            diagnostics_count: action.diagnostics.as_ref().map_or(0, Vec::len),
+        }
+    }
+
+    fn snapshot_actions(
+        actions: &[CodeActionOrCommand],
+        uri: &Uri,
+        version: Option<i32>,
+    ) -> Vec<ActionSnapshot> {
+        actions
+            .iter()
+            .map(|a| match a {
+                CodeActionOrCommand::CodeAction(ca) => snapshot_action(ca, uri, version),
+                CodeActionOrCommand::Command(_) => panic!("expected CodeAction, got Command"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn snapshot_outdated_all_three_actions() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let range = make_range(7, 31, 33);
+        let diag = make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
+        let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
+
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true, true);
+        let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
+
+        insta::assert_yaml_snapshot!("outdated_all_three_actions", snaps);
+    }
+
+    #[test]
+    fn snapshot_outdated_without_pin_comment() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let range = make_range(7, 31, 33);
+        let diag = make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
+        let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
+
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
+        let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
+
+        insta::assert_yaml_snapshot!("outdated_without_pin_comment", snaps);
+    }
+
+    #[test]
+    fn snapshot_cursor_pin_with_comment() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 32, 32);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true, true);
+        let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
+
+        insta::assert_yaml_snapshot!("cursor_pin_with_comment", snaps);
+    }
+
+    #[test]
+    fn snapshot_cursor_pin_without_comment() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 32, 32);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
+
+        insta::assert_yaml_snapshot!("cursor_pin_without_comment", snaps);
+    }
+
+    #[test]
+    fn snapshot_fix_all_multiple_outdated() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 =
+            make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+        let diag2 =
+            make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
+
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = &action else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let snap = FixAllSnapshot {
+            title: action.title.clone(),
+            kind: action
+                .kind
+                .as_ref()
+                .map_or_else(|| "none".into(), |k| k.as_str().to_string()),
+            is_preferred: action.is_preferred,
+            edits: edits
+                .iter()
+                .map(|e| EditSnapshot {
+                    new_text: e.new_text.clone(),
+                    range: format!(
+                        "{}:{}-{}:{}",
+                        e.range.start.line,
+                        e.range.start.character,
+                        e.range.end.line,
+                        e.range.end.character,
+                    ),
+                })
+                .collect(),
+            diagnostics_count: action.diagnostics.as_ref().map_or(0, Vec::len),
+        };
+
+        insta::assert_yaml_snapshot!("fix_all_multiple_outdated", snap);
+    }
+
+    #[test]
+    fn snapshot_outdated_no_entries_no_pin_current() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        // No entries → no pin-current action
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true, true);
+        let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
+
+        insta::assert_yaml_snapshot!("outdated_no_entries_no_pin_current", snaps);
+    }
+
+    #[test]
+    fn snapshot_unresolvable_with_suggestion() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
+        let snaps = snapshot_actions(&actions, &uri, TEST_VERSION);
+
+        insta::assert_yaml_snapshot!("unresolvable_with_suggestion", snaps);
+    }
 }

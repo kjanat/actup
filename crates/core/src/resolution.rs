@@ -1070,5 +1070,79 @@ mod tests {
                 None,
             );
         }
+
+        // --- Snapshot tests ---
+
+        #[derive(serde::Serialize)]
+        struct CheckOutdatedSnapshot {
+            status: String,
+            resolved_sha: Option<String>,
+            target_version: Option<String>,
+            target_sha: Option<String>,
+        }
+
+        #[derive(serde::Serialize)]
+        struct CheckStatusSnapshot {
+            status: String,
+            resolved_sha: Option<String>,
+        }
+
+        #[test]
+        fn snapshot_check_result_outdated_with_sha() {
+            let action = make_action_ref("actions", "checkout", "v4.0.0");
+            let v4_0 = make_version_info("v4.0.0", "sha_old_aaa111bbb222ccc333ddd444eee");
+            let v4_2 = make_version_info("v4.2.0", "sha_new_fff999eee888ddd777ccc666bb");
+            let mut latest_per_major = HashMap::new();
+            latest_per_major.insert(4, v4_2.clone());
+            let versions = make_version_set(
+                vec![v4_0, v4_2.clone()],
+                Some(v4_2),
+                latest_per_major,
+                HashMap::new(),
+            );
+            let config = Config::default();
+
+            let result = check_action(&action, &versions, &config);
+
+            let snap = match result.status() {
+                CheckStatus::Outdated { target, .. } => CheckOutdatedSnapshot {
+                    status: "outdated".into(),
+                    resolved_sha: result.resolved_sha().map(String::from),
+                    target_version: Some(target.version().to_string()),
+                    target_sha: Some(target.sha().to_string()),
+                },
+                _ => panic!("expected Outdated status"),
+            };
+
+            insta::assert_yaml_snapshot!("check_result_outdated_with_sha", snap);
+        }
+
+        #[test]
+        fn snapshot_check_result_up_to_date_with_sha() {
+            let action = make_action_ref("actions", "checkout", "v4.2.0");
+            let v4_2 = make_version_info("v4.2.0", "sha_latest_aaa111bbb222ccc333ddd444");
+            let mut latest_per_major = HashMap::new();
+            latest_per_major.insert(4, v4_2.clone());
+            let versions = make_version_set(
+                vec![v4_2.clone()],
+                Some(v4_2),
+                latest_per_major,
+                HashMap::new(),
+            );
+            let config = Config::default();
+
+            let result = check_action(&action, &versions, &config);
+
+            let snap = CheckStatusSnapshot {
+                status: format!("{:?}", result.status())
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("unknown")
+                    .to_string(),
+                resolved_sha: result.resolved_sha().map(String::from),
+            };
+
+            insta::assert_yaml_snapshot!("check_result_up_to_date_with_sha", snap);
+        }
     }
 }

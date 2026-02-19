@@ -1,0 +1,16 @@
+---
+source: crates/lsp/src/code_actions.rs
+expression: snaps
+---
+- title: Update to v4.2.0
+  kind: quickfix
+  is_preferred: true
+  edit_text: v4.2.0
+  edit_range: "7:31-7:33"
+  diagnostics_count: 1
+- title: Update & pin to SHA (abc1234...)
+  kind: refactor
+  is_preferred: false
+  edit_text: "abc1234567890abcdef1234567890abcdef12345 # v4.2.0"
+  edit_range: "7:31-7:33"
+  diagnostics_count: 1

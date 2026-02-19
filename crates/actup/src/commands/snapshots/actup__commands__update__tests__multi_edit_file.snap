@@ -1,0 +1,13 @@
+---
+source: crates/actup/src/commands/update.rs
+expression: result
+---
+name: CI
+on:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.2.0
+      - uses: actions/setup-node@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.0.0

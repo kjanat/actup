@@ -119,3 +119,14 @@ Started: 2026-02-19
 - 7 new tests: SHA edit replaces ref, SHA with comment, SHA without comment, existing comment preserved, config integration, per-action override
 - Files: `crates/actup/src/commands/update.rs`
 - **Learnings:** `target.sha()` from `version::Info` already has the SHA — no need to call `resolve_ref_to_sha` (unlike pin command which resolves current ref). The edit infrastructure (`create_edit` + `with_comment`) reuses cleanly between pin and update commands.
+
+## Task - tests-snapshot
+
+- Added `insta` (YAML snapshot) as dev-dependency to `actup-core`, `actup-lsp`, `actup` crates
+- **LSP code action snapshots** (7): `outdated_all_three_actions`, `outdated_without_pin_comment`, `cursor_pin_with_comment`, `cursor_pin_without_comment`, `fix_all_multiple_outdated`, `outdated_no_entries_no_pin_current`, `unresolvable_with_suggestion`
+- **Core resolution snapshots** (2): `check_result_outdated_with_sha`, `check_result_up_to_date_with_sha`
+- **CLI update edit snapshots** (5): `sha_edit_with_comment`, `sha_edit_without_comment`, `tag_edit_preserves_format`, `sha_edit_existing_comment_preserved`, `multi_edit_file` (full YAML file with mixed tag+SHA edits)
+- Snapshot helper structs: `ActionSnapshot`, `FixAllSnapshot`, `EditSnapshot`, `CheckOutdatedSnapshot`, `CheckStatusSnapshot` — serialize key fields for readable YAML comparison
+- No assertion-based edge case tests added (existing 80+ tests already cover all edge cases comprehensively)
+- Files: `crates/core/Cargo.toml`, `crates/lsp/Cargo.toml`, `crates/actup/Cargo.toml`, `crates/core/src/resolution.rs`, `crates/lsp/src/code_actions.rs`, `crates/actup/src/commands/update.rs`, 14 snapshot files
+- **Learnings:** `CodeAction` from `lsp-types` implements `Serialize`, but full struct snapshots are noisy (URI, nested edit structures). Better to extract key fields into simple structs for readable YAML snapshots. `insta` `INSTA_UPDATE=always` accepts all new snapshots in one pass.

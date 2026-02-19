@@ -35,6 +35,7 @@ tracing               = { workspace = true }                   # Logging
 tracing-subscriber    = { workspace = true }                   # Log formatting
 
 [dev-dependencies]
+insta    = { workspace = true }  # Snapshot tests
 tempfile = { workspace = true }  # Temp files for tests
 wiremock = { workspace = true }  # HTTP mocking
 

@@ -1,0 +1,6 @@
+---
+source: crates/core/src/resolution.rs
+expression: snap
+---
+status: UpToDate
+resolved_sha: sha_latest_aaa111bbb222ccc333ddd444

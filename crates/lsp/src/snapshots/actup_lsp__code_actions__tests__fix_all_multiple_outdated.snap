@@ -1,0 +1,13 @@
+---
+source: crates/lsp/src/code_actions.rs
+expression: snap
+---
+title: Fix all outdated actions (2 refs)
+kind: source.fixAll.actup
+is_preferred: false
+edits:
+  - new_text: v4.2.0
+    range: "7:31-7:33"
+  - new_text: v4.0.0
+    range: "8:34-8:36"
+diagnostics_count: 2
