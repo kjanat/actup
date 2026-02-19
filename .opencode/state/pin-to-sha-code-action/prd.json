@@ -73,7 +73,7 @@
 			"description": "When ref_style = sha in config, CLI update emits SHA refs instead of tags. Reuses resolve_sha logic from pin command. Respects pin.comment config. Done when: actup update with ref_style=sha produces SHA refs with optional comments.",
 			"depends": ["resolved-sha-field", "pin-comment-config"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "tests-snapshot",

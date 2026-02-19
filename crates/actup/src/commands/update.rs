@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action as core_check_action, provider,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action as core_check_action, policy,
+    provider,
 };
 use owo_colors::OwoColorize;
 
@@ -92,9 +93,24 @@ pub async fn run(
                 continue; // Not outdated, skip
             };
 
-            let new_ref = target.version().to_string();
+            let style = config.ref_style_for(action_ref.owner(), action_ref.repo());
+            let (new_ref, comment) = if style == policy::Style::Sha {
+                let sha = target.sha().to_string();
+                let tag = target.version().to_string();
+                let comment = if config.pin.comment {
+                    Some(format!(" # {tag}"))
+                } else {
+                    None
+                };
+                (sha, comment)
+            } else {
+                (target.version().to_string(), None)
+            };
 
-            let edit = create_edit(&loc, &action_ref, &new_ref);
+            let mut edit = create_edit(&loc, &action_ref, &new_ref);
+            if let Some(ref c) = comment {
+                edit = edit.with_comment(c.clone());
+            }
 
             if !file_edits.add(edit) {
                 eprintln!(
@@ -108,12 +124,13 @@ pub async fn run(
             }
 
             if matches!(format, OutputFormat::Human) {
+                let display_suffix = comment.as_deref().unwrap_or("");
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
                     loc.line(),
                     action_ref.ref_str().red(),
-                    new_ref.green()
+                    format!("{new_ref}{display_suffix}").green()
                 );
             }
             total_updates += 1;
@@ -176,5 +193,107 @@ mod tests {
         let edit = create_edit(&loc, &action_ref, "v1.0.0");
 
         assert_eq!(edit.line, 5);
+    }
+
+    #[test]
+    fn test_create_edit_sha_style_replaces_ref_with_sha() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha);
+
+        let result = edit.apply(line).unwrap();
+        assert_eq!(
+            result,
+            "      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11"
+        );
+    }
+
+    #[test]
+    fn test_create_edit_sha_style_with_comment() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha)
+            .with_comment(" # v4.2.0".to_string());
+
+        let result = edit.apply(line).unwrap();
+        assert_eq!(
+            result,
+            "      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.2.0"
+        );
+    }
+
+    #[test]
+    fn test_create_edit_sha_style_no_comment_when_disabled() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        // No .with_comment() — simulates pin.comment = false
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha);
+
+        let result = edit.apply(line).unwrap();
+        assert!(
+            !result.contains('#'),
+            "no comment should be appended when pin.comment is false"
+        );
+    }
+
+    #[test]
+    fn test_create_edit_sha_style_skips_comment_when_line_has_existing() {
+        let line = "      - uses: actions/checkout@v4 # existing comment";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let sha = "b4ffde65f46336ab88eb53be808477a3936bae11";
+        let edit = create_edit(&loc, &make_action_ref("actions", "checkout", "v4"), sha)
+            .with_comment(" # v4.2.0".to_string());
+
+        let result = edit.apply(line).unwrap();
+        // Existing comment preserved, new comment not added (PendingEdit behavior)
+        assert!(result.contains("# existing comment"));
+        assert!(!result.contains("# v4.2.0"));
+    }
+
+    #[test]
+    fn test_ref_style_sha_config_integration() {
+        use actup_core::policy;
+
+        let config = Config {
+            ref_style: policy::Style::Sha,
+            ..Config::default()
+        };
+        assert_eq!(
+            config.ref_style_for("actions", "checkout"),
+            policy::Style::Sha
+        );
+    }
+
+    #[test]
+    fn test_ref_style_sha_per_action_override() {
+        use actup_core::config::ActionOverride;
+        use actup_core::policy;
+
+        let config = Config {
+            action_overrides: {
+                let mut m = std::collections::HashMap::new();
+                m.insert(
+                    "actions/checkout".to_string(),
+                    ActionOverride {
+                        ref_style: Some(policy::Style::Sha),
+                        ..ActionOverride::default()
+                    },
+                );
+                m
+            },
+            ..Config::default()
+        };
+        // Global is preserve (default), but per-action override is sha
+        assert_eq!(
+            config.ref_style_for("actions", "checkout"),
+            policy::Style::Sha
+        );
+        assert_eq!(
+            config.ref_style_for("actions", "setup-node"),
+            policy::Style::Preserve
+        );
     }
 }

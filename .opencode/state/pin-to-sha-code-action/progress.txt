@@ -108,3 +108,14 @@ Started: 2026-02-19
 - All existing tests updated with `false` for new `pin_comment` parameter
 - Files: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`, `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/diagnostics.rs`, `crates/actup/src/commands/pin.rs`, `schemas/actup-config.schema.json`
 - **Learnings:** `PinConfig` needs `#[allow(clippy::module_name_repetitions)]` since it lives in `config` module. `format_pin_text(sha, ref_str, pin_comment)` centralizes the SHA+comment formatting logic — used by all three code action types and CLI pin. New config fields require `just schema` regeneration (the `schema_file_matches_generated` integration test compares committed vs generated).
+
+## Task - cli-update-ref-style-sha
+
+- Added `ref_style` check in `update::run()`: after determining `CheckStatus::Outdated`, checks `config.ref_style_for(owner, repo)`
+- When `Style::Sha`: uses `target.sha()` directly (already in version::Info, no extra API call), builds comment from `target.version().to_string()` conditional on `config.pin.comment`
+- When `Style::Tag` or `Style::Preserve`: preserves existing behavior (`target.version().to_string()`)
+- Comment attached via `PendingEdit::with_comment()` — reuses existing infrastructure from pin command
+- Human output updated to display comment suffix when present
+- 7 new tests: SHA edit replaces ref, SHA with comment, SHA without comment, existing comment preserved, config integration, per-action override
+- Files: `crates/actup/src/commands/update.rs`
+- **Learnings:** `target.sha()` from `version::Info` already has the SHA — no need to call `resolve_ref_to_sha` (unlike pin command which resolves current ref). The edit infrastructure (`create_edit` + `with_comment`) reuses cleanly between pin and update commands.
