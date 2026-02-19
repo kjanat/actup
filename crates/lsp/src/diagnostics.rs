@@ -79,21 +79,9 @@ fn extract_located_actions(
                 // ref_range gives byte range of just the ref after @; fall back to full value.
                 // Convert byte offsets to the negotiated LSP encoding.
                 let raw_line = loc.raw_line();
-                let (col_start, col_end) = loc.ref_range().map_or_else(
-                    || {
-                        let r = loc.value_range();
-                        (
-                            crate::position::byte_to_col(raw_line, r.start, encoding),
-                            crate::position::byte_to_col(raw_line, r.end, encoding),
-                        )
-                    },
-                    |r| {
-                        (
-                            crate::position::byte_to_col(raw_line, r.start, encoding),
-                            crate::position::byte_to_col(raw_line, r.end, encoding),
-                        )
-                    },
-                );
+                let r = loc.ref_range().unwrap_or_else(|| loc.value_range());
+                let col_start = crate::position::byte_to_col(raw_line, r.start, encoding);
+                let col_end = crate::position::byte_to_col(raw_line, r.end, encoding);
 
                 #[allow(clippy::cast_possible_truncation)]
                 let line = (loc.line() - 1) as u32; // 1-indexed -> 0-indexed

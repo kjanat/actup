@@ -88,13 +88,13 @@ pub fn byte_to_col(line: &str, byte_offset: usize, encoding: PositionEncoding) -
 ///
 /// Used for **incoming** positions: hover cursor, completion cursor.
 ///
-/// If `col` falls inside a surrogate pair (non-BMP character), clamps to
-/// the start of that character (same approach as rust-analyzer).
+/// If `col` falls inside a surrogate pair (non-BMP character), advances
+/// to the next character boundary (same approach as rust-analyzer).
 /// Returns `line.len()` if `col` is past the end.
 #[allow(clippy::cast_possible_truncation)]
 pub fn col_to_byte(line: &str, col: u32, encoding: PositionEncoding) -> usize {
     match encoding {
-        PositionEncoding::Utf8 => col as usize,
+        PositionEncoding::Utf8 => (col as usize).min(line.len()),
         PositionEncoding::Utf16 => {
             let mut utf16_count = 0u32;
             for (byte_idx, ch) in line.char_indices() {
@@ -210,7 +210,7 @@ mod tests {
         // A=1 UTF-16 cu, 🎉=2 UTF-16 cu, B=1 UTF-16 cu
         // col 0 → byte 0 (A)
         // col 1 → byte 1 (start of 🎉)
-        // col 2 → still byte 1 (inside 🎉 surrogate pair, clamp to start)
+        // col 2 → byte 5 (inside surrogate pair, advances to next boundary)
         // col 3 → byte 5 (B)
         assert_eq!(col_to_byte(line, 0, PositionEncoding::Utf16), 0);
         assert_eq!(col_to_byte(line, 1, PositionEncoding::Utf16), 1);
@@ -231,7 +231,7 @@ mod tests {
     #[test]
     fn col_to_byte_past_end_returns_line_len() {
         let line = "hello";
-        assert_eq!(col_to_byte(line, 100, PositionEncoding::Utf8), 100);
+        assert_eq!(col_to_byte(line, 100, PositionEncoding::Utf8), line.len());
         assert_eq!(col_to_byte(line, 100, PositionEncoding::Utf16), line.len());
     }
 
