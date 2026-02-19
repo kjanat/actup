@@ -65,9 +65,9 @@ fn make_edit(
 ///
 /// For each `Outdated` diagnostic, produces:
 /// - A quickfix "Update to vX.Y.Z" that replaces only the ref portion
-/// - A refactor "Update & pin to SHA ({full_sha})" when `target_sha` is
+/// - A refactor "Update & pin to SHA (`full_sha`)" when `target_sha` is
 ///   a valid 40-char SHA, replacing the ref with the target's resolved commit SHA
-/// - A refactor "Pin {current} to SHA ({full_sha})" when a matching
+/// - A refactor "Pin {current} to SHA (`full_sha`)" when a matching
 ///   [`ActionCheckEntry`] provides a valid 40-char `resolved_sha` for the current ref
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
@@ -301,7 +301,7 @@ fn format_pin_text(sha: &str, ref_str: &str, pin_comment: bool) -> String {
 ///
 /// Uses `<=` for start/end comparisons so that a zero-width cursor at a
 /// range boundary still counts as overlapping.
-const fn ranges_overlap(a: &Range, b: &Range) -> bool {
+pub const fn ranges_overlap(a: &Range, b: &Range) -> bool {
     position_le(a.start, b.end) && position_le(b.start, a.end)
 }
 
@@ -335,7 +335,7 @@ pub fn pin_actions_for_cursor(
         .iter()
         .filter(|e| ranges_overlap(cursor_range, &e.ref_range))
         .filter(|e| !diagnostic_ranges.contains(&e.ref_range))
-        .filter(|e| e.resolved_sha.as_deref().is_some_and(|s| is_sha(s)))
+        .filter(|e| e.resolved_sha.as_deref().is_some_and(is_sha))
         .filter(|e| !is_sha(&e.ref_str))
         .filter_map(|e| {
             let sha = e.resolved_sha.as_ref()?;

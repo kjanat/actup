@@ -712,11 +712,23 @@ impl LanguageServer for LspBackend {
             only,
             &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
         ) {
-            let diagnostic_ranges: Vec<_> = context_diagnostics
-                .iter()
-                .filter(|d| d.source.as_deref() == Some(crate::diagnostics::DIAGNOSTIC_SOURCE))
-                .map(|d| d.range)
-                .collect();
+            let diagnostic_ranges: Vec<_> = if context_diagnostics.is_empty() {
+                self.documents
+                    .get(&uri)
+                    .map(|doc| doc.diagnostics.clone())
+                    .unwrap_or_default()
+                    .iter()
+                    .filter(|d| d.source.as_deref() == Some(crate::diagnostics::DIAGNOSTIC_SOURCE))
+                    .filter(|d| crate::code_actions::ranges_overlap(&params.range, &d.range))
+                    .map(|d| d.range)
+                    .collect()
+            } else {
+                context_diagnostics
+                    .iter()
+                    .filter(|d| d.source.as_deref() == Some(crate::diagnostics::DIAGNOSTIC_SOURCE))
+                    .map(|d| d.range)
+                    .collect()
+            };
             let pin_actions = crate::code_actions::pin_actions_for_cursor(
                 &uri,
                 doc_version,
