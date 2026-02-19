@@ -313,8 +313,8 @@ const fn position_le(a: Position, b: Position) -> bool {
 /// Build cursor-based "Pin to SHA" code actions from [`ActionCheckEntry`]s.
 ///
 /// For each entry where the cursor overlaps `ref_range`, `resolved_sha` is
-/// available, and the ref is not already a SHA, produces a `REFACTOR` code
-/// action that replaces the ref with the resolved SHA.
+/// a valid 40-char SHA, and the ref is not already a SHA, produces a
+/// `REFACTOR` code action that replaces the ref with the resolved SHA.
 ///
 /// This is the cursor-based complement to diagnostic-based actions: it works
 /// on `UpToDate` and branch refs that have no diagnostic.
@@ -335,20 +335,16 @@ pub fn pin_actions_for_cursor(
         .iter()
         .filter(|e| ranges_overlap(cursor_range, &e.ref_range))
         .filter(|e| !diagnostic_ranges.contains(&e.ref_range))
-        .filter(|e| e.resolved_sha.is_some())
+        .filter(|e| e.resolved_sha.as_deref().is_some_and(|s| is_sha(s)))
         .filter(|e| !is_sha(&e.ref_str))
-        .map(|e| {
-            // SAFETY: filtered for `is_some()` above.
-            let Some(sha) = &e.resolved_sha else {
-                unreachable!()
-            };
-            let short = sha.get(..7).unwrap_or(sha);
+        .filter_map(|e| {
+            let sha = e.resolved_sha.as_ref()?;
             let edit = TextEdit {
                 range: e.ref_range,
                 new_text: format_pin_text(sha, &e.ref_str, pin_comment),
             };
-            CodeActionOrCommand::CodeAction(CodeAction {
-                title: format!("Pin to SHA ({short}...)"),
+            Some(CodeActionOrCommand::CodeAction(CodeAction {
+                title: format!("Pin to SHA ({sha})"),
                 kind: Some(CodeActionKind::REFACTOR),
                 edit: Some(make_edit(
                     uri,
@@ -357,7 +353,7 @@ pub fn pin_actions_for_cursor(
                     supports_document_changes,
                 )),
                 ..Default::default()
-            })
+            }))
         })
         .collect()
 }
@@ -1160,10 +1156,10 @@ mod tests {
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        assert!(
-            action.title.starts_with("Pin to SHA ("),
-            "title: {}",
+        assert_eq!(
             action.title,
+            format!("Pin to SHA ({})", test_utils::DUMMY_SHA),
+            "title should contain full 40-char SHA",
         );
         assert_eq!(action.kind, Some(CodeActionKind::REFACTOR));
 
@@ -1273,7 +1269,7 @@ mod tests {
     }
 
     #[test]
-    fn pin_action_title_contains_short_sha() {
+    fn pin_action_title_contains_full_sha() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(0, 11, 11);
@@ -1283,12 +1279,11 @@ mod tests {
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        assert!(
-            action.title.contains(&test_utils::DUMMY_SHA[..7]),
-            "title should contain short SHA, got: {}",
+        assert_eq!(
             action.title,
+            format!("Pin to SHA ({})", test_utils::DUMMY_SHA),
+            "title should contain full 40-char SHA",
         );
-        assert!(action.title.ends_with("...)"));
     }
 
     #[test]

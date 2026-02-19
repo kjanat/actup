@@ -2,7 +2,7 @@
 source: crates/lsp/src/code_actions.rs
 expression: snaps
 ---
-- title: Pin to SHA (abc1234...)
+- title: Pin to SHA (abc1234567890abcdef1234567890abcdef12345)
   kind: refactor
   is_preferred: ~
   edit_text: abc1234567890abcdef1234567890abcdef12345
