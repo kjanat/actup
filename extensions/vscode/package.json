@@ -1,0 +1,87 @@
+{
+  "name": "actup-vscode",
+  "displayName": "Actup",
+  "version": "0.1.0",
+  "description": "Keep GitHub Actions uses: refs up-to-date — diagnostics, code actions, hover, completion",
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kjanat/actup-v2",
+    "directory": "extensions/vscode"
+  },
+  "license": "MIT OR Apache-2.0",
+  "publisher": "Kaj Kowalski <info@kajkowalski.nl>",
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "lint": "eslint .",
+    "package": "vsce package",
+    "typecheck": "tsc --noEmit",
+    "watch": "tsc -watch -p ./"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "actup.fixAllInWorkspace",
+        "title": "actup: Fix All in Workspace"
+      },
+      {
+        "command": "actup.restartServer",
+        "title": "actup: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "actup",
+      "properties": {
+        "actup.server.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Absolute path to the `actup-lsp` binary. If unset, searches `PATH`."
+        },
+        "actup.server.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra arguments passed to `actup-lsp`."
+        },
+        "actup.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VS Code and the actup language server."
+        }
+      }
+    }
+  },
+  "activationEvents": [
+    "onLanguage:yaml"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.9.0",
+    "@types/node": "^22",
+    "@types/vscode": "^1.100.0",
+    "@vscode/vsce": "^3.0.0",
+    "eslint": "^10.0.0",
+    "typescript": "^5.8.2",
+    "typescript-eslint": "^8.56.0"
+  },
+  "engines": {
+    "vscode": "^1.109.0"
+  }
+}
