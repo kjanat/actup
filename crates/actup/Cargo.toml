@@ -18,6 +18,7 @@ actup-provider-gitea  = { workspace = true, optional = true }  # Gitea/Forgejo p
 actup-provider-github = { workspace = true }                   # GitHub provider
 actup-provider-gitlab = { workspace = true, optional = true }  # GitLab provider
 clap                  = { workspace = true }                   # CLI parsing
+clap_complete         = { workspace = true }                   # Shell completions
 console               = { workspace = true }                   # Terminal utilities
 dirs                  = { workspace = true }                   # Directory paths
 futures               = { workspace = true }                   # Async utilities

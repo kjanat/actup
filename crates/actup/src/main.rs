@@ -45,6 +45,12 @@ async fn main() -> ExitCode {
 }
 
 async fn run(cli: Cli) -> i32 {
+    // Handle completions early (no config/registry needed)
+    if let Command::Completions { shell } = cli.command {
+        Cli::print_completions(shell);
+        return CliExitCode::Success.into();
+    }
+
     // Get the start directory from command path
     let start_dir = match &cli.command {
         Command::Check { path, .. }
@@ -59,6 +65,7 @@ async fn run(cli: Cli) -> i32 {
                 return CliExitCode::EnvironmentError.into();
             }
         },
+        Command::Completions { .. } => unreachable!("handled above"),
     };
 
     let config = match Config::load(None, &start_dir) {
@@ -105,6 +112,7 @@ async fn run(cli: Cli) -> i32 {
         }
         Command::Schema => commands::schema::run(),
         Command::Cache { action, format } => commands::cache::run(&action, format, &config).await,
+        Command::Completions { .. } => unreachable!("handled before config load"),
     }
 }
 

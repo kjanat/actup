@@ -1,6 +1,7 @@
 //! CLI argument parsing with clap
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -12,8 +13,15 @@ pub struct Cli {
     pub command: Command,
 
     /// Verbose output
-    #[arg(short, long, global = true)]
+    #[arg(short, long, global = true, env = "ACTUP_VERBOSE")]
     pub verbose: bool,
+}
+
+impl Cli {
+    /// Generate shell completions and write to stdout
+    pub fn print_completions(shell: Shell) {
+        clap_complete::generate(shell, &mut Self::command(), "actup", &mut std::io::stdout());
+    }
 }
 
 #[derive(Subcommand)]
@@ -25,11 +33,11 @@ pub enum Command {
         path: PathBuf,
 
         /// Fail if any actions are outdated
-        #[arg(long)]
+        #[arg(long, env = "ACTUP_STRICT")]
         strict: bool,
 
         /// Output format
-        #[arg(long, default_value = "human")]
+        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
         format: OutputFormat,
     },
 
@@ -44,7 +52,7 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format
-        #[arg(long, default_value = "human")]
+        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
         format: OutputFormat,
     },
 
@@ -59,7 +67,7 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format
-        #[arg(long, default_value = "human")]
+        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
         format: OutputFormat,
     },
 
@@ -74,7 +82,7 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format
-        #[arg(long, default_value = "human")]
+        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
         format: OutputFormat,
     },
 
@@ -85,7 +93,7 @@ pub enum Command {
         path: PathBuf,
 
         /// Output format
-        #[arg(long, default_value = "human")]
+        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
         format: OutputFormat,
     },
 
@@ -98,8 +106,15 @@ pub enum Command {
         action: CacheAction,
 
         /// Output format
-        #[arg(long, default_value = "human")]
+        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
         format: OutputFormat,
+    },
+
+    /// Generate shell completions
+    Completions {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 

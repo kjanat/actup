@@ -41,15 +41,16 @@ actup update --dry-run
 
 ## Commands
 
-| Command  | Description                                    |
-| -------- | ---------------------------------------------- |
-| `check`  | Scan workflows, report outdated (read-only)    |
-| `update` | Update actions to latest versions              |
-| `fix`    | Alias for `update`                             |
-| `pin`    | Pin all actions to their current commit SHA    |
-| `config` | Show effective configuration                   |
-| `cache`  | Manage version cache (`info`, `clear`, `path`) |
-| `schema` | Output JSON schema for config file             |
+| Command       | Description                                    |
+| ------------- | ---------------------------------------------- |
+| `check`       | Scan workflows, report outdated (read-only)    |
+| `update`      | Update actions to latest versions              |
+| `fix`         | Alias for `update`                             |
+| `pin`         | Pin all actions to their current commit SHA    |
+| `config`      | Show effective configuration                   |
+| `cache`       | Manage version cache (`info`, `clear`, `path`) |
+| `schema`      | Output JSON schema for config file             |
+| `completions` | Generate shell completions                     |
 
 ### Output Formats
 
@@ -91,9 +92,33 @@ token_env = "GITLAB_TOKEN"
 
 ### Environment Variables
 
+**Authentication:**
+
 - `GITHUB_TOKEN` - GitHub API authentication
 - `GITLAB_TOKEN` - GitLab API authentication
 - `GITEA_TOKEN` - Gitea/Forgejo API authentication
+
+**CLI defaults:**
+
+- `ACTUP_VERBOSE` - Enable verbose output
+- `ACTUP_FORMAT` - Default output format (`human`, `json`, `toml`)
+- `ACTUP_STRICT` - Enable strict mode for `check`
+
+## Shell Completions
+
+```sh
+# Bash
+actup completions bash > ~/.local/share/bash-completion/completions/actup
+
+# Zsh
+actup completions zsh > ~/.zfunc/_actup
+
+# Fish
+actup completions fish > ~/.config/fish/completions/actup.fish
+
+# PowerShell
+actup completions powershell >> $PROFILE
+```
 
 ## Exit Codes
 
