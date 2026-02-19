@@ -1829,4 +1829,113 @@ mod tests {
 
         insta::assert_yaml_snapshot!("unresolvable_with_suggestion", snaps);
     }
+
+    /// F15: Combined diagnostic+cursor test — verifies F6 fix.
+    ///
+    /// When a cursor overlaps an Outdated diagnostic's ref range, the
+    /// diagnostic-based code actions already produce "Update & pin to SHA"
+    /// and "Pin current to SHA". The cursor-based `pin_actions_for_cursor`
+    /// must NOT produce a duplicate "Pin to SHA" for the same range.
+    #[test]
+    fn cursor_overlapping_diagnostic_no_duplicate_pin() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let ref_range = make_range(7, 31, 33);
+
+        // Entry at the overlapping ref range, with a resolved SHA
+        let entry = ActionCheckEntry {
+            ref_range,
+            value_range: make_range(7, 14, 33),
+            ref_str: "v3".into(),
+            resolved_sha: Some(test_utils::DUMMY_SHA.into()),
+        };
+
+        // Diagnostic at the SAME ref range (Outdated)
+        let diag = make_outdated_diagnostic(ref_range, "actions/checkout@v3", "v4.2.0");
+
+        // Cursor sits on the ref range — overlaps both the entry and the diagnostic
+        let cursor = make_range(7, 31, 31);
+
+        // 1) Diagnostic-based actions: should produce quickfix + update-pin + pin-current
+        let diag_actions = code_actions_for_diagnostics(
+            &uri,
+            TEST_VERSION,
+            &[diag],
+            std::slice::from_ref(&entry),
+            false,
+            true,
+        );
+        let diag_pin_count = diag_actions
+            .iter()
+            .filter(|a| {
+                if let CodeActionOrCommand::CodeAction(ca) = a {
+                    ca.title.contains("Pin")
+                } else {
+                    false
+                }
+            })
+            .count();
+        // Should have at least one pin action from diagnostics
+        assert!(diag_pin_count > 0, "diagnostics should produce pin actions");
+
+        // 2) Cursor-based pin actions: should produce ZERO because the ref_range
+        //    matches a diagnostic range and is therefore filtered out.
+        let diagnostic_ranges = vec![ref_range];
+        let cursor_actions = pin_actions_for_cursor(
+            &uri,
+            TEST_VERSION,
+            &cursor,
+            &[entry],
+            &diagnostic_ranges,
+            false,
+            true,
+        );
+        assert!(
+            cursor_actions.is_empty(),
+            "cursor-based pin should be suppressed when ref overlaps a diagnostic, \
+             got {} actions: {:?}",
+            cursor_actions.len(),
+            cursor_actions
+                .iter()
+                .map(|a| match a {
+                    CodeActionOrCommand::CodeAction(ca) => &ca.title,
+                    CodeActionOrCommand::Command(c) => &c.title,
+                })
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// F15 companion: cursor on a ref that has NO diagnostic should still
+    /// produce a pin action.
+    #[test]
+    fn cursor_without_diagnostic_still_produces_pin() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let ref_range = make_range(5, 20, 26);
+
+        let entry = ActionCheckEntry {
+            ref_range,
+            value_range: make_range(5, 14, 26),
+            ref_str: "v2.1.0".into(),
+            resolved_sha: Some(test_utils::DUMMY_SHA.into()),
+        };
+
+        let cursor = make_range(5, 22, 22);
+
+        // No diagnostic ranges
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], &[], false, true);
+        assert_eq!(
+            actions.len(),
+            1,
+            "should produce exactly one pin action when no diagnostic overlap",
+        );
+        if let CodeActionOrCommand::CodeAction(ca) = &actions[0] {
+            assert!(
+                ca.title.starts_with("Pin to SHA"),
+                "unexpected title: {}",
+                ca.title
+            );
+        } else {
+            panic!("expected CodeAction, got Command");
+        }
+    }
 }

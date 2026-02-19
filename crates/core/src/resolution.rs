@@ -1145,4 +1145,277 @@ mod tests {
             insta::assert_yaml_snapshot!("check_result_up_to_date_with_sha", snap);
         }
     }
+
+    mod check_action_remote_tests {
+        use super::*;
+        use crate::action_ref::ActionRepoId;
+        use crate::error;
+        use crate::provider::{ActionYml, Kind, Provider, Sha40};
+        use std::future::Future;
+        use std::pin::Pin;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        /// Configurable mock provider for `check_action_remote` async tests.
+        ///
+        /// Allows injecting specific `version::Set` responses and
+        /// `resolve_ref_to_sha` results to exercise the async gap-fill path.
+        struct MockProvider {
+            versions: version::Set,
+            sha_response: Option<Sha40>,
+            resolve_ref_call_count: Arc<AtomicUsize>,
+        }
+
+        impl MockProvider {
+            fn new(versions: version::Set, sha_response: Option<Sha40>) -> Self {
+                Self {
+                    versions,
+                    sha_response,
+                    resolve_ref_call_count: Arc::new(AtomicUsize::new(0)),
+                }
+            }
+
+            fn call_counter(&self) -> Arc<AtomicUsize> {
+                Arc::clone(&self.resolve_ref_call_count)
+            }
+        }
+
+        impl Provider for MockProvider {
+            fn kind(&self) -> Kind {
+                Kind::GitHub
+            }
+
+            #[allow(clippy::unnecessary_literal_bound)]
+            fn host(&self) -> &str {
+                "github.com"
+            }
+
+            fn get_versions(
+                &self,
+                _repo: &ActionRepoId,
+            ) -> Pin<Box<dyn Future<Output = error::Result<version::Set>> + Send + '_>>
+            {
+                let versions = self.versions.clone();
+                Box::pin(async move { Ok(versions) })
+            }
+
+            fn resolve_ref_to_sha(
+                &self,
+                _repo: &ActionRepoId,
+                _ref_name: &str,
+            ) -> Pin<Box<dyn Future<Output = error::Result<Sha40>> + Send + '_>> {
+                self.resolve_ref_call_count.fetch_add(1, Ordering::Relaxed);
+                let sha = self.sha_response.clone();
+                Box::pin(async move {
+                    sha.ok_or_else(|| error::Error::RefNotFound {
+                        owner: "owner".into(),
+                        repo: "repo".into(),
+                        ref_name: "mock-ref".into(),
+                        host: None,
+                    })
+                })
+            }
+
+            fn get_default_branch(
+                &self,
+                _repo: &ActionRepoId,
+            ) -> Pin<Box<dyn Future<Output = error::Result<String>> + Send + '_>> {
+                Box::pin(async { Ok("main".into()) })
+            }
+
+            fn get_readme(
+                &self,
+                _repo: &ActionRepoId,
+                _ref_name: Option<&str>,
+            ) -> Pin<Box<dyn Future<Output = error::Result<Option<String>>> + Send + '_>>
+            {
+                Box::pin(async { Ok(None) })
+            }
+
+            fn get_action_yml(
+                &self,
+                _repo: &ActionRepoId,
+                _ref_name: &str,
+            ) -> Pin<Box<dyn Future<Output = error::Result<ActionYml>> + Send + '_>> {
+                Box::pin(async { Ok(ActionYml::default()) })
+            }
+        }
+
+        fn make_registry_with_counter(
+            provider: MockProvider,
+        ) -> (provider::Registry, Arc<AtomicUsize>) {
+            let counter = provider.call_counter();
+            let mut registry = provider::Registry::new();
+            registry.register(Box::new(provider));
+            registry.set_default_host("github.com");
+            (registry, counter)
+        }
+
+        fn make_registry(provider: MockProvider) -> provider::Registry {
+            make_registry_with_counter(provider).0
+        }
+
+        const BRANCH_SHA: &str = "aabbccddee11223344556677889900aabbccddee";
+
+        #[tokio::test]
+        async fn non_default_branch_gets_sha_via_async_gap_fill() {
+            // Sync path: "develop" != default branch "main", so resolved_sha = None.
+            // Async gap-fill should call resolve_ref_to_sha and fill it in.
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new())
+                .with_default_branch(version::BranchInfo::new("main", "sha_main_head"));
+            let sha = Sha40::new(BRANCH_SHA).unwrap();
+            let provider = MockProvider::new(versions, Some(sha));
+
+            let config = Config {
+                branch_policy: policy::Branch::Ignore,
+                ..Default::default()
+            };
+            let action = make_action_ref("owner", "repo", "develop");
+            let registry = make_registry(provider);
+
+            let result = check_action_remote(&action, &config, &registry)
+                .await
+                .unwrap();
+
+            // Branch::Ignore treats non-semver refs as UpToDate
+            assert!(
+                matches!(result.status(), CheckStatus::UpToDate),
+                "expected UpToDate, got {:?}",
+                result.status(),
+            );
+            // Async gap-fill should have resolved the SHA
+            assert_eq!(result.resolved_sha(), Some(BRANCH_SHA));
+        }
+
+        #[tokio::test]
+        async fn non_default_branch_resolve_fails_leaves_sha_none() {
+            // When resolve_ref_to_sha fails, resolved_sha stays None
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new())
+                .with_default_branch(version::BranchInfo::new("main", "sha_main_head"));
+            let provider = MockProvider::new(versions, None);
+
+            let config = Config {
+                branch_policy: policy::Branch::Ignore,
+                ..Default::default()
+            };
+            let action = make_action_ref("owner", "repo", "develop");
+            let registry = make_registry(provider);
+
+            let result = check_action_remote(&action, &config, &registry)
+                .await
+                .unwrap();
+
+            assert!(matches!(result.status(), CheckStatus::UpToDate));
+            assert_eq!(result.resolved_sha(), None);
+        }
+
+        #[tokio::test]
+        async fn already_resolved_sha_skips_resolve_ref_call() {
+            // When sync path already resolved the SHA (e.g., known tag),
+            // the async gap-fill should NOT call resolve_ref_to_sha.
+            let v4_2 = make_version_info("v4.2.0", "abc123def456abc123def456abc123def456abcd");
+            let mut latest_per_major = HashMap::new();
+            latest_per_major.insert(4, v4_2.clone());
+            let versions = make_version_set(
+                vec![v4_2.clone()],
+                Some(v4_2),
+                latest_per_major,
+                HashMap::new(),
+            );
+            // Provider would return a different SHA, but it should never be called
+            let sha = Sha40::new("ff".repeat(20)).unwrap();
+            let mock = MockProvider::new(versions, Some(sha));
+            let (registry, counter) = make_registry_with_counter(mock);
+
+            let config = Config::default();
+            let action = make_action_ref("owner", "repo", "v4.2.0");
+
+            let result = check_action_remote(&action, &config, &registry)
+                .await
+                .unwrap();
+
+            assert_eq!(
+                result.resolved_sha(),
+                Some("abc123def456abc123def456abc123def456abcd"),
+            );
+            assert_eq!(
+                counter.load(Ordering::Relaxed),
+                0,
+                "resolve_ref_to_sha should not have been called",
+            );
+        }
+
+        #[tokio::test]
+        async fn sha_ref_skips_resolve_ref_call() {
+            // SHA refs should never trigger resolve_ref_to_sha
+            let sha_ref = "abc123def456abc123def456abc123def456abcd";
+            let v4 = make_version_info("v4.0.0", sha_ref);
+            let versions =
+                make_version_set(vec![v4.clone()], Some(v4), HashMap::new(), HashMap::new());
+            let sha = Sha40::new("ff".repeat(20)).unwrap();
+            let mock = MockProvider::new(versions, Some(sha));
+            let (registry, counter) = make_registry_with_counter(mock);
+
+            let config = Config::default();
+            let action = make_action_ref("owner", "repo", sha_ref);
+
+            let result = check_action_remote(&action, &config, &registry)
+                .await
+                .unwrap();
+
+            assert!(matches!(result.status(), CheckStatus::Pinned { .. }));
+            assert_eq!(result.resolved_sha(), None); // SHA refs don't get resolved_sha
+            assert_eq!(
+                counter.load(Ordering::Relaxed),
+                0,
+                "resolve_ref_to_sha should not have been called for SHA refs",
+            );
+        }
+
+        #[tokio::test]
+        async fn no_versions_fallback_resolves_sha() {
+            // When batch fetch returns no versions but resolve_ref_to_sha succeeds,
+            // the result should be UpToDate with the resolved SHA.
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+            let sha = Sha40::new(BRANCH_SHA).unwrap();
+            let provider = MockProvider::new(versions, Some(sha));
+
+            let config = Config::default();
+            let action = make_action_ref("owner", "repo", "v1.0.0");
+            let registry = make_registry(provider);
+
+            let result = check_action_remote(&action, &config, &registry)
+                .await
+                .unwrap();
+
+            assert!(
+                matches!(result.status(), CheckStatus::UpToDate),
+                "expected UpToDate, got {:?}",
+                result.status(),
+            );
+            assert_eq!(result.resolved_sha(), Some(BRANCH_SHA));
+        }
+
+        #[tokio::test]
+        async fn no_versions_fallback_ref_not_found_stays_unresolvable() {
+            // When batch fetch returns no versions AND resolve_ref_to_sha fails,
+            // the original Unresolvable result is returned.
+            let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+            let provider = MockProvider::new(versions, None);
+
+            let config = Config::default();
+            let action = make_action_ref("owner", "repo", "v1.0.0");
+            let registry = make_registry(provider);
+
+            let result = check_action_remote(&action, &config, &registry)
+                .await
+                .unwrap();
+
+            assert!(
+                matches!(result.status(), CheckStatus::Unresolvable { .. }),
+                "expected Unresolvable, got {:?}",
+                result.status(),
+            );
+            assert_eq!(result.resolved_sha(), None);
+        }
+    }
 }
