@@ -276,23 +276,9 @@ pub fn resolve_default_host(
     registrations: &[&Registration],
 ) -> Result<String, Error> {
     if let Some(ref host) = config.default_host {
-        // Validate the hostname itself
-        validate_hostname(host, "default_host")?;
-
-        // Verify it can resolve (must be a preset or have a [hosts] entry)
-        let preset_index = build_preset_index(registrations);
-        let has_preset = preset_index.contains_key(host.as_str());
-        let has_host_entry = config.hosts.contains_key(host.as_str());
-
-        if !has_preset && !has_host_entry {
-            return Err(Error::InvalidConfig {
-                path: "default_host".to_string(),
-                reason: format!(
-                    "\"{host}\" is not a preset host and has no [hosts.\"{host}\"] entry"
-                ),
-            });
-        }
-
+        // Validate hostname and ensure full resolution works (kind, api_base, etc.)
+        // This catches incomplete [hosts] entries early rather than at first use.
+        effective_host(host, config, registrations, &config.fetch)?;
         Ok(host.clone())
     } else {
         // No explicit default_host — look for github.com preset
@@ -1032,6 +1018,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn user_kind_override_with_api_base_but_no_token_env() {
+        // User overrides kind on preset host, provides api_base but NOT token_env.
+        // token_env should NOT leak from the preset (GITHUB_TOKEN).
+        let gh = github_registration();
+        let gl = gitlab_rest_only_registration();
+        let regs: Vec<&Registration> = vec![&gh, &gl];
+        let mut config = Config::default();
+        config.hosts.insert(
+            "github.com".into(),
+            HostConfig {
+                kind: Some(HostKind::GitLab),
+                api_base: Some("https://gitlab-proxy.corp.com/api/v4".into()), // provided
+                token_env: None, // NOT provided -- should NOT leak GITHUB_TOKEN
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+
+        // GitLab only supports REST
+        let fetch = FetchSettings {
+            api_mode: ApiMode::Rest,
+            ..Default::default()
+        };
+        // GitLab registration has default_token_env = Some("GITLAB_TOKEN")
+        let result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        // Should use GitLab's default_token_env, NOT GitHub's preset
+        assert_eq!(result.kind, HostKind::GitLab);
+        assert_eq!(result.api_base, "https://gitlab-proxy.corp.com/api/v4");
+        assert_eq!(
+            result.token_env, "GITLAB_TOKEN",
+            "should use GitLab default, not GitHub preset"
+        );
+    }
+
+    #[test]
+    fn user_kind_override_with_token_env_but_no_api_base() {
+        // User overrides kind on preset host, provides token_env but NOT api_base.
+        // api_base should NOT leak from the preset (api.github.com).
+        let gh = github_registration();
+        let gl = gitlab_rest_only_registration();
+        let regs: Vec<&Registration> = vec![&gh, &gl];
+        let mut config = Config::default();
+        config.hosts.insert(
+            "github.com".into(),
+            HostConfig {
+                kind: Some(HostKind::GitLab),
+                api_base: None, // NOT provided -- should NOT leak api.github.com
+                token_env: Some("MY_GL_TOKEN".into()), // provided
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+
+        // GitLab's infer_api_base returns None for "github.com", so this should error
+        let err = effective_host("github.com", &config, &regs, &default_fetch()).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("api_base required"),
+            "expected api_base error, got: {msg}"
+        );
+        // Crucially: the error should NOT contain "api.github.com" (that would mean leak)
+        assert!(
+            !msg.contains("api.github.com"),
+            "preset api_base leaked: {msg}"
+        );
+    }
+
     // Step 1: preset lookup (additional coverage)
 
     #[test]
@@ -1623,6 +1677,11 @@ mod tests {
         let regs: Vec<&Registration> = vec![&gh, &gl];
         let config = Config {
             default_host: Some("gitlab.com".into()),
+            // GitLab only supports REST, so set api_mode accordingly
+            fetch: FetchSettings {
+                api_mode: ApiMode::Rest,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
