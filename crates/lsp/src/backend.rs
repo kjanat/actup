@@ -175,7 +175,7 @@ pub struct LspBackend {
 impl LspBackend {
     /// Create a new backend from the LSP client handle.
     ///
-    /// Used as the constructor passed to [`LspService::new`].
+    /// Used as the constructor passed to `LspService::new`.
     pub fn new(client: Client) -> Self {
         Self {
             client,
@@ -767,7 +767,7 @@ impl LanguageServer for LspBackend {
 
 /// Post-command helpers (separate impl block to keep `LanguageServer` methods focused).
 impl LspBackend {
-    /// Apply a [`FixAllResult`] to the workspace and notify the user.
+    /// Apply a [`FixAllResult`](crate::workspace_commands::FixAllResult) to the workspace and notify the user.
     async fn apply_fix_all_result(&self, result: crate::workspace_commands::FixAllResult) {
         if result.cancelled && result.refs_updated == 0 {
             self.client
@@ -1067,7 +1067,7 @@ fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
         || action_overrides_differ(&old.action_overrides, &new.action_overrides)
 }
 
-/// Compare host config maps by serialized form since [`HostConfig`] may
+/// Compare host config maps by serialized form since [`HostConfig`](actup_core::HostConfig) may
 /// not implement `PartialEq`.
 fn hosts_differ(
     old: &std::collections::HashMap<String, actup_core::HostConfig>,
@@ -1081,7 +1081,7 @@ fn hosts_differ(
     old_json != new_json
 }
 
-/// Compare action override maps by serialized form since [`ActionOverride`]
+/// Compare action override maps by serialized form since [`ActionOverride`](actup_core::config::ActionOverride)
 /// doesn't implement `PartialEq`.
 fn action_overrides_differ(
     old: &std::collections::HashMap<String, actup_core::config::ActionOverride>,

@@ -6,7 +6,7 @@
 //!
 //! Progress is reported in phases via `$/progress`:
 //! 1. Discovery: "Discovering files..." (0%)
-//! 2. Per-file scanning: "Checking <path>..." with action counts (5-95%)
+//! 2. Per-file scanning: "Checking `<path>`..." with action counts (5-95%)
 //! 3. Summary: "Updated N refs in M files" (done)
 //!
 //! The operation shows a cancellation button. When cancelled (via the
