@@ -23,15 +23,16 @@ impl zed::Extension for ActupExtension {
 
         let command = match binary_settings.as_ref().and_then(|s| s.path.clone()) {
             Some(path) => path,
-            None => worktree.which("actup-lsp").ok_or_else(|| {
-                concat!(
-                    "`actup-lsp` not found in PATH. ",
-                    "Install: `cargo install --path crates/lsp` or ",
-                    "set binary path in Zed settings under ",
-                    "lsp.actup-lsp.binary.path"
-                )
-                .to_string()
-            })?,
+            None => {
+                let settings_key = format!("lsp.{}.binary.path", language_server_id.as_ref());
+                worktree.which("actup-lsp").ok_or_else(|| {
+                    format!(
+                        "`actup-lsp` not found in PATH. \
+                         Install: `cargo install --path crates/lsp` or \
+                         set binary path in Zed settings under {settings_key}"
+                    )
+                })?
+            }
         };
 
         Ok(zed::Command {

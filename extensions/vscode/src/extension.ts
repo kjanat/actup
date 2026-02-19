@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { Executable, LanguageClient, LanguageClientOptions, ServerOptions, TransportKind } from "vscode-languageclient/node";
+import { type Executable, LanguageClient, type LanguageClientOptions, type ServerOptions, TransportKind } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel;
@@ -75,8 +75,17 @@ async function startClient(): Promise<void> {
 		serverOptions,
 		clientOptions,
 	);
-	await client.start();
-	outputChannel.appendLine(`actup-lsp started (${command})`);
+	try {
+		await client.start();
+		outputChannel.appendLine(`actup-lsp started (${command})`);
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		outputChannel.appendLine(`Failed to start actup-lsp: ${message}`);
+		void vscode.window.showErrorMessage(
+			"actup: Failed to start language server. Is 'actup-lsp' installed? See output for details.",
+		);
+		client = undefined;
+	}
 }
 
 async function stopClient(): Promise<void> {
@@ -97,8 +106,14 @@ async function fixAll(): Promise<void> {
 		vscode.window.showWarningMessage("actup language server is not running.");
 		return;
 	}
-	await client.sendRequest("workspace/executeCommand", {
-		command: "actup.fixAllInWorkspace",
-		arguments: [],
-	});
+	try {
+		await client.sendRequest("workspace/executeCommand", {
+			command: "actup.fixAllInWorkspace",
+			arguments: [],
+		});
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		outputChannel.appendLine(`actup.fixAllInWorkspace failed: ${message}`);
+		void vscode.window.showErrorMessage("actup: Fix all failed. See output for details.");
+	}
 }

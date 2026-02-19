@@ -101,13 +101,13 @@ extensions/zed/
 
 ```sh
 cd extensions/zed
-cargo check --target wasm32-wasip1
+cargo check --target wasm32-wasip2
 ```
 
 Requires the WASM target:
 
 ```sh
-rustup target add wasm32-wasip1
+rustup target add wasm32-wasip2
 ```
 
 ### How it works

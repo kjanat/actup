@@ -19,10 +19,24 @@ default:
 
 # Install
 
-# Install binary to ~/.cargo/bin
+# Install all binaries to ~/.cargo/bin
 [group('install')]
-install binary="actup":
-    cargo install --bin={{ binary }} --path crates/{{ binary }}
+install: install-actup install-actup-lsp install-actup-mcp
+
+# Install actup CLI
+[group('install')]
+install-actup:
+    cargo install --bin=actup --path crates/actup
+
+# Install actup-lsp language server
+[group('install')]
+install-actup-lsp:
+    cargo install --bin=actup-lsp --path crates/lsp
+
+# Install actup-mcp server (stub)
+[group('install')]
+install-actup-mcp:
+    -cargo install --bin=actup-mcp --path crates/mcp
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]
