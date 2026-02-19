@@ -221,7 +221,7 @@ mod tests {
     fn available_registrations_includes_github() {
         let regs = available_registrations();
         assert!(
-            regs.iter().any(|r| r.kind == HostKind::Github),
+            regs.iter().any(|r| r.kind == HostKind::GitHub),
             "GitHub registration must always be present"
         );
     }
@@ -250,7 +250,7 @@ mod tests {
     #[test]
     fn available_registrations_github_preset_host() {
         let regs = available_registrations();
-        let github = regs.iter().find(|r| r.kind == HostKind::Github).unwrap();
+        let github = regs.iter().find(|r| r.kind == HostKind::GitHub).unwrap();
         assert!(
             github.presets.iter().any(|p| p.host == "github.com"),
             "GitHub preset must include github.com"
@@ -343,7 +343,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".to_string(),
-            host_config_with_kind(HostKind::Github),
+            host_config_with_kind(HostKind::GitHub),
         );
         let registry = build_registry(&config).unwrap();
         assert!(registry.find(Some("github.com")).is_some());
@@ -383,7 +383,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".to_string(),
-            host_config_with_kind(HostKind::Github),
+            host_config_with_kind(HostKind::GitHub),
         );
         let registry = build_registry(&config).unwrap();
         assert!(
@@ -399,7 +399,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "UPPERCASE.COM".to_string(),
-            host_config_with_kind(HostKind::Github),
+            host_config_with_kind(HostKind::GitHub),
         );
         let result = build_registry(&config);
         assert!(result.is_err(), "uppercase hostname must error");
@@ -429,7 +429,7 @@ mod tests {
         config.hosts.insert(
             "ghe.corp.com".to_string(),
             actup_core::HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: Some("no-scheme.example.com/api".to_string()),
                 token_env: None,
                 api_mode: None,
@@ -467,11 +467,11 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe1.corp.com".to_string(),
-            host_config_with_kind(HostKind::Github),
+            host_config_with_kind(HostKind::GitHub),
         );
         config.hosts.insert(
             "ghe2.corp.com".to_string(),
-            host_config_with_kind(HostKind::Github),
+            host_config_with_kind(HostKind::GitHub),
         );
         let registry = build_registry(&config).unwrap();
         assert!(registry.find(Some("ghe1.corp.com")).is_some());

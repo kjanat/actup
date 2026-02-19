@@ -243,9 +243,9 @@ impl std::fmt::Display for ApiMode {
 #[serde(rename_all = "lowercase")]
 pub enum HostKind {
     /// GitHub / GitHub Enterprise
-    Github,
+    GitHub,
     /// GitLab (gitlab.com or self-hosted)
-    Gitlab,
+    GitLab,
     /// Gitea / Forgejo
     Gitea,
 }
@@ -253,8 +253,8 @@ pub enum HostKind {
 impl std::fmt::Display for HostKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Github => write!(f, "github"),
-            Self::Gitlab => write!(f, "gitlab"),
+            Self::GitHub => write!(f, "github"),
+            Self::GitLab => write!(f, "gitlab"),
             Self::Gitea => write!(f, "gitea"),
         }
     }
@@ -661,8 +661,8 @@ mod tests {
     fn test_hostkind_serde_roundtrip() {
         #[allow(clippy::unwrap_used)]
         for (variant, expected_str) in [
-            (HostKind::Github, "\"github\""),
-            (HostKind::Gitlab, "\"gitlab\""),
+            (HostKind::GitHub, "\"github\""),
+            (HostKind::GitLab, "\"gitlab\""),
             (HostKind::Gitea, "\"gitea\""),
         ] {
             let json = serde_json::to_string(&variant).unwrap();
@@ -675,8 +675,8 @@ mod tests {
 
     #[test]
     fn test_hostkind_display() {
-        assert_eq!(HostKind::Github.to_string(), "github");
-        assert_eq!(HostKind::Gitlab.to_string(), "gitlab");
+        assert_eq!(HostKind::GitHub.to_string(), "github");
+        assert_eq!(HostKind::GitLab.to_string(), "gitlab");
         assert_eq!(HostKind::Gitea.to_string(), "gitea");
     }
 
@@ -700,10 +700,10 @@ mod tests {
     fn test_hostkind_hashable() {
         use std::collections::HashSet;
         let mut set = HashSet::new();
-        set.insert(HostKind::Github);
-        set.insert(HostKind::Gitlab);
+        set.insert(HostKind::GitHub);
+        set.insert(HostKind::GitLab);
         set.insert(HostKind::Gitea);
-        set.insert(HostKind::Github); // duplicate
+        set.insert(HostKind::GitHub); // duplicate
         assert_eq!(set.len(), 3);
     }
 
@@ -802,7 +802,7 @@ mod tests {
             "max_tags_per_repo": 50
         }"#;
         let hc: HostConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(hc.kind, Some(HostKind::Github));
+        assert_eq!(hc.kind, Some(HostKind::GitHub));
         assert_eq!(hc.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
         assert_eq!(hc.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(hc.api_mode, Some(ApiMode::Rest));
@@ -826,7 +826,7 @@ mod tests {
     fn test_hostconfig_partial_kind_only() {
         let json = r#"{"kind": "gitlab"}"#;
         let hc: HostConfig = serde_json::from_str(json).unwrap();
-        assert_eq!(hc.kind, Some(HostKind::Gitlab));
+        assert_eq!(hc.kind, Some(HostKind::GitLab));
         assert_eq!(hc.api_base, None);
         assert_eq!(hc.token_env, None);
         assert_eq!(hc.api_mode, None);
@@ -888,8 +888,8 @@ mod tests {
     #[test]
     fn test_hostconfig_each_kind_variant() {
         for (variant, name) in [
-            (HostKind::Github, "github"),
-            (HostKind::Gitlab, "gitlab"),
+            (HostKind::GitHub, "github"),
+            (HostKind::GitLab, "gitlab"),
             (HostKind::Gitea, "gitea"),
         ] {
             let json = format!(r#"{{"kind": "{name}"}}"#);
@@ -908,8 +908,8 @@ mod tests {
             kind: HostKind,
         }
         for (variant, name) in [
-            (HostKind::Github, "github"),
-            (HostKind::Gitlab, "gitlab"),
+            (HostKind::GitHub, "github"),
+            (HostKind::GitLab, "gitlab"),
             (HostKind::Gitea, "gitea"),
         ] {
             let toml_str = format!("kind = \"{name}\"");
@@ -949,7 +949,7 @@ mod tests {
             max_tags_per_repo = 50
         "#;
         let hc: HostConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(hc.kind, Some(HostKind::Github));
+        assert_eq!(hc.kind, Some(HostKind::GitHub));
         assert_eq!(hc.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
         assert_eq!(hc.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(hc.api_mode, Some(ApiMode::Rest));
@@ -1000,13 +1000,13 @@ mod tests {
         assert_eq!(outer.hosts.len(), 2);
 
         let ghe = &outer.hosts["ghe.corp.com"];
-        assert_eq!(ghe.kind, Some(HostKind::Github));
+        assert_eq!(ghe.kind, Some(HostKind::GitHub));
         assert_eq!(ghe.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
         assert_eq!(ghe.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(ghe.api_mode, None);
 
         let gl = &outer.hosts["gitlab.internal"];
-        assert_eq!(gl.kind, Some(HostKind::Gitlab));
+        assert_eq!(gl.kind, Some(HostKind::GitLab));
         assert_eq!(gl.api_mode, Some(ApiMode::Rest));
     }
 
@@ -1033,7 +1033,7 @@ mod tests {
         assert_eq!(config.fetch.max_tags_per_repo.get(), 42);
         assert_eq!(config.hosts.len(), 1);
         let ghe = &config.hosts["ghe.corp.com"];
-        assert_eq!(ghe.kind, Some(HostKind::Github));
+        assert_eq!(ghe.kind, Some(HostKind::GitHub));
         assert_eq!(ghe.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
     }
 
@@ -1083,6 +1083,6 @@ mod tests {
         assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
         assert_eq!(config.hosts.len(), 2);
         assert_eq!(config.hosts["ghe.corp.com"].api_mode, Some(ApiMode::Rest));
-        assert_eq!(config.hosts["gitlab.internal"].kind, Some(HostKind::Gitlab));
+        assert_eq!(config.hosts["gitlab.internal"].kind, Some(HostKind::GitLab));
     }
 }

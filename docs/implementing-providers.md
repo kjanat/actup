@@ -473,7 +473,7 @@ pub static REGISTRATION: Registration = Registration {
 };
 
 fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn actup_core::Provider>> {
-    let token = config.token_env.and_then(|env| std::env::var(env).ok());
+    let token = std::env::var(&config.token_env).ok();
     let provider = YourProvider::new(&config.api_base, &config.host, token.as_deref())?;
     Ok(Box::new(provider))
 }

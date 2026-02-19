@@ -323,7 +323,7 @@ token_env = "GHE_TOKEN"
         let config = ok_or_panic(Config::load(None, temp.path()), "load config");
         assert_eq!(config.hosts.len(), 1);
         let host = config.hosts.get("ghe.corp.com").expect("ghe host present");
-        assert_eq!(host.kind, Some(HostKind::Github));
+        assert_eq!(host.kind, Some(HostKind::GitHub));
         assert_eq!(
             host.api_base.as_deref(),
             Some("https://ghe.corp.com/api/v3")
@@ -371,7 +371,7 @@ token_env = "GITLAB_TOKEN"
         assert!(config.hosts.contains_key("gitlab.corp.com"));
 
         let gitlab = config.hosts.get("gitlab.corp.com").unwrap();
-        assert_eq!(gitlab.kind, Some(HostKind::Gitlab));
+        assert_eq!(gitlab.kind, Some(HostKind::GitLab));
     }
 
     #[test]
@@ -445,7 +445,7 @@ token_env = "GHE_TOKEN"
                 m.insert(
                     "ghe.corp.com".to_string(),
                     HostConfig {
-                        kind: Some(HostKind::Github),
+                        kind: Some(HostKind::GitHub),
                         api_base: Some("https://ghe.corp.com/api/v3".to_string()),
                         token_env: Some("GHE_TOKEN".to_string()),
                         api_mode: None,
@@ -468,7 +468,7 @@ token_env = "GHE_TOKEN"
         );
         assert_eq!(roundtripped.hosts.len(), 1);
         let host = roundtripped.hosts.get("ghe.corp.com").unwrap();
-        assert_eq!(host.kind, Some(HostKind::Github));
+        assert_eq!(host.kind, Some(HostKind::GitHub));
     }
 
     #[test]
@@ -503,7 +503,7 @@ token_env = "GHE_TOKEN"
                 m.insert(
                     "ghe.corp.com".to_string(),
                     HostConfig {
-                        kind: Some(HostKind::Github),
+                        kind: Some(HostKind::GitHub),
                         api_base: None,
                         token_env: None,
                         api_mode: None,

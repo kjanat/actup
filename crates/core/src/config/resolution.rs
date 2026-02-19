@@ -98,15 +98,31 @@ pub fn effective_host(
         };
 
     // Step 2: Merge user [hosts."hostname"] overrides
-    if let Some(host_config) = config.hosts.get(hostname) {
-        if let Some(k) = host_config.kind {
+    let host_config = config.hosts.get(hostname);
+    if let Some(hc) = host_config {
+        if let Some(k) = hc.kind {
             kind = Some(k);
         }
-        if let Some(ref ab) = host_config.api_base {
+        if let Some(ref ab) = hc.api_base {
             api_base = Some(ab.clone());
         }
-        if let Some(ref te) = host_config.token_env {
+        if let Some(ref te) = hc.token_env {
             token_env = Some(te.clone());
+        }
+    }
+
+    // Step 2.5: If user changed kind away from preset, clear preset-derived fields
+    // so inference/defaults run against the correct registration.
+    if let Some((reg, _)) = preset_index.get(hostname)
+        && kind != Some(reg.kind)
+    {
+        // User overrode kind to a different provider -- preset api_base/token_env
+        // are for the wrong provider and must be cleared (unless user also overrode them).
+        if host_config.and_then(|hc| hc.api_base.as_ref()).is_none() {
+            api_base = None;
+        }
+        if host_config.and_then(|hc| hc.token_env.as_ref()).is_none() {
+            token_env = None;
         }
     }
 
@@ -326,7 +342,7 @@ mod tests {
 
     fn github_registration() -> Registration {
         Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -350,7 +366,7 @@ mod tests {
 
     fn gitlab_rest_only_registration() -> Registration {
         Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[Preset {
                 host: "gitlab.com",
                 api_base: "https://gitlab.com/api/v4",
@@ -384,8 +400,6 @@ mod tests {
         FetchSettings::default()
     }
 
-    // === effective_host: preset-only host ===
-
     #[test]
     fn preset_only_github_com() {
         let gh = github_registration();
@@ -394,7 +408,7 @@ mod tests {
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
         assert_eq!(result.host, "github.com");
-        assert_eq!(result.kind, HostKind::Github);
+        assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.token_env, "GITHUB_TOKEN");
         assert_eq!(result.api_mode, ApiMode::Graphql);
@@ -415,12 +429,10 @@ mod tests {
         };
 
         let result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
-        assert_eq!(result.kind, HostKind::Gitlab);
+        assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab.com/api/v4");
         assert_eq!(result.token_env, "GITLAB_TOKEN");
     }
-
-    // === effective_host: user override of preset ===
 
     #[test]
     fn user_overrides_preset_token_env() {
@@ -442,7 +454,7 @@ mod tests {
         assert_eq!(result.token_env, "MY_CUSTOM_TOKEN");
         // Other preset values unchanged
         assert_eq!(result.api_base, "https://api.github.com");
-        assert_eq!(result.kind, HostKind::Github);
+        assert_eq!(result.kind, HostKind::GitHub);
     }
 
     #[test]
@@ -505,8 +517,6 @@ mod tests {
         assert_eq!(result.max_tags_per_repo.get(), 50);
     }
 
-    // === effective_host: non-preset with kind ===
-
     #[test]
     fn non_preset_ghe_with_kind_and_full_config() {
         let gh = github_registration();
@@ -515,7 +525,7 @@ mod tests {
         config.hosts.insert(
             "ghe.corp.com".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: Some("https://ghe.corp.com/api/v3".into()),
                 token_env: Some("GHE_TOKEN".into()),
                 api_mode: Some(ApiMode::Rest),
@@ -525,7 +535,7 @@ mod tests {
 
         let result = effective_host("ghe.corp.com", &config, &regs, &default_fetch()).unwrap();
         assert_eq!(result.host, "ghe.corp.com");
-        assert_eq!(result.kind, HostKind::Github);
+        assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://ghe.corp.com/api/v3");
         assert_eq!(result.token_env, "GHE_TOKEN");
         assert_eq!(result.api_mode, ApiMode::Rest);
@@ -540,7 +550,7 @@ mod tests {
         config.hosts.insert(
             "ghe.corp.com".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: None,  // should be inferred
                 token_env: None, // should use default_token_env
                 api_mode: None,
@@ -552,8 +562,6 @@ mod tests {
         assert_eq!(result.api_base, "https://ghe.corp.com/api/v3");
         assert_eq!(result.token_env, "GITHUB_TOKEN");
     }
-
-    // === effective_host: error cases ===
 
     #[test]
     fn error_missing_kind_non_preset() {
@@ -586,7 +594,7 @@ mod tests {
         config.hosts.insert(
             "gitlab.internal".into(),
             HostConfig {
-                kind: Some(HostKind::Gitlab),
+                kind: Some(HostKind::GitLab),
                 api_base: Some("https://gitlab.internal/api/v4".into()),
                 token_env: Some("GL_TOKEN".into()),
                 api_mode: None,
@@ -609,7 +617,7 @@ mod tests {
         config.hosts.insert(
             "gitlab.internal".into(),
             HostConfig {
-                kind: Some(HostKind::Gitlab),
+                kind: Some(HostKind::GitLab),
                 api_base: None, // GitLab infer_api_base returns None
                 token_env: Some("GL_TOKEN".into()),
                 api_mode: None,
@@ -689,8 +697,6 @@ mod tests {
         assert!(err.to_string().contains("lowercase"), "{}", err);
     }
 
-    // === effective_host: fetch settings precedence ===
-
     #[test]
     fn fetch_api_mode_used_when_no_host_override() {
         let gh = github_registration();
@@ -740,8 +746,6 @@ mod tests {
         assert_eq!(result.max_tags_per_repo.get(), 42);
     }
 
-    // === effective_host: gitea with inference ===
-
     #[test]
     fn gitea_api_base_inferred() {
         let gitea = gitea_registration();
@@ -768,8 +772,6 @@ mod tests {
         assert_eq!(result.kind, HostKind::Gitea);
     }
 
-    // === effective_host: api_base normalization ===
-
     #[test]
     fn api_base_trailing_slash_stripped() {
         let gh = github_registration();
@@ -790,8 +792,6 @@ mod tests {
         assert_eq!(result.api_base, "https://api.github.com");
     }
 
-    // === effective_host: hostname not in hosts map and not preset ===
-
     #[test]
     fn error_unknown_host_no_config() {
         let gh = github_registration();
@@ -802,8 +802,6 @@ mod tests {
         let msg = err.to_string();
         assert!(msg.contains("kind required"), "{msg}");
     }
-
-    // === resolve_default_host ===
 
     #[test]
     fn default_host_from_config() {
@@ -879,7 +877,7 @@ mod tests {
         config.hosts.insert(
             "ghe.corp.com".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: Some("https://ghe.corp.com/api/v3".into()),
                 token_env: Some("GHE_TOKEN".into()),
                 api_mode: None,
@@ -890,8 +888,6 @@ mod tests {
         let result = resolve_default_host(&config, &regs).unwrap();
         assert_eq!(result, "ghe.corp.com");
     }
-
-    // === build_preset_index ===
 
     #[test]
     fn preset_index_empty_registrations() {
@@ -911,25 +907,21 @@ mod tests {
         assert_eq!(index.len(), 2);
     }
 
-    // === find_registration_by_kind ===
-
     #[test]
     fn find_registration_found() {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
-        let found = find_registration_by_kind(&regs, HostKind::Github);
+        let found = find_registration_by_kind(&regs, HostKind::GitHub);
         assert!(found.is_some());
-        assert_eq!(found.unwrap().kind, HostKind::Github);
+        assert_eq!(found.unwrap().kind, HostKind::GitHub);
     }
 
     #[test]
     fn find_registration_not_found() {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
-        assert!(find_registration_by_kind(&regs, HostKind::Gitlab).is_none());
+        assert!(find_registration_by_kind(&regs, HostKind::GitLab).is_none());
     }
-
-    // === capability_list ===
 
     #[test]
     fn capability_list_both() {
@@ -960,8 +952,6 @@ mod tests {
         assert_eq!(capability_list(caps), "none");
     }
 
-    // === Multiple registrations ===
-
     #[test]
     fn multiple_registrations_correct_dispatch() {
         let gh = github_registration();
@@ -975,14 +965,12 @@ mod tests {
 
         // GitHub preset resolves correctly
         let github_result = effective_host("github.com", &config, &regs, &fetch).unwrap();
-        assert_eq!(github_result.kind, HostKind::Github);
+        assert_eq!(github_result.kind, HostKind::GitHub);
 
         // GitLab preset resolves correctly
         let gitlab_result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
-        assert_eq!(gitlab_result.kind, HostKind::Gitlab);
+        assert_eq!(gitlab_result.kind, HostKind::GitLab);
     }
-
-    // === User kind override changes registration lookup ===
 
     #[test]
     fn user_kind_override_on_preset_host() {
@@ -995,7 +983,7 @@ mod tests {
         config.hosts.insert(
             "github.com".into(),
             HostConfig {
-                kind: Some(HostKind::Gitlab),
+                kind: Some(HostKind::GitLab),
                 api_base: Some("https://gitlab-proxy.corp.com/api/v4".into()),
                 token_env: Some("GL_TOKEN".into()),
                 api_mode: Some(ApiMode::Rest),
@@ -1005,11 +993,46 @@ mod tests {
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
         // Kind should be overridden to Gitlab
-        assert_eq!(result.kind, HostKind::Gitlab);
+        assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab-proxy.corp.com/api/v4");
     }
 
-    // === Step 1: preset lookup (additional coverage) ===
+    #[test]
+    fn user_kind_override_clears_preset_derived_fields() {
+        // When user overrides kind on a preset host WITHOUT providing api_base/token_env,
+        // the preset-derived values must be cleared so inference runs for the new provider.
+        // Since gitlab's infer_api_base returns None for "github.com", this should error
+        // asking for api_base -- NOT silently use github.com's preset api_base.
+        let gh = github_registration();
+        let gl = gitlab_rest_only_registration();
+        let regs: Vec<&Registration> = vec![&gh, &gl];
+        let mut config = Config::default();
+        config.hosts.insert(
+            "github.com".into(),
+            HostConfig {
+                kind: Some(HostKind::GitLab), // Override kind only
+                api_base: None,               // NOT provided -- should NOT leak github.com preset
+                token_env: None,              // NOT provided -- should NOT leak GITHUB_TOKEN
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+
+        let err = effective_host("github.com", &config, &regs, &default_fetch()).unwrap_err();
+        // Should error asking for api_base, NOT silently use github's preset
+        let msg = err.to_string();
+        assert!(
+            msg.contains("api_base required"),
+            "expected api_base error, got: {msg}"
+        );
+        // Crucially: the error should NOT contain "api.github.com" (that would mean leak)
+        assert!(
+            !msg.contains("api.github.com"),
+            "preset api_base leaked: {msg}"
+        );
+    }
+
+    // Step 1: preset lookup (additional coverage)
 
     #[test]
     fn preset_populates_all_fields_from_registration() {
@@ -1020,7 +1043,7 @@ mod tests {
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
         // All three fields come from the single preset
-        assert_eq!(result.kind, HostKind::Github);
+        assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.token_env, "GITHUB_TOKEN");
         assert_eq!(result.host, "github.com");
@@ -1035,7 +1058,7 @@ mod tests {
         config.hosts.insert(
             "custom.host.io".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: Some("https://custom.host.io/api/v3".into()),
                 token_env: Some("CUSTOM_TOKEN".into()),
                 api_mode: None,
@@ -1048,8 +1071,6 @@ mod tests {
         assert_eq!(result.api_base, "https://custom.host.io/api/v3");
         assert_eq!(result.token_env, "CUSTOM_TOKEN");
     }
-
-    // === Step 2: merge user overrides (additional coverage) ===
 
     #[test]
     fn user_overrides_all_preset_fields_simultaneously() {
@@ -1068,7 +1089,7 @@ mod tests {
         );
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
-        assert_eq!(result.kind, HostKind::Github);
+        assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://proxy.corp.com/gh");
         assert_eq!(result.token_env, "CORP_GH_TOKEN");
         assert_eq!(result.api_mode, ApiMode::Rest);
@@ -1093,12 +1114,10 @@ mod tests {
         );
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
-        assert_eq!(result.kind, HostKind::Github);
+        assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.token_env, "GITHUB_TOKEN");
     }
-
-    // === Step 3: kind required (additional coverage) ===
 
     #[test]
     fn error_kind_required_message_includes_hostname() {
@@ -1123,8 +1142,6 @@ mod tests {
         assert!(msg.contains("not a preset host"), "{msg}");
     }
 
-    // === Step 4: registration lookup by kind (additional coverage) ===
-
     #[test]
     fn error_no_registrations_at_all() {
         let regs: Vec<&Registration> = vec![];
@@ -1132,7 +1149,7 @@ mod tests {
         config.hosts.insert(
             "some.host".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: Some("https://some.host/api/v3".into()),
                 token_env: Some("TOKEN".into()),
                 api_mode: None,
@@ -1156,7 +1173,7 @@ mod tests {
         config.hosts.insert(
             "gl.corp.com".into(),
             HostConfig {
-                kind: Some(HostKind::Gitlab),
+                kind: Some(HostKind::GitLab),
                 api_base: Some("https://gl.corp.com/api/v4".into()),
                 token_env: Some("GL_TOKEN".into()),
                 api_mode: None,
@@ -1174,8 +1191,6 @@ mod tests {
         assert!(msg.contains("gitea"), "{msg}");
     }
 
-    // === Step 5: defaults/inference (explicit coverage) ===
-
     #[test]
     fn default_token_env_used_when_not_in_preset_or_user() {
         // Non-preset GHE host: no user token_env, no preset token_env —
@@ -1186,7 +1201,7 @@ mod tests {
         config.hosts.insert(
             "ghe.internal".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: None,  // inferred: https://ghe.internal/api/v3
                 token_env: None, // should use default_token_env: "GITHUB_TOKEN"
                 api_mode: None,
@@ -1207,7 +1222,7 @@ mod tests {
         config.hosts.insert(
             "ghe.internal".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: Some("MY_GHE_TOKEN".into()),
                 api_mode: None,
@@ -1228,7 +1243,7 @@ mod tests {
         config.hosts.insert(
             "ghe.example.org".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: Some("TOKEN".into()),
                 api_mode: None,
@@ -1248,7 +1263,7 @@ mod tests {
         config.hosts.insert(
             "ghe.example.org".into(),
             HostConfig {
-                kind: Some(HostKind::Github),
+                kind: Some(HostKind::GitHub),
                 api_base: Some("https://proxy.corp.com/ghe".into()),
                 token_env: Some("TOKEN".into()),
                 api_mode: None,
@@ -1270,7 +1285,7 @@ mod tests {
         config.hosts.insert(
             "gl.internal.io".into(),
             HostConfig {
-                kind: Some(HostKind::Gitlab),
+                kind: Some(HostKind::GitLab),
                 api_base: None,
                 token_env: Some("GL_TOKEN".into()),
                 api_mode: None,
@@ -1287,8 +1302,6 @@ mod tests {
         assert!(msg.contains("api_base required"), "{msg}");
         assert!(msg.contains("gl.internal.io"), "{msg}");
     }
-
-    // === Step 6: required field validation (additional coverage) ===
 
     #[test]
     fn error_invalid_api_base_shape_via_user_override() {
@@ -1332,13 +1345,11 @@ mod tests {
         assert!(msg.contains("query") || msg.contains('?'), "{msg}");
     }
 
-    // === Step 7: api_mode capability validation (additional coverage) ===
-
     #[test]
     fn graphql_only_provider_rejects_rest() {
         // Hypothetical graphql-only provider
         let graphql_only = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "graphql-only.example.com",
                 api_base: "https://graphql-only.example.com/graphql",
@@ -1431,8 +1442,6 @@ mod tests {
         assert!(msg.contains("not supported"), "{msg}");
     }
 
-    // === Precedence: per-host > fetch > default ===
-
     #[test]
     fn host_max_tags_overrides_fetch() {
         let gh = github_registration();
@@ -1499,8 +1508,6 @@ mod tests {
         assert_eq!(result.max_tags_per_repo.get(), 1);
     }
 
-    // === Hostname validation integration ===
-
     #[test]
     fn error_empty_hostname() {
         let gh = github_registration();
@@ -1546,8 +1553,6 @@ mod tests {
         assert!(msg.contains("port") || msg.contains(':'), "{msg}");
     }
 
-    // === Multiple registrations (additional coverage) ===
-
     #[test]
     fn three_registrations_all_resolve_own_presets() {
         let gh = github_registration();
@@ -1561,10 +1566,10 @@ mod tests {
         };
 
         let gh_result = effective_host("github.com", &config, &regs, &fetch).unwrap();
-        assert_eq!(gh_result.kind, HostKind::Github);
+        assert_eq!(gh_result.kind, HostKind::GitHub);
 
         let gitlab_result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
-        assert_eq!(gitlab_result.kind, HostKind::Gitlab);
+        assert_eq!(gitlab_result.kind, HostKind::GitLab);
 
         // Gitea has no presets — can't resolve without hosts entry
         let err = effective_host("gitea.example.com", &config, &regs, &fetch).unwrap_err();
@@ -1599,8 +1604,6 @@ mod tests {
         assert_eq!(result.api_base, "https://code.corp.io/api/v1");
         assert_eq!(result.token_env, "GITEA_TOKEN");
     }
-
-    // === resolve_default_host (additional coverage) ===
 
     #[test]
     fn resolve_default_host_with_multiple_registrations() {
@@ -1652,32 +1655,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_default_host_hosts_entry_without_preset() {
-        // default_host points to a [hosts] entry that has no preset
-        let gh = github_registration();
-        let regs: Vec<&Registration> = vec![&gh];
-        let mut config = Config {
-            default_host: Some("ghe.internal".into()),
-            ..Default::default()
-        };
-        config.hosts.insert(
-            "ghe.internal".into(),
-            HostConfig {
-                kind: Some(HostKind::Github),
-                api_base: Some("https://ghe.internal/api/v3".into()),
-                token_env: Some("GHE_TOKEN".into()),
-                api_mode: None,
-                max_tags_per_repo: None,
-            },
-        );
-
-        let result = resolve_default_host(&config, &regs).unwrap();
-        assert_eq!(result, "ghe.internal");
-    }
-
-    // === Idempotency ===
-
-    #[test]
     fn effective_host_idempotent() {
         // Calling twice with same inputs yields same result
         let gh = github_registration();
@@ -1694,8 +1671,6 @@ mod tests {
         assert_eq!(r1.max_tags_per_repo, r2.max_tags_per_repo);
     }
 
-    // === capability_list (additional coverage) ===
-
     #[test]
     fn capability_list_graphql_only() {
         let caps = Capabilities {
@@ -1704,8 +1679,6 @@ mod tests {
         };
         assert_eq!(capability_list(caps), "graphql");
     }
-
-    // === Edge: preset token_env vs user token_env on preset host ===
 
     #[test]
     fn preset_token_env_preserved_when_user_sets_other_fields() {
@@ -1730,8 +1703,6 @@ mod tests {
         assert_eq!(result.api_base, "https://proxy.github.com"); // from user
     }
 
-    // === Edge: no hosts entry and not a preset ===
-
     #[test]
     fn non_preset_no_hosts_entry_errors_kind_required() {
         // Host not in presets AND not in config.hosts → step 3 errors
@@ -1745,8 +1716,6 @@ mod tests {
         assert!(msg.contains("kind required"), "{msg}");
         assert!(msg.contains("totally.unknown.host"), "{msg}");
     }
-
-    // === api_base normalization via resolution pipeline ===
 
     #[test]
     fn multiple_trailing_slashes_stripped() {
@@ -1768,8 +1737,6 @@ mod tests {
         assert_eq!(result.api_base, "https://api.github.com");
     }
 
-    // === build_preset_index: registration with no presets ===
-
     #[test]
     fn preset_index_skips_registration_without_presets() {
         let gitea = gitea_registration(); // no presets
@@ -1780,8 +1747,6 @@ mod tests {
         assert!(index.contains_key("github.com"));
     }
 
-    // === find_registration_by_kind: multiple kinds ===
-
     #[test]
     fn find_registration_returns_first_match() {
         let gh = github_registration();
@@ -1790,10 +1755,10 @@ mod tests {
         let regs: Vec<&Registration> = vec![&gh, &gl, &gitea];
 
         assert_eq!(
-            find_registration_by_kind(&regs, HostKind::Gitlab)
+            find_registration_by_kind(&regs, HostKind::GitLab)
                 .unwrap()
                 .kind,
-            HostKind::Gitlab
+            HostKind::GitLab
         );
         assert_eq!(
             find_registration_by_kind(&regs, HostKind::Gitea)
@@ -1806,6 +1771,6 @@ mod tests {
     #[test]
     fn find_registration_empty_list() {
         let regs: Vec<&Registration> = vec![];
-        assert!(find_registration_by_kind(&regs, HostKind::Github).is_none());
+        assert!(find_registration_by_kind(&regs, HostKind::GitHub).is_none());
     }
 }

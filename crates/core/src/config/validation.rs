@@ -163,8 +163,6 @@ mod tests {
     use crate::config::{ApiMode, HostKind};
     use std::num::NonZeroU8;
 
-    // === Hostname validation ===
-
     #[test]
     fn hostname_valid_simple() {
         assert!(validate_hostname("github.com", "hosts").is_ok());
@@ -306,8 +304,6 @@ mod tests {
         assert!(err.to_string().contains("lowercase"), "{err}");
     }
 
-    // === api_base validation ===
-
     #[test]
     fn api_base_valid_https() {
         let result = validate_api_base("https://api.github.com", "test").unwrap();
@@ -428,12 +424,10 @@ mod tests {
         assert!(err.to_string().contains("ghe.corp.com"), "{err}");
     }
 
-    // === Post-merge (ProviderConfig) validation ===
-
     fn valid_provider_config() -> ProviderConfig {
         ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::Graphql,
@@ -450,7 +444,7 @@ mod tests {
     fn provider_config_valid_ghe() {
         let config = ProviderConfig {
             host: "ghe.corp.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: "GHE_TOKEN".into(),
             api_mode: ApiMode::Rest,
@@ -514,7 +508,7 @@ mod tests {
     fn provider_config_valid_gitlab() {
         let config = ProviderConfig {
             host: "gitlab.com".into(),
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
             token_env: "GITLAB_TOKEN".into(),
             api_mode: ApiMode::Rest,
@@ -589,7 +583,7 @@ mod tests {
     fn provider_config_max_tags_boundary() {
         let config = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::Graphql,
@@ -602,7 +596,7 @@ mod tests {
     fn provider_config_min_tags_boundary() {
         let config = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::Rest,

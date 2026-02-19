@@ -207,7 +207,7 @@ Each provider crate exports a single `REGISTRATION: Registration`. Example (GitH
 
 ```rust
 pub const REGISTRATION: Registration = Registration {
-    kind: HostKind::Github,
+    kind: HostKind::GitHub,
     presets: &[Preset {
         host: "github.com",
         api_base: "https://api.github.com",

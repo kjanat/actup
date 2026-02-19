@@ -41,7 +41,7 @@ pub const GITHUB_HOST: &str = "github.com";
 /// infers `api_base` for GHE hosts as `https://{host}/api/v3`, and
 /// supports both GraphQL and REST modes.
 pub static REGISTRATION: Registration = Registration {
-    kind: HostKind::Github,
+    kind: HostKind::GitHub,
     presets: &[Preset {
         host: GITHUB_HOST,
         api_base: "https://api.github.com",
@@ -95,7 +95,7 @@ mod tests {
 
     #[test]
     fn registration_kind_is_github() {
-        assert_eq!(REGISTRATION.kind, HostKind::Github);
+        assert_eq!(REGISTRATION.kind, HostKind::GitHub);
     }
 
     #[test]
@@ -165,7 +165,7 @@ mod tests {
         // No GITHUB_TOKEN env needed — provider runs unauthenticated
         let config = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into(),
             api_mode: ApiMode::Graphql,
@@ -179,7 +179,7 @@ mod tests {
     fn create_produces_provider_for_ghe() {
         let config = ProviderConfig {
             host: "ghe.corp.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: "_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into(),
             api_mode: ApiMode::Rest,
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn debug_output_includes_kind_and_presets() {
         let debug = format!("{REGISTRATION:?}");
-        assert!(debug.contains("Github"));
+        assert!(debug.contains("GitHub"));
         assert!(debug.contains("github.com"));
         assert!(debug.contains("GITHUB_TOKEN"));
         // fn pointers excluded by finish_non_exhaustive

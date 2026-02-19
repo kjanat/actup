@@ -183,14 +183,14 @@ mod tests {
     fn provider_config_construction() {
         let pc = ProviderConfig {
             host: "ghe.corp.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: "GHE_TOKEN".into(),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(50).unwrap(),
         };
         assert_eq!(pc.host, "ghe.corp.com");
-        assert_eq!(pc.kind, HostKind::Github);
+        assert_eq!(pc.kind, HostKind::GitHub);
         assert_eq!(pc.api_base, "https://ghe.corp.com/api/v3");
         assert_eq!(pc.token_env, "GHE_TOKEN");
         assert_eq!(pc.api_mode, ApiMode::Rest);
@@ -201,7 +201,7 @@ mod tests {
     fn provider_config_default_values() {
         let pc = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::default(),
@@ -221,7 +221,7 @@ mod tests {
     #[test]
     fn registration_construction() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -241,7 +241,7 @@ mod tests {
             },
             create: mock_create,
         };
-        assert_eq!(reg.kind, HostKind::Github);
+        assert_eq!(reg.kind, HostKind::GitHub);
         assert_eq!(reg.presets.len(), 1);
         assert_eq!(reg.presets[0].host, "github.com");
         assert_eq!(reg.default_token_env, Some("GITHUB_TOKEN"));
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn registration_infer_api_base() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[],
             default_token_env: None,
             infer_api_base: |host| {
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn registration_create_returns_error() {
         let reg = Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[],
             default_token_env: None,
             infer_api_base: |_| None,
@@ -295,7 +295,7 @@ mod tests {
 
         let config = ProviderConfig {
             host: "gitlab.com".into(),
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
             token_env: "GITLAB_TOKEN".into(),
             api_mode: ApiMode::Rest,
@@ -309,7 +309,7 @@ mod tests {
     #[test]
     fn registration_debug_impl() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -325,13 +325,13 @@ mod tests {
         };
         let debug = format!("{reg:?}");
         assert!(debug.contains("Registration"));
-        assert!(debug.contains("Github"));
+        assert!(debug.contains("GitHub"));
     }
 
     #[test]
     fn registration_multiple_presets() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[
                 Preset {
                     host: "github.com",
@@ -473,7 +473,7 @@ mod tests {
     fn provider_config_clone() {
         let pc = ProviderConfig {
             host: "ghe.corp.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: "GHE_TOKEN".into(),
             api_mode: ApiMode::Rest,
@@ -492,7 +492,7 @@ mod tests {
     fn provider_config_debug_output() {
         let pc = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::Graphql,
@@ -508,13 +508,13 @@ mod tests {
     fn provider_config_gitlab() {
         let pc = ProviderConfig {
             host: "gitlab.com".into(),
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
             token_env: "GITLAB_TOKEN".into(),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(20).unwrap(),
         };
-        assert_eq!(pc.kind, HostKind::Gitlab);
+        assert_eq!(pc.kind, HostKind::GitLab);
         assert_eq!(pc.api_mode, ApiMode::Rest);
     }
 
@@ -536,7 +536,7 @@ mod tests {
     fn provider_config_max_tags_boundary() {
         let pc = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::Graphql,
@@ -548,7 +548,7 @@ mod tests {
     #[test]
     fn registration_debug_excludes_fn_pointers() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[],
             default_token_env: None,
             infer_api_base: |_| None,
@@ -569,7 +569,7 @@ mod tests {
     #[test]
     fn registration_infer_always_none() {
         let reg = Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[Preset {
                 host: "gitlab.com",
                 api_base: "https://gitlab.com/api/v4",
@@ -616,14 +616,14 @@ mod tests {
         fn capturing_create(config: ProviderConfig) -> crate::Result<Box<dyn Provider>> {
             // Verify the config fields are passed through correctly
             assert_eq!(config.host, "github.com");
-            assert_eq!(config.kind, HostKind::Github);
+            assert_eq!(config.kind, HostKind::GitHub);
             assert_eq!(config.api_base, "https://api.github.com");
             assert_eq!(config.api_mode, ApiMode::Graphql);
             Err(crate::Error::ProviderNotFound { host: config.host })
         }
 
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[],
             default_token_env: None,
             infer_api_base: |_| None,
@@ -636,7 +636,7 @@ mod tests {
 
         let config = ProviderConfig {
             host: "github.com".into(),
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: "GITHUB_TOKEN".into(),
             api_mode: ApiMode::Graphql,
@@ -651,7 +651,7 @@ mod tests {
     #[test]
     fn registration_debug_includes_preset_details() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[
                 Preset {
                     host: "github.com",
@@ -688,7 +688,7 @@ mod tests {
     #[test]
     fn validate_no_duplicates_single_registration() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -708,7 +708,7 @@ mod tests {
     #[test]
     fn validate_no_duplicates_disjoint_presets() {
         let github = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -723,7 +723,7 @@ mod tests {
             create: mock_create,
         };
         let gitlab = Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[Preset {
                 host: "gitlab.com",
                 api_base: "https://gitlab.com/api/v4",
@@ -765,7 +765,7 @@ mod tests {
             create: mock_create,
         };
         let gitlab = Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[],
             default_token_env: None,
             infer_api_base: |_| None,
@@ -782,7 +782,7 @@ mod tests {
     #[should_panic(expected = "duplicate preset hostname \"github.com\"")]
     fn validate_duplicates_panics() {
         let reg1 = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -797,7 +797,7 @@ mod tests {
             create: mock_create,
         };
         let reg2 = Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[Preset {
                 host: "github.com",
                 api_base: "https://api.github.com",
@@ -818,7 +818,7 @@ mod tests {
     #[should_panic(expected = "duplicate preset hostname \"example.com\"")]
     fn validate_duplicates_within_same_kind() {
         let reg1 = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "example.com",
                 api_base: "https://example.com/api/v3",
@@ -833,7 +833,7 @@ mod tests {
             create: mock_create,
         };
         let reg2 = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "example.com",
                 api_base: "https://example.com/api/v3",
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn validate_multiple_presets_per_registration_no_conflict() {
         let reg = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[
                 Preset {
                     host: "github.com",
@@ -875,7 +875,7 @@ mod tests {
             create: mock_create,
         };
         let gitlab = Registration {
-            kind: HostKind::Gitlab,
+            kind: HostKind::GitLab,
             presets: &[Preset {
                 host: "gitlab.com",
                 api_base: "https://gitlab.com/api/v4",
@@ -893,10 +893,10 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Github")]
+    #[should_panic(expected = "GitHub")]
     fn validate_panic_message_includes_provider_kinds() {
         let reg1 = Registration {
-            kind: HostKind::Github,
+            kind: HostKind::GitHub,
             presets: &[Preset {
                 host: "shared.example.com",
                 api_base: "https://shared.example.com/api/v3",
