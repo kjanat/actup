@@ -73,7 +73,7 @@
 			"description": "Bulk fix for current file. Done when:\n- Source action with kind 'source.fixAll.actup' registered\n- Aggregates all Outdated diagnostics in file\n- Returns single WorkspaceEdit with all edits\n- Appears in editor's 'Source Action' menu\n- Edits applied atomically",
 			"depends": ["single-ref-codeaction"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "workspace-command",

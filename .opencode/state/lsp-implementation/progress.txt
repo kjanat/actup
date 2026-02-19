@@ -51,6 +51,9 @@ Started: 2026-02-19
 - Embed structured data in `Diagnostic.data` as JSON (`DiagnosticData` enum) to carry target refs between diagnostic computation and code action generation
 - `CodeAction.diagnostics` links back to triggering diagnostic(s) for editor UI integration
 - `is_preferred: true` for Outdated quickfixes (auto-applicable), `false` for suggestions
+- Fix-all source actions use ALL cached diagnostics (not cursor-scoped context), gated by `kind_allowed()` check against `context.only`
+- `CodeActionKind` hierarchy: `source.fixAll` is parent of `source.fixAll.actup` — dot-separated prefix match, not substring
+- Custom kinds as `const`: `CodeActionKind::new("source.fixAll.actup")` is const-capable
 
 ### Async Diagnostics Pattern
 - Fields shared with spawned tasks must be `Arc`-wrapped: `DashMap`, `RwLock<Config>`, `RwLock<Option<Arc<Registry>>>`, etc.
@@ -175,3 +178,15 @@ Started: 2026-02-19
 - 9 new tests: quickfix generation, diagnostic linking, suggestion handling, foreign source filtering, data-less diagnostic handling, multiple diagnostics, JSON roundtrip for both `DiagnosticData` variants
 - Files: `crates/lsp/src/code_actions.rs` (new), `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
 - **Learnings:** `Diagnostic.data` is `Option<serde_json::Value>` — ideal for carrying structured metadata between diagnostic publish and code action request; `params.context.diagnostics` is the standard LSP pattern for code actions (client filters by cursor); `CodeActionKind::QUICKFIX` for single-ref fixes, `SOURCE_FIX_ALL` reserved for bulk operations
+
+## Task - fix-all-file
+
+- Added `SOURCE_FIX_ALL_ACTUP` constant (`CodeActionKind::new("source.fixAll.actup")`) in `code_actions.rs`
+- Implemented `fix_all_in_file()`: aggregates all Outdated diagnostics into a single `WorkspaceEdit` with multiple `TextEdit`s; returns `None` if fewer than 2 fixable refs (single quickfix already covers that)
+- Added `kind_matches()` for hierarchical LSP kind prefix matching (e.g. `source.fixAll` matches `source.fixAll.actup` but `source.fix` does not)
+- Added `kind_allowed()` for `context.only` filter checking
+- Updated `code_action` handler in `backend.rs`: produces both quickfixes (when `QUICKFIX` kind allowed) and fix-all action (when `source.fixAll.actup` kind allowed), using cached diagnostics for fix-all (not just cursor-scoped context diagnostics)
+- Updated capability registration: `source.fixAll.actup` instead of generic `source.fixAll`
+- 10 new tests: fix-all aggregation, threshold (< 2 = None), foreign/non-outdated skipping, kind_matches hierarchical logic, kind_allowed with None/exact/parent/partial-prefix/empty
+- Files changed: `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`
+- **Learnings:** `CodeActionKind::new(&'static str)` is const-capable — ideal for custom kind constants; `context.only` uses hierarchical prefix matching per LSP spec (dot-separated), not simple string prefix; `is_none_or` (Rust nightly/2024) preferred over `map_or(true, ...)` by clippy

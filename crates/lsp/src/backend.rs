@@ -333,7 +333,7 @@ impl LanguageServer for LspBackend {
                     CodeActionOptions {
                         code_action_kinds: Some(vec![
                             tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
-                            tower_lsp_server::ls_types::CodeActionKind::SOURCE_FIX_ALL,
+                            crate::code_actions::SOURCE_FIX_ALL_ACTUP,
                         ]),
                         work_done_progress_options: WorkDoneProgressOptions {
                             work_done_progress: Some(false),
@@ -453,6 +453,7 @@ impl LanguageServer for LspBackend {
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
         let uri = params.text_document.uri;
+        let only = params.context.only.as_deref();
 
         // Use the diagnostics the client sent in the context (already filtered
         // to the requested range by the editor). This is the standard LSP
@@ -460,18 +461,39 @@ impl LanguageServer for LspBackend {
         // cursor/selection.
         let context_diagnostics = &params.context.diagnostics;
 
-        // Fall back to cached diagnostics if the client didn't send any,
-        // filtering by range overlap ourselves.
-        let actions = if context_diagnostics.is_empty() {
-            let cached = self
+        let mut actions = Vec::new();
+
+        // Per-diagnostic quickfixes (only when quickfix kind is allowed).
+        if crate::code_actions::kind_allowed(
+            only,
+            &tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
+        ) {
+            let quickfixes = if context_diagnostics.is_empty() {
+                let cached = self
+                    .documents
+                    .get(&uri)
+                    .map(|doc| doc.diagnostics.clone())
+                    .unwrap_or_default();
+                crate::code_actions::code_actions_for_diagnostics(&uri, &cached)
+            } else {
+                crate::code_actions::code_actions_for_diagnostics(&uri, context_diagnostics)
+            };
+            actions.extend(quickfixes);
+        }
+
+        // Fix-all-in-file source action (uses ALL cached diagnostics, not
+        // just the ones at the cursor). Only included when the requested
+        // kind filter allows source.fixAll or source.fixAll.actup.
+        if crate::code_actions::kind_allowed(only, &crate::code_actions::SOURCE_FIX_ALL_ACTUP) {
+            let all_diagnostics = self
                 .documents
                 .get(&uri)
                 .map(|doc| doc.diagnostics.clone())
                 .unwrap_or_default();
-            crate::code_actions::code_actions_for_diagnostics(&uri, &cached)
-        } else {
-            crate::code_actions::code_actions_for_diagnostics(&uri, context_diagnostics)
-        };
+            if let Some(fix_all) = crate::code_actions::fix_all_in_file(&uri, &all_diagnostics) {
+                actions.push(fix_all);
+            }
+        }
 
         if actions.is_empty() {
             Ok(None)

@@ -1,11 +1,12 @@
 //! Code action generation for `uses:` reference diagnostics.
 //!
-//! Produces [`CodeAction`]s from diagnostics, enabling single-ref
-//! quick fixes (e.g. "Update to vX.Y.Z") for outdated action references.
+//! Produces [`CodeAction`]s from diagnostics, enabling:
+//! - Single-ref quick fixes (e.g. "Update to vX.Y.Z") for outdated refs
+//! - Fix-all-in-file source action that updates every outdated ref at once
 //!
-//! The primary entry point is [`code_actions_for_diagnostics`], which takes
-//! the diagnostics the client already associated with the cursor/selection
-//! range and generates appropriate code actions from their embedded data.
+//! Entry points:
+//! - [`code_actions_for_diagnostics`]: per-diagnostic quickfixes
+//! - [`fix_all_in_file`]: aggregated source action for all outdated refs
 
 use std::collections::HashMap;
 
@@ -14,6 +15,12 @@ use tower_lsp_server::ls_types::{
 };
 
 use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};
+
+/// Custom [`CodeActionKind`] for actup's fix-all source action.
+///
+/// Registered in server capabilities so editors show it in the
+/// "Source Action" menu. Hierarchically under `source.fixAll` per LSP spec.
+pub const SOURCE_FIX_ALL_ACTUP: CodeActionKind = CodeActionKind::new("source.fixAll.actup");
 
 /// Build code actions from a slice of diagnostics.
 ///
@@ -95,6 +102,80 @@ pub fn code_actions_for_diagnostics(
     }
 
     actions
+}
+
+/// Build a single "Fix all outdated actions" source action for the file.
+///
+/// Aggregates all `Outdated` diagnostics into one [`WorkspaceEdit`] with
+/// multiple [`TextEdit`]s. Returns `None` if there are fewer than 2
+/// actionable diagnostics (single-ref quickfixes already cover that case).
+///
+/// The action uses [`SOURCE_FIX_ALL_ACTUP`] kind so it appears in the
+/// editor's "Source Action" menu and responds to `source.fixAll` requests.
+pub fn fix_all_in_file(uri: &Uri, diagnostics: &[Diagnostic]) -> Option<CodeActionOrCommand> {
+    let mut edits = Vec::new();
+    let mut fixed_diagnostics = Vec::new();
+
+    for diag in diagnostics {
+        if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE) {
+            continue;
+        }
+
+        let Some(data) = diag
+            .data
+            .as_ref()
+            .and_then(|v| serde_json::from_value::<DiagnosticData>(v.clone()).ok())
+        else {
+            continue;
+        };
+
+        if let DiagnosticData::Outdated { target_ref } = data {
+            edits.push(TextEdit {
+                range: diag.range,
+                new_text: target_ref,
+            });
+            fixed_diagnostics.push(diag.clone());
+        }
+    }
+
+    // Not useful as a bulk action if there's fewer than 2 fixable refs.
+    if edits.len() < 2 {
+        return None;
+    }
+
+    let mut changes = HashMap::new();
+    changes.insert(uri.clone(), edits);
+
+    let count = fixed_diagnostics.len();
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
+        title: format!("Fix all outdated actions ({count} refs)"),
+        kind: Some(SOURCE_FIX_ALL_ACTUP),
+        diagnostics: Some(fixed_diagnostics),
+        edit: Some(WorkspaceEdit {
+            changes: Some(changes),
+            ..Default::default()
+        }),
+        is_preferred: Some(false),
+        ..Default::default()
+    }))
+}
+
+/// Returns `true` if `requested` is a parent kind of `candidate`.
+///
+/// In LSP, kind `source.fixAll` is a prefix of `source.fixAll.actup`,
+/// meaning a request for `source.fixAll` should include our action.
+fn kind_matches(requested: &CodeActionKind, candidate: &CodeActionKind) -> bool {
+    let req = requested.as_str();
+    let cand = candidate.as_str();
+    cand == req || cand.starts_with(req) && cand.as_bytes().get(req.len()) == Some(&b'.')
+}
+
+/// Check whether the `context.only` filter (if present) includes a kind.
+///
+/// If `only` is `None`, all kinds are allowed. If `Some`, at least one
+/// entry must match via [`kind_matches`] (hierarchical prefix match).
+pub fn kind_allowed(only: Option<&[CodeActionKind]>, kind: &CodeActionKind) -> bool {
+    only.is_none_or(|allowed| allowed.iter().any(|a| kind_matches(a, kind)))
 }
 
 #[cfg(test)]
@@ -288,5 +369,122 @@ mod tests {
             }
             DiagnosticData::Outdated { .. } => panic!("wrong variant"),
         }
+    }
+
+    #[test]
+    fn fix_all_returns_none_for_single_outdated() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        // Single outdated ref — quickfix already covers this, no fix-all needed.
+        assert!(fix_all_in_file(&uri, &[diag]).is_none());
+    }
+
+    #[test]
+    fn fix_all_returns_none_for_empty_diagnostics() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        assert!(fix_all_in_file(&uri, &[]).is_none());
+    }
+
+    #[test]
+    fn fix_all_returns_none_for_non_outdated_diagnostics() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
+        let diag2 = make_unresolvable_diagnostic(make_range(5, 10, 15), None);
+
+        // Only unresolvable diagnostics — fix-all only handles Outdated.
+        assert!(fix_all_in_file(&uri, &[diag1, diag2]).is_none());
+    }
+
+    #[test]
+    fn fix_all_aggregates_multiple_outdated() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 =
+            make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+        let diag2 =
+            make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
+        let diag3 = make_outdated_diagnostic(make_range(12, 20, 22), "actions/cache@v2", "v4.1.0");
+
+        let action = fix_all_in_file(&uri, &[diag1, diag2, diag3]).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+
+        assert_eq!(action.title, "Fix all outdated actions (3 refs)");
+        assert_eq!(action.kind, Some(SOURCE_FIX_ALL_ACTUP));
+        assert_eq!(action.is_preferred, Some(false));
+
+        // Single WorkspaceEdit with 3 TextEdits.
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let edits = &changes[&uri];
+        assert_eq!(edits.len(), 3);
+        assert_eq!(edits[0].new_text, "v4.2.0");
+        assert_eq!(edits[1].new_text, "v4.0.0");
+        assert_eq!(edits[2].new_text, "v4.1.0");
+
+        // All 3 diagnostics linked.
+        let linked = action.diagnostics.as_ref().unwrap();
+        assert_eq!(linked.len(), 3);
+    }
+
+    #[test]
+    fn fix_all_skips_foreign_and_non_outdated() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let outdated1 =
+            make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+        let outdated2 =
+            make_outdated_diagnostic(make_range(8, 31, 33), "actions/setup-node@v3", "v4.0.0");
+        let foreign = Diagnostic {
+            range: make_range(9, 0, 10),
+            source: Some("other-tool".into()),
+            ..Default::default()
+        };
+        let unresolvable = make_unresolvable_diagnostic(make_range(10, 5, 12), None);
+
+        let action = fix_all_in_file(&uri, &[outdated1, foreign, unresolvable, outdated2]).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+
+        // Only the 2 outdated refs are in the edit.
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let edits = &changes[&uri];
+        assert_eq!(edits.len(), 2);
+        assert_eq!(action.diagnostics.as_ref().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn kind_allowed_none_allows_all() {
+        assert!(kind_allowed(None, &CodeActionKind::QUICKFIX));
+        assert!(kind_allowed(None, &SOURCE_FIX_ALL_ACTUP));
+    }
+
+    #[test]
+    fn kind_allowed_exact_match() {
+        let only = vec![SOURCE_FIX_ALL_ACTUP];
+        assert!(kind_allowed(Some(&only), &SOURCE_FIX_ALL_ACTUP));
+        assert!(!kind_allowed(Some(&only), &CodeActionKind::QUICKFIX));
+    }
+
+    #[test]
+    fn kind_allowed_parent_match() {
+        // Requesting source.fixAll should include source.fixAll.actup.
+        let only = vec![CodeActionKind::SOURCE_FIX_ALL];
+        assert!(kind_allowed(Some(&only), &SOURCE_FIX_ALL_ACTUP));
+    }
+
+    #[test]
+    fn kind_allowed_no_partial_prefix_collision() {
+        // "source.fix" is NOT a parent of "source.fixAll.actup" (no dot boundary).
+        let only = vec![CodeActionKind::new("source.fix")];
+        assert!(!kind_allowed(Some(&only), &SOURCE_FIX_ALL_ACTUP));
+    }
+
+    #[test]
+    fn kind_allowed_empty_only_allows_nothing() {
+        let only: Vec<CodeActionKind> = vec![];
+        assert!(!kind_allowed(Some(&only), &CodeActionKind::QUICKFIX));
     }
 }
