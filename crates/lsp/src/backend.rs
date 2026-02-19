@@ -1291,4 +1291,91 @@ mod tests {
         changed.cache.ttl = base.cache.ttl + Duration::from_secs(1000);
         assert!(!configs_differ_for_diagnostics(&base, &changed));
     }
+
+    #[test]
+    fn configs_differ_detects_ref_style_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.ref_style = actup_core::policy::Style::Sha;
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn configs_differ_detects_branch_policy_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        // Default is `Ignore`; change to `Warn` to trigger a diff.
+        changed.branch_policy = actup_core::policy::Branch::Warn;
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn extract_workspace_root_from_root_uri() {
+        let uri = Uri::from_file_path("/workspace/from-uri").unwrap();
+        #[allow(deprecated)]
+        let params = InitializeParams {
+            root_uri: Some(uri),
+            root_path: Some("/legacy/root".to_owned()),
+            ..Default::default()
+        };
+        let root = extract_workspace_root(&params);
+        // root_uri takes precedence over root_path when workspace_folders absent.
+        assert_eq!(root, Some(PathBuf::from("/workspace/from-uri")));
+    }
+
+    #[test]
+    fn has_uses_keyword_matches_various_positions() {
+        assert!(has_uses_keyword("    uses: actions/checkout@v4"));
+        assert!(has_uses_keyword("- uses: x/y@v1\n"));
+        assert!(has_uses_keyword("  uses:"));
+    }
+
+    #[test]
+    fn has_uses_keyword_does_not_match_similar_strings() {
+        // "refuses:" contains "uses:" as substring — that's expected behavior.
+        // The function is intentionally a broad substring check, not precise.
+        assert!(!has_uses_keyword("# no action refs here"));
+        assert!(!has_uses_keyword("run: echo hello"));
+        assert!(!has_uses_keyword("  fuse: x"));
+    }
+
+    #[test]
+    fn action_overrides_differ_empty_maps_equal() {
+        let a = std::collections::HashMap::new();
+        let b = std::collections::HashMap::new();
+        assert!(!action_overrides_differ(&a, &b));
+    }
+
+    #[test]
+    fn action_overrides_differ_detects_addition() {
+        let a = std::collections::HashMap::new();
+        let mut b = std::collections::HashMap::new();
+        b.insert(
+            "actions/checkout".to_owned(),
+            serde_json::from_value(serde_json::json!({"update_policy": "minor"})).unwrap(),
+        );
+        assert!(action_overrides_differ(&a, &b));
+    }
+
+    #[test]
+    fn is_actup_config_path_handles_nested_config_dir() {
+        // .config/actup.toml — the last path segment is "actup.toml"
+        assert!(is_actup_config_path("file:///project/.config/actup.toml"));
+    }
+
+    #[test]
+    fn is_actup_config_path_rejects_partial_matches() {
+        assert!(!is_actup_config_path("file:///project/not-actup.toml"));
+        assert!(!is_actup_config_path("file:///actup.toml.bak"));
+    }
+
+    #[test]
+    fn document_state_clone_is_independent() {
+        let state = DocumentState::new("original".into(), 1);
+        let mut cloned = state.clone();
+        cloned.text = "modified".into();
+        cloned.version = 2;
+        assert_eq!(state.text, "original");
+        assert_eq!(state.version, 1);
+    }
 }

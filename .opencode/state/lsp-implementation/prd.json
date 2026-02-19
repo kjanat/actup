@@ -100,7 +100,7 @@
 			"description": "Test diagnostic generation and code actions. Done when:\n- Tests for CheckStatus -> Diagnostic severity mapping\n- Tests for code action generation from diagnostics\n- Tests for edit generation (preserves formatting)\n- Tests for quiet mode (no uses: = no diagnostics)\n- Mock provider responses, no network calls",
 			"depends": ["single-ref-codeaction"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "tests-integration",

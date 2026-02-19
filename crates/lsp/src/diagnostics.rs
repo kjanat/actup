@@ -349,25 +349,19 @@ mod tests {
     use actup_core::version;
     use std::sync::Arc;
 
-    /// Helper to build a range at (line, `col_start..col_end`).
+    use crate::test_utils::{self, DUMMY_SHA, DUMMY_SHA_2};
+
     fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
-        Range {
-            start: Position {
-                line,
-                character: col_start,
-            },
-            end: Position {
-                line,
-                character: col_end,
-            },
-        }
+        test_utils::make_range(line, col_start, col_end)
     }
+
+    // --- CheckStatus -> Diagnostic severity mapping ---
 
     #[test]
     fn outdated_maps_to_warning() {
         let target = Arc::new(version::Info::new(
             version::Version::parse("v2.0.0"),
-            "abc1234567890abcdef1234567890abcdef123456",
+            DUMMY_SHA,
         ));
         let status = CheckStatus::Outdated {
             current: "v1.0.0".into(),
@@ -382,15 +376,51 @@ mod tests {
     }
 
     #[test]
+    fn outdated_message_contains_short_sha() {
+        let target = Arc::new(version::Info::new(
+            version::Version::parse("v3.0.0"),
+            DUMMY_SHA,
+        ));
+        let status = CheckStatus::Outdated {
+            current: "v2.5.0".into(),
+            target,
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v2.5.0").unwrap();
+        assert!(
+            diag.message.contains(&DUMMY_SHA[..7]),
+            "expected short SHA in message, got: {}",
+            diag.message
+        );
+    }
+
+    #[test]
+    fn outdated_embeds_diagnostic_data() {
+        let target = Arc::new(version::Info::new(
+            version::Version::parse("v4.0.0"),
+            DUMMY_SHA,
+        ));
+        let status = CheckStatus::Outdated {
+            current: "v3".into(),
+            target,
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v3").unwrap();
+        let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
+        match data {
+            DiagnosticData::Outdated { target_ref } => assert_eq!(target_ref, "v4.0.0"),
+            DiagnosticData::Unresolvable { .. } => panic!("expected Outdated variant"),
+        }
+    }
+
+    #[test]
     fn pinned_maps_to_hint() {
         let status = CheckStatus::Pinned {
-            sha: "abc1234567890abcdef1234567890abcdef123456".into(),
+            sha: DUMMY_SHA.into(),
             tag: Some("v3.1.0".into()),
         };
         let diag = status_to_diagnostic(
             &status,
             make_range(5, 20, 60),
-            "actions/checkout@abc1234567890abcdef1234567890abcdef123456",
+            &format!("actions/checkout@{DUMMY_SHA}"),
         )
         .unwrap();
         assert_eq!(diag.severity, Some(DiagnosticSeverity::HINT));
@@ -401,16 +431,41 @@ mod tests {
     #[test]
     fn pinned_unknown_tag() {
         let status = CheckStatus::Pinned {
-            sha: "abc1234567890abcdef1234567890abcdef123456".into(),
+            sha: DUMMY_SHA.into(),
             tag: None,
         };
         let diag = status_to_diagnostic(
             &status,
             make_range(0, 0, 40),
-            "owner/repo@abc1234567890abcdef1234567890abcdef123456",
+            &format!("owner/repo@{DUMMY_SHA}"),
         )
         .unwrap();
         assert!(diag.message.contains("unknown version"));
+    }
+
+    #[test]
+    fn pinned_has_no_embedded_data() {
+        let status = CheckStatus::Pinned {
+            sha: DUMMY_SHA.into(),
+            tag: Some("v1.0.0".into()),
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 40), "o/r@sha").unwrap();
+        // Pinned diagnostics have no DiagnosticData (no code action target).
+        assert!(diag.data.is_none());
+    }
+
+    #[test]
+    fn pinned_message_uses_short_sha() {
+        let status = CheckStatus::Pinned {
+            sha: DUMMY_SHA.into(),
+            tag: Some("v2.0.0".into()),
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 40), "o/r@sha").unwrap();
+        assert!(
+            diag.message.contains(&DUMMY_SHA[..7]),
+            "expected short SHA, got: {}",
+            diag.message
+        );
     }
 
     #[test]
@@ -425,6 +480,19 @@ mod tests {
     }
 
     #[test]
+    fn unresolvable_user_error_code_is_unresolvable() {
+        let status = CheckStatus::Unresolvable {
+            reason: "not found".into(),
+            is_environment_error: false,
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").unwrap();
+        assert_eq!(
+            diag.code,
+            Some(NumberOrString::String("unresolvable".into()))
+        );
+    }
+
+    #[test]
     fn unresolvable_env_error_maps_to_information() {
         let status = CheckStatus::Unresolvable {
             reason: "rate limited".into(),
@@ -433,7 +501,6 @@ mod tests {
         let diag =
             status_to_diagnostic(&status, make_range(1, 5, 10), "actions/setup-node@v4").unwrap();
         assert_eq!(diag.severity, Some(DiagnosticSeverity::INFORMATION));
-        // Environment errors use the "(check failed: reason)" format.
         assert!(
             diag.message.contains("(check failed: rate limited)"),
             "expected check-failed format, got: {}",
@@ -448,7 +515,6 @@ mod tests {
             is_environment_error: false,
         };
         let diag = status_to_diagnostic(&status, make_range(0, 0, 10), "bad/repo@v1").unwrap();
-        // User errors use direct "value: reason" format, NOT "(check failed: ...)".
         assert!(
             !diag.message.contains("check failed"),
             "user errors should not use check-failed format, got: {}",
@@ -482,6 +548,21 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_source_is_actup() {
+        let status = CheckStatus::Outdated {
+            current: "v1".into(),
+            target: Arc::new(version::Info::new(
+                version::Version::parse("v2.0.0"),
+                "0000000000000000000000000000000000000000",
+            )),
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").unwrap();
+        assert_eq!(diag.source.as_deref(), Some("actup"));
+    }
+
+    // --- Extraction from YAML ---
+
+    #[test]
     fn extract_located_actions_parses_workflow() {
         let yaml = r"
 name: CI
@@ -500,8 +581,7 @@ jobs:
         assert_eq!(actions[0].action_ref.repo(), "checkout");
         assert_eq!(actions[0].action_ref.ref_str(), "v4");
         assert_eq!(actions[1].action_ref.repo(), "setup-node");
-        // Line numbers are 0-indexed
-        assert_eq!(actions[0].line, 7); // "- uses: actions/checkout@v4" is line 8 (1-indexed)
+        assert_eq!(actions[0].line, 7);
         assert_eq!(actions[1].line, 8);
     }
 
@@ -510,8 +590,6 @@ jobs:
         let yaml = "      - uses: actions/checkout@v4\n";
         let actions = extract_located_actions(yaml);
         assert_eq!(actions.len(), 1);
-        // Value "actions/checkout@v4" starts at byte 14 (col 15, 1-indexed).
-        // ref_range: at_pos=16 in value, start = 14 + 16 + 1 = 31, end = 14 + 19 = 33
         assert_eq!(actions[0].col_start, 31);
         assert_eq!(actions[0].col_end, 33);
     }
@@ -529,15 +607,295 @@ jobs:
     }
 
     #[test]
-    fn diagnostic_source_is_actup() {
-        let status = CheckStatus::Outdated {
-            current: "v1".into(),
-            target: Arc::new(version::Info::new(
-                version::Version::parse("v2.0.0"),
-                "0000000000000000000000000000000000000000",
-            )),
+    fn extract_located_actions_handles_subpath_refs() {
+        let yaml = "      - uses: owner/repo/.github/workflows/reusable.yml@v1\n";
+        let actions = extract_located_actions(yaml);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action_ref.owner(), "owner");
+        assert_eq!(actions[0].action_ref.repo(), "repo");
+        assert_eq!(actions[0].action_ref.ref_str(), "v1");
+    }
+
+    #[test]
+    fn extract_located_actions_empty_yaml_returns_empty() {
+        let yaml = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
+        let actions = extract_located_actions(yaml);
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn extract_located_actions_multiple_steps_different_repos() {
+        let yaml = r"
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+      - uses: docker/build-push-action@v5
+      - uses: ./local
+";
+        let actions = extract_located_actions(yaml);
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0].action_ref.repo(), "checkout");
+        assert_eq!(actions[1].action_ref.repo(), "setup-node");
+        assert_eq!(actions[2].action_ref.repo(), "build-push-action");
+    }
+
+    #[test]
+    fn extract_preserves_uses_value_string() {
+        let yaml = "      - uses: actions/checkout@v4.1.2\n";
+        let actions = extract_located_actions(yaml);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].uses_value, "actions/checkout@v4.1.2");
+    }
+
+    // --- DiagnosticData serde edge cases ---
+
+    #[test]
+    fn diagnostic_data_unresolvable_none_roundtrips() {
+        let data = DiagnosticData::Unresolvable {
+            suggested_ref: None,
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").unwrap();
-        assert_eq!(diag.source.as_deref(), Some("actup"));
+        let json = serde_json::to_value(&data).unwrap();
+        let back: DiagnosticData = serde_json::from_value(json).unwrap();
+        match back {
+            DiagnosticData::Unresolvable { suggested_ref } => assert!(suggested_ref.is_none()),
+            DiagnosticData::Outdated { .. } => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
+    fn diagnostic_data_tagged_correctly() {
+        let outdated = DiagnosticData::Outdated {
+            target_ref: "v1".into(),
+        };
+        let json = serde_json::to_value(&outdated).unwrap();
+        assert_eq!(json["kind"], "outdated");
+
+        let unresolvable = DiagnosticData::Unresolvable {
+            suggested_ref: None,
+        };
+        let json = serde_json::to_value(&unresolvable).unwrap();
+        assert_eq!(json["kind"], "unresolvable");
+    }
+
+    // --- compute_diagnostics with mock provider ---
+
+    #[tokio::test]
+    async fn compute_diagnostics_empty_text_returns_empty() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let result =
+            compute_diagnostics("name: CI\non: push\n", &uri, &config, &registry, &cache).await;
+        assert!(result.diagnostics.is_empty());
+        assert!(!result.errors.has_errors());
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_outdated_ref_produces_warning() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v3\n";
+        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(
+            result.diagnostics[0].severity,
+            Some(DiagnosticSeverity::WARNING)
+        );
+        assert!(result.diagnostics[0].message.contains("v4.2.0"));
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_up_to_date_ref_no_diagnostic() {
+        let versions = test_utils::simple_version_set("v4.0.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v4.0.0\n";
+        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+
+        assert!(
+            result.diagnostics.is_empty(),
+            "up-to-date ref should produce no diagnostics, got: {:?}",
+            result
+                .diagnostics
+                .iter()
+                .map(|d| &d.message)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_provider_error_produces_env_diagnostic() {
+        let provider = test_utils::MockProvider::new("github.com").with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            },
+        );
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v4\n";
+        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(
+            result.diagnostics[0].severity,
+            Some(DiagnosticSeverity::INFORMATION)
+        );
+        assert!(result.diagnostics[0].message.contains("check failed"));
+        assert!(result.errors.has_errors());
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_deduplicates_repos() {
+        // Same repo referenced twice — should only fetch versions once.
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v2\n";
+        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+
+        // Both refs should produce diagnostics (both outdated).
+        assert_eq!(result.diagnostics.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_mixed_repos() {
+        let checkout_versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let node_versions = test_utils::simple_version_set("v4.0.0", DUMMY_SHA_2);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", checkout_versions)
+            .with_versions("actions", "setup-node", node_versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/setup-node@v4.0.0\n";
+        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+
+        // checkout@v3 is outdated (v4.2.0 available), setup-node@v4.0.0 is up to date.
+        let warnings: Vec<_> = result
+            .diagnostics
+            .iter()
+            .filter(|d| d.severity == Some(DiagnosticSeverity::WARNING))
+            .collect();
+        assert_eq!(warnings.len(), 1, "only checkout should be outdated");
+        assert!(warnings[0].message.contains("checkout"));
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_local_refs_not_checked() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: ./local-action\n    - uses: docker://node:16\n";
+        let result = compute_diagnostics(yaml, &uri, &config, &registry, &cache).await;
+
+        assert!(result.diagnostics.is_empty());
+    }
+
+    // --- batch_fetch_versions ---
+
+    #[tokio::test]
+    async fn batch_fetch_versions_returns_results_for_all_repos() {
+        let versions = test_utils::simple_version_set("v2.0.0", DUMMY_SHA);
+        let provider =
+            test_utils::MockProvider::new("github.com").with_versions("owner", "repo", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+
+        let repo = ActionRepoId::simple("owner", "repo");
+        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+
+        assert!(results.contains_key(&repo));
+        assert!(results[&repo].is_ok());
+    }
+
+    #[tokio::test]
+    async fn batch_fetch_versions_error_propagated() {
+        let provider = test_utils::MockProvider::new("github.com").with_error(
+            "bad",
+            "repo",
+            actup_core::Error::NotFound {
+                owner: "bad".into(),
+                repo: "repo".into(),
+                host: None,
+            },
+        );
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+
+        let repo = ActionRepoId::simple("bad", "repo");
+        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+
+        assert!(results[&repo].is_err());
+    }
+
+    #[tokio::test]
+    async fn batch_fetch_versions_caches_results() {
+        let versions = test_utils::simple_version_set("v1.0.0", DUMMY_SHA);
+        let provider =
+            test_utils::MockProvider::new("github.com").with_versions("owner", "repo", versions);
+        let registry = test_utils::mock_registry(provider);
+
+        let temp = tempfile::TempDir::new().unwrap();
+        let cache = crate::file_cache::FileCache::with_path(
+            temp.path().to_path_buf(),
+            std::time::Duration::from_secs(3600),
+        );
+
+        let repo = ActionRepoId::simple("owner", "repo");
+        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        assert!(results[&repo].is_ok());
+
+        // Second fetch should hit file cache (even though provider would return
+        // the same data, this tests the caching path works without error).
+        let results2 = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        assert!(results2[&repo].is_ok());
+    }
+
+    // --- Quiet mode ---
+
+    #[tokio::test]
+    async fn quiet_mode_no_uses_keyword() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/readme.md").unwrap();
+
+        let text = "# README\nThis is not a workflow file.\n";
+        let result = compute_diagnostics(text, &uri, &config, &registry, &cache).await;
+        assert!(result.diagnostics.is_empty());
     }
 }

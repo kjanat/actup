@@ -264,4 +264,83 @@ mod tests {
                 .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
         );
     }
+
+    #[tokio::test]
+    async fn remove_existing_key_succeeds() {
+        let (cache, _temp) = make_test_cache(3600);
+        let entry = cache::Entry::new(version::Set::default());
+        cache.set("to_remove", entry).await.unwrap();
+
+        // Key exists before remove.
+        assert!(cache.get("to_remove").await.is_ok());
+
+        cache.remove("to_remove").await.unwrap();
+
+        // Key no longer exists.
+        assert!(matches!(
+            cache.get("to_remove").await,
+            Err(cache::Error::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn remove_nonexistent_key_is_ok() {
+        let (cache, _temp) = make_test_cache(3600);
+        // Removing a key that doesn't exist should not error.
+        assert!(cache.remove("never_existed").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn remove_on_disabled_cache_is_ok() {
+        let cache = FileCache::disabled();
+        assert!(cache.remove("key").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn clear_removes_all_entries() {
+        let (cache, _temp) = make_test_cache(3600);
+        let entry1 = cache::Entry::new(version::Set::default());
+        let entry2 = cache::Entry::new(version::Set::default());
+        cache.set("key1", entry1).await.unwrap();
+        cache.set("key2", entry2).await.unwrap();
+
+        // Both keys exist.
+        assert!(cache.get("key1").await.is_ok());
+        assert!(cache.get("key2").await.is_ok());
+
+        cache.clear().await.unwrap();
+
+        // Both keys gone after clear.
+        assert!(matches!(
+            cache.get("key1").await,
+            Err(cache::Error::NotFound)
+        ));
+        assert!(matches!(
+            cache.get("key2").await,
+            Err(cache::Error::NotFound)
+        ));
+    }
+
+    #[tokio::test]
+    async fn clear_on_empty_cache_is_ok() {
+        let (cache, _temp) = make_test_cache(3600);
+        assert!(cache.clear().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn clear_on_disabled_cache_is_ok() {
+        let cache = FileCache::disabled();
+        assert!(cache.clear().await.is_ok());
+    }
+
+    #[test]
+    fn default_cache_dir_ends_with_actup() {
+        let dir = default_cache_dir();
+        let dir_str = dir.to_string_lossy();
+        // Should end with "actup" (or "actup/cache" on Windows).
+        assert!(
+            dir_str.contains("actup"),
+            "expected 'actup' in path, got: {dir_str}"
+        );
+    }
 }

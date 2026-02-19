@@ -415,34 +415,18 @@ fn progress_id() -> u64 {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use tower_lsp_server::ls_types::{DiagnosticSeverity, NumberOrString, Position, Range};
 
-    fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
-        Range {
-            start: Position {
-                line,
-                character: col_start,
-            },
-            end: Position {
-                line,
-                character: col_end,
-            },
-        }
+    use crate::test_utils;
+
+    fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
+        test_utils::make_range(line, col_start, col_end)
     }
 
-    fn make_outdated_diagnostic(range: Range, target_ref: &str) -> Diagnostic {
-        let data = DiagnosticData::Outdated {
-            target_ref: target_ref.into(),
-        };
-        Diagnostic {
-            range,
-            severity: Some(DiagnosticSeverity::WARNING),
-            code: Some(NumberOrString::String("outdated".into())),
-            source: Some(DIAGNOSTIC_SOURCE.into()),
-            message: format!("o/r@old -> {target_ref}"),
-            data: serde_json::to_value(data).ok(),
-            ..Default::default()
-        }
+    fn make_outdated_diagnostic(
+        range: tower_lsp_server::ls_types::Range,
+        target_ref: &str,
+    ) -> Diagnostic {
+        test_utils::make_outdated_diagnostic(range, "o/r@old", target_ref)
     }
 
     #[test]
@@ -583,5 +567,67 @@ mod tests {
         };
         assert!(result.cancelled);
         assert_eq!(result.files_scanned, 3);
+    }
+
+    #[test]
+    fn fix_all_result_summary_normal() {
+        let result = FixAllResult {
+            edit: WorkspaceEdit::default(),
+            files_scanned: 5,
+            files_changed: 2,
+            refs_updated: 3,
+            actions_checked: 10,
+            failures: Vec::new(),
+            cancelled: false,
+        };
+        let summary = result.summary();
+        assert!(summary.contains("3 refs"));
+        assert!(summary.contains("2 files"));
+        assert!(summary.contains("10 actions checked"));
+        assert!(!summary.contains("Cancelled"));
+    }
+
+    #[test]
+    fn fix_all_result_summary_cancelled() {
+        let result = FixAllResult {
+            edit: WorkspaceEdit::default(),
+            files_scanned: 2,
+            files_changed: 0,
+            refs_updated: 0,
+            actions_checked: 5,
+            failures: Vec::new(),
+            cancelled: true,
+        };
+        let summary = result.summary();
+        assert!(summary.contains("Cancelled"));
+        assert!(summary.contains("5 actions checked"));
+    }
+
+    #[test]
+    fn edits_from_diagnostics_skips_none_data() {
+        let diag = Diagnostic {
+            range: make_range(0, 0, 5),
+            source: Some(DIAGNOSTIC_SOURCE.into()),
+            data: None,
+            ..Default::default()
+        };
+        assert!(edits_from_diagnostics(&[diag]).is_empty());
+    }
+
+    #[test]
+    fn edits_from_diagnostics_skips_malformed_data() {
+        let diag = Diagnostic {
+            range: make_range(0, 0, 5),
+            source: Some(DIAGNOSTIC_SOURCE.into()),
+            data: Some(serde_json::json!({"kind": "unknown_variant"})),
+            ..Default::default()
+        };
+        assert!(edits_from_diagnostics(&[diag]).is_empty());
+    }
+
+    #[test]
+    fn cancelled_default_is_not_cancelled() {
+        let flag = Cancelled::default();
+        assert!(!flag.is_cancelled());
     }
 }

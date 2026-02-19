@@ -182,49 +182,26 @@ pub fn kind_allowed(only: Option<&[CodeActionKind]>, kind: &CodeActionKind) -> b
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use tower_lsp_server::ls_types::{DiagnosticSeverity, NumberOrString, Position, Range};
 
-    fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
-        Range {
-            start: Position {
-                line,
-                character: col_start,
-            },
-            end: Position {
-                line,
-                character: col_end,
-            },
-        }
+    use crate::test_utils;
+
+    fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
+        test_utils::make_range(line, col_start, col_end)
     }
 
-    fn make_outdated_diagnostic(range: Range, uses_value: &str, target_ref: &str) -> Diagnostic {
-        let data = DiagnosticData::Outdated {
-            target_ref: target_ref.into(),
-        };
-        Diagnostic {
-            range,
-            severity: Some(DiagnosticSeverity::WARNING),
-            code: Some(NumberOrString::String("outdated".into())),
-            source: Some(DIAGNOSTIC_SOURCE.into()),
-            message: format!("{uses_value}: v1.0.0 -> {target_ref} (abc1234)"),
-            data: serde_json::to_value(data).ok(),
-            ..Default::default()
-        }
+    fn make_outdated_diagnostic(
+        range: tower_lsp_server::ls_types::Range,
+        uses_value: &str,
+        target_ref: &str,
+    ) -> Diagnostic {
+        test_utils::make_outdated_diagnostic(range, uses_value, target_ref)
     }
 
-    fn make_unresolvable_diagnostic(range: Range, suggested: Option<&str>) -> Diagnostic {
-        let data = DiagnosticData::Unresolvable {
-            suggested_ref: suggested.map(String::from),
-        };
-        Diagnostic {
-            range,
-            severity: Some(DiagnosticSeverity::ERROR),
-            code: Some(NumberOrString::String("unresolvable".into())),
-            source: Some(DIAGNOSTIC_SOURCE.into()),
-            message: "bad/repo@v1: repository not found".into(),
-            data: serde_json::to_value(data).ok(),
-            ..Default::default()
-        }
+    fn make_unresolvable_diagnostic(
+        range: tower_lsp_server::ls_types::Range,
+        suggested: Option<&str>,
+    ) -> Diagnostic {
+        test_utils::make_unresolvable_diagnostic(range, suggested)
     }
 
     #[test]
@@ -486,5 +463,127 @@ mod tests {
     fn kind_allowed_empty_only_allows_nothing() {
         let only: Vec<CodeActionKind> = vec![];
         assert!(!kind_allowed(Some(&only), &CodeActionKind::QUICKFIX));
+    }
+
+    // --- Edit generation preserves formatting ---
+
+    #[test]
+    fn edit_replaces_only_ref_range() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        // Range covers just "v3" (2 chars), not the entire `uses:` line.
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        let actions = code_actions_for_diagnostics(&uri, &[diag]);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let text_edits = &changes[&uri];
+        assert_eq!(text_edits.len(), 1);
+
+        // Only the ref portion is replaced, not the whole line.
+        assert_eq!(text_edits[0].range.start.line, 7);
+        assert_eq!(text_edits[0].range.start.character, 31);
+        assert_eq!(text_edits[0].range.end.character, 33);
+        assert_eq!(text_edits[0].new_text, "v4.2.0");
+    }
+
+    #[test]
+    fn edit_handles_longer_replacement() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        // Replacing "v3" (2 chars) with "v4.2.0" (6 chars).
+        let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v3", "v4.2.0");
+
+        let actions = code_actions_for_diagnostics(&uri, &[diag]);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let text_edits = &changes[&uri];
+        // The range stays the same (2 chars), but the new_text is longer.
+        // LSP handles the expansion — we just provide the replacement text.
+        assert_eq!(text_edits[0].range, make_range(0, 10, 12));
+        assert_eq!(text_edits[0].new_text, "v4.2.0");
+    }
+
+    #[test]
+    fn fix_all_edits_maintain_per_line_ranges() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 =
+            make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+        let diag2 =
+            make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
+        let diag3 = make_outdated_diagnostic(make_range(12, 20, 22), "actions/cache@v2", "v4.1.0");
+
+        let action = fix_all_in_file(&uri, &[diag1, diag2, diag3]).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        let text_edits = &changes[&uri];
+
+        // Each edit preserves its specific range — no overlap or combined ranges.
+        assert_eq!(text_edits[0].range, make_range(7, 31, 33));
+        assert_eq!(text_edits[1].range, make_range(8, 34, 36));
+        assert_eq!(text_edits[2].range, make_range(12, 20, 22));
+    }
+
+    #[test]
+    fn fix_all_title_includes_ref_count() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
+        let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v2.0.0");
+
+        let action = fix_all_in_file(&uri, &[diag1, diag2]).unwrap();
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+        assert_eq!(action.title, "Fix all outdated actions (2 refs)");
+    }
+
+    #[test]
+    fn code_action_edit_targets_correct_uri() {
+        let uri = Uri::from_file_path("/project/.github/workflows/ci.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(0, 0, 2), "o/r@v1", "v2.0.0");
+
+        let actions = code_actions_for_diagnostics(&uri, &[diag]);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+
+        let edit = action.edit.as_ref().unwrap();
+        let changes = edit.changes.as_ref().unwrap();
+        assert!(
+            changes.contains_key(&uri),
+            "edit should target the correct URI"
+        );
+    }
+
+    #[test]
+    fn mixed_diagnostics_produce_correct_action_types() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let outdated = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
+        let suggestion = make_unresolvable_diagnostic(make_range(1, 10, 15), Some("v3.0.0"));
+        let no_suggestion = make_unresolvable_diagnostic(make_range(2, 10, 15), None);
+
+        let actions = code_actions_for_diagnostics(&uri, &[outdated, suggestion, no_suggestion]);
+        assert_eq!(actions.len(), 2); // outdated + suggestion, NOT the no_suggestion
+
+        let CodeActionOrCommand::CodeAction(a0) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let CodeActionOrCommand::CodeAction(a1) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+        assert!(a0.title.starts_with("Update to"));
+        assert!(a1.title.starts_with("Change to"));
+        assert_eq!(a0.is_preferred, Some(true));
+        assert_eq!(a1.is_preferred, Some(false));
     }
 }

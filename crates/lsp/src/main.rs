@@ -15,6 +15,9 @@ mod hover;
 mod provider_setup;
 mod workspace_commands;
 
+#[cfg(test)]
+mod test_utils;
+
 use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;
 

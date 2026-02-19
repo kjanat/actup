@@ -58,6 +58,15 @@ Started: 2026-02-19
 - Only count spaces/tabs (not newlines) as whitespace between `uses:` and value — `trim_start()` eats newlines which breaks empty-value detection
 - Quote stripping: detect leading `"` or `'`, offset content_col by 1, strip trailing quote from value before analysis
 
+### Mock Provider Pattern (test_utils)
+- `test_utils::MockProvider::new(host)` creates a provider returning empty version sets
+- `.with_versions(owner, repo, versions)` configures per-repo version sets
+- `.with_error(owner, repo, error)` configures per-repo error responses
+- `test_utils::mock_registry(provider)` builds a `Registry` with single provider + default host
+- `test_utils::simple_version_set(version_str, sha)` builds a minimal version set with one semver tag as latest
+- Shared helpers: `make_range`, `make_outdated_diagnostic`, `make_unresolvable_diagnostic`, `make_pinned_diagnostic`
+- `DUMMY_SHA` / `DUMMY_SHA_2` constants for deterministic 40-char SHAs
+
 ### Error Notification Pattern
 - `ErrorCategory::from_core_error()` classifies `CoreError` into notification categories
 - `ErrorDeduplicator` (session-scoped `Mutex<HashSet>`) prevents repeat notifications
@@ -354,3 +363,21 @@ Started: 2026-02-19
 - 27 new tests: context detection (empty, partial name, version ref, empty version prefix, quoted values, single-quoted, multiline, non-uses line, cursor before value), `parse_owner_repo` (simple, subpath, invalid cases), `action_completions` (all, filtered, case-insensitive, partial owner, insert text, documentation, sort order, no match), `version_completion_item` (preselect, sort order, SHA label detail), popular actions validation
 - Files: `crates/lsp/src/completion.rs` (new), `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
 - **Learnings:** LSP `character` is 0-based column of cursor position; for completion context, include the character AT cursor_col (use `..=offset`); only skip spaces/tabs (not newlines) after `uses:` colon to avoid breaking empty-value detection when cursor is right after `uses: `; `trim_start()` eats newlines — use manual byte counting for YAML value whitespace; `CompletionOptions` has `trigger_characters` (not `trigger_chars`); `version::Set::major_tags()` returns `HashMap<u32, Arc<Info>>` — sort by key descending for newest-first display
+
+## Task - tests-unit
+
+- Created `crates/lsp/src/test_utils.rs`: shared test utilities module with `MockProvider`, diagnostic builders, version set helpers
+- `MockProvider`: configurable per-repo version sets or error responses, implements full `Provider` trait; `mock_registry()` builds a single-provider `Registry`; `simple_version_set()` creates a minimal version set with one semver tag as latest
+- Shared helpers: `make_range`, `make_outdated_diagnostic`, `make_unresolvable_diagnostic`, `make_pinned_diagnostic`, `make_version_info`, `DUMMY_SHA`/`DUMMY_SHA_2` constants
+- Refactored existing test modules (`code_actions`, `workspace_commands`) to delegate to shared helpers instead of duplicating them
+- Added 29 new tests across modules:
+  - **diagnostics.rs** (11 new): `outdated_message_contains_short_sha`, `outdated_embeds_diagnostic_data`, `pinned_has_no_embedded_data`, `pinned_message_uses_short_sha`, `unresolvable_user_error_code_is_unresolvable`, `extract_located_actions_handles_subpath_refs`, `extract_located_actions_empty_yaml_returns_empty`, `extract_located_actions_multiple_steps_different_repos`, `extract_preserves_uses_value_string`, `diagnostic_data_unresolvable_none_roundtrips`, `diagnostic_data_tagged_correctly`
+  - **diagnostics.rs async** (8 new): `compute_diagnostics_empty_text_returns_empty`, `compute_diagnostics_outdated_ref_produces_warning`, `compute_diagnostics_up_to_date_ref_no_diagnostic`, `compute_diagnostics_provider_error_produces_env_diagnostic`, `compute_diagnostics_deduplicates_repos`, `compute_diagnostics_mixed_repos`, `compute_diagnostics_local_refs_not_checked`, `quiet_mode_no_uses_keyword`
+  - **diagnostics.rs batch** (3 new): `batch_fetch_versions_returns_results_for_all_repos`, `batch_fetch_versions_error_propagated`, `batch_fetch_versions_caches_results`
+  - **code_actions.rs** (7 new): `edit_replaces_only_ref_range`, `edit_handles_longer_replacement`, `fix_all_edits_maintain_per_line_ranges`, `fix_all_title_includes_ref_count`, `code_action_edit_targets_correct_uri`, `mixed_diagnostics_produce_correct_action_types`
+  - **workspace_commands.rs** (4 new): `fix_all_result_summary_normal`, `fix_all_result_summary_cancelled`, `edits_from_diagnostics_skips_none_data`, `edits_from_diagnostics_skips_malformed_data`, `cancelled_default_is_not_cancelled`
+  - **file_cache.rs** (7 new): `remove_existing_key_succeeds`, `remove_nonexistent_key_is_ok`, `remove_on_disabled_cache_is_ok`, `clear_removes_all_entries`, `clear_on_empty_cache_is_ok`, `clear_on_disabled_cache_is_ok`, `default_cache_dir_ends_with_actup`
+  - **backend.rs** (9 new): `configs_differ_detects_ref_style_change`, `configs_differ_detects_branch_policy_change`, `extract_workspace_root_from_root_uri`, `has_uses_keyword_matches_various_positions`, `has_uses_keyword_does_not_match_similar_strings`, `action_overrides_differ_empty_maps_equal`, `action_overrides_differ_detects_addition`, `is_actup_config_path_handles_nested_config_dir`, `is_actup_config_path_rejects_partial_matches`, `document_state_clone_is_independent`
+- Total: 188 tests (up from ~128), all passing, clippy clean
+- Files changed: `crates/lsp/src/test_utils.rs` (new), `crates/lsp/src/main.rs`, `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/code_actions.rs`, `crates/lsp/src/workspace_commands.rs`, `crates/lsp/src/file_cache.rs`, `crates/lsp/src/backend.rs`
+- **Learnings:** `MockProvider` needs manual `CoreError` cloning since `Error` doesn't impl `Clone` — reconstruct by matching variants; `DiagnosticData` match arms should use exhaustive patterns (not `_`) per `clippy::wildcard_enum_match_arm`; `&[repo.clone()]` triggers `clippy::cloned_ref_to_slice_refs` — use `std::slice::from_ref(&repo)` instead; `has_uses_keyword` is a simple `contains("uses:")` — "refuses:" will match, which is correct (better false positives than missed refs)
