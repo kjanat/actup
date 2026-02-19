@@ -16,6 +16,7 @@ use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Uri,
 };
 
+use crate::error_ux::{self, DiagnosticErrors};
 use crate::file_cache::FileCache;
 
 /// Diagnostic source identifier shown in the editor.
@@ -224,16 +225,32 @@ fn status_to_diagnostic(
             } else {
                 DiagnosticSeverity::ERROR
             };
+            // Environment errors use "(check failed: reason)" to distinguish
+            // from user errors which show the reason directly.
+            let message = if *is_environment_error {
+                error_ux::format_check_failed(uses_value, reason)
+            } else {
+                format!("{uses_value}: {reason}")
+            };
             Some(Diagnostic {
                 range,
                 severity: Some(severity),
                 code: Some(NumberOrString::String("unresolvable".into())),
                 source: Some(DIAGNOSTIC_SOURCE.into()),
-                message: format!("{uses_value}: {reason}"),
+                message,
                 ..Default::default()
             })
         }
     }
+}
+
+/// Result of a diagnostic computation: diagnostics to publish plus any
+/// environment errors that should trigger user notifications.
+pub struct DiagnosticResult {
+    /// LSP diagnostics to publish for the document.
+    pub diagnostics: Vec<Diagnostic>,
+    /// Environment errors encountered during version fetching.
+    pub errors: DiagnosticErrors,
 }
 
 /// Compute diagnostics for all `uses:` references in a document.
@@ -242,18 +259,22 @@ fn status_to_diagnostic(
 /// It extracts refs, deduplicates repos, fetches versions (with caching),
 /// checks each ref against policy, and maps results to LSP diagnostics.
 ///
-/// Network errors are surfaced as `Information`-severity diagnostics
-/// rather than blocking the entire document.
+/// Environment errors are both:
+/// 1. Surfaced as `Information`-severity diagnostics on the affected refs
+/// 2. Collected in [`DiagnosticResult::errors`] for user notifications
 pub async fn compute_diagnostics(
     text: &str,
     _uri: &Uri,
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
-) -> Vec<Diagnostic> {
+) -> DiagnosticResult {
     let actions = extract_located_actions(text);
     if actions.is_empty() {
-        return Vec::new();
+        return DiagnosticResult {
+            diagnostics: Vec::new(),
+            errors: DiagnosticErrors::default(),
+        };
     }
 
     // Deduplicate repos for batch fetching.
@@ -271,6 +292,7 @@ pub async fn compute_diagnostics(
     let versions_map = batch_fetch_versions(&unique_repos, registry, file_cache).await;
 
     let mut diagnostics = Vec::with_capacity(actions.len());
+    let mut errors = DiagnosticErrors::default();
 
     for action in &actions {
         let range = Range {
@@ -287,13 +309,16 @@ pub async fn compute_diagnostics(
         let repo_id = action.action_ref.to_repo_id();
         let result = match versions_map.get(&repo_id) {
             Some(Ok(versions)) => check_action(&action.action_ref, versions, config),
-            Some(Err(e)) => CheckResult::new(
-                action.action_ref.clone(),
-                CheckStatus::Unresolvable {
-                    reason: e.to_string(),
-                    is_environment_error: e.is_environment_error(),
-                },
-            ),
+            Some(Err(e)) => {
+                errors.record(e);
+                CheckResult::new(
+                    action.action_ref.clone(),
+                    CheckStatus::Unresolvable {
+                        reason: e.to_string(),
+                        is_environment_error: e.is_environment_error(),
+                    },
+                )
+            }
             None => {
                 // Should not happen (all repos are in the map), but handle gracefully.
                 CheckResult::new(
@@ -311,7 +336,10 @@ pub async fn compute_diagnostics(
         }
     }
 
-    diagnostics
+    DiagnosticResult {
+        diagnostics,
+        errors,
+    }
 }
 
 #[cfg(test)]
@@ -405,6 +433,28 @@ mod tests {
         let diag =
             status_to_diagnostic(&status, make_range(1, 5, 10), "actions/setup-node@v4").unwrap();
         assert_eq!(diag.severity, Some(DiagnosticSeverity::INFORMATION));
+        // Environment errors use the "(check failed: reason)" format.
+        assert!(
+            diag.message.contains("(check failed: rate limited)"),
+            "expected check-failed format, got: {}",
+            diag.message
+        );
+    }
+
+    #[test]
+    fn unresolvable_user_error_does_not_use_check_failed_format() {
+        let status = CheckStatus::Unresolvable {
+            reason: "repository not found".into(),
+            is_environment_error: false,
+        };
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 10), "bad/repo@v1").unwrap();
+        // User errors use direct "value: reason" format, NOT "(check failed: ...)".
+        assert!(
+            !diag.message.contains("check failed"),
+            "user errors should not use check-failed format, got: {}",
+            diag.message
+        );
+        assert!(diag.message.contains("repository not found"));
     }
 
     #[test]

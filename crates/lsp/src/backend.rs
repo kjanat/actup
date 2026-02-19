@@ -156,6 +156,13 @@ pub struct LspBackend {
     /// Keyed by (owner, repo, ref) since `CachingProvider` does not cache
     /// `get_action_yml` calls. Shared across all hover requests.
     action_meta_cache: crate::hover::ActionMetaCache,
+    /// Session-scoped deduplicator for environment error notifications.
+    ///
+    /// Prevents spamming the user with repeated rate-limit or auth error
+    /// messages across multiple diagnostic runs. Reset on config reload
+    /// (in case the user fixed their token). Wrapped in `Arc` for shared
+    /// access from spawned diagnostic tasks.
+    error_dedup: Arc<crate::error_ux::ErrorDeduplicator>,
 }
 
 impl LspBackend {
@@ -173,6 +180,7 @@ impl LspBackend {
             file_cache: Arc::new(RwLock::new(None)),
             in_flight: DashMap::new(),
             action_meta_cache: crate::hover::new_action_meta_cache(),
+            error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
         }
     }
 
@@ -200,6 +208,7 @@ impl LspBackend {
         let config = Arc::clone(&self.config);
         let registry = Arc::clone(&self.registry);
         let file_cache = Arc::clone(&self.file_cache);
+        let error_dedup = Arc::clone(&self.error_dedup);
         let task_uri = uri.clone();
 
         let handle = tokio::spawn(async move {
@@ -225,7 +234,7 @@ impl LspBackend {
             let file_cache =
                 file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
-            let diagnostics = crate::diagnostics::compute_diagnostics(
+            let result = crate::diagnostics::compute_diagnostics(
                 &text,
                 &uri,
                 &config,
@@ -233,6 +242,13 @@ impl LspBackend {
                 &file_cache,
             )
             .await;
+
+            // Send user-visible notifications for environment errors (deduplicated).
+            if result.errors.has_errors() {
+                crate::error_ux::notify_errors(&client, &result.errors, &error_dedup).await;
+            }
+
+            let diagnostics = result.diagnostics;
 
             // Update cached diagnostics in document state, checking for staleness.
             let should_publish = if let Some(mut doc) = documents.get_mut(&uri) {
@@ -873,6 +889,10 @@ impl LspBackend {
         // Rebuild file cache (TTL or path may have changed).
         let file_cache = Arc::new(provider_setup::build_file_cache(&new_config));
         *self.file_cache.write().await = Some(file_cache);
+
+        // Reset error deduplication on config reload so that persistent errors
+        // (e.g. auth) are re-shown if the user changed their token/config.
+        self.error_dedup.reset_all();
 
         if policy_changed {
             tracing::info!("policy changed, refreshing diagnostics for all open documents");

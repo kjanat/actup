@@ -91,7 +91,7 @@
 			"description": "Better feedback for network/auth errors. Done when:\n- Rate limit error shows window/showMessage notification\n- Auth error suggests setting GITHUB_TOKEN\n- Per-ref diagnostics show '(check failed: reason)'\n- Aggregate status logged via MessageType::Log\n- Errors don't spam user (deduplicated per-session)",
 			"depends": ["async-diagnostics"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "tests-unit",

@@ -8,6 +8,7 @@
 mod backend;
 mod code_actions;
 mod diagnostics;
+mod error_ux;
 mod file_cache;
 mod hover;
 mod provider_setup;

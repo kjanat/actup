@@ -190,9 +190,9 @@ async fn process_file(
         };
     };
 
-    let diags = diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache).await;
-    let actions_checked = diags.len();
-    let edits = edits_from_diagnostics(&diags);
+    let result = diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache).await;
+    let actions_checked = result.diagnostics.len();
+    let edits = edits_from_diagnostics(&result.diagnostics);
 
     let result_edits = if edits.is_empty() {
         None

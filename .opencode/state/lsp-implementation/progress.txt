@@ -46,6 +46,15 @@ Started: 2026-02-19
 - User errors (NotFound, InvalidRef) -> Error severity
 - Env errors (Network, RateLimit, Auth) -> Information severity + status message
 
+### Error Notification Pattern
+- `ErrorCategory::from_core_error()` classifies `CoreError` into notification categories
+- `ErrorDeduplicator` (session-scoped `Mutex<HashSet>`) prevents repeat notifications
+- `DiagnosticErrors` collects per-run errors, deduped by category within a single run
+- `notify_errors()` dispatches: RateLimit/Auth/Forbidden → `showMessage`, Network/ProviderNotFound → `logMessage`
+- Environment error diagnostics use `"(check failed: reason)"` format; user errors use direct format
+- Reset deduplication on config reload so persistent errors re-notify after user fixes config
+- `compute_diagnostics` returns `DiagnosticResult { diagnostics, errors }` — caller handles notifications
+
 ### Config Watching Pattern
 - Dynamic watcher registration via `client.register_capability` in `initialized` (not `initialize`)
 - Gate on `caps.workspace.did_change_watched_files.dynamic_registration == Some(true)`
@@ -293,3 +302,26 @@ Started: 2026-02-19
 - 20 new tests: position finding (on value, off value, wrong line, local ref, start/end boundaries), repo URL construction (default host, explicit host, fallback), version status formatting (all 7 variants), hover content assembly (with/without meta, outdated status), cache store/retrieve, cache key ref distinction
 - Files: `crates/lsp/src/hover.rs` (new), `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
 - **Learnings:** `value_range()` returns Rust `Range` (exclusive end) — hover boundary check needs `>=` for end, not `>`; `Provider::get_action_yml` and `get_readme` are NOT cached by `CachingProvider` — must cache in LSP layer; `ActionRef::new` with `.into()` on string literals causes ambiguous type inference in test code due to multiple `From<&str>` impls — use `String::from()` or `.to_owned()` explicitly; `ActionYml.runs().using()` gives runtime string (e.g. "node20", "composite")
+
+## Task - error-ux
+
+- Created `crates/lsp/src/error_ux.rs`: error classification, deduplication, and notification module
+- `ErrorCategory` enum: `RateLimit`, `Auth`, `Network`, `ProviderNotFound`, `Forbidden` — classified from `CoreError` variants
+- `ErrorDeduplicator`: session-scoped `Mutex<HashSet<ErrorCategory>>` that tracks which error types have been shown to the user; prevents repeated `showMessage` spam across diagnostic runs
+- `DiagnosticErrors`: collects environment errors from a single diagnostic run, deduplicated by category within the run
+- `format_check_failed()`: formats per-ref failure messages as `"value (check failed: reason)"` for environment errors
+- `notify_errors()`: dispatches errors to appropriate LSP notification channels:
+  - `RateLimit` → `window/showMessage` (WARNING) with suggestion to set `GITHUB_TOKEN`
+  - `Auth` → `window/showMessage` (WARNING) suggesting `GITHUB_TOKEN` env variable
+  - `Forbidden` → `window/showMessage` (WARNING) about insufficient scopes
+  - `Network` / `ProviderNotFound` → `window/logMessage` (WARNING) for output panel
+  - Aggregate status → `window/logMessage` (LOG) summarizing error count
+- Modified `compute_diagnostics` to return `DiagnosticResult { diagnostics, errors }` instead of bare `Vec<Diagnostic>`
+- Modified `status_to_diagnostic` for `Unresolvable { is_environment_error: true }`: uses `"(check failed: reason)"` format instead of bare `"value: reason"`
+- Added `error_dedup: Arc<ErrorDeduplicator>` to `LspBackend`, passed into spawned diagnostic tasks
+- `schedule_diagnostics` now calls `notify_errors()` after `compute_diagnostics` completes
+- `reload_config` resets `error_dedup` so persistent errors are re-shown after config changes (user may have added token)
+- Updated `workspace_commands::process_file` to use `DiagnosticResult.diagnostics` from new return type
+- 16 new tests: error classification for all 6 `CoreError` variants, deduplicator lifecycle (first/second/independent/reset/reset_all), `format_check_failed` format, `DiagnosticErrors` within-run dedup and multi-category, user-error skip, env-error message format verification
+- Files: `crates/lsp/src/error_ux.rs` (new), `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`, `crates/lsp/src/workspace_commands.rs`
+- **Learnings:** `std::sync::Mutex` is fine for small `HashSet` (no contention concern); `PoisonError::into_inner` preferred over closure per `clippy::redundant_closure_for_method_calls`; `compute_diagnostics` returning a struct is cleaner than a tuple for multi-value returns; `#[cfg(test)]` on individual methods suppresses dead-code warnings for test-only helpers
