@@ -18,20 +18,20 @@
 			{ "fileNames": ["package.json"], "command": "npx -y sort-package-json --stdin" }, // Sorts package.json files
 			{ "exts": ["svg"], "command": "npx -y svgo --multipass --pretty -q --input - --output -" }, // Prettifies and minifies SVG files
 			{ "exts": ["toml"], "command": "tombi format --stdin-filename {{file_path}} -" }, // Formats toml files
-			{ "exts": ["sh", "bash"], "command": "shfmt -i 0 -ln bash -bn -kp -ci --filename {{file_path}}" }, // Formats shell files
+			{ "exts": ["sh", "bash"], "command": "shfmt --filename {{file_path}} -i 0 -ln bash -bn -ci" }, // Formats shell files
 			{ "fileNames": ["justfile"], "command": "just --dump" },
 		],
 	},
 	// File inclusions/exclusions
-	"excludes": ["**/*-lock.json", "**/node_modules", "**/target", "**/fixtures", "**/*invalid*", "**/schemas/*.json"],
+	"excludes": ["**/*-lock.json", "**/node_modules", "**/target", "**/fixtures", "**/*invalid*", "**/schemas/*.json", "**/.idea"],
 	// Plugins
 	"plugins": [
-		"https://plugins.dprint.dev/typescript-0.95.13.wasm",
+		"https://plugins.dprint.dev/typescript-0.95.15.wasm",
 		"https://plugins.dprint.dev/json-0.21.1.wasm",
-		"https://plugins.dprint.dev/markdown-0.20.0.wasm",
+		"https://plugins.dprint.dev/markdown-0.21.1.wasm",
 		"https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
 		"https://plugins.dprint.dev/g-plane/malva-v0.15.2.wasm",
-		"https://plugins.dprint.dev/g-plane/markup_fmt-v0.25.3.wasm",
+		"https://plugins.dprint.dev/g-plane/markup_fmt-v0.26.0.wasm",
 		"https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
 		"https://plugins.dprint.dev/exec-0.6.0.json@a054130d458f124f9b5c91484833828950723a5af3f8ff2bd1523bd47b83b364",
 	],

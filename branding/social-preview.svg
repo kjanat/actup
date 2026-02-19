@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 1280 640">
+	<path fill="#0d1117" d="M0 0h1280v640H0z" />
+	<defs>
+		<linearGradient id="b" x1="0%" x2="100%" y1="0%" y2="100%">
+			<stop offset="0%" style="stop-color: #7b2ff7; stop-opacity: 1" />
+			<stop offset="100%" style="stop-color: #2188ff; stop-opacity: 1" />
+		</linearGradient>
+		<pattern id="a" width="80" height="80" patternUnits="userSpaceOnUse">
+			<path stroke="#30363d" d="M80 0H0v80" />
+		</pattern>
+	</defs>
+	<path fill="url(#a)" d="M0 0h1280v640H0z" />
+	<g transform="translate(640 220)">
+		<circle r="120" fill="url(#b)" />
+		<path fill="#fff" d="m0-70 45 45-13 13-22-22v84h-20v-84l-22 22-13-13z" />
+		<path stroke="#fff" stroke-linecap="round" stroke-width="8" d="M60 0c0 33.137-26.863 60-60 60S-60 33.137-60 0" opacity=".6" />
+	</g>
+	<text
+		y="80"
+		fill="#fff"
+		font-family="Inter, sans-serif, Arial"
+		font-size="120"
+		font-weight="bold"
+		text-anchor="middle"
+		transform="translate(640 320)"
+	>actup</text>
+	<text y="150" fill="#8b949e" font-family="Inter, sans-serif, Arial" font-size="36" text-anchor="middle" transform="translate(640 320)"
+	>Update GitHub Actions with Confidence</text>
+</svg>
