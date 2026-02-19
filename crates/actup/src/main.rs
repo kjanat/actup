@@ -46,7 +46,7 @@ async fn main() -> ExitCode {
 
 async fn run(cli: Cli) -> i32 {
     // Handle completions early (no config/registry needed)
-    if let Command::Completions { shell } = cli.command {
+    if let Some(Command::Completions { shell }) = cli.command {
         let Some(shell) = shell.or_else(Cli::detect_shell) else {
             eprintln!(
                 "Could not detect shell from $SHELL. Specify one: bash, zsh, fish, elvish, powershell"
@@ -57,21 +57,30 @@ async fn run(cli: Cli) -> i32 {
         return CliExitCode::Success.into();
     }
 
+    // No subcommand and no positional action argument: print help
+    if cli.command.is_none() && cli.latest.action.is_none() {
+        let _ = <Cli as clap::CommandFactory>::command().print_help();
+        println!();
+        return CliExitCode::Success.into();
+    }
+
     // Get the start directory from command path
     let start_dir = match &cli.command {
-        Command::Check { path, .. }
-        | Command::Update { path, .. }
-        | Command::Fix { path, .. }
-        | Command::Pin { path, .. }
-        | Command::Config { path, .. } => path.clone(),
-        Command::Schema | Command::Cache { .. } => match std::env::current_dir() {
+        Some(
+            Command::Check { path, .. }
+            | Command::Update { path, .. }
+            | Command::Fix { path, .. }
+            | Command::Pin { path, .. }
+            | Command::Config { path, .. },
+        ) => path.clone(),
+        Some(Command::Schema | Command::Cache { .. }) | None => match std::env::current_dir() {
             Ok(dir) => dir,
             Err(e) => {
                 eprintln!("Error reading current directory: {e}");
                 return CliExitCode::EnvironmentError.into();
             }
         },
-        Command::Completions { .. } => unreachable!("handled above"),
+        Some(Command::Completions { .. }) => unreachable!("handled above"),
     };
 
     let config = match Config::load(None, &start_dir) {
@@ -92,33 +101,38 @@ async fn run(cli: Cli) -> i32 {
     };
 
     match cli.command {
-        Command::Check {
+        Some(Command::Check {
             path,
             strict,
             format,
-        } => commands::check::run(&path, strict, format, &config, &registry).await,
-        Command::Update {
+        }) => commands::check::run(&path, strict, format, &config, &registry).await,
+        Some(
+            Command::Update {
+                path,
+                dry_run,
+                format,
+            }
+            | Command::Fix {
+                path,
+                dry_run,
+                format,
+            },
+        ) => commands::update::run(&path, dry_run, format, &config, &registry).await,
+        Some(Command::Pin {
             path,
             dry_run,
             format,
-        }
-        | Command::Fix {
-            path,
-            dry_run,
-            format,
-        } => commands::update::run(&path, dry_run, format, &config, &registry).await,
-        Command::Pin {
-            path,
-            dry_run,
-            format,
-        } => commands::pin::run(&path, dry_run, format, &config, &registry).await,
-        Command::Config { path, format } => {
+        }) => commands::pin::run(&path, dry_run, format, &config, &registry).await,
+        Some(Command::Config { path, format }) => {
             let registrations = available_registrations();
             commands::config::run(&path, format, &config, &registrations)
         }
-        Command::Schema => commands::schema::run(),
-        Command::Cache { action, format } => commands::cache::run(&action, format, &config).await,
-        Command::Completions { .. } => unreachable!("handled before config load"),
+        Some(Command::Schema) => commands::schema::run(),
+        Some(Command::Cache { action, format }) => {
+            commands::cache::run(&action, format, &config).await
+        }
+        Some(Command::Completions { .. }) => unreachable!("handled before config load"),
+        None => commands::latest::run(&cli.latest, &config, &registry).await,
     }
 }
 
