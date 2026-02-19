@@ -112,6 +112,9 @@ pub struct Config {
     /// Per-host configuration (keyed by lowercase hostname)
     pub hosts: HashMap<String, HostConfig>,
 
+    /// Pin-to-SHA settings (comment style, etc.)
+    pub pin: PinConfig,
+
     /// Additional paths to scan (beyond defaults)
     ///
     /// By default, actup scans:
@@ -165,6 +168,42 @@ pub struct ActionOverride {
 
     /// Whether to completely ignore this action
     pub ignore: bool,
+}
+
+/// Pin-to-SHA configuration.
+///
+/// Controls how SHA-pinned refs are formatted when writing edits.
+///
+/// ## Example
+/// ```toml
+/// [pin]
+/// comment = true  # default: append "# v1.2.3" after SHA
+/// ```
+///
+/// When `comment` is true, pin/update operations produce:
+/// ```text
+/// uses: actions/checkout@abc123def456abc123def456abc123def456abcd # v4.2.0
+/// ```
+///
+/// When false:
+/// ```text
+/// uses: actions/checkout@abc123def456abc123def456abc123def456abcd
+/// ```
+#[allow(clippy::module_name_repetitions)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PinConfig {
+    /// Append `# {original_ref}` comment after SHA when pinning.
+    ///
+    /// Defaults to `true`. When enabled, SHA edits include the original
+    /// tag/branch ref as a trailing YAML comment for readability.
+    pub comment: bool,
+}
+
+impl Default for PinConfig {
+    fn default() -> Self {
+        Self { comment: true }
+    }
 }
 
 /// Cache configuration
@@ -489,6 +528,7 @@ mod tests {
         assert!(!config.allow_prerelease);
         assert!(config.ignore.is_empty());
         assert!(config.action_overrides.is_empty());
+        assert!(config.pin.comment);
         assert!(config.extra_paths.is_empty());
         assert!(config.loaded_from.is_none());
         assert!(config.default_host.is_none());
@@ -1045,6 +1085,7 @@ mod tests {
         assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
         assert_eq!(config.fetch.max_tags_per_repo.get(), 10);
         assert!(config.hosts.is_empty());
+        assert!(config.pin.comment, "pin.comment defaults to true");
     }
 
     #[allow(clippy::unwrap_used)]
@@ -1084,5 +1125,72 @@ mod tests {
         assert_eq!(config.hosts.len(), 2);
         assert_eq!(config.hosts["ghe.corp.com"].api_mode, Some(ApiMode::Rest));
         assert_eq!(config.hosts["gitlab.internal"].kind, Some(HostKind::GitLab));
+    }
+
+    // PinConfig tests
+
+    #[test]
+    fn test_pin_config_default() {
+        let pin = PinConfig::default();
+        assert!(pin.comment);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_pin_config_serde_roundtrip() {
+        let pin = PinConfig { comment: false };
+        let json = serde_json::to_string(&pin).unwrap();
+        let back: PinConfig = serde_json::from_str(&json).unwrap();
+        assert!(!back.comment);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_pin_config_serde_empty_uses_default() {
+        let pin: PinConfig = serde_json::from_str("{}").unwrap();
+        assert!(pin.comment);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_pin_config_toml_comment_false() {
+        let toml_str = "comment = false";
+        let pin: PinConfig = toml::from_str(toml_str).unwrap();
+        assert!(!pin.comment);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_pin_config_toml_comment_true() {
+        let toml_str = "comment = true";
+        let pin: PinConfig = toml::from_str(toml_str).unwrap();
+        assert!(pin.comment);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_config_toml_with_pin_section() {
+        let toml_str = r#"
+            update_policy = "minor"
+
+            [pin]
+            comment = false
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.update_policy, policy::Update::Minor);
+        assert!(!config.pin.comment);
+    }
+
+    #[allow(clippy::unwrap_used)]
+    #[test]
+    fn test_config_toml_without_pin_section_defaults() {
+        let toml_str = r#"
+            update_policy = "major"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(
+            config.pin.comment,
+            "missing [pin] section defaults comment=true"
+        );
     }
 }

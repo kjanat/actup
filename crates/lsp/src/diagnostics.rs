@@ -63,9 +63,9 @@ pub struct ActionCheckEntry {
     pub ref_range: Range,
     /// Range of the full `uses:` value (e.g. `actions/checkout@v4`).
     ///
-    /// Used by comment-aware code actions (D7) that need end-of-value
-    /// context for appending `# {ref}` comments.
-    #[allow(dead_code)] // Consumed by D7 comment config (next task)
+    /// Available for end-of-value context (e.g. detecting existing trailing
+    /// comments before appending new ones).
+    #[allow(dead_code)] // Reserved for future comment-aware edits
     pub value_range: Range,
     /// The original ref string (e.g. `v4`, `v4.2.0`, `main`).
     pub ref_str: String,

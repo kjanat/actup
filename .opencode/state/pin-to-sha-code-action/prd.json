@@ -64,7 +64,7 @@
 			"description": "Add [pin] section to config with comment bool (default true). When true, SHA edits append '# {ref}' comment. Wire into LSP code actions and CLI pin command. Done when: config parses, comment appended when enabled, omitted when disabled.",
 			"depends": [],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "cli-update-ref-style-sha",

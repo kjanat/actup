@@ -113,12 +113,18 @@ pub async fn run(
             // Build the new uses value
             let prefix = action_prefix(&action_ref);
             let new_uses = format!("{prefix}@{sha}");
-            let comment = format!(" # {}", action_ref.ref_str());
+            let comment = if config.pin.comment {
+                Some(format!(" # {}", action_ref.ref_str()))
+            } else {
+                None
+            };
 
             // Create edit using value range for targeted replacement
             let range = loc.value_range();
-            let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
-                .with_comment(comment.clone());
+            let mut edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone());
+            if let Some(ref c) = comment {
+                edit = edit.with_comment(c.clone());
+            }
 
             if !file_edits.add(edit) {
                 // Collision: two edits on same line
@@ -134,12 +140,13 @@ pub async fn run(
 
             // Print progress for human output
             if matches!(format, OutputFormat::Human) {
+                let display_suffix = comment.as_deref().unwrap_or("");
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
                     loc.line(),
                     action_ref.to_string().yellow(),
-                    format!("{new_uses}{comment}").cyan()
+                    format!("{new_uses}{display_suffix}").cyan()
                 );
             }
             total_pins += 1;

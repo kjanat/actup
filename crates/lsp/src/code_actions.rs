@@ -83,6 +83,9 @@ fn make_edit(
 /// `version` is the document version from `DocumentState` — `Some(n)` for
 /// tracked documents, `None` for untracked (shouldn't happen in normal flow).
 ///
+/// `pin_comment` controls whether SHA replacement text includes a trailing
+/// `# {ref}` YAML comment (from [`Config::pin.comment`]).
+///
 /// `supports_document_changes` gates whether the edit uses versioned
 /// `documentChanges` or falls back to unversioned `changes`.
 #[allow(clippy::too_many_lines)]
@@ -91,6 +94,7 @@ pub fn code_actions_for_diagnostics(
     version: Option<i32>,
     diagnostics: &[Diagnostic],
     entries: &[ActionCheckEntry],
+    pin_comment: bool,
     supports_document_changes: bool,
 ) -> Vec<CodeActionOrCommand> {
     let mut actions = Vec::new();
@@ -139,7 +143,7 @@ pub fn code_actions_for_diagnostics(
                     let short = sha.get(..7).unwrap_or(sha);
                     let pin_edit = TextEdit {
                         range: diag.range,
-                        new_text: sha.clone(),
+                        new_text: format_pin_text(sha, &target_ref, pin_comment),
                     };
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                         title: format!("Update & pin to SHA ({short}...)"),
@@ -166,7 +170,7 @@ pub fn code_actions_for_diagnostics(
                     let short = sha.get(..7).unwrap_or(sha);
                     let pin_edit = TextEdit {
                         range: diag.range,
-                        new_text: sha.clone(),
+                        new_text: format_pin_text(sha, &entry.ref_str, pin_comment),
                     };
                     actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                         title: format!("Pin {} to SHA ({short}...)", entry.ref_str),
@@ -280,6 +284,18 @@ fn is_sha(ref_str: &str) -> bool {
     ref_str.len() == 40 && ref_str.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
+/// Format the replacement text for a pin-to-SHA edit.
+///
+/// When `pin_comment` is `true`, appends ` # {ref_str}` after the SHA so
+/// the original ref is preserved as a trailing YAML comment.
+fn format_pin_text(sha: &str, ref_str: &str, pin_comment: bool) -> String {
+    if pin_comment {
+        format!("{sha} # {ref_str}")
+    } else {
+        sha.to_string()
+    }
+}
+
 /// Returns `true` if two LSP [`Range`]s overlap (share at least one position).
 ///
 /// Uses `<=` for start/end comparisons so that a zero-width cursor at a
@@ -306,6 +322,7 @@ pub fn pin_actions_for_cursor(
     version: Option<i32>,
     cursor_range: &Range,
     entries: &[ActionCheckEntry],
+    pin_comment: bool,
     supports_document_changes: bool,
 ) -> Vec<CodeActionOrCommand> {
     entries
@@ -321,7 +338,7 @@ pub fn pin_actions_for_cursor(
             let short = sha.get(..7).unwrap_or(sha);
             let edit = TextEdit {
                 range: e.ref_range,
-                new_text: sha.clone(),
+                new_text: format_pin_text(sha, &e.ref_str, pin_comment),
             };
             CodeActionOrCommand::CodeAction(CodeAction {
                 title: format!("Pin to SHA ({short}...)"),
@@ -423,7 +440,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         // Quickfix "Update to v4.2.0" + refactor "Update & pin to SHA".
         assert_eq!(actions.len(), 2);
 
@@ -456,6 +473,7 @@ mod tests {
             TEST_VERSION,
             std::slice::from_ref(&diag),
             &[],
+            false,
             true,
         );
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -476,7 +494,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         // Second action is the "Update & pin to SHA" refactor.
         let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
             panic!("expected CodeAction");
@@ -493,7 +511,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
             panic!("expected CodeAction");
         };
@@ -520,6 +538,7 @@ mod tests {
             TEST_VERSION,
             std::slice::from_ref(&diag),
             &[],
+            false,
             true,
         );
         let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
@@ -548,7 +567,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         // Only the quickfix, no pin action.
         assert_eq!(actions.len(), 1);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -562,7 +581,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], &[], false);
+        let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], &[], false, false);
         let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
             panic!("expected CodeAction");
         };
@@ -583,7 +602,8 @@ mod tests {
         // Entry matching the diagnostic's ref_range with a resolved SHA.
         let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         // Quickfix + update-pin + pin-current = 3
         assert_eq!(actions.len(), 3);
 
@@ -604,7 +624,8 @@ mod tests {
         let diag = make_outdated_diagnostic(range, "o/r@v1", "v2.0.0");
         let entry = make_entry(0, 10, 12, "v1", Some(test_utils::DUMMY_SHA_2));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
             panic!("expected CodeAction");
         };
@@ -628,7 +649,8 @@ mod tests {
         let diag = make_outdated_diagnostic(range, "o/r@v1", "v2.0.0");
         let entry = make_entry(0, 10, 12, "v1", Some(test_utils::DUMMY_SHA_2));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
             panic!("expected CodeAction");
         };
@@ -643,7 +665,8 @@ mod tests {
         let diag = make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
         let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
             panic!("expected CodeAction");
         };
@@ -660,7 +683,8 @@ mod tests {
         // Entry on a different line — no range match.
         let entry = make_entry(8, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         // Quickfix + update-pin only (no pin-current due to range mismatch).
         assert_eq!(actions.len(), 2);
     }
@@ -673,7 +697,8 @@ mod tests {
         // Entry matches range but has no resolved SHA.
         let entry = make_entry(7, 31, 33, "v3", None);
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         // Quickfix + update-pin only (no pin-current due to missing SHA).
         assert_eq!(actions.len(), 2);
     }
@@ -696,7 +721,8 @@ mod tests {
             Some(test_utils::DUMMY_SHA),
         );
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         // Quickfix + update-pin only (no pin-current since ref is already SHA).
         assert_eq!(actions.len(), 2);
     }
@@ -706,7 +732,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         // Quickfix + update-pin only (no entries to cross-reference).
         assert_eq!(actions.len(), 2);
     }
@@ -719,7 +745,8 @@ mod tests {
         // Entry has a DIFFERENT SHA from target_sha (DUMMY_SHA).
         let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
         let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
             panic!("expected CodeAction");
         };
@@ -735,7 +762,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -750,7 +777,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), None);
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         assert!(actions.is_empty());
     }
 
@@ -763,7 +790,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         assert!(actions.is_empty());
     }
 
@@ -777,7 +804,7 @@ mod tests {
             ..Default::default()
         };
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         assert!(actions.is_empty());
     }
 
@@ -789,7 +816,8 @@ mod tests {
         let diag2 =
             make_outdated_diagnostic(make_range(8, 31, 33), "actions/setup-node@v3", "v4.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag1, diag2], &[], true);
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag1, diag2], &[], false, true);
         // 2 diagnostics × 2 actions each (quickfix + pin) = 4
         assert_eq!(actions.len(), 4);
 
@@ -970,7 +998,7 @@ mod tests {
         // Range covers just "v3" (2 chars), not the entire `uses:` line.
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -991,7 +1019,7 @@ mod tests {
         // Replacing "v3" (2 chars) with "v4.2.0" (6 chars).
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v3", "v4.2.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1043,7 +1071,7 @@ mod tests {
         let uri = Uri::from_file_path("/project/.github/workflows/ci.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 0, 2), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1065,6 +1093,7 @@ mod tests {
             TEST_VERSION,
             &[outdated, suggestion, no_suggestion],
             &[],
+            false,
             true,
         );
         // outdated produces quickfix + pin (2), suggestion produces quickfix (1) = 3
@@ -1129,7 +1158,7 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 32, 32); // cursor inside ref range
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -1160,7 +1189,7 @@ mod tests {
         );
         let cursor = make_range(7, 30, 30);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         assert!(actions.is_empty(), "SHA ref should not produce pin action");
     }
 
@@ -1170,7 +1199,7 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", None);
         let cursor = make_range(7, 32, 32);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         assert!(
             actions.is_empty(),
             "no resolved SHA should not produce pin action"
@@ -1183,7 +1212,7 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 10, 10); // cursor before ref range
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         assert!(
             actions.is_empty(),
             "cursor outside ref range should not produce action"
@@ -1196,7 +1225,7 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(8, 31, 33); // different line
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         assert!(
             actions.is_empty(),
             "cursor on different line should not match"
@@ -1209,7 +1238,7 @@ mod tests {
         let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(7, 31, 31); // at start boundary
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         assert_eq!(actions.len(), 1, "cursor at boundary should match");
     }
 
@@ -1220,7 +1249,8 @@ mod tests {
         let entry2 = make_entry(8, 35, 37, "v3", Some(test_utils::DUMMY_SHA_2));
         let cursor = make_range(8, 36, 36); // on line 8
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry1, entry2], true);
+        let actions =
+            pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry1, entry2], false, true);
         assert_eq!(actions.len(), 1);
 
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -1240,7 +1270,7 @@ mod tests {
         let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(0, 11, 11);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1258,7 +1288,7 @@ mod tests {
         let entry = make_entry(0, 10, 12, "v3", Some(test_utils::DUMMY_SHA));
         let cursor = make_range(0, 11, 11);
 
-        let actions = pin_actions_for_cursor(&uri, Some(5), &cursor, &[entry], false);
+        let actions = pin_actions_for_cursor(&uri, Some(5), &cursor, &[entry], false, false);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1274,7 +1304,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let cursor = make_range(0, 0, 0);
 
-        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[], true);
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[], false, true);
         assert!(actions.is_empty());
     }
 
@@ -1384,7 +1414,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, Some(42), &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, Some(42), &[diag], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1406,7 +1436,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], &[], false);
+        let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], &[], false, false);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1443,7 +1473,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
-        let actions = code_actions_for_diagnostics(&uri, None, &[diag], &[], true);
+        let actions = code_actions_for_diagnostics(&uri, None, &[diag], &[], false, true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
@@ -1453,5 +1483,145 @@ mod tests {
         };
         // Untracked document should have version None (null).
         assert_eq!(doc_edits[0].text_document.version, None);
+    }
+
+    // --- format_pin_text ---
+
+    #[test]
+    fn format_pin_text_with_comment() {
+        let result = format_pin_text("abc123def456abc123def456abc123def456abcd", "v4.2.0", true);
+        assert_eq!(result, "abc123def456abc123def456abc123def456abcd # v4.2.0",);
+    }
+
+    #[test]
+    fn format_pin_text_without_comment() {
+        let result = format_pin_text("abc123def456abc123def456abc123def456abcd", "v4.2.0", false);
+        assert_eq!(result, "abc123def456abc123def456abc123def456abcd");
+    }
+
+    #[test]
+    fn format_pin_text_branch_ref_with_comment() {
+        let result = format_pin_text("abc123def456abc123def456abc123def456abcd", "main", true);
+        assert_eq!(result, "abc123def456abc123def456abc123def456abcd # main",);
+    }
+
+    // --- pin_comment=true: "Update & pin to SHA" includes comment ---
+
+    #[test]
+    fn update_pin_with_comment_appends_ref() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true, true);
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(pin.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits.len(), 1);
+        let expected = format!("{} # v4.2.0", test_utils::DUMMY_SHA);
+        assert_eq!(edits[0].new_text, expected);
+    }
+
+    #[test]
+    fn update_pin_without_comment_is_bare_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], false, true);
+        let CodeActionOrCommand::CodeAction(pin) = &actions[1] else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(pin.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, test_utils::DUMMY_SHA);
+    }
+
+    // --- pin_comment=true: "Pin current to SHA" includes comment ---
+
+    #[test]
+    fn pin_current_with_comment_appends_ref() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let range = make_range(7, 31, 33);
+        let diag = make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
+        let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
+
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], true, true);
+        // Quickfix + update-pin + pin-current = 3
+        let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(pin_current.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let expected = format!("{} # v3", test_utils::DUMMY_SHA_2);
+        assert_eq!(edits[0].new_text, expected);
+    }
+
+    #[test]
+    fn pin_current_without_comment_is_bare_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let range = make_range(7, 31, 33);
+        let diag = make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
+        let entry = make_entry(7, 31, 33, "v3", Some(test_utils::DUMMY_SHA_2));
+
+        let actions =
+            code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[entry], false, true);
+        let CodeActionOrCommand::CodeAction(pin_current) = &actions[2] else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(pin_current.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, test_utils::DUMMY_SHA_2);
+    }
+
+    // --- pin_comment=true: cursor-based "Pin to SHA" includes comment ---
+
+    #[test]
+    fn pin_cursor_with_comment_appends_ref() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 32, 32);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], true, true);
+        assert_eq!(actions.len(), 1);
+
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let expected = format!("{} # v4", test_utils::DUMMY_SHA);
+        assert_eq!(edits[0].new_text, expected);
+    }
+
+    #[test]
+    fn pin_cursor_without_comment_is_bare_sha() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let entry = make_entry(7, 31, 33, "v4", Some(test_utils::DUMMY_SHA));
+        let cursor = make_range(7, 32, 32);
+
+        let actions = pin_actions_for_cursor(&uri, TEST_VERSION, &cursor, &[entry], false, true);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, test_utils::DUMMY_SHA);
+    }
+
+    // --- pin_comment does not affect non-SHA actions ---
+
+    #[test]
+    fn quickfix_unaffected_by_pin_comment() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], &[], true, true);
+        let CodeActionOrCommand::CodeAction(quickfix) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+
+        let edits = extract_text_edits(quickfix.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        // Quickfix always produces the tag, never SHA+comment.
+        assert_eq!(edits[0].new_text, "v2.0.0");
     }
 }

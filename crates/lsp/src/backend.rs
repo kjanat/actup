@@ -650,6 +650,8 @@ impl LanguageServer for LspBackend {
             .unwrap_or_default();
         let supports_doc_changes = self.supports_document_changes().await;
 
+        let pin_comment = self.config.read().await.pin.comment;
+
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
         if crate::code_actions::kind_allowed(
             only,
@@ -666,6 +668,7 @@ impl LanguageServer for LspBackend {
                     doc_version,
                     &cached,
                     &entries,
+                    pin_comment,
                     supports_doc_changes,
                 )
             } else {
@@ -674,6 +677,7 @@ impl LanguageServer for LspBackend {
                     doc_version,
                     context_diagnostics,
                     &entries,
+                    pin_comment,
                     supports_doc_changes,
                 )
             };
@@ -711,6 +715,7 @@ impl LanguageServer for LspBackend {
                 doc_version,
                 &params.range,
                 &entries,
+                pin_comment,
                 supports_doc_changes,
             );
             actions.extend(pin_actions);

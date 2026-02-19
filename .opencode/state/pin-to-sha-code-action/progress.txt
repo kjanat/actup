@@ -19,6 +19,7 @@ Started: 2026-02-19
 - `DiagnosticResult.entries` is the transport from `compute_diagnostics` to `DocumentState`.
 - Cross-referencing diagnostics with entries: match by exact `ref_range` equality (both computed from same `LocatedAction`). Use `entries.iter().find(|e| e.ref_range == diag.range)`.
 - Adding `entries` param to `code_actions_for_diagnostics` is backward-compatible: existing callers pass `&[]` for no pin-current behavior.
+- `format_pin_text(sha, ref_str, pin_comment)` centralizes SHA+comment formatting for all code action types + CLI pin. Returns `"{sha} # {ref_str}"` when `pin_comment=true`, else just `"{sha}"`.
 
 ---
 
@@ -93,3 +94,17 @@ Started: 2026-02-19
 - 9 new tests: `pin_current_action_replaces_ref_with_resolved_sha`, `pin_current_action_title_contains_current_ref_and_short_sha`, `pin_current_action_is_refactor_not_preferred`, `pin_current_action_links_diagnostic`, `pin_current_absent_when_no_matching_entry`, `pin_current_absent_when_no_resolved_sha`, `pin_current_absent_when_ref_already_sha`, `pin_current_absent_with_empty_entries`, `pin_current_uses_resolved_sha_not_target_sha`
 - Files: `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/diagnostics.rs`
 - **Learnings:** Cross-reference by exact `ref_range` equality is reliable since both diagnostic range and entry `ref_range` derive from the same `LocatedAction`. Adding `entries` param doesn't break existing tests that pass `&[]`. Consolidating document state reads (version + entries) into one destructure avoids duplicate `DashMap::get` calls.
+
+## Task - pin-comment-config
+
+- Added `PinConfig` struct with `comment: bool` (default `true`) to `crates/core/src/config/mod.rs`
+- Added `pin: PinConfig` field to `Config` with `#[serde(default)]`
+- Exported `PinConfig` from `crates/core/src/lib.rs`
+- Added `format_pin_text(sha, ref_str, pin_comment)` helper to `crates/lsp/src/code_actions.rs` — centralizes SHA+comment formatting for all 3 code action types
+- Added `pin_comment: bool` parameter to `code_actions_for_diagnostics()` and `pin_actions_for_cursor()` — read from `config.pin.comment` once per code_action request in `backend.rs`
+- Made CLI `pin` command conditional on `config.pin.comment` in `crates/actup/src/commands/pin.rs`
+- Regenerated `schemas/actup-config.schema.json` via `just schema`
+- 7 new config tests, 10 new code action tests (comment=true vs comment=false for each action type)
+- All existing tests updated with `false` for new `pin_comment` parameter
+- Files: `crates/core/src/config/mod.rs`, `crates/core/src/lib.rs`, `crates/lsp/src/code_actions.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/diagnostics.rs`, `crates/actup/src/commands/pin.rs`, `schemas/actup-config.schema.json`
+- **Learnings:** `PinConfig` needs `#[allow(clippy::module_name_repetitions)]` since it lives in `config` module. `format_pin_text(sha, ref_str, pin_comment)` centralizes the SHA+comment formatting logic — used by all three code action types and CLI pin. New config fields require `just schema` regeneration (the `schema_file_matches_generated` integration test compares committed vs generated).

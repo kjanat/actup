@@ -31,8 +31,8 @@ pub use config::registration::{
 pub use config::resolution::{effective_host, resolve_default_host};
 pub use config::validation::{validate_api_base, validate_hostname, validate_provider_config};
 pub use config::{
-    ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, HostConfig, HostKind, find_repo_config,
-    iter_config_candidates, user_config_path,
+    ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, HostConfig, HostKind, PinConfig,
+    find_repo_config, iter_config_candidates, user_config_path,
 };
 pub use discovery::{DiscoveredFile, FileKind, discover_files};
 pub use error::{Error, Result};
