@@ -629,6 +629,11 @@ impl LanguageServer for LspBackend {
 
         let mut actions = Vec::new();
 
+        // Snapshot the document version for versioned edits. If the document
+        // isn't tracked (shouldn't happen in normal flow), default to 0 so
+        // the edit still works but clients won't enforce version matching.
+        let doc_version = self.documents.get(&uri).map_or(0, |doc| doc.version);
+
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
         if crate::code_actions::kind_allowed(
             only,
@@ -640,9 +645,13 @@ impl LanguageServer for LspBackend {
                     .get(&uri)
                     .map(|doc| doc.diagnostics.clone())
                     .unwrap_or_default();
-                crate::code_actions::code_actions_for_diagnostics(&uri, &cached)
+                crate::code_actions::code_actions_for_diagnostics(&uri, doc_version, &cached)
             } else {
-                crate::code_actions::code_actions_for_diagnostics(&uri, context_diagnostics)
+                crate::code_actions::code_actions_for_diagnostics(
+                    &uri,
+                    doc_version,
+                    context_diagnostics,
+                )
             };
             actions.extend(quickfixes);
         }
@@ -656,7 +665,9 @@ impl LanguageServer for LspBackend {
                 .get(&uri)
                 .map(|doc| doc.diagnostics.clone())
                 .unwrap_or_default();
-            if let Some(fix_all) = crate::code_actions::fix_all_in_file(&uri, &all_diagnostics) {
+            if let Some(fix_all) =
+                crate::code_actions::fix_all_in_file(&uri, doc_version, &all_diagnostics)
+            {
                 actions.push(fix_all);
             }
         }

@@ -25,11 +25,11 @@ use tower_lsp_server::ls_types::{
     ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
     CompletionContext, CompletionParams, CompletionTriggerKind, DidChangeTextDocumentParams,
     DidChangeWatchedFilesClientCapabilities, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    ExecuteCommandParams, HoverParams, InitializeParams, InitializeResult, InitializedParams,
-    PartialResultParams, Position, PublishDiagnosticsParams, Range, TextDocumentContentChangeEvent,
-    TextDocumentIdentifier, TextDocumentItem, TextDocumentPositionParams, TextEdit, Uri,
-    VersionedTextDocumentIdentifier, WorkDoneProgressParams, WorkspaceClientCapabilities,
-    WorkspaceFolder,
+    DocumentChanges, ExecuteCommandParams, HoverParams, InitializeParams, InitializeResult,
+    InitializedParams, OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range,
+    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+    TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
+    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceFolder,
 };
 use tower_lsp_server::{ClientSocket, LspService};
 
@@ -482,10 +482,25 @@ async fn code_action_returns_quickfix_for_outdated() {
     assert!(action.title.contains("v4.2.0"));
 
     let edit = action.edit.as_ref().unwrap();
-    let changes = edit.changes.as_ref().unwrap();
-    assert!(changes.contains_key(&uri));
-    assert_eq!(changes[&uri].len(), 1);
-    assert_eq!(changes[&uri][0].new_text, "v4.2.0");
+    // Edits must use versioned documentChanges, not unversioned changes.
+    assert!(edit.changes.is_none());
+    let doc_changes = edit.document_changes.as_ref().unwrap();
+    let DocumentChanges::Edits(doc_edits) = doc_changes else {
+        panic!("expected DocumentChanges::Edits");
+    };
+    assert_eq!(doc_edits.len(), 1);
+    assert_eq!(&doc_edits[0].text_document.uri, &uri);
+    assert_eq!(doc_edits[0].text_document.version, Some(1));
+    let text_edits: Vec<_> = doc_edits[0]
+        .edits
+        .iter()
+        .map(|e| match e {
+            OneOf::Left(te) => te,
+            OneOf::Right(_) => panic!("expected TextEdit"),
+        })
+        .collect();
+    assert_eq!(text_edits.len(), 1);
+    assert_eq!(text_edits[0].new_text, "v4.2.0");
 
     harness.shutdown().await;
 }
