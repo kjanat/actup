@@ -46,6 +46,18 @@ Started: 2026-02-19
 - User errors (NotFound, InvalidRef) -> Error severity
 - Env errors (Network, RateLimit, Auth) -> Information severity + status message
 
+### Completion Pattern
+- `detect_completion_context()` parses cursor position on `uses:` line, returns `ActionName` or `VersionRef` context
+- After `uses:` with partial/no text → suggest popular actions from hardcoded `POPULAR_ACTIONS` list
+- After `owner/repo@` → fetch versions from provider (file cache first, then network), suggest semver tags + major tags
+- Trigger character: `@` (registered in `CompletionOptions`)
+- `CompletionItem.insert_text` for action names includes `owner/repo@defaultRef` for full insertion
+- `CompletionItem.label_details.detail` shows short SHA for version items
+- `CompletionList.is_incomplete = true` for version completions (network may change), `false` for action names
+- LSP `character` position is 0-based column of cursor; text typed = line content from content_col through cursor_col (inclusive)
+- Only count spaces/tabs (not newlines) as whitespace between `uses:` and value — `trim_start()` eats newlines which breaks empty-value detection
+- Quote stripping: detect leading `"` or `'`, offset content_col by 1, strip trailing quote from value before analysis
+
 ### Error Notification Pattern
 - `ErrorCategory::from_core_error()` classifies `CoreError` into notification categories
 - `ErrorDeduplicator` (session-scoped `Mutex<HashSet>`) prevents repeat notifications
@@ -325,3 +337,20 @@ Started: 2026-02-19
 - 16 new tests: error classification for all 6 `CoreError` variants, deduplicator lifecycle (first/second/independent/reset/reset_all), `format_check_failed` format, `DiagnosticErrors` within-run dedup and multi-category, user-error skip, env-error message format verification
 - Files: `crates/lsp/src/error_ux.rs` (new), `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`, `crates/lsp/src/workspace_commands.rs`
 - **Learnings:** `std::sync::Mutex` is fine for small `HashSet` (no contention concern); `PoisonError::into_inner` preferred over closure per `clippy::redundant_closure_for_method_calls`; `compute_diagnostics` returning a struct is cleaner than a tuple for multi-value returns; `#[cfg(test)]` on individual methods suppresses dead-code warnings for test-only helpers
+
+## Task - completion-provider
+
+- Created `crates/lsp/src/completion.rs`: completion provider for `uses:` references
+- Two completion contexts detected via `detect_completion_context()`:
+  - `ActionName`: after `uses:` with no or partial text — suggests from hardcoded `POPULAR_ACTIONS` list (13 well-known actions: checkout, setup-node, cache, etc.)
+  - `VersionRef`: after `owner/repo@` — fetches versions from provider registry (file cache first, then network)
+- `POPULAR_ACTIONS` static list: `actions/checkout`, `actions/setup-node`, `actions/setup-python`, `actions/cache`, `actions/upload-artifact`, `actions/download-artifact`, `actions/setup-go`, `actions/setup-java`, `actions/github-script`, `actions/setup-dotnet`, `docker/build-push-action`, `docker/login-action`, `docker/setup-buildx-action`
+- `action_completions()`: filters by prefix (case-insensitive), sets `insert_text` to `owner/repo@defaultRef`, adds GitHub link in documentation, sort order preserves popularity
+- `version_completions()`: fetches `version::Set` from provider, suggests latest (preselected), major tags (newest first), and semver tags (newest first, capped at 20), with short SHA in `label_details`
+- `CompletionItem.kind`: `MODULE` for actions, `VALUE` for versions
+- Trigger character: `@` (registered in `CompletionOptions` in `ServerCapabilities`)
+- `completion` handler on `LanguageServer`: clones doc text, snapshots registry/cache, delegates to `compute_completions`; early-exits if no `uses:` keyword or no registry
+- `CompletionList.is_incomplete`: `false` for action names (static list), `true` for version refs (network-dependent)
+- 27 new tests: context detection (empty, partial name, version ref, empty version prefix, quoted values, single-quoted, multiline, non-uses line, cursor before value), `parse_owner_repo` (simple, subpath, invalid cases), `action_completions` (all, filtered, case-insensitive, partial owner, insert text, documentation, sort order, no match), `version_completion_item` (preselect, sort order, SHA label detail), popular actions validation
+- Files: `crates/lsp/src/completion.rs` (new), `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
+- **Learnings:** LSP `character` is 0-based column of cursor position; for completion context, include the character AT cursor_col (use `..=offset`); only skip spaces/tabs (not newlines) after `uses:` colon to avoid breaking empty-value detection when cursor is right after `uses: `; `trim_start()` eats newlines — use manual byte counting for YAML value whitespace; `CompletionOptions` has `trigger_characters` (not `trigger_chars`); `version::Set::major_tags()` returns `HashMap<u32, Arc<Info>>` — sort by key descending for newest-first display

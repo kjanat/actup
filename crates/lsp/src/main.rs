@@ -7,6 +7,7 @@
 
 mod backend;
 mod code_actions;
+mod completion;
 mod diagnostics;
 mod error_ux;
 mod file_cache;

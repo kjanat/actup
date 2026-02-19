@@ -145,7 +145,7 @@
 			"description": "Autocomplete for uses: values. Done when:\n- textDocument/completion handler implemented\n- After 'uses:' suggests popular actions (hardcoded + cached)\n- After 'owner/repo@' suggests available versions\n- CompletionItem includes description and documentation\n- Trigger characters: '/', '@'",
 			"depends": ["provider-setup"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		}
 	]
 }

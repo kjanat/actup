@@ -12,7 +12,8 @@ use tokio::task::AbortHandle;
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
     ClientCapabilities, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
-    CodeActionResponse, Diagnostic, DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+    CodeActionResponse, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
+    DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
     DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
     DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
     ExecuteCommandOptions, ExecuteCommandParams, FileChangeType, FileSystemWatcher, GlobPattern,
@@ -363,6 +364,10 @@ impl LanguageServer for LspBackend {
                     },
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec!["@".to_owned()]),
+                    ..Default::default()
+                }),
                 code_action_provider: Some(CodeActionProviderCapability::Options(
                     CodeActionOptions {
                         code_action_kinds: Some(vec![
@@ -536,6 +541,36 @@ impl LanguageServer for LspBackend {
         .await;
 
         Ok(hover)
+    }
+
+    async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let position = params.text_document_position.position;
+
+        let doc = match self.documents.get(&uri) {
+            Some(doc) => doc.clone(),
+            None => return Ok(None),
+        };
+
+        if !has_uses_keyword(&doc.text) {
+            return Ok(None);
+        }
+
+        let registry = self.registry.read().await.clone();
+        let file_cache = self.file_cache.read().await.clone();
+
+        let Some(registry) = registry else {
+            return Ok(None);
+        };
+
+        let file_cache =
+            file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
+
+        let result =
+            crate::completion::compute_completions(&doc.text, position, &registry, &file_cache)
+                .await;
+
+        Ok(result)
     }
 
     async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
