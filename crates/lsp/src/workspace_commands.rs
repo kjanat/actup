@@ -134,7 +134,7 @@ fn edits_from_diagnostics(diags: &[Diagnostic]) -> Vec<TextEdit> {
         else {
             continue;
         };
-        if let DiagnosticData::Outdated { target_ref } = data {
+        if let DiagnosticData::Outdated { target_ref, .. } = data {
             edits.push(TextEdit {
                 range: diag.range,
                 new_text: target_ref,

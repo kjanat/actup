@@ -40,6 +40,7 @@ pub fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
 pub fn make_outdated_diagnostic(range: Range, uses_value: &str, target_ref: &str) -> Diagnostic {
     let data = DiagnosticData::Outdated {
         target_ref: target_ref.into(),
+        target_sha: Some(DUMMY_SHA.into()),
     };
     // Extract current ref from uses_value (after @) for realistic messages.
     let current = uses_value.rsplit_once('@').map_or("unknown", |(_, r)| r);

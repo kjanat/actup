@@ -19,7 +19,7 @@
 			"description": "Extend DiagnosticData::Outdated to carry target_sha: Option<String>. Populate from CheckResult's suggested target's SHA during status_to_diagnostic. Done when: DiagnosticData serializes/deserializes with target_sha, existing diagnostic tests pass.",
 			"depends": ["resolved-sha-field"],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "action-check-entry",

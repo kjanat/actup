@@ -35,6 +35,10 @@ pub enum DiagnosticData {
     Outdated {
         /// The ref string to replace with (e.g. "v2.0.0").
         target_ref: String,
+        /// SHA of the target version, for "Update & pin to SHA" code actions.
+        /// `None` for backward compatibility with older diagnostics.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        target_sha: Option<String>,
     },
     /// The ref is unresolvable — includes a suggested ref if available.
     // TODO: implement closest-tag suggestion for typos (e.g. "v4.0" → "v4.0.0")
@@ -188,6 +192,7 @@ fn status_to_diagnostic(
             let target_ref = target.version().to_string();
             let data = DiagnosticData::Outdated {
                 target_ref: target_ref.clone(),
+                target_sha: Some(target.sha().to_string()),
             };
             Some(Diagnostic {
                 range,
@@ -420,7 +425,13 @@ mod tests {
         let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v3").unwrap();
         let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
         match data {
-            DiagnosticData::Outdated { target_ref } => assert_eq!(target_ref, "v4.0.0"),
+            DiagnosticData::Outdated {
+                target_ref,
+                target_sha,
+            } => {
+                assert_eq!(target_ref, "v4.0.0");
+                assert_eq!(target_sha.as_deref(), Some(DUMMY_SHA));
+            }
             DiagnosticData::Unresolvable { .. } => panic!("expected Outdated variant"),
         }
     }
@@ -666,6 +677,53 @@ jobs:
     // --- DiagnosticData serde edge cases ---
 
     #[test]
+    fn target_sha_omitted_when_none() {
+        let data = DiagnosticData::Outdated {
+            target_ref: "v2.0.0".into(),
+            target_sha: None,
+        };
+        let json = serde_json::to_value(&data).unwrap();
+        assert!(
+            json.get("target_sha").is_none(),
+            "None target_sha must be omitted"
+        );
+        assert_eq!(json["target_ref"], "v2.0.0");
+    }
+
+    #[test]
+    fn target_sha_present_when_some() {
+        let data = DiagnosticData::Outdated {
+            target_ref: "v2.0.0".into(),
+            target_sha: Some("abc123def456abc123def456abc123def456abcd".into()),
+        };
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(
+            json["target_sha"],
+            "abc123def456abc123def456abc123def456abcd"
+        );
+    }
+
+    #[test]
+    fn target_sha_backward_compat_missing_field() {
+        // Old diagnostics without target_sha should deserialize with None
+        let json = serde_json::json!({
+            "kind": "outdated",
+            "target_ref": "v3.0.0"
+        });
+        let data: DiagnosticData = serde_json::from_value(json).unwrap();
+        match data {
+            DiagnosticData::Outdated {
+                target_ref,
+                target_sha,
+            } => {
+                assert_eq!(target_ref, "v3.0.0");
+                assert!(target_sha.is_none(), "missing field should default to None");
+            }
+            DiagnosticData::Unresolvable { .. } => panic!("wrong variant"),
+        }
+    }
+
+    #[test]
     fn diagnostic_data_unresolvable_none_roundtrips() {
         let data = DiagnosticData::Unresolvable {
             suggested_ref: None,
@@ -682,6 +740,7 @@ jobs:
     fn diagnostic_data_tagged_correctly() {
         let outdated = DiagnosticData::Outdated {
             target_ref: "v1".into(),
+            target_sha: None,
         };
         let json = serde_json::to_value(&outdated).unwrap();
         assert_eq!(json["kind"], "outdated");

@@ -97,7 +97,7 @@ pub fn code_actions_for_diagnostics(
         };
 
         match data {
-            DiagnosticData::Outdated { target_ref } => {
+            DiagnosticData::Outdated { target_ref, .. } => {
                 let edit = TextEdit {
                     range: diag.range,
                     new_text: target_ref.clone(),
@@ -184,7 +184,7 @@ pub fn fix_all_in_file(
             continue;
         };
 
-        if let DiagnosticData::Outdated { target_ref } = data {
+        if let DiagnosticData::Outdated { target_ref, .. } = data {
             edits.push(TextEdit {
                 range: diag.range,
                 new_text: target_ref,
@@ -405,12 +405,22 @@ mod tests {
     fn diagnostic_data_roundtrips_through_json() {
         let data = DiagnosticData::Outdated {
             target_ref: "v5.0.0".into(),
+            target_sha: Some("abc123def456abc123def456abc123def456abcd".into()),
         };
         let json = serde_json::to_value(&data).unwrap();
         let back: DiagnosticData = serde_json::from_value(json).unwrap();
 
         match back {
-            DiagnosticData::Outdated { target_ref } => assert_eq!(target_ref, "v5.0.0"),
+            DiagnosticData::Outdated {
+                target_ref,
+                target_sha,
+            } => {
+                assert_eq!(target_ref, "v5.0.0");
+                assert_eq!(
+                    target_sha.as_deref(),
+                    Some("abc123def456abc123def456abc123def456abcd"),
+                );
+            }
             DiagnosticData::Unresolvable { .. } => panic!("wrong variant"),
         }
     }
@@ -695,9 +705,12 @@ mod tests {
     fn diagnostic_data_json_has_kind_field() {
         let data = DiagnosticData::Outdated {
             target_ref: "v2.0.0".into(),
+            target_sha: None,
         };
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json.get("kind").unwrap().as_str(), Some("outdated"));
+        // target_sha is None, should be omitted from JSON
+        assert!(json.get("target_sha").is_none());
     }
 
     #[test]
