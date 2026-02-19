@@ -20,6 +20,8 @@ struct ActionQuery {
 /// Result of a latest-version lookup, serializable for JSON/TOML output.
 #[derive(Serialize)]
 pub struct LookupResult {
+    host: String,
+    provider: String,
     owner: String,
     repo: String,
     latest: String,
@@ -152,6 +154,8 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
     };
 
     let result = LookupResult {
+        host: provider.host().to_string(),
+        provider: provider.kind().to_string(),
         owner: query.owner.clone(),
         repo: query.repo.clone(),
         latest: best.version().to_string(),
@@ -164,14 +168,14 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
         OutputFormat::Human => {
             let suffix = exact_version
                 .as_ref()
-                .filter(|ev| ev.as_str() != best.version().to_string())
+                .filter(|ev| ev.as_str() != result.latest.as_str())
                 .map(|ev| format!(" ({ev})"))
                 .unwrap_or_default();
             println!(
                 "{}/{}  {}{}",
                 query.owner,
                 query.repo,
-                best.version().to_string().green(),
+                result.latest.green(),
                 suffix.dimmed()
             );
         }
