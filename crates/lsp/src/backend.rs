@@ -11,11 +11,11 @@ use tokio::sync::RwLock;
 use tokio::task::AbortHandle;
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
-    CodeActionOptions, CodeActionProviderCapability, Diagnostic, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    InitializeParams, InitializeResult, InitializedParams, MessageType, ServerCapabilities,
-    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
+    CodeActionOptions, CodeActionParams, CodeActionProviderCapability, CodeActionResponse,
+    Diagnostic, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+    DidSaveTextDocumentParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
+    ServerCapabilities, ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind,
+    TextDocumentSyncOptions, TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
@@ -449,6 +449,35 @@ impl LanguageServer for LspBackend {
 
         tracing::debug!(uri = uri.as_str(), "document saved, refreshing diagnostics");
         self.schedule_diagnostics(uri, text, version, Duration::ZERO);
+    }
+
+    async fn code_action(&self, params: CodeActionParams) -> Result<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+
+        // Use the diagnostics the client sent in the context (already filtered
+        // to the requested range by the editor). This is the standard LSP
+        // pattern — the client knows which diagnostics are relevant to the
+        // cursor/selection.
+        let context_diagnostics = &params.context.diagnostics;
+
+        // Fall back to cached diagnostics if the client didn't send any,
+        // filtering by range overlap ourselves.
+        let actions = if context_diagnostics.is_empty() {
+            let cached = self
+                .documents
+                .get(&uri)
+                .map(|doc| doc.diagnostics.clone())
+                .unwrap_or_default();
+            crate::code_actions::code_actions_for_diagnostics(&uri, &cached)
+        } else {
+            crate::code_actions::code_actions_for_diagnostics(&uri, context_diagnostics)
+        };
+
+        if actions.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(actions))
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {

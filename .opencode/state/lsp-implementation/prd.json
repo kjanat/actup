@@ -64,7 +64,7 @@
 			"description": "Quick fixes for individual outdated refs. Done when:\n- textDocument/codeAction handler implemented\n- For Outdated diagnostic: returns 'Update to vX.Y.Z' action\n- For Unresolvable with close match: returns 'Change to vX.Y.Z'\n- CodeAction includes WorkspaceEdit with text replacement\n- Edit replaces only the ref portion (preserves formatting)\n- Diagnostic linked via CodeAction.diagnostics field",
 			"depends": ["async-diagnostics"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "fix-all-file",

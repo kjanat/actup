@@ -45,6 +45,13 @@ Started: 2026-02-19
 - `Client` is `Clone` (backed by `Arc<ClientInner>`) — safe to clone into spawned tasks
 - `Client::new` is `pub(super)` — can't construct in tests directly; use `LspService::new` or test components in isolation
 
+### Code Action Pattern
+- Use `params.context.diagnostics` (client-provided) as primary source for code actions — client already filters by cursor/selection
+- Fall back to cached `DocumentState.diagnostics` when client sends empty context
+- Embed structured data in `Diagnostic.data` as JSON (`DiagnosticData` enum) to carry target refs between diagnostic computation and code action generation
+- `CodeAction.diagnostics` links back to triggering diagnostic(s) for editor UI integration
+- `is_preferred: true` for Outdated quickfixes (auto-applicable), `false` for suggestions
+
 ### Async Diagnostics Pattern
 - Fields shared with spawned tasks must be `Arc`-wrapped: `DashMap`, `RwLock<Config>`, `RwLock<Option<Arc<Registry>>>`, etc.
 - Per-document abort handles via `DashMap<Uri, AbortHandle>` for cancellation on re-edit
@@ -154,3 +161,17 @@ Started: 2026-02-19
 - Added 5 new tests: debounce constant, abort handle tracking, cancellation behavior, version staleness, closed document guard
 - Files changed: `crates/lsp/src/backend.rs`
 - **Learnings:** `Client` is `Clone` (Arc-backed) — safe for spawned tasks; `Uri` lacks `Copy` — must clone before move into async block and rebind; `TextDocumentSyncOptions` needed for save notifications (not just `Kind`); `Client::new` is `pub(super)` so test infrastructure must work around it
+
+## Task - single-ref-codeaction
+
+- Created `crates/lsp/src/code_actions.rs`: code action generation from diagnostics
+- `code_actions_for_diagnostics()`: iterates diagnostics, deserializes `DiagnosticData` from `Diagnostic.data`, produces `CodeAction` with `WorkspaceEdit`
+- For `Outdated`: "Update to vX.Y.Z" quickfix with `is_preferred: true`, `TextEdit` replaces ref range
+- For `Unresolvable` with suggestion: "Change to vX.Y.Z" quickfix with `is_preferred: false`
+- Created `DiagnosticData` enum (serde-tagged) in `diagnostics.rs`: `Outdated { target_ref }` and `Unresolvable { suggested_ref }`
+- Modified `status_to_diagnostic()` to embed `DiagnosticData` in `Diagnostic.data` field as JSON
+- Implemented `code_action` handler on `LanguageServer` trait: uses `params.context.diagnostics` (client-provided) as primary source, falls back to cached `DocumentState.diagnostics`
+- `CodeAction.diagnostics` links back to triggering diagnostic per LSP spec
+- 9 new tests: quickfix generation, diagnostic linking, suggestion handling, foreign source filtering, data-less diagnostic handling, multiple diagnostics, JSON roundtrip for both `DiagnosticData` variants
+- Files: `crates/lsp/src/code_actions.rs` (new), `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/main.rs`
+- **Learnings:** `Diagnostic.data` is `Option<serde_json::Value>` — ideal for carrying structured metadata between diagnostic publish and code action request; `params.context.diagnostics` is the standard LSP pattern for code actions (client filters by cursor); `CodeActionKind::QUICKFIX` for single-ref fixes, `SOURCE_FIX_ALL` reserved for bulk operations

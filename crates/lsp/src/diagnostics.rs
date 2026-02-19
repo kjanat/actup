@@ -11,6 +11,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, check_action, extract_uses_from_yaml,
     parse_uses, provider,
 };
+use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Uri,
 };
@@ -18,7 +19,29 @@ use tower_lsp_server::ls_types::{
 use crate::file_cache::FileCache;
 
 /// Diagnostic source identifier shown in the editor.
-const DIAGNOSTIC_SOURCE: &str = "actup";
+pub const DIAGNOSTIC_SOURCE: &str = "actup";
+
+/// Structured data attached to diagnostics via [`Diagnostic::data`].
+///
+/// Carries the information code actions need to construct edits without
+/// re-fetching version data. Serialized as JSON into the diagnostic's
+/// opaque `data` field and deserialized in the code action handler.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind")]
+pub enum DiagnosticData {
+    /// The ref is outdated — target ref string is the replacement.
+    #[serde(rename = "outdated")]
+    Outdated {
+        /// The ref string to replace with (e.g. "v2.0.0").
+        target_ref: String,
+    },
+    /// The ref is unresolvable — includes a suggested ref if available.
+    #[serde(rename = "unresolvable")]
+    Unresolvable {
+        /// Optional suggested replacement (e.g. closest matching tag).
+        suggested_ref: Option<String>,
+    },
+}
 
 /// Parsed action reference with its source location in the document.
 struct LocatedAction {
@@ -156,18 +179,24 @@ fn status_to_diagnostic(
     match status {
         CheckStatus::UpToDate | CheckStatus::Ignored => None,
 
-        CheckStatus::Outdated { current, target } => Some(Diagnostic {
-            range,
-            severity: Some(DiagnosticSeverity::WARNING),
-            code: Some(NumberOrString::String("outdated".into())),
-            source: Some(DIAGNOSTIC_SOURCE.into()),
-            message: format!(
-                "{uses_value}: {current} -> {} ({})",
-                target.version(),
-                target.sha().get(..7).unwrap_or_else(|| target.sha()),
-            ),
-            ..Default::default()
-        }),
+        CheckStatus::Outdated { current, target } => {
+            let target_ref = target.version().to_string();
+            let data = DiagnosticData::Outdated {
+                target_ref: target_ref.clone(),
+            };
+            Some(Diagnostic {
+                range,
+                severity: Some(DiagnosticSeverity::WARNING),
+                code: Some(NumberOrString::String("outdated".into())),
+                source: Some(DIAGNOSTIC_SOURCE.into()),
+                message: format!(
+                    "{uses_value}: {current} -> {target_ref} ({})",
+                    target.sha().get(..7).unwrap_or_else(|| target.sha()),
+                ),
+                data: serde_json::to_value(data).ok(),
+                ..Default::default()
+            })
+        }
 
         CheckStatus::Pinned { sha, tag } => {
             let tag_info = tag
