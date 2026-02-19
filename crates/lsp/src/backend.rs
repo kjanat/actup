@@ -430,15 +430,6 @@ impl LanguageServer for LspBackend {
 
         let has_registry = self.registry.read().await.is_some();
 
-        self.client
-            .log_message(
-                MessageType::INFO,
-                format!(
-                    "actup-lsp ready (policy={policy:?}, {ignored} ignored patterns, providers={})",
-                    if has_registry { "ok" } else { "unavailable" }
-                ),
-            )
-            .await;
         tracing::info!(?policy, ignored, has_registry, "actup-lsp initialized");
 
         // Register file watchers for actup config files (dynamic registration).

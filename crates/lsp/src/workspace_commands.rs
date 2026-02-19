@@ -1,6 +1,6 @@
 //! Workspace-wide commands for the LSP server.
 //!
-//! Implements `actup.fixAllInWorkspace` — discovers all workflow and composite
+//! Implements `actup-lsp/fixAllInWorkspace` — discovers all workflow and composite
 //! action files, computes diagnostics, and applies a single multi-file
 //! [`WorkspaceEdit`] with all outdated ref replacements.
 //!
@@ -30,7 +30,7 @@ use crate::diagnostics::{self, DIAGNOSTIC_SOURCE, DiagnosticData};
 use crate::file_cache::FileCache;
 
 /// Command identifier registered in server capabilities.
-pub const FIX_ALL_IN_WORKSPACE: &str = "actup.fixAllInWorkspace";
+pub const FIX_ALL_IN_WORKSPACE: &str = "actup-lsp/fixAllInWorkspace";
 
 /// Cooperative cancellation flag for workspace operations.
 ///
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn command_name_is_stable() {
-        assert_eq!(FIX_ALL_IN_WORKSPACE, "actup.fixAllInWorkspace");
+        assert_eq!(FIX_ALL_IN_WORKSPACE, "actup-lsp/fixAllInWorkspace");
     }
 
     #[test]

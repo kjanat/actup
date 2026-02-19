@@ -357,7 +357,7 @@ async fn initialize_returns_capabilities() {
     let exec = caps.execute_command_provider.unwrap();
     assert!(
         exec.commands
-            .contains(&"actup.fixAllInWorkspace".to_owned())
+            .contains(&"actup-lsp/fixAllInWorkspace".to_owned())
     );
 
     harness.shutdown().await;
@@ -801,7 +801,7 @@ async fn execute_command_fix_all_returns_response() {
     let resp = harness
         .request(execute_command_request(
             30,
-            "actup.fixAllInWorkspace",
+            "actup-lsp/fixAllInWorkspace",
             vec![],
         ))
         .await;

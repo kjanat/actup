@@ -22,17 +22,22 @@ mod test_utils;
 #[cfg(test)]
 mod integration_tests;
 
+use std::io::IsTerminal;
+
 use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    let is_tty = std::io::stderr().is_terminal();
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("actup_lsp=info")),
         )
         .with_target(false)
         .without_time()
+        .with_level(is_tty)
+        .with_ansi(is_tty)
         .with_writer(std::io::stderr)
         .init();
 
