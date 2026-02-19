@@ -728,6 +728,7 @@ impl LanguageServer for LspBackend {
             &config,
             &registry,
             &file_cache,
+            &self.documents,
             &cancelled,
             encoding,
         )

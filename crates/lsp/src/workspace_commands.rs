@@ -13,15 +13,19 @@
 //! [`Cancelled`] flag), it stops after the current file and returns partial
 //! results.
 
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use actup_core::{Config, DiscoveredFile, discover_files, provider};
+use dashmap::DashMap;
 use tower_lsp_server::Client;
-use tower_lsp_server::ls_types::{Diagnostic, NumberOrString, TextEdit, Uri, WorkspaceEdit};
+use tower_lsp_server::ls_types::{
+    Diagnostic, DocumentChanges, NumberOrString, OneOf, OptionalVersionedTextDocumentIdentifier,
+    TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+};
 
+use crate::backend::DocumentState;
 use crate::diagnostics::{self, DIAGNOSTIC_SOURCE, DiagnosticData};
 use crate::file_cache::FileCache;
 
@@ -142,22 +146,33 @@ fn edits_from_diagnostics(diags: &[Diagnostic]) -> Vec<TextEdit> {
 
 /// Outcome of processing a single file.
 struct FileOutcome {
-    /// URI + edits if outdated refs were found.
-    edits: Option<(Uri, Vec<TextEdit>)>,
+    /// URI, document version, and edits if outdated refs were found.
+    ///
+    /// `version` is `Some(n)` when the file was open in the editor (read from
+    /// the document store), `None` when read from disk. Captured atomically
+    /// with the text content so clients can reject stale edits.
+    edits: Option<(Uri, Option<i32>, Vec<TextEdit>)>,
     /// Number of `uses:` actions checked in this file.
     actions_checked: usize,
 }
 
 /// Process a single discovered file: read, compute diagnostics, extract edits.
 ///
-/// Returns a [`FileOutcome`] with optional edits and the count of actions
-/// checked. Read/parse failures are pushed to `failures` without propagating.
+/// For files open in the editor, reads from the document store and snapshots
+/// the version atomically with the text content. For files not open in the
+/// editor, reads from disk with `version = None`.
+///
+/// Returns a [`FileOutcome`] with optional edits (including the snapshotted
+/// version) and the count of actions checked. Read/parse failures are pushed
+/// to `failures` without propagating.
+#[allow(clippy::too_many_arguments)]
 async fn process_file(
     file: &DiscoveredFile,
     workspace_root: &Path,
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    documents: &DashMap<Uri, DocumentState>,
     failures: &mut Vec<(String, String)>,
     encoding: crate::position::PositionEncoding,
 ) -> FileOutcome {
@@ -168,15 +183,33 @@ async fn process_file(
         .display()
         .to_string();
 
-    let text = match tokio::fs::read_to_string(path).await {
-        Ok(t) => t,
-        Err(e) => {
-            tracing::warn!(path = %rel, error = %e, "failed to read file");
-            failures.push((rel, e.to_string()));
-            return FileOutcome {
-                edits: None,
-                actions_checked: 0,
-            };
+    let Some(uri) = Uri::from_file_path(path) else {
+        tracing::warn!(path = %rel, "failed to convert path to URI");
+        failures.push((rel, "failed to convert path to URI".into()));
+        return FileOutcome {
+            edits: None,
+            actions_checked: 0,
+        };
+    };
+
+    // Read text + version atomically: prefer editor buffer (document store)
+    // over disk so edits match the content the user sees.
+    let (text, version) = if let Some(doc) = documents.get(&uri) {
+        let t = doc.text.clone();
+        let v = doc.version;
+        drop(doc); // release DashMap shard lock before async work
+        (t, Some(v))
+    } else {
+        match tokio::fs::read_to_string(path).await {
+            Ok(t) => (t, None),
+            Err(e) => {
+                tracing::warn!(path = %rel, error = %e, "failed to read file");
+                failures.push((rel, e.to_string()));
+                return FileOutcome {
+                    edits: None,
+                    actions_checked: 0,
+                };
+            }
         }
     };
 
@@ -187,15 +220,6 @@ async fn process_file(
         };
     }
 
-    let Some(uri) = Uri::from_file_path(path) else {
-        tracing::warn!(path = %rel, "failed to convert path to URI");
-        failures.push((rel, "failed to convert path to URI".into()));
-        return FileOutcome {
-            edits: None,
-            actions_checked: 0,
-        };
-    };
-
     let result =
         diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache, encoding).await;
     let actions_checked = result.refs_checked;
@@ -204,7 +228,7 @@ async fn process_file(
     let result_edits = if edits.is_empty() {
         None
     } else {
-        Some((uri, edits))
+        Some((uri, version, edits))
     };
 
     FileOutcome {
@@ -227,12 +251,14 @@ async fn process_file(
 /// A cancel button is shown in the editor. The [`Cancelled`] flag is checked
 /// between files; when set, the operation stops and returns partial results
 /// with `cancelled: true`.
+#[allow(clippy::too_many_arguments)]
 pub async fn fix_all_in_workspace(
     client: Client,
     workspace_root: &Path,
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    documents: &DashMap<Uri, DocumentState>,
     cancelled: &Cancelled,
     encoding: crate::position::PositionEncoding,
 ) -> FixAllResult {
@@ -272,6 +298,7 @@ pub async fn fix_all_in_workspace(
         config,
         registry,
         file_cache,
+        documents,
         cancelled,
         progress.as_ref(),
         encoding,
@@ -285,6 +312,14 @@ pub async fn fix_all_in_workspace(
     result
 }
 
+/// Per-file edits with the document version snapshotted at read time.
+struct VersionedFileEdits {
+    uri: Uri,
+    /// `Some(n)` for files open in the editor, `None` for disk-only files.
+    version: Option<i32>,
+    edits: Vec<TextEdit>,
+}
+
 /// Scan discovered files, compute diagnostics, and collect edits.
 ///
 /// Reports per-file progress and checks cancellation between files.
@@ -295,6 +330,7 @@ async fn scan_files(
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    documents: &DashMap<Uri, DocumentState>,
     cancelled: &Cancelled,
     progress: Option<
         &tower_lsp_server::OngoingProgress<
@@ -305,7 +341,7 @@ async fn scan_files(
     encoding: crate::position::PositionEncoding,
 ) -> FixAllResult {
     let file_count = discovered.len();
-    let mut all_changes: HashMap<Uri, Vec<TextEdit>> = HashMap::new();
+    let mut all_edits: Vec<VersionedFileEdits> = Vec::new();
     let mut failures = Vec::new();
     let mut total_refs = 0usize;
     let mut total_actions = 0usize;
@@ -318,9 +354,9 @@ async fn scan_files(
                 total = file_count,
                 "workspace fix cancelled by client"
             );
-            let files_changed = all_changes.len();
+            let files_changed = all_edits.len();
             return FixAllResult {
-                edit: build_workspace_edit(all_changes),
+                edit: build_workspace_edit(all_edits),
                 total_files: file_count,
                 files_scanned: files_completed,
                 files_changed,
@@ -337,15 +373,20 @@ async fn scan_files(
             config,
             registry,
             file_cache,
+            documents,
             &mut failures,
             encoding,
         )
         .await;
 
         total_actions += outcome.actions_checked;
-        if let Some((uri, edits)) = outcome.edits {
+        if let Some((uri, version, edits)) = outcome.edits {
             total_refs += edits.len();
-            all_changes.insert(uri, edits);
+            all_edits.push(VersionedFileEdits {
+                uri,
+                version,
+                edits,
+            });
         }
 
         files_completed = i + 1;
@@ -360,9 +401,9 @@ async fn scan_files(
         .await;
     }
 
-    let files_changed = all_changes.len();
+    let files_changed = all_edits.len();
     FixAllResult {
-        edit: build_workspace_edit(all_changes),
+        edit: build_workspace_edit(all_edits),
         total_files: file_count,
         files_scanned: file_count,
         files_changed,
@@ -406,13 +447,29 @@ async fn report_file_progress(
     p.report_with_message(msg, pct.min(95), None).await;
 }
 
-/// Build a [`WorkspaceEdit`] from accumulated per-file changes.
-fn build_workspace_edit(changes: HashMap<Uri, Vec<TextEdit>>) -> WorkspaceEdit {
-    if changes.is_empty() {
+/// Build a versioned [`WorkspaceEdit`] from accumulated per-file changes.
+///
+/// Uses [`DocumentChanges::Edits`] with [`OptionalVersionedTextDocumentIdentifier`]
+/// so clients can reject edits that target a stale document version. Files
+/// open in the editor carry `version: Some(n)` (snapshotted at read time);
+/// files read from disk use `version: None` (null), which per LSP spec means
+/// "content on disk is the master."
+fn build_workspace_edit(file_edits: Vec<VersionedFileEdits>) -> WorkspaceEdit {
+    if file_edits.is_empty() {
         WorkspaceEdit::default()
     } else {
+        let doc_edits = file_edits
+            .into_iter()
+            .map(|fe| TextDocumentEdit {
+                text_document: OptionalVersionedTextDocumentIdentifier {
+                    uri: fe.uri,
+                    version: fe.version,
+                },
+                edits: fe.edits.into_iter().map(OneOf::Left).collect(),
+            })
+            .collect();
         WorkspaceEdit {
-            changes: Some(changes),
+            document_changes: Some(DocumentChanges::Edits(doc_edits)),
             ..Default::default()
         }
     }
@@ -534,25 +591,82 @@ mod tests {
 
     #[test]
     fn build_workspace_edit_empty_returns_default() {
-        let edit = build_workspace_edit(HashMap::new());
+        let edit = build_workspace_edit(Vec::new());
         assert!(edit.changes.is_none());
+        assert!(edit.document_changes.is_none());
     }
 
     #[test]
-    fn build_workspace_edit_with_changes() {
+    fn build_workspace_edit_versioned_open_file() {
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
-        let mut changes = HashMap::new();
-        changes.insert(
-            uri.clone(),
-            vec![TextEdit {
+        let edits = vec![VersionedFileEdits {
+            uri: uri.clone(),
+            version: Some(7),
+            edits: vec![TextEdit {
                 range: make_range(0, 0, 2),
                 new_text: "v4".into(),
             }],
-        );
-        let edit = build_workspace_edit(changes);
-        let ch = edit.changes.unwrap();
-        assert_eq!(ch.len(), 1);
-        assert!(ch.contains_key(&uri));
+        }];
+        let edit = build_workspace_edit(edits);
+        assert!(edit.changes.is_none(), "must not use unversioned changes");
+        let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
+            panic!("expected DocumentChanges::Edits");
+        };
+        assert_eq!(doc_edits.len(), 1);
+        assert_eq!(doc_edits[0].text_document.uri, uri);
+        assert_eq!(doc_edits[0].text_document.version, Some(7));
+        assert_eq!(doc_edits[0].edits.len(), 1);
+    }
+
+    #[test]
+    fn build_workspace_edit_null_version_for_disk_file() {
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let edits = vec![VersionedFileEdits {
+            uri,
+            version: None,
+            edits: vec![TextEdit {
+                range: make_range(0, 0, 2),
+                new_text: "v4".into(),
+            }],
+        }];
+        let edit = build_workspace_edit(edits);
+        let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
+            panic!("expected DocumentChanges::Edits");
+        };
+        assert_eq!(doc_edits[0].text_document.version, None);
+    }
+
+    #[test]
+    fn build_workspace_edit_mixed_open_and_disk() {
+        let open_uri = Uri::from_file_path("/test/open.yml").unwrap();
+        let disk_uri = Uri::from_file_path("/test/disk.yml").unwrap();
+        let edits = vec![
+            VersionedFileEdits {
+                uri: open_uri.clone(),
+                version: Some(3),
+                edits: vec![TextEdit {
+                    range: make_range(1, 0, 5),
+                    new_text: "v2".into(),
+                }],
+            },
+            VersionedFileEdits {
+                uri: disk_uri.clone(),
+                version: None,
+                edits: vec![TextEdit {
+                    range: make_range(2, 0, 5),
+                    new_text: "v3".into(),
+                }],
+            },
+        ];
+        let edit = build_workspace_edit(edits);
+        let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
+            panic!("expected DocumentChanges::Edits");
+        };
+        assert_eq!(doc_edits.len(), 2);
+        assert_eq!(doc_edits[0].text_document.uri, open_uri);
+        assert_eq!(doc_edits[0].text_document.version, Some(3));
+        assert_eq!(doc_edits[1].text_document.uri, disk_uri);
+        assert_eq!(doc_edits[1].text_document.version, None);
     }
 
     #[test]
