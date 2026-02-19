@@ -96,7 +96,7 @@ pub fn make_version_info(version_str: &str, sha: &str) -> Arc<version::Info> {
 }
 
 /// Dummy 40-char SHA for tests.
-pub const DUMMY_SHA: &str = "abc1234567890abcdef1234567890abcdef123456";
+pub const DUMMY_SHA: &str = "abc1234567890abcdef1234567890abcdef12345";
 
 /// Second dummy SHA for tests requiring two distinct SHAs.
 pub const DUMMY_SHA_2: &str = "def4567890abcdef1234567890abcdef456789ab";

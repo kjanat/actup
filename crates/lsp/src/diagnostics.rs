@@ -892,6 +892,66 @@ jobs:
         assert!(results2[&repo].is_ok());
     }
 
+    // --- SHA-pinned refs ---
+
+    #[tokio::test]
+    async fn compute_diagnostics_sha_pinned_produces_hint() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        // Use a full 40-char SHA as the ref to trigger the Pinned code path.
+        let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA}\n");
+        let result = compute_diagnostics(&yaml, &uri, &config, &registry, &cache).await;
+
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(
+            result.diagnostics[0].severity,
+            Some(DiagnosticSeverity::HINT)
+        );
+        assert_eq!(
+            result.diagnostics[0].code,
+            Some(NumberOrString::String("pinned".into()))
+        );
+        // Pinned to a known tag should show the tag in the message.
+        assert!(
+            result.diagnostics[0].message.contains("v4.2.0"),
+            "expected tag in pinned message, got: {}",
+            result.diagnostics[0].message
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_sha_pinned_unknown_tag() {
+        // SHA that doesn't match any known tag.
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        // Use DUMMY_SHA_2 which doesn't match any tag in the version set.
+        let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA_2}\n");
+        let result = compute_diagnostics(&yaml, &uri, &config, &registry, &cache).await;
+
+        assert_eq!(result.diagnostics.len(), 1);
+        assert_eq!(
+            result.diagnostics[0].severity,
+            Some(DiagnosticSeverity::HINT)
+        );
+        assert!(
+            result.diagnostics[0].message.contains("unknown version"),
+            "expected 'unknown version' for unmatched SHA, got: {}",
+            result.diagnostics[0].message
+        );
+    }
+
     // --- Quiet mode ---
 
     #[tokio::test]

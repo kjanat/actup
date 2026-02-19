@@ -632,6 +632,97 @@ mod tests {
         assert!(content.contains("v4.2.0"));
     }
 
+    // --- compute_hover async tests ---
+
+    #[tokio::test]
+    async fn compute_hover_returns_hover_for_uses_line() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+
+        let text = "      - uses: actions/checkout@v3\n";
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
+
+        let hover =
+            compute_hover(text, position, &config, &registry, &file_cache, &meta_cache).await;
+        let hover = hover.unwrap();
+
+        match &hover.contents {
+            HoverContents::Markup(mc) => {
+                assert!(mc.value.contains("actions/checkout"));
+                assert!(mc.value.contains("v3")); // current ref
+            }
+            other => panic!("expected Markup hover contents, got: {other:?}"),
+        }
+
+        // Range should cover the uses value.
+        let range = hover.range.unwrap();
+        assert_eq!(range.start.line, 0);
+    }
+
+    #[tokio::test]
+    async fn compute_hover_returns_none_for_non_uses_line() {
+        let provider = crate::test_utils::MockProvider::new("github.com");
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+
+        let text = "      - run: echo hello\n";
+        let position = Position {
+            line: 0,
+            character: 10,
+        };
+
+        let hover =
+            compute_hover(text, position, &config, &registry, &file_cache, &meta_cache).await;
+        assert!(hover.is_none(), "expected no hover for non-uses line");
+    }
+
+    #[tokio::test]
+    async fn compute_hover_shows_outdated_status() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+
+        let text = "      - uses: actions/checkout@v3\n";
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
+
+        let hover = compute_hover(text, position, &config, &registry, &file_cache, &meta_cache)
+            .await
+            .unwrap();
+
+        match &hover.contents {
+            HoverContents::Markup(mc) => {
+                assert!(
+                    mc.value.contains("Outdated"),
+                    "expected 'Outdated' in hover, got: {}",
+                    mc.value
+                );
+                assert!(mc.value.contains("v4.2.0"));
+            }
+            other => panic!("expected Markup, got: {other:?}"),
+        }
+    }
+
     #[test]
     fn action_meta_cache_stores_and_retrieves() {
         let cache = new_action_meta_cache();

@@ -657,6 +657,92 @@ mod tests {
         }
     }
 
+    // --- compute_completions async tests ---
+
+    #[tokio::test]
+    async fn compute_completions_returns_actions_for_empty_uses() {
+        let provider = crate::test_utils::MockProvider::new("github.com");
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+
+        let text = "      - uses: \n";
+        let position = Position {
+            line: 0,
+            character: 14,
+        };
+
+        let result = compute_completions(text, position, &registry, &file_cache).await;
+        let response = result.unwrap();
+        match response {
+            CompletionResponse::List(list) => {
+                assert!(
+                    !list.items.is_empty(),
+                    "expected action completions for empty uses:"
+                );
+                // Should include popular actions.
+                assert!(list.items.iter().any(|i| i.label.contains("checkout")));
+            }
+            CompletionResponse::Array(items) => {
+                assert!(!items.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn compute_completions_returns_none_for_non_uses_line() {
+        let provider = crate::test_utils::MockProvider::new("github.com");
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+
+        let text = "      - run: echo hello\n";
+        let position = Position {
+            line: 0,
+            character: 15,
+        };
+
+        let result = compute_completions(text, position, &registry, &file_cache).await;
+        assert!(
+            result.is_none(),
+            "expected no completions for non-uses line"
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_completions_returns_versions_after_at() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+
+        let text = "      - uses: actions/checkout@\n";
+        let position = Position {
+            line: 0,
+            character: 30,
+        };
+
+        let result = compute_completions(text, position, &registry, &file_cache).await;
+        let response = result.unwrap();
+        match response {
+            CompletionResponse::List(list) => {
+                assert!(
+                    !list.items.is_empty(),
+                    "expected version completions after @"
+                );
+                assert!(
+                    list.items.iter().any(|i| i.label.contains("v4.2.0")),
+                    "expected v4.2.0 in completions, got: {:?}",
+                    list.items.iter().map(|i| &i.label).collect::<Vec<_>>()
+                );
+            }
+            CompletionResponse::Array(items) => {
+                assert!(!items.is_empty());
+            }
+        }
+    }
+
     #[test]
     fn detect_context_multiline() {
         let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@\n";
