@@ -46,7 +46,7 @@
 			"description": "Core diagnostic logic using actup-core. Done when:\n- extract_uses_from_yaml parses document text\n- parse_uses converts to ActionRef (skip local refs)\n- check_action computes CheckStatus for each ref\n- CheckStatus maps to LSP Diagnostic with correct severity:\n  - Outdated -> Warning\n  - Unresolvable (user) -> Error\n  - Unresolvable (env) -> Information\n  - Pinned -> Hint\n- Diagnostic range points to ref portion after @",
 			"depends": ["provider-setup"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "async-diagnostics",

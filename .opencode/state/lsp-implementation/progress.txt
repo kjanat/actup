@@ -17,6 +17,13 @@ Started: 2026-02-19
 - `FileEdits` for accumulating edits per file
 - Preserve trailing newlines and formatting
 
+### Diagnostic Computation Pattern
+- `extract_uses_from_yaml(text)` -> `parse_uses(value)` -> `ActionRef` (skip `None` for local/docker)
+- Deduplicate by `ActionRepoId`, batch fetch `version::Set` from cache then providers
+- `check_action(action_ref, versions, config)` for synchronous check with pre-fetched data
+- `UsesLocation.ref_range()` gives byte range after `@` in the raw line (0-indexed); `.line()` is 1-indexed
+- `status_to_diagnostic()` for `CheckStatus` -> `Diagnostic` severity mapping
+
 ### Error Classification
 - `Error::is_environment_error()` distinguishes user vs env errors
 - User errors (NotFound, InvalidRef) -> Error severity
@@ -103,3 +110,22 @@ Started: 2026-02-19
 - 12 new tests: 5 for `FileCache`, 6 for `provider_setup`, 1 existing test unaffected
 - Files changed: `crates/lsp/Cargo.toml`, `crates/lsp/src/main.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/file_cache.rs` (new), `crates/lsp/src/provider_setup.rs` (new)
 - **Learnings:** `Box<dyn Provider>` does not impl `Provider` — `CachingProvider<P>` requires concrete `P: Provider`, so in-memory dedup must happen at the call site (diagnostic layer), not at registry level; `FileCache` is duplicated between CLI and LSP since it's in the CLI crate, not core — both share the same on-disk directory
+
+## Task - diagnostic-extraction
+
+- Created `crates/lsp/src/diagnostics.rs`: core diagnostic extraction module
+- `extract_located_actions()`: parses YAML via `extract_uses_from_yaml` + `parse_uses`, skips local/docker refs, converts 1-indexed lines to 0-indexed, computes ref range (after `@`) for precise highlighting
+- `batch_fetch_versions()`: deduplicates repos by `ActionRepoId`, checks file cache first, fetches uncached from providers, writes results back to cache
+- `status_to_diagnostic()`: maps `CheckStatus` to LSP `Diagnostic` with correct severity:
+  - `Outdated` -> `WARNING` (message: "current -> target (short-sha)")
+  - `Pinned` -> `HINT` (message: "pinned to sha (= tag)")
+  - `Unresolvable(user)` -> `ERROR`
+  - `Unresolvable(env)` -> `INFORMATION`
+  - `UpToDate` / `Ignored` -> no diagnostic
+- `compute_diagnostics()`: entry point composing extraction, batch fetch, check, and mapping
+- `trigger_diagnostics()` on `LspBackend`: snapshots config/registry/cache, runs `compute_diagnostics`, checks version staleness before publishing
+- Wired into `did_open` and `did_change` (replaced TODO placeholders)
+- Diagnostic `source` field is always "actup"; `code` field is "outdated"/"pinned"/"unresolvable"
+- 11 new unit tests: severity mapping for all 5 statuses, extraction from YAML, ref range accuracy, local/docker skip, source field
+- Files: `crates/lsp/src/diagnostics.rs` (new), `crates/lsp/src/main.rs`, `crates/lsp/src/backend.rs`
+- **Learnings:** `UsesLocation.ref_range()` returns byte offsets into the raw line (0-indexed), with `column` being 1-indexed — careful with the arithmetic; `check_action` is synchronous (needs pre-fetched `version::Set`), `check_action_remote` is async but fetches per-ref — batch fetching with dedup is more efficient for LSP; Rust 2024 let-chains (`if let ... && let ...`) simplify cache-hit checks

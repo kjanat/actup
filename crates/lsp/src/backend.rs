@@ -144,6 +144,50 @@ impl LspBackend {
             file_cache: RwLock::new(None),
         }
     }
+
+    /// Trigger background diagnostic computation for a document.
+    ///
+    /// Snapshots the current config, registry, and cache handles, then
+    /// calls [`compute_diagnostics`](crate::diagnostics::compute_diagnostics)
+    /// synchronously (within the current task). A future `async-diagnostics`
+    /// task will move this to a spawned task with debouncing.
+    async fn trigger_diagnostics(&self, uri: Uri, text: String, version: i32) {
+        let config = self.config.read().await.clone();
+        let registry = self.registry.read().await.clone();
+        let file_cache = self.file_cache.read().await.clone();
+
+        let Some(registry) = registry else {
+            tracing::debug!("no provider registry; skipping diagnostics");
+            return;
+        };
+
+        let file_cache =
+            file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
+
+        let diagnostics =
+            crate::diagnostics::compute_diagnostics(&text, &uri, &config, &registry, &file_cache)
+                .await;
+
+        // Update cached diagnostics in document state.
+        if let Some(mut doc) = self.documents.get_mut(&uri) {
+            // Only publish if the document version hasn't changed since we started.
+            if doc.version == version {
+                doc.diagnostics.clone_from(&diagnostics);
+            } else {
+                tracing::debug!(
+                    uri = uri.as_str(),
+                    started = version,
+                    current = doc.version,
+                    "stale diagnostics, skipping publish"
+                );
+                return;
+            }
+        }
+
+        self.client
+            .publish_diagnostics(uri, diagnostics, Some(version))
+            .await;
+    }
 }
 
 impl LanguageServer for LspBackend {
@@ -280,9 +324,9 @@ impl LanguageServer for LspBackend {
 
         tracing::debug!(uri = uri.as_str(), version, "document opened");
         self.documents
-            .insert(uri, DocumentState::new(text, version));
+            .insert(uri.clone(), DocumentState::new(text.clone(), version));
 
-        // TODO(diagnostic-extraction): trigger async diagnostic computation
+        self.trigger_diagnostics(uri, text, version).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -311,9 +355,9 @@ impl LanguageServer for LspBackend {
 
         tracing::debug!(uri = uri.as_str(), version, "document changed");
         self.documents
-            .insert(uri, DocumentState::new(text, version));
+            .insert(uri.clone(), DocumentState::new(text.clone(), version));
 
-        // TODO(diagnostic-extraction): trigger async diagnostic computation
+        self.trigger_diagnostics(uri, text, version).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {

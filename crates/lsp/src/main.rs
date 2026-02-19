@@ -6,6 +6,7 @@
 #![warn(missing_docs)]
 
 mod backend;
+mod diagnostics;
 mod file_cache;
 mod provider_setup;
 
