@@ -28,7 +28,7 @@
 			"description": "Add ActionCheckEntry struct (ref_range, value_range, ref_str, resolved_sha) and store Vec<ActionCheckEntry> in DocumentState. Populate for ALL uses: refs during diagnostic computation. Done when: entries stored, accessible from code action handler.",
 			"depends": ["resolved-sha-field"],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "pin-cursor-code-action",

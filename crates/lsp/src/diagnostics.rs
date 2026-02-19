@@ -50,16 +50,39 @@ pub enum DiagnosticData {
     },
 }
 
+/// Per-action check result stored in [`DocumentState`](crate::backend::DocumentState)
+/// for cursor-based code actions.
+///
+/// Unlike diagnostics (which only exist for Outdated/Unresolvable refs),
+/// entries are stored for ALL `uses:` refs — including `UpToDate` and `Ignored`.
+/// This enables cursor-based "Pin to SHA" code actions on refs that have
+/// no diagnostic.
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields consumed by cursor-based code actions (D4)
+pub struct ActionCheckEntry {
+    /// Range of the ref portion (after `@`) in the document.
+    pub ref_range: Range,
+    /// Range of the full `uses:` value (e.g. `actions/checkout@v4`).
+    pub value_range: Range,
+    /// The original ref string (e.g. `v4`, `v4.2.0`, `main`).
+    pub ref_str: String,
+    /// Resolved SHA of the current ref, if available.
+    pub resolved_sha: Option<String>,
+}
+
 /// Parsed action reference with its source location in the document.
 struct LocatedAction {
     /// Parsed action reference (owner/repo@ref).
     action_ref: ActionRef,
     /// 0-indexed line in the document.
     line: u32,
-    /// Byte range of the ref portion (after `@`) within the line.
+    /// Column range of the ref portion (after `@`) in LSP encoding.
     /// Falls back to the full value range if no `@` is present.
-    col_start: u32,
-    col_end: u32,
+    ref_col_start: u32,
+    ref_col_end: u32,
+    /// Column range of the full `uses:` value in LSP encoding.
+    value_col_start: u32,
+    value_col_end: u32,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
 }
@@ -82,20 +105,27 @@ fn extract_located_actions(
     for loc in locations {
         match parse_uses(loc.value()) {
             Ok(Some(action_ref)) => {
-                // ref_range gives byte range of just the ref after @; fall back to full value.
-                // Convert byte offsets to the negotiated LSP encoding.
                 let raw_line = loc.raw_line();
-                let r = loc.ref_range().unwrap_or_else(|| loc.value_range());
-                let col_start = crate::position::byte_to_col(raw_line, r.start, encoding);
-                let col_end = crate::position::byte_to_col(raw_line, r.end, encoding);
+
+                // Value range: full `uses:` value (e.g. "actions/checkout@v4").
+                let vr = loc.value_range();
+                let value_col_start = crate::position::byte_to_col(raw_line, vr.start, encoding);
+                let value_col_end = crate::position::byte_to_col(raw_line, vr.end, encoding);
+
+                // Ref range: just the ref after @; fall back to full value.
+                let rr = loc.ref_range().unwrap_or_else(|| vr.clone());
+                let ref_col_start = crate::position::byte_to_col(raw_line, rr.start, encoding);
+                let ref_col_end = crate::position::byte_to_col(raw_line, rr.end, encoding);
 
                 #[allow(clippy::cast_possible_truncation)]
                 let line = (loc.line() - 1) as u32; // 1-indexed -> 0-indexed
                 actions.push(LocatedAction {
                     action_ref,
                     line,
-                    col_start,
-                    col_end,
+                    ref_col_start,
+                    ref_col_end,
+                    value_col_start,
+                    value_col_end,
                     uses_value: loc.value().to_string(),
                 });
             }
@@ -262,6 +292,11 @@ fn status_to_diagnostic(
 pub struct DiagnosticResult {
     /// LSP diagnostics to publish for the document.
     pub diagnostics: Vec<Diagnostic>,
+    /// Per-action check entries for ALL `uses:` refs (not just diagnostic-producing ones).
+    ///
+    /// Used by cursor-based code actions (e.g. "Pin to SHA") that need to
+    /// operate on `UpToDate` refs which have no diagnostic.
+    pub entries: Vec<ActionCheckEntry>,
     /// Total number of `uses:` action refs checked (including up-to-date/ignored
     /// refs that don't produce diagnostics). Used for accurate progress reporting.
     pub refs_checked: usize,
@@ -290,6 +325,7 @@ pub async fn compute_diagnostics(
     if actions.is_empty() {
         return DiagnosticResult {
             diagnostics: Vec::new(),
+            entries: Vec::new(),
             refs_checked: 0,
             errors: DiagnosticErrors::default(),
         };
@@ -310,17 +346,28 @@ pub async fn compute_diagnostics(
     let versions_map = batch_fetch_versions(&unique_repos, registry, file_cache).await;
 
     let mut diagnostics = Vec::with_capacity(actions.len());
+    let mut entries = Vec::with_capacity(actions.len());
     let mut errors = DiagnosticErrors::default();
 
     for action in &actions {
-        let range = Range {
+        let ref_range = Range {
             start: Position {
                 line: action.line,
-                character: action.col_start,
+                character: action.ref_col_start,
             },
             end: Position {
                 line: action.line,
-                character: action.col_end,
+                character: action.ref_col_end,
+            },
+        };
+        let value_range = Range {
+            start: Position {
+                line: action.line,
+                character: action.value_col_start,
+            },
+            end: Position {
+                line: action.line,
+                character: action.value_col_end,
             },
         };
 
@@ -349,13 +396,21 @@ pub async fn compute_diagnostics(
             }
         };
 
-        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value) {
+        entries.push(ActionCheckEntry {
+            ref_range,
+            value_range,
+            ref_str: action.action_ref.ref_str().to_string(),
+            resolved_sha: result.resolved_sha().map(String::from),
+        });
+
+        if let Some(diag) = status_to_diagnostic(result.status(), ref_range, &action.uses_value) {
             diagnostics.push(diag);
         }
     }
 
     DiagnosticResult {
         diagnostics,
+        entries,
         refs_checked: actions.len(),
         errors,
     }
@@ -615,8 +670,8 @@ jobs:
         let yaml = "      - uses: actions/checkout@v4\n";
         let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
         assert_eq!(actions.len(), 1);
-        assert_eq!(actions[0].col_start, 31);
-        assert_eq!(actions[0].col_end, 33);
+        assert_eq!(actions[0].ref_col_start, 31);
+        assert_eq!(actions[0].ref_col_end, 33);
     }
 
     #[test]
@@ -1164,5 +1219,225 @@ jobs:
 
         assert!(results.contains_key(&repo));
         assert!(results[&repo].is_err());
+    }
+
+    // --- ActionCheckEntry population ---
+
+    #[test]
+    fn extract_located_actions_computes_value_range() {
+        //                   14          30
+        //                    |           |
+        let yaml = "      - uses: actions/checkout@v4\n";
+        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        assert_eq!(actions.len(), 1);
+        // value = "actions/checkout@v4" starts at col 14, ends at col 33
+        assert_eq!(actions[0].value_col_start, 14);
+        assert_eq!(actions[0].value_col_end, 33);
+        // ref = "v4" starts at col 31, ends at col 33
+        assert_eq!(actions[0].ref_col_start, 31);
+        assert_eq!(actions[0].ref_col_end, 33);
+    }
+
+    #[tokio::test]
+    async fn entries_populated_for_all_refs_including_up_to_date() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        // v3 is outdated, v4.2.0 is up-to-date — both should produce entries.
+        let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v4.2.0\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(
+            result.entries.len(),
+            2,
+            "entries for ALL refs, not just diagnostics"
+        );
+        assert_eq!(
+            result.diagnostics.len(),
+            1,
+            "only outdated produces diagnostic"
+        );
+    }
+
+    #[tokio::test]
+    async fn entries_carry_ref_str() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v4.2.0\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(result.entries[0].ref_str, "v3");
+        assert_eq!(result.entries[1].ref_str, "v4.2.0");
+    }
+
+    #[tokio::test]
+    async fn entries_carry_resolved_sha_for_known_tags() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        // v4.2.0 is an exact semver match — resolved_sha should be populated.
+        let yaml = "    - uses: actions/checkout@v4.2.0\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(result.entries.len(), 1);
+        assert_eq!(
+            result.entries[0].resolved_sha.as_deref(),
+            Some(DUMMY_SHA),
+            "exact semver match should resolve SHA",
+        );
+    }
+
+    #[tokio::test]
+    async fn entries_ref_range_and_value_range_differ() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v4.2.0\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        let entry = &result.entries[0];
+        // value_range covers "actions/checkout@v4.2.0", ref_range covers "v4.2.0".
+        assert!(
+            entry.value_range.start.character < entry.ref_range.start.character,
+            "value_range should start before ref_range",
+        );
+        assert_eq!(
+            entry.value_range.end, entry.ref_range.end,
+            "both ranges should end at the same column",
+        );
+    }
+
+    #[tokio::test]
+    async fn entries_count_matches_refs_checked() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let node_versions = test_utils::simple_version_set("v4.0.0", DUMMY_SHA_2);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions)
+            .with_versions("actions", "setup-node", node_versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/setup-node@v4.0.0\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(result.entries.len(), result.refs_checked);
+    }
+
+    #[tokio::test]
+    async fn entries_empty_for_no_uses_refs() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "name: CI\non: push\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert!(result.entries.is_empty());
+    }
+
+    #[tokio::test]
+    async fn entries_none_sha_for_provider_error() {
+        let provider = test_utils::MockProvider::new("github.com").with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            },
+        );
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: actions/checkout@v4\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(result.entries.len(), 1);
+        assert!(
+            result.entries[0].resolved_sha.is_none(),
+            "provider error should yield None resolved_sha",
+        );
     }
 }

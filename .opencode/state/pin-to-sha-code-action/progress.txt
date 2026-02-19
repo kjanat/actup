@@ -14,6 +14,9 @@ Started: 2026-02-19
 - Async SHA resolution: `resolve_ref_to_sha` fills gaps (non-default branches, unusual tags).
 - Additive `Option` fields on serde enums: use `#[serde(default, skip_serializing_if = "Option::is_none")]` for backward compat.
 - `DiagnosticData::Outdated` destructuring: use `{ target_ref, .. }` in code action/workspace handlers that don't need `target_sha`.
+- `UsesLocation::value_range()` = byte range of full value; `ref_range()` = byte range after `@`. Both need `byte_to_col` conversion for LSP.
+- `ActionCheckEntry` stored in `DocumentState.entries` alongside `diagnostics` — populated for ALL refs (not just diagnostic-producing ones).
+- `DiagnosticResult.entries` is the transport from `compute_diagnostics` to `DocumentState`.
 
 ---
 
@@ -38,3 +41,15 @@ Started: 2026-02-19
 - 3 new serde tests: None omission, Some serialization, backward compat with missing field
 - Files: `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/code_actions.rs`, `crates/lsp/src/workspace_commands.rs`, `crates/lsp/src/test_utils.rs`
 - **Learnings:** Use `#[serde(default, skip_serializing_if = "Option::is_none")]` for additive optional fields — ensures backward compat with older serialized data and clean JSON output.
+
+## Task - action-check-entry
+
+- Added `ActionCheckEntry` struct in `diagnostics.rs`: `ref_range`, `value_range`, `ref_str`, `resolved_sha`
+- Extended `LocatedAction` with `value_col_start`/`value_col_end` (renamed `col_start`/`col_end` to `ref_col_start`/`ref_col_end`)
+- Updated `extract_located_actions` to compute both ref range and value range from `UsesLocation`
+- Added `entries: Vec<ActionCheckEntry>` to `DiagnosticResult`, populated in `compute_diagnostics` for ALL `uses:` refs
+- Added `entries: Vec<ActionCheckEntry>` to `DocumentState`, stored alongside diagnostics in `schedule_diagnostics`
+- Entries cleared alongside diagnostics in `refresh_all_diagnostics`
+- 8 new tests: value range computation, entries for all refs (incl. up-to-date), ref_str, resolved_sha, range relationships, count parity, empty case, provider error case
+- Files: `crates/lsp/src/diagnostics.rs`, `crates/lsp/src/backend.rs`
+- **Learnings:** `UsesLocation::value_range()` gives byte range for full value; `ref_range()` gives ref after `@`. Compute both in extraction, store both in `LocatedAction` for downstream use.

@@ -38,8 +38,9 @@ const DEBOUNCE_DELAY: Duration = Duration::from_millis(300);
 /// State tracked per open document.
 ///
 /// Stores the full document text (since we use `TextDocumentSyncKind::FULL`),
-/// the document version for staleness checks, and any cached diagnostics
-/// from the most recent analysis pass.
+/// the document version for staleness checks, cached diagnostics from the
+/// most recent analysis pass, and per-action check entries for cursor-based
+/// code actions.
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields read by future diagnostic/code-action tasks
 pub struct DocumentState {
@@ -49,6 +50,12 @@ pub struct DocumentState {
     pub version: i32,
     /// Cached diagnostics from the last analysis. Empty until first check.
     pub diagnostics: Vec<Diagnostic>,
+    /// Per-action check entries for ALL `uses:` refs, including `UpToDate`.
+    ///
+    /// Populated alongside diagnostics during `compute_diagnostics`. Used
+    /// by cursor-based code actions (e.g. "Pin to SHA") that need to operate
+    /// on refs without diagnostics. Empty until first check.
+    pub entries: Vec<crate::diagnostics::ActionCheckEntry>,
 }
 
 impl DocumentState {
@@ -58,6 +65,7 @@ impl DocumentState {
             text,
             version,
             diagnostics: Vec::new(),
+            entries: Vec::new(),
         }
     }
 }
@@ -266,11 +274,13 @@ impl LspBackend {
             }
 
             let diagnostics = result.diagnostics;
+            let entries = result.entries;
 
-            // Update cached diagnostics in document state, checking for staleness.
+            // Update cached diagnostics and entries in document state, checking for staleness.
             let should_publish = if let Some(mut doc) = documents.get_mut(&uri) {
                 if doc.version == version {
                     doc.diagnostics.clone_from(&diagnostics);
+                    doc.entries = entries;
                     true
                 } else {
                     tracing::debug!(
@@ -1070,9 +1080,10 @@ impl LspBackend {
             .collect();
 
         for (uri, text, version) in entries {
-            // Clear cached diagnostics so stale results aren't served to code actions.
+            // Clear cached diagnostics and entries so stale results aren't served to code actions.
             if let Some(mut doc) = self.documents.get_mut(&uri) {
                 doc.diagnostics.clear();
+                doc.entries.clear();
             }
             if has_uses_keyword(&text) {
                 self.schedule_diagnostics(uri, text, version, Duration::ZERO);
