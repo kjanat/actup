@@ -42,6 +42,15 @@ Started: 2026-02-19
 - `config.policy_for(owner, repo)` / `config.should_ignore(owner, repo, ref_str)` for per-action queries
 - Use `tokio::sync::RwLock<Config>` for async-safe interior mutability (future config reload)
 
+### Provider Setup
+- `build_registry(config)` mirrors CLI: collects `REGISTRATION` statics, resolves default host, registers providers
+- `build_file_cache(config)` reads `config.cache.{enabled, path, ttl}` — shared dir with CLI
+- `provider::Registry` stored as `Arc` in `LspBackend` for shared access from background tasks
+- `FileCache` stored as `Arc` for same reason
+- Token loaded via registration factory (`create_github_provider` reads `GITHUB_TOKEN` from env)
+- `CachingProvider<P>` available in core but NOT used at registry level — designed for ad-hoc wrapping at call sites (diagnostic layer)
+- `Box<dyn Provider>` does NOT impl `Provider`, so can't wrap registry entries directly
+
 ---
 
 <!-- Task completion logs below - APPEND ONLY -->
@@ -81,3 +90,16 @@ Started: 2026-02-19
 - 5 new unit tests for workspace root extraction and config path extraction
 - Files changed: `crates/lsp/Cargo.toml`, `crates/lsp/src/backend.rs`
 - **Learnings:** `Uri::to_file_path()` returns `Option<Cow<'_, Path>>` (need `.into_owned()`); Rust 2024 edition supports let-chains in if-let for collapsible-if; `Config::discover()` is a convenience wrapper around `Config::load()` that never fails
+
+## Task - provider-setup
+
+- Added `actup-provider-github`, `dirs`, `sanitize-filename` deps to `crates/lsp/Cargo.toml`
+- Created `file_cache.rs`: `FileCache` impl matching CLI's, shares `~/.cache/actup/` directory
+- Created `provider_setup.rs`: `build_registry()` + `build_file_cache()` mirroring CLI's setup
+- `LspBackend` now has `registry: RwLock<Option<Arc<provider::Registry>>>` and `file_cache: RwLock<Option<Arc<FileCache>>>`
+- `initialize` handler: builds registry from config + static registrations after config load
+- Registry construction errors are non-fatal (logged + notified to client, server continues without providers)
+- Token loaded automatically via `actup_provider_github::REGISTRATION.create` factory (reads `GITHUB_TOKEN`)
+- 12 new tests: 5 for `FileCache`, 6 for `provider_setup`, 1 existing test unaffected
+- Files changed: `crates/lsp/Cargo.toml`, `crates/lsp/src/main.rs`, `crates/lsp/src/backend.rs`, `crates/lsp/src/file_cache.rs` (new), `crates/lsp/src/provider_setup.rs` (new)
+- **Learnings:** `Box<dyn Provider>` does not impl `Provider` — `CachingProvider<P>` requires concrete `P: Provider`, so in-memory dedup must happen at the call site (diagnostic layer), not at registry level; `FileCache` is duplicated between CLI and LSP since it's in the CLI crate, not core — both share the same on-disk directory

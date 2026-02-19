@@ -6,6 +6,8 @@
 #![warn(missing_docs)]
 
 mod backend;
+mod file_cache;
+mod provider_setup;
 
 use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;

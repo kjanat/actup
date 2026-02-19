@@ -1,8 +1,10 @@
 //! LSP backend implementing the [`LanguageServer`] trait.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use actup_core::Config;
+use actup_core::cache::Cache as _;
+use actup_core::{Config, provider};
 use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tower_lsp_server::jsonrpc::Result;
@@ -13,6 +15,9 @@ use tower_lsp_server::ls_types::{
     TextDocumentSyncKind, Uri, WorkDoneProgressOptions,
 };
 use tower_lsp_server::{Client, LanguageServer};
+
+use crate::file_cache::FileCache;
+use crate::provider_setup;
 
 /// State tracked per open document.
 ///
@@ -98,7 +103,10 @@ fn extract_config_path(params: &InitializeParams) -> Option<PathBuf> {
 /// Holds the LSP [`Client`] handle for sending notifications (diagnostics,
 /// log messages) back to the editor, and a concurrent map of open document
 /// state for incremental analysis.
-#[derive(Debug)]
+///
+/// The provider [`Registry`](provider::Registry) and [`FileCache`] are
+/// initialized during `initialize` after config is loaded, and wrapped in
+/// `Arc` for shared access from background diagnostic tasks.
 pub struct LspBackend {
     /// LSP client handle for sending notifications.
     client: Client,
@@ -109,6 +117,17 @@ pub struct LspBackend {
     /// Loaded actup configuration (set during `initialize`, may be refreshed
     /// on config file changes).
     config: RwLock<Config>,
+    /// Provider registry for version lookups (set during `initialize`).
+    ///
+    /// `None` until `initialize` completes. Providers are created from config
+    /// and static registrations (GitHub always present, GitLab/Gitea behind
+    /// feature gates).
+    registry: RwLock<Option<Arc<provider::Registry>>>,
+    /// Persistent file-based cache shared with the CLI (set during `initialize`).
+    ///
+    /// Stored as `Arc` so background diagnostic tasks can read/write the
+    /// cache without holding a lock on the entire backend.
+    file_cache: RwLock<Option<Arc<FileCache>>>,
 }
 
 impl LspBackend {
@@ -121,6 +140,8 @@ impl LspBackend {
             documents: DashMap::new(),
             workspace_root: RwLock::new(None),
             config: RwLock::new(Config::default()),
+            registry: RwLock::new(None),
+            file_cache: RwLock::new(None),
         }
     }
 }
@@ -160,9 +181,35 @@ impl LanguageServer for LspBackend {
             }
         };
 
+        // Build provider registry from config + compiled-in registrations.
+        let registry = match provider_setup::build_registry(&config) {
+            Ok(r) => {
+                if let Some(host) = r.default_host() {
+                    tracing::info!(default_host = host, "provider registry built");
+                }
+                Some(Arc::new(r))
+            }
+            Err(e) => {
+                tracing::error!("failed to build provider registry: {e}");
+                self.client
+                    .log_message(
+                        MessageType::ERROR,
+                        format!("actup-lsp: failed to initialize providers: {e}"),
+                    )
+                    .await;
+                None
+            }
+        };
+
+        // Initialize persistent file cache (shared with CLI).
+        let file_cache = Arc::new(provider_setup::build_file_cache(&config));
+        tracing::info!(enabled = file_cache.is_enabled(), "file cache initialized");
+
         // Store state for use by other handlers.
         *self.workspace_root.write().await = workspace_root;
         *self.config.write().await = config;
+        *self.registry.write().await = registry;
+        *self.file_cache.write().await = Some(file_cache);
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -195,13 +242,19 @@ impl LanguageServer for LspBackend {
         let policy = config.update_policy;
         let ignored = config.ignore.len();
         drop(config);
+
+        let has_registry = self.registry.read().await.is_some();
+
         self.client
             .log_message(
                 MessageType::INFO,
-                format!("actup-lsp ready (policy={policy:?}, {ignored} ignored patterns)"),
+                format!(
+                    "actup-lsp ready (policy={policy:?}, {ignored} ignored patterns, providers={})",
+                    if has_registry { "ok" } else { "unavailable" }
+                ),
             )
             .await;
-        tracing::info!(?policy, ignored, "actup-lsp initialized");
+        tracing::info!(?policy, ignored, has_registry, "actup-lsp initialized");
     }
 
     async fn shutdown(&self) -> Result<()> {

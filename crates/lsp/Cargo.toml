@@ -13,14 +13,20 @@ name = "actup-lsp"
 path = "src/main.rs"
 
 [dependencies]
-actup-core         = { workspace = true }  # Core config + resolution engine
-dashmap            = { workspace = true }  # Concurrent document state
-serde              = { workspace = true }  # initializationOptions deserialization
-serde_json         = { workspace = true }  # initializationOptions parsing
-tokio              = { workspace = true }  # Async runtime
-tower-lsp-server   = { workspace = true }  # LSP framework
-tracing            = { workspace = true }  # Logging
-tracing-subscriber = { workspace = true }  # Log formatting
+actup-core            = { workspace = true }  # Core config + resolution engine
+actup-provider-github = { workspace = true }  # GitHub/GHE provider
+dashmap               = { workspace = true }  # Concurrent document state
+dirs                  = { workspace = true }  # OS cache directory
+sanitize-filename     = { workspace = true }  # Cache key sanitization
+serde                 = { workspace = true }  # initializationOptions deserialization
+serde_json            = { workspace = true }  # initializationOptions parsing
+tokio                 = { workspace = true }  # Async runtime
+tower-lsp-server      = { workspace = true }  # LSP framework
+tracing               = { workspace = true }  # Logging
+tracing-subscriber    = { workspace = true }  # Log formatting
+
+[dev-dependencies]
+tempfile = { workspace = true }  # Temp dirs for cache tests
 
 [lints]
 workspace = true

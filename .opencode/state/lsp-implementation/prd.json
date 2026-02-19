@@ -37,7 +37,7 @@
 			"description": "Initialize providers for version fetching. Done when:\n- provider::Registry created with GitHub provider (feature-gated GitLab/Gitea)\n- FileCache initialized at ~/.cache/actup/ (shared with CLI)\n- CachingProvider wraps base provider for in-memory dedup\n- Token loaded from GITHUB_TOKEN env var",
 			"depends": ["config-loading"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "diagnostic-extraction",
