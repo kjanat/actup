@@ -9,7 +9,8 @@ Provides diagnostics, code actions, hover info, and completion for `uses:` refs.
 `actup-lsp` must be available on your system. Install from the repo root:
 
 ```sh
-cargo install --path crates/lsp
+just install-actup-lsp
+# cargo install --path crates/lsp
 ```
 
 Or build without installing:
@@ -26,16 +27,17 @@ Once published, search "actup" in the Extensions panel and install.
 
 ## Install (dev)
 
-```sh
-cd extensions/vscode
-npm install
-npm run compile
+```bash
+EXTENSION_DIR="$(git rev-parse --show-toplevel)/extensions/vscode"
+bun --cwd="${EXTENSION_DIR}" install
+bun --cwd="${EXTENSION_DIR}" run compile
 ```
 
 Then launch VS Code with the extension loaded:
 
-```sh
-code --extensionDevelopmentPath="$(pwd)"
+```bash
+EXTENSION_DIR="$(git rev-parse --show-toplevel)/extensions/vscode"
+code --extensionDevelopmentPath="${EXTENSION_DIR}"
 ```
 
 Or press `F5` inside VS Code (with this folder open) to launch an Extension Development Host.
@@ -107,8 +109,8 @@ extensions/vscode/
 ### Build
 
 ```sh
-npm run compile   # one-shot
-npm run watch     # recompile on save
+bun run compile   # one-shot
+bun run watch     # recompile on save
 ```
 
 ### Debug
@@ -119,7 +121,7 @@ mode, `RUST_LOG=actup_lsp=debug` is set so the server produces verbose logs (vis
 ### Package
 
 ```sh
-npm run package   # produces actup-vscode-0.1.0.vsix
+bun run package   # produces actup-vscode-0.1.0.vsix
 ```
 
 ### How it works

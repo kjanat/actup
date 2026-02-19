@@ -62,7 +62,9 @@ async function startClient(): Promise<void> {
 
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [
-			{ scheme: "file", language: "yaml", pattern: "**/.github/**" },
+			{ scheme: "file", language: "github-actions-workflow" },
+			{ scheme: "file", language: "yaml", pattern: "**/.*/workflows/*.yml" },
+			{ scheme: "file", language: "yaml", pattern: "**/.*/workflows/*.yaml" },
 			{ scheme: "file", language: "yaml", pattern: "**/action.yml" },
 			{ scheme: "file", language: "yaml", pattern: "**/action.yaml" },
 		],

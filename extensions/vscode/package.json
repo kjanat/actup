@@ -81,7 +81,11 @@
     }
   },
   "activationEvents": [
-    "onLanguage:yaml"
+    "onLanguage:github-actions-workflow",
+    "workspaceContains:**/action.yml",
+    "workspaceContains:**/action.yaml",
+    "workspaceContains:**/.*/workflows/**/*.yml",
+    "workspaceContains:**/.*/workflows/**/*.yaml"
   ],
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
@@ -109,6 +113,9 @@
   "markdown": "github",
   "extensionKind": [
     "workspace"
+  ],
+  "extensionRecommendations": [
+    "github.vscode-github-actions"
   ],
   "pricing": "Free"
 }
