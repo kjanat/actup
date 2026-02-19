@@ -22,12 +22,29 @@ Started: 2026-02-19
 - User errors (NotFound, InvalidRef) -> Error severity
 - Env errors (Network, RateLimit, Auth) -> Information severity + status message
 
-### tower-lsp Patterns
+### tower-lsp-server 0.23 Patterns
+- Crate re-exports `ls_types` (not `lsp_types`) — use `tower_lsp_server::ls_types::*`
 - Store `Client` handle in backend for async notifications
+- `LspService::new(|client| Backend::new(client))` constructor pattern
+- `Server::new(stdin, stdout, socket).serve(service).await` for stdio transport
 - Use `DashMap` for concurrent document access
 - Spawn background tasks with `tokio::spawn`
 - Check client capabilities before using features
+- `InitializeResult` has only 2 non-feature-gated fields: `capabilities` + `server_info`
+- Tracing must write to stderr (stdout is the LSP transport)
 
 ---
 
 <!-- Task completion logs below - APPEND ONLY -->
+
+## Task - lsp-skeleton
+
+- Created LSP skeleton with `tower-lsp-server` 0.23 + `dashmap` + `tokio`
+- `LspBackend` struct holds `Client`, implements `LanguageServer` trait
+- `initialize` returns `textDocumentSync: FULL` + `codeActionProvider` (quickfix + source.fixAll)
+- `initialized` logs ready message via client notification
+- `shutdown` logs and returns Ok
+- Stdio transport in `main.rs` with tracing to stderr
+- Smoke-tested: server responds to LSP `initialize` with correct capabilities
+- Files: `crates/lsp/Cargo.toml`, `crates/lsp/src/main.rs`, `crates/lsp/src/backend.rs`
+- **Learnings:** `ls_types` module (not `lsp_types`); `InitializeResult` only has 2 fields without `proposed` feature; clippy requires `const fn` on constructors that qualify

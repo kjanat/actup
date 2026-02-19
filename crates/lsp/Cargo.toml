@@ -2,12 +2,22 @@
 name                 = "actup-lsp"
 version.workspace    = true
 edition.workspace    = true
+description          = "Language Server Protocol implementation for actup"
 homepage.workspace   = true
 repository.workspace = true
 license.workspace    = true
-publish              = false        # stub - not yet implemented
+publish              = false
+
+[[bin]]
+name = "actup-lsp"
+path = "src/main.rs"
 
 [dependencies]
+dashmap            = { workspace = true }  # Concurrent document state
+tokio              = { workspace = true }  # Async runtime
+tower-lsp-server   = { workspace = true }  # LSP framework
+tracing            = { workspace = true }  # Logging
+tracing-subscriber = { workspace = true }  # Log formatting
 
 [lints]
 workspace = true

@@ -10,7 +10,7 @@
 			"description": "Set up the basic LSP server infrastructure. Done when:\n- Cargo.toml has tower-lsp, dashmap, tokio, lsp-types dependencies\n- LspBackend struct implements LanguageServer trait\n- initialize/initialized/shutdown handlers work\n- textDocumentSync and codeActionProvider capabilities declared\n- Stdio transport entry point in main.rs\n- Server starts and responds to initialize request",
 			"depends": [],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "document-state",
