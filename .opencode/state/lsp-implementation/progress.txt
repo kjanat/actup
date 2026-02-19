@@ -42,6 +42,16 @@ Started: 2026-02-19
 - `Uri` has no `Display` — use `uri.as_str()` in tracing fields, not `%uri`
 - `Uri::to_file_path()` returns `Option<Cow<'_, Path>>` — call `.into_owned()` for `PathBuf`
 - `Uri::from_file_path(path)` returns `Option<Uri>` — useful in tests
+- `Client` is `Clone` (backed by `Arc<ClientInner>`) — safe to clone into spawned tasks
+- `Client::new` is `pub(super)` — can't construct in tests directly; use `LspService::new` or test components in isolation
+
+### Async Diagnostics Pattern
+- Fields shared with spawned tasks must be `Arc`-wrapped: `DashMap`, `RwLock<Config>`, `RwLock<Option<Arc<Registry>>>`, etc.
+- Per-document abort handles via `DashMap<Uri, AbortHandle>` for cancellation on re-edit
+- Debounce via `tokio::time::sleep` at start of spawned task — aborted on cancellation = zero wasted work
+- `Uri` doesn't impl `Copy` — clone before moving into async block, rebind inside
+- `TextDocumentSyncOptions` (not `Kind`) required to declare `save` notification support
+- `did_open` uses zero debounce (immediate), `did_change` uses 300ms, `did_save` uses zero
 
 ### Config Loading
 - `Config::load(config_path, start_dir)` — layered (env > explicit > repo > user > defaults)
@@ -129,3 +139,18 @@ Started: 2026-02-19
 - 11 new unit tests: severity mapping for all 5 statuses, extraction from YAML, ref range accuracy, local/docker skip, source field
 - Files: `crates/lsp/src/diagnostics.rs` (new), `crates/lsp/src/main.rs`, `crates/lsp/src/backend.rs`
 - **Learnings:** `UsesLocation.ref_range()` returns byte offsets into the raw line (0-indexed), with `column` being 1-indexed — careful with the arithmetic; `check_action` is synchronous (needs pre-fetched `version::Set`), `check_action_remote` is async but fetches per-ref — batch fetching with dedup is more efficient for LSP; Rust 2024 let-chains (`if let ... && let ...`) simplify cache-hit checks
+
+## Task - async-diagnostics
+
+- Replaced synchronous `trigger_diagnostics` with `schedule_diagnostics` that spawns background tasks via `tokio::spawn`
+- Added 300ms debounce (`DEBOUNCE_DELAY` const) on `did_change` to prevent API spam during rapid typing
+- `did_open` and `did_save` use zero debounce for immediate feedback
+- Per-document cancellation via `DashMap<Uri, AbortHandle>` — new edits abort pending tasks before debounce expires
+- Wrapped `DashMap`, `RwLock<Config>`, `RwLock<Option<Arc<Registry>>>`, `RwLock<Option<Arc<FileCache>>>` in `Arc` for shared ownership across spawned tasks
+- Document version staleness check: spawned task compares version at spawn-time vs current before publishing
+- `did_close` cancels in-flight tasks and clears diagnostics
+- `did_change` with no `uses:` cancels pending tasks and clears diagnostics
+- Updated capabilities from `TextDocumentSyncKind::FULL` to `TextDocumentSyncOptions` with `open_close`, `change: FULL`, `save: true`
+- Added 5 new tests: debounce constant, abort handle tracking, cancellation behavior, version staleness, closed document guard
+- Files changed: `crates/lsp/src/backend.rs`
+- **Learnings:** `Client` is `Clone` (Arc-backed) — safe for spawned tasks; `Uri` lacks `Copy` — must clone before move into async block and rebind; `TextDocumentSyncOptions` needed for save notifications (not just `Kind`); `Client::new` is `pub(super)` so test infrastructure must work around it

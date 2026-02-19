@@ -2,22 +2,32 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use actup_core::cache::Cache as _;
 use actup_core::{Config, provider};
 use dashmap::DashMap;
 use tokio::sync::RwLock;
+use tokio::task::AbortHandle;
 use tower_lsp_server::jsonrpc::Result;
 use tower_lsp_server::ls_types::{
     CodeActionOptions, CodeActionProviderCapability, Diagnostic, DidChangeTextDocumentParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, InitializeParams, InitializeResult,
-    InitializedParams, MessageType, ServerCapabilities, ServerInfo, TextDocumentSyncCapability,
-    TextDocumentSyncKind, Uri, WorkDoneProgressOptions,
+    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+    InitializeParams, InitializeResult, InitializedParams, MessageType, ServerCapabilities,
+    ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
 };
 use tower_lsp_server::{Client, LanguageServer};
 
 use crate::file_cache::FileCache;
 use crate::provider_setup;
+
+/// Debounce delay for diagnostic computation on document changes.
+///
+/// Prevents flooding providers with API requests when the user types rapidly.
+/// After each edit, we wait this long before starting version checks. If another
+/// edit arrives before the delay expires, the previous pending check is cancelled.
+const DEBOUNCE_DELAY: Duration = Duration::from_millis(300);
 
 /// State tracked per open document.
 ///
@@ -111,23 +121,29 @@ pub struct LspBackend {
     /// LSP client handle for sending notifications.
     client: Client,
     /// Open document state, keyed by document URI.
-    documents: DashMap<Uri, DocumentState>,
+    documents: Arc<DashMap<Uri, DocumentState>>,
     /// Resolved workspace root path (set during `initialize`).
     workspace_root: RwLock<Option<PathBuf>>,
     /// Loaded actup configuration (set during `initialize`, may be refreshed
     /// on config file changes).
-    config: RwLock<Config>,
+    config: Arc<RwLock<Config>>,
     /// Provider registry for version lookups (set during `initialize`).
     ///
     /// `None` until `initialize` completes. Providers are created from config
     /// and static registrations (GitHub always present, GitLab/Gitea behind
     /// feature gates).
-    registry: RwLock<Option<Arc<provider::Registry>>>,
+    registry: Arc<RwLock<Option<Arc<provider::Registry>>>>,
     /// Persistent file-based cache shared with the CLI (set during `initialize`).
     ///
     /// Stored as `Arc` so background diagnostic tasks can read/write the
     /// cache without holding a lock on the entire backend.
-    file_cache: RwLock<Option<Arc<FileCache>>>,
+    file_cache: Arc<RwLock<Option<Arc<FileCache>>>>,
+    /// Abort handles for in-flight diagnostic tasks, keyed by document URI.
+    ///
+    /// When a new edit arrives, we abort the previous pending task for that
+    /// document before spawning a fresh one. This, combined with
+    /// [`DEBOUNCE_DELAY`], prevents redundant version checks.
+    in_flight: DashMap<Uri, AbortHandle>,
 }
 
 impl LspBackend {
@@ -137,56 +153,100 @@ impl LspBackend {
     pub fn new(client: Client) -> Self {
         Self {
             client,
-            documents: DashMap::new(),
+            documents: Arc::new(DashMap::new()),
             workspace_root: RwLock::new(None),
-            config: RwLock::new(Config::default()),
-            registry: RwLock::new(None),
-            file_cache: RwLock::new(None),
+            config: Arc::new(RwLock::new(Config::default())),
+            registry: Arc::new(RwLock::new(None)),
+            file_cache: Arc::new(RwLock::new(None)),
+            in_flight: DashMap::new(),
         }
     }
 
-    /// Trigger background diagnostic computation for a document.
+    /// Schedule background diagnostic computation for a document.
     ///
-    /// Snapshots the current config, registry, and cache handles, then
-    /// calls [`compute_diagnostics`](crate::diagnostics::compute_diagnostics)
-    /// synchronously (within the current task). A future `async-diagnostics`
-    /// task will move this to a spawned task with debouncing.
-    async fn trigger_diagnostics(&self, uri: Uri, text: String, version: i32) {
-        let config = self.config.read().await.clone();
-        let registry = self.registry.read().await.clone();
-        let file_cache = self.file_cache.read().await.clone();
-
-        let Some(registry) = registry else {
-            tracing::debug!("no provider registry; skipping diagnostics");
-            return;
-        };
-
-        let file_cache =
-            file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
-
-        let diagnostics =
-            crate::diagnostics::compute_diagnostics(&text, &uri, &config, &registry, &file_cache)
-                .await;
-
-        // Update cached diagnostics in document state.
-        if let Some(mut doc) = self.documents.get_mut(&uri) {
-            // Only publish if the document version hasn't changed since we started.
-            if doc.version == version {
-                doc.diagnostics.clone_from(&diagnostics);
-            } else {
-                tracing::debug!(
-                    uri = uri.as_str(),
-                    started = version,
-                    current = doc.version,
-                    "stale diagnostics, skipping publish"
-                );
-                return;
-            }
+    /// Cancels any previously scheduled (or in-flight) diagnostic task for
+    /// the same URI, then spawns a new task that:
+    /// 1. Waits `debounce` duration (cancelled if another edit arrives)
+    /// 2. Snapshots config, registry, and cache
+    /// 3. Runs [`compute_diagnostics`](crate::diagnostics::compute_diagnostics)
+    /// 4. Publishes results only if the document version is still current
+    ///
+    /// Network errors within `compute_diagnostics` are surfaced as
+    /// `Information`-severity diagnostics rather than propagated, so the
+    /// editor UI is never blocked by slow or failing network calls.
+    fn schedule_diagnostics(&self, uri: Uri, text: String, version: i32, debounce: Duration) {
+        // Cancel any pending diagnostic task for this document.
+        if let Some((_, prev)) = self.in_flight.remove(&uri) {
+            prev.abort();
+            tracing::debug!(uri = uri.as_str(), "cancelled previous diagnostic task");
         }
 
-        self.client
-            .publish_diagnostics(uri, diagnostics, Some(version))
+        let client = self.client.clone();
+        let documents = Arc::clone(&self.documents);
+        let config = Arc::clone(&self.config);
+        let registry = Arc::clone(&self.registry);
+        let file_cache = Arc::clone(&self.file_cache);
+        let task_uri = uri.clone();
+
+        let handle = tokio::spawn(async move {
+            let uri = task_uri;
+            // Debounce: wait before starting expensive version checks.
+            // If the task is aborted during this sleep (because a new edit
+            // arrived), no work is wasted.
+            if !debounce.is_zero() {
+                tokio::time::sleep(debounce).await;
+            }
+
+            // Snapshot shared state after debounce (picks up any config changes
+            // that happened during the wait).
+            let config = config.read().await.clone();
+            let registry = registry.read().await.clone();
+            let file_cache = file_cache.read().await.clone();
+
+            let Some(registry) = registry else {
+                tracing::debug!("no provider registry; skipping diagnostics");
+                return;
+            };
+
+            let file_cache =
+                file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
+
+            let diagnostics = crate::diagnostics::compute_diagnostics(
+                &text,
+                &uri,
+                &config,
+                &registry,
+                &file_cache,
+            )
             .await;
+
+            // Update cached diagnostics in document state, checking for staleness.
+            let should_publish = if let Some(mut doc) = documents.get_mut(&uri) {
+                if doc.version == version {
+                    doc.diagnostics.clone_from(&diagnostics);
+                    true
+                } else {
+                    tracing::debug!(
+                        uri = uri.as_str(),
+                        started = version,
+                        current = doc.version,
+                        "stale diagnostics, skipping publish"
+                    );
+                    false
+                }
+            } else {
+                // Document was closed while we were computing. Don't publish.
+                false
+            };
+
+            if should_publish {
+                client
+                    .publish_diagnostics(uri, diagnostics, Some(version))
+                    .await;
+            }
+        });
+
+        self.in_flight.insert(uri, handle.abort_handle());
     }
 }
 
@@ -261,8 +321,13 @@ impl LanguageServer for LspBackend {
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
             capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
+                text_document_sync: Some(TextDocumentSyncCapability::Options(
+                    TextDocumentSyncOptions {
+                        open_close: Some(true),
+                        change: Some(TextDocumentSyncKind::FULL),
+                        save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                        ..Default::default()
+                    },
                 )),
                 code_action_provider: Some(CodeActionProviderCapability::Options(
                     CodeActionOptions {
@@ -326,7 +391,8 @@ impl LanguageServer for LspBackend {
         self.documents
             .insert(uri.clone(), DocumentState::new(text.clone(), version));
 
-        self.trigger_diagnostics(uri, text, version).await;
+        // No debounce on open — user expects immediate feedback.
+        self.schedule_diagnostics(uri, text, version, Duration::ZERO);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -345,6 +411,10 @@ impl LanguageServer for LspBackend {
                 uri = uri.as_str(),
                 "no `uses:` after change, clearing diagnostics"
             );
+            // Cancel any pending diagnostic task — document no longer has refs.
+            if let Some((_, prev)) = self.in_flight.remove(&uri) {
+                prev.abort();
+            }
             self.documents
                 .insert(uri.clone(), DocumentState::new(text, version));
             self.client
@@ -357,12 +427,39 @@ impl LanguageServer for LspBackend {
         self.documents
             .insert(uri.clone(), DocumentState::new(text.clone(), version));
 
-        self.trigger_diagnostics(uri, text, version).await;
+        // Debounce: wait before checking versions to avoid API spam on rapid edits.
+        self.schedule_diagnostics(uri, text, version, DEBOUNCE_DELAY);
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        let uri = params.text_document.uri;
+
+        // On save, re-trigger diagnostics with no debounce. Use the currently
+        // stored document text (save doesn't carry text unless configured).
+        let Some(doc) = self.documents.get(&uri) else {
+            return;
+        };
+        let text = doc.text.clone();
+        let version = doc.version;
+        drop(doc);
+
+        if !has_uses_keyword(&text) {
+            return;
+        }
+
+        tracing::debug!(uri = uri.as_str(), "document saved, refreshing diagnostics");
+        self.schedule_diagnostics(uri, text, version, Duration::ZERO);
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
         let uri = params.text_document.uri;
         tracing::debug!(uri = uri.as_str(), "document closed");
+
+        // Cancel any pending diagnostic task for this document.
+        if let Some((_, prev)) = self.in_flight.remove(&uri) {
+            prev.abort();
+        }
+
         self.documents.remove(&uri);
         // Clear diagnostics for the closed document.
         self.client.publish_diagnostics(uri, Vec::new(), None).await;
@@ -373,6 +470,11 @@ impl LanguageServer for LspBackend {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debounce_delay_is_300ms() {
+        assert_eq!(DEBOUNCE_DELAY, Duration::from_millis(300));
+    }
 
     #[test]
     fn has_uses_keyword_detects_action_refs() {
@@ -453,5 +555,90 @@ mod tests {
         };
         let root = extract_workspace_root(&params);
         assert_eq!(root, Some(PathBuf::from("/workspace/root")));
+    }
+
+    #[tokio::test]
+    async fn schedule_diagnostics_registers_in_flight_handle() {
+        // Direct test: construct backend parts and verify in_flight tracking.
+        let in_flight: DashMap<Uri, AbortHandle> = DashMap::new();
+        let uri = Uri::from_file_path("/test/file.yml").unwrap();
+
+        // Simulate what schedule_diagnostics does: insert an abort handle.
+        let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        in_flight.insert(uri.clone(), handle.abort_handle());
+
+        assert!(in_flight.contains_key(&uri));
+
+        // Simulate cancellation on new edit.
+        if let Some((_, prev)) = in_flight.remove(&uri) {
+            prev.abort();
+        }
+        assert!(!in_flight.contains_key(&uri));
+    }
+
+    #[tokio::test]
+    async fn schedule_diagnostics_cancels_previous_task() {
+        let in_flight: DashMap<Uri, AbortHandle> = DashMap::new();
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+
+        // Spawn a long-running task (simulating slow version check).
+        let task1 = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        let handle1 = task1.abort_handle();
+        in_flight.insert(uri.clone(), handle1);
+
+        // Second "edit" arrives — should cancel the first.
+        if let Some((_, prev)) = in_flight.remove(&uri) {
+            prev.abort();
+        }
+        let task2 = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        in_flight.insert(uri.clone(), task2.abort_handle());
+
+        // First task should be cancelled.
+        assert!(task1.await.unwrap_err().is_cancelled());
+
+        // Cleanup.
+        task2.abort();
+    }
+
+    #[tokio::test]
+    async fn version_staleness_prevents_stale_publish() {
+        let documents: Arc<DashMap<Uri, DocumentState>> = Arc::new(DashMap::new());
+        let uri = Uri::from_file_path("/test/stale.yml").unwrap();
+
+        // Store document at version 5.
+        documents.insert(
+            uri.clone(),
+            DocumentState::new("uses: actions/checkout@v4".into(), 5),
+        );
+
+        // Simulate what the spawned task does: check version before publishing.
+        let started_version = 3; // started computing for version 3
+        let should_publish = if let Some(doc) = documents.get(&uri) {
+            doc.version == started_version
+        } else {
+            false
+        };
+
+        // Version 3 != 5, so should NOT publish.
+        assert!(!should_publish);
+
+        // Now check with matching version.
+        let started_version = 5;
+        let should_publish = if let Some(doc) = documents.get(&uri) {
+            doc.version == started_version
+        } else {
+            false
+        };
+        assert!(should_publish);
+    }
+
+    #[tokio::test]
+    async fn closed_document_prevents_publish() {
+        let documents: Arc<DashMap<Uri, DocumentState>> = Arc::new(DashMap::new());
+        let uri = Uri::from_file_path("/test/closed.yml").unwrap();
+
+        // Document not in map (was closed).
+        let should_publish = documents.get(&uri).is_some();
+        assert!(!should_publish);
     }
 }

@@ -55,7 +55,7 @@
 			"description": "Non-blocking diagnostic updates. Done when:\n- did_open/did_save spawn background task for version checks\n- Debounce mechanism (300ms) prevents API spam on rapid edits\n- client.publish_diagnostics called when results ready\n- Document version tracked to avoid stale updates\n- Network errors don't block editor UI",
 			"depends": ["diagnostic-extraction"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "single-ref-codeaction",
