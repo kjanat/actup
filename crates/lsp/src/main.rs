@@ -18,6 +18,9 @@ mod workspace_commands;
 #[cfg(test)]
 mod test_utils;
 
+#[cfg(test)]
+mod integration_tests;
+
 use tower_lsp_server::{LspService, Server};
 use tracing_subscriber::EnvFilter;
 

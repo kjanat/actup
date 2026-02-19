@@ -58,6 +58,17 @@ Started: 2026-02-19
 - Only count spaces/tabs (not newlines) as whitespace between `uses:` and value — `trim_start()` eats newlines which breaks empty-value detection
 - Quote stripping: detect leading `"` or `'`, offset content_col by 1, strip trailing quote from value before analysis
 
+### Integration Test Pattern (tower-lsp-server)
+- `LspService::new(LspBackend::new)` returns `(LspService, ClientSocket)`
+- `LspService` implements `tower::Service<Request, Response=Option<Response>>` — call with `service.call(req).await`
+- `ClientSocket` implements `Stream<Item=Request>` + `Sink<Response>` — server→client notifications + response sink
+- **Must spawn background task** to drain `ClientSocket` concurrently — otherwise channel fills up and server blocks (deadlock)
+- `Request::build("method").id(N).params(json).finish()` for requests; omit `.id()` for notifications
+- Notifications (id-less) return `None` from `service.call`; requests return `Some(Response)`
+- Server→client requests (e.g. `client/registerCapability`) must be responded to via `Sink::send(Response::from_ok(id, json!(null)))`
+- `textDocument/publishDiagnostics` arrives as a notification on the stream — parse `params` to `PublishDiagnosticsParams`
+- `futures` crate needed for `StreamExt::next()` and `SinkExt::send()`; `tower` crate for `Service::call()`
+
 ### Mock Provider Pattern (test_utils)
 - `test_utils::MockProvider::new(host)` creates a provider returning empty version sets
 - `.with_versions(owner, repo, versions)` configures per-repo version sets

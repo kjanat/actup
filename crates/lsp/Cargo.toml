@@ -26,7 +26,9 @@ tracing               = { workspace = true }  # Logging
 tracing-subscriber    = { workspace = true }  # Log formatting
 
 [dev-dependencies]
+futures  = { workspace = true }  # Stream/Sink for integration tests
 tempfile = { workspace = true }  # Temp dirs for cache tests
+tower    = { workspace = true }  # Service trait for integration tests
 
 [lints]
 workspace = true

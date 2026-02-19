@@ -109,7 +109,7 @@
 			"description": "End-to-end LSP protocol tests. Done when:\n- Test harness with mock LSP client\n- Test: initialize -> didOpen -> diagnostics published\n- Test: codeAction request returns expected fixes\n- Test: executeCommand applies workspace edit\n- Snapshot tests for YAML before/after edits",
 			"depends": ["tests-unit", "workspace-command"],
 			"priority": "polish",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "progress-reporting",

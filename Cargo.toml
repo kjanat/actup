@@ -47,6 +47,7 @@ tempfile              = "3"                                                 # te
 thiserror             = "2"                                                 # errors
 tokio                 = { version = "1", features = ["full"] }              # async
 toml                  = "1"                                                 # config
+tower                 = "0.5"                                               # service
 tower-lsp-server      = "0.23"                                              # lsp
 tracing               = "0.1"                                               # logging
 tracing-subscriber    = { version = "0.3", features = ["env-filter"] }      # logging
