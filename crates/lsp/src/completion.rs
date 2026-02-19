@@ -172,9 +172,15 @@ fn detect_completion_context(text: &str, position: Position) -> Option<Completio
     // Extract the portion from content start up to and including the cursor.
     // In LSP, `character` is the 0-based column. The character at cursor_col
     // is either the last typed character or just past the end of input.
+    //
+    // LSP positions use UTF-16 code units, but `uses:` values are ASCII-only
+    // (`owner/repo@ref`), so byte offsets == UTF-16 offsets. Guard against
+    // multi-byte boundary panics defensively.
     let offset_in_value = cursor_col - content_col;
     let typed = if offset_in_value < value_clean.len() {
-        &value_clean[..=offset_in_value]
+        // Ensure we don't slice inside a multi-byte character (defensive).
+        let end = offset_in_value + 1;
+        value_clean.get(..end).unwrap_or(value_clean)
     } else {
         value_clean
     };

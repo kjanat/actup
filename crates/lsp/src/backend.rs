@@ -164,6 +164,12 @@ pub struct LspBackend {
     /// (in case the user fixed their token). Wrapped in `Arc` for shared
     /// access from spawned diagnostic tasks.
     error_dedup: Arc<crate::error_ux::ErrorDeduplicator>,
+    /// Explicit config file path from `initializationOptions.configPath`.
+    ///
+    /// Stored so that `reload_config` can re-use it (analogous to CLI's
+    /// `--config` flag). If the file disappears, reload falls back to
+    /// normal discovery but keeps the path for future reloads.
+    config_path: RwLock<Option<PathBuf>>,
 }
 
 impl LspBackend {
@@ -182,6 +188,7 @@ impl LspBackend {
             in_flight: DashMap::new(),
             action_meta_cache: crate::hover::new_action_meta_cache(),
             error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
+            config_path: RwLock::new(None),
         }
     }
 
@@ -345,6 +352,7 @@ impl LanguageServer for LspBackend {
 
         // Store state for use by other handlers.
         *self.workspace_root.write().await = workspace_root;
+        *self.config_path.write().await = config_path;
         *self.config.write().await = config;
         *self.registry.write().await = registry;
         *self.file_cache.write().await = Some(file_cache);
@@ -755,9 +763,7 @@ impl LspBackend {
                     MessageType::INFO,
                     format!(
                         "actup: cancelled ({}/{} files scanned, {} actions checked)",
-                        result.files_scanned,
-                        result.files_scanned, // partial — only scanned portion known
-                        result.actions_checked,
+                        result.files_scanned, result.total_files, result.actions_checked,
                     ),
                 )
                 .await;
@@ -871,15 +877,21 @@ impl LspBackend {
     ///
     /// Called when a config file changes or workspace folders change.
     /// Compares old and new policy to decide whether diagnostics need refreshing.
+    ///
+    /// If an explicit `configPath` was set via `initializationOptions`, it is
+    /// tried first. If that file no longer exists, we fall back to normal
+    /// discovery and log a warning.
     async fn reload_config(&self) {
         let workspace_root = self.workspace_root.read().await.clone();
+        let config_path = self.config_path.read().await.clone();
         let start_dir = workspace_root
             .as_deref()
             .unwrap_or_else(|| std::path::Path::new("."));
 
         let old_config = self.config.read().await.clone();
 
-        let new_config = match Config::load(None, start_dir) {
+        // Try explicit configPath first, fall back to discovery if it fails.
+        let new_config = match Config::load(config_path.as_deref(), start_dir) {
             Ok(c) => {
                 if let Some(from) = &c.loaded_from {
                     tracing::info!(path = %from.display(), "reloaded config");
@@ -887,6 +899,27 @@ impl LspBackend {
                     tracing::info!("reloaded defaults (no config file found)");
                 }
                 c
+            }
+            Err(e) if config_path.is_some() => {
+                // Explicit path failed — fall back to discovery.
+                tracing::warn!(
+                    path = ?config_path,
+                    error = %e,
+                    "explicit configPath failed, falling back to discovery"
+                );
+                match Config::load(None, start_dir) {
+                    Ok(c) => c,
+                    Err(e2) => {
+                        tracing::warn!("fallback config load also failed: {e2}");
+                        self.client
+                            .log_message(
+                                MessageType::WARNING,
+                                format!("actup: failed to reload config: {e2}"),
+                            )
+                            .await;
+                        return;
+                    }
+                }
             }
             Err(e) => {
                 tracing::warn!("failed to reload config: {e}");
@@ -1001,16 +1034,32 @@ fn config_file_watchers() -> Vec<FileSystemWatcher> {
 /// Returns `true` if two configs differ in ways that affect diagnostic output.
 ///
 /// Compares policy-relevant fields: update policy, ref style, branch policy,
-/// prerelease setting, ignore list, and per-action overrides. Changes to
-/// cache settings or host config don't directly affect diagnostics (though
-/// host config changes are handled by provider rebuild).
+/// prerelease setting, ignore list, per-action overrides, default host, and
+/// host configuration. Host changes affect provider resolution which changes
+/// what versions are fetched and thus which diagnostics are emitted.
 fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
     old.update_policy != new.update_policy
         || old.ref_style != new.ref_style
         || old.branch_policy != new.branch_policy
         || old.allow_prerelease != new.allow_prerelease
         || old.ignore != new.ignore
+        || old.default_host != new.default_host
+        || hosts_differ(&old.hosts, &new.hosts)
         || action_overrides_differ(&old.action_overrides, &new.action_overrides)
+}
+
+/// Compare host config maps by serialized form since [`HostConfig`] may
+/// not implement `PartialEq`.
+fn hosts_differ(
+    old: &std::collections::HashMap<String, actup_core::HostConfig>,
+    new: &std::collections::HashMap<String, actup_core::HostConfig>,
+) -> bool {
+    if old.len() != new.len() {
+        return true;
+    }
+    let old_json = serde_json::to_string(old).unwrap_or_default();
+    let new_json = serde_json::to_string(new).unwrap_or_default();
+    old_json != new_json
 }
 
 /// Compare action override maps by serialized form since [`ActionOverride`]

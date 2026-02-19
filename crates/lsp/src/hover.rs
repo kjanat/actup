@@ -92,6 +92,8 @@ fn find_action_at_position(text: &str, position: Position) -> Option<LocatedActi
         }
 
         // Check if cursor is within the value range.
+        // LSP positions use UTF-16 code units, but `uses:` values are
+        // ASCII-only (`owner/repo@ref`), so byte offsets == UTF-16 offsets.
         let value_range = loc.value_range();
         #[allow(clippy::cast_possible_truncation)]
         let col_start = value_range.start as u32;

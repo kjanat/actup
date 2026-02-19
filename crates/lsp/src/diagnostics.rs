@@ -72,6 +72,9 @@ fn extract_located_actions(text: &str) -> Vec<LocatedAction> {
             Ok(Some(action_ref)) => {
                 // ref_range gives byte range of just the ref after @; fall back to full value.
                 // Truncation is safe: YAML lines are bounded well within u32::MAX.
+                //
+                // LSP positions use UTF-16 code units, but `uses:` values are
+                // ASCII-only (`owner/repo@ref`), so byte offsets == UTF-16 offsets.
                 #[allow(clippy::cast_possible_truncation)]
                 let (col_start, col_end) = loc.ref_range().map_or_else(
                     || {
@@ -249,6 +252,9 @@ fn status_to_diagnostic(
 pub struct DiagnosticResult {
     /// LSP diagnostics to publish for the document.
     pub diagnostics: Vec<Diagnostic>,
+    /// Total number of `uses:` action refs checked (including up-to-date/ignored
+    /// refs that don't produce diagnostics). Used for accurate progress reporting.
+    pub refs_checked: usize,
     /// Environment errors encountered during version fetching.
     pub errors: DiagnosticErrors,
 }
@@ -273,6 +279,7 @@ pub async fn compute_diagnostics(
     if actions.is_empty() {
         return DiagnosticResult {
             diagnostics: Vec::new(),
+            refs_checked: 0,
             errors: DiagnosticErrors::default(),
         };
     }
@@ -338,6 +345,7 @@ pub async fn compute_diagnostics(
 
     DiagnosticResult {
         diagnostics,
+        refs_checked: actions.len(),
         errors,
     }
 }

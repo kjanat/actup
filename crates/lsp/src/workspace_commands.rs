@@ -69,7 +69,9 @@ impl Default for Cancelled {
 pub struct FixAllResult {
     /// The workspace edit to apply (may span multiple files).
     pub edit: WorkspaceEdit,
-    /// Number of files scanned.
+    /// Total number of discovered workflow/action files.
+    pub total_files: usize,
+    /// Number of files scanned (may be less than `total_files` if cancelled).
     pub files_scanned: usize,
     /// Number of files with edits.
     pub files_changed: usize,
@@ -88,6 +90,7 @@ impl FixAllResult {
     fn empty() -> Self {
         Self {
             edit: WorkspaceEdit::default(),
+            total_files: 0,
             files_scanned: 0,
             files_changed: 0,
             refs_updated: 0,
@@ -102,7 +105,7 @@ impl FixAllResult {
         if self.cancelled {
             format!(
                 "Cancelled ({}/{} files, {} actions checked)",
-                self.files_scanned, self.files_scanned, self.actions_checked,
+                self.files_scanned, self.total_files, self.actions_checked,
             )
         } else {
             format!(
@@ -191,7 +194,7 @@ async fn process_file(
     };
 
     let result = diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache).await;
-    let actions_checked = result.diagnostics.len();
+    let actions_checked = result.refs_checked;
     let edits = edits_from_diagnostics(&result.diagnostics);
 
     let result_edits = if edits.is_empty() {
@@ -310,6 +313,7 @@ async fn scan_files(
             let files_changed = all_changes.len();
             return FixAllResult {
                 edit: build_workspace_edit(all_changes),
+                total_files: file_count,
                 files_scanned: files_completed,
                 files_changed,
                 refs_updated: total_refs,
@@ -350,6 +354,7 @@ async fn scan_files(
     let files_changed = all_changes.len();
     FixAllResult {
         edit: build_workspace_edit(all_changes),
+        total_files: file_count,
         files_scanned: file_count,
         files_changed,
         refs_updated: total_refs,
@@ -445,6 +450,7 @@ mod tests {
     fn fix_all_result_default_is_empty() {
         let result = FixAllResult {
             edit: WorkspaceEdit::default(),
+            total_files: 0,
             files_scanned: 0,
             files_changed: 0,
             refs_updated: 0,
@@ -544,6 +550,7 @@ mod tests {
     fn fix_all_result_tracks_actions_checked() {
         let result = FixAllResult {
             edit: WorkspaceEdit::default(),
+            total_files: 5,
             files_scanned: 5,
             files_changed: 2,
             refs_updated: 3,
@@ -558,6 +565,7 @@ mod tests {
     fn fix_all_result_tracks_cancelled() {
         let result = FixAllResult {
             edit: WorkspaceEdit::default(),
+            total_files: 5,
             files_scanned: 3,
             files_changed: 1,
             refs_updated: 1,
@@ -573,6 +581,7 @@ mod tests {
     fn fix_all_result_summary_normal() {
         let result = FixAllResult {
             edit: WorkspaceEdit::default(),
+            total_files: 5,
             files_scanned: 5,
             files_changed: 2,
             refs_updated: 3,
@@ -591,6 +600,7 @@ mod tests {
     fn fix_all_result_summary_cancelled() {
         let result = FixAllResult {
             edit: WorkspaceEdit::default(),
+            total_files: 10,
             files_scanned: 2,
             files_changed: 0,
             refs_updated: 0,
@@ -600,6 +610,7 @@ mod tests {
         };
         let summary = result.summary();
         assert!(summary.contains("Cancelled"));
+        assert!(summary.contains("2/10 files"));
         assert!(summary.contains("5 actions checked"));
     }
 

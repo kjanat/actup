@@ -34,16 +34,24 @@ pub fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
 }
 
 /// Build an `Outdated` diagnostic with embedded [`DiagnosticData`].
+///
+/// The message is derived from `uses_value` and `target_ref` to match
+/// production output format rather than hardcoding values.
 pub fn make_outdated_diagnostic(range: Range, uses_value: &str, target_ref: &str) -> Diagnostic {
     let data = DiagnosticData::Outdated {
         target_ref: target_ref.into(),
     };
+    // Extract current ref from uses_value (after @) for realistic messages.
+    let current = uses_value.rsplit_once('@').map_or("unknown", |(_, r)| r);
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::WARNING),
         code: Some(NumberOrString::String("outdated".into())),
         source: Some(DIAGNOSTIC_SOURCE.into()),
-        message: format!("{uses_value}: v1.0.0 -> {target_ref} (abc1234)"),
+        message: format!(
+            "{uses_value}: {current} -> {target_ref} ({})",
+            &DUMMY_SHA[..7],
+        ),
         data: serde_json::to_value(data).ok(),
         ..Default::default()
     }
@@ -68,16 +76,13 @@ pub fn make_unresolvable_diagnostic(range: Range, suggested: Option<&str>) -> Di
 /// Build a `Pinned` diagnostic (no embedded data — pinned refs have no code action).
 pub fn make_pinned_diagnostic(range: Range, sha: &str, tag: Option<&str>) -> Diagnostic {
     let tag_info = tag.map_or_else(|| "unknown version".into(), |t| format!("= {t}"));
+    let short_sha = sha.get(..7).unwrap_or(sha);
     Diagnostic {
         range,
         severity: Some(DiagnosticSeverity::HINT),
         code: Some(NumberOrString::String("pinned".into())),
         source: Some(DIAGNOSTIC_SOURCE.into()),
-        message: format!(
-            "owner/repo@{}: pinned to {} ({tag_info})",
-            &sha[..7],
-            &sha[..7],
-        ),
+        message: format!("owner/repo@{short_sha}: pinned to {short_sha} ({tag_info})",),
         ..Default::default()
     }
 }
@@ -217,6 +222,9 @@ pub fn simple_version_set(version_str: &str, sha: &str) -> version::Set {
 }
 
 /// Clone a `CoreError` (errors don't impl Clone, so we reconstruct).
+///
+/// Uses exhaustive matching so new variants cause a compile error here
+/// rather than silently falling through to a catch-all.
 fn clone_core_error(e: &CoreError) -> CoreError {
     match e {
         CoreError::RateLimited {
@@ -244,9 +252,36 @@ fn clone_core_error(e: &CoreError) -> CoreError {
             repo: repo.clone(),
             host: host.clone(),
         },
-        _ => CoreError::Network {
-            operation: "test".into(),
-            message: e.to_string(),
+        CoreError::InvalidRef { input, reason } => CoreError::InvalidRef {
+            input: input.clone(),
+            reason: reason.clone(),
+        },
+        CoreError::InvalidConfig { path, reason } => CoreError::InvalidConfig {
+            path: path.clone(),
+            reason: reason.clone(),
+        },
+        CoreError::YamlParse { path, reason } => CoreError::YamlParse {
+            path: path.clone(),
+            reason: reason.clone(),
+        },
+        CoreError::RefNotFound {
+            owner,
+            repo,
+            ref_name,
+            host,
+        } => CoreError::RefNotFound {
+            owner: owner.clone(),
+            repo: repo.clone(),
+            ref_name: ref_name.clone(),
+            host: host.clone(),
+        },
+        CoreError::Cache { operation, reason } => CoreError::Cache {
+            operation: operation.clone(),
+            reason: reason.clone(),
+        },
+        CoreError::Internal { context, message } => CoreError::Internal {
+            context: context.clone(),
+            message: message.clone(),
         },
     }
 }
