@@ -56,15 +56,19 @@ impl FileCache {
 
     /// Convert a cache key to a filesystem path.
     ///
-    /// Uses hex-encoded SHA-256 of the key to avoid collisions that
-    /// `sanitize_filename` can cause (e.g. `a::b/c` and `a__b_c` mapping
-    /// to the same sanitized filename). The hash is deterministic and
-    /// filesystem-safe on all platforms.
+    /// Uses FNV-1a (64-bit) which is deterministic across processes/runs,
+    /// unlike `DefaultHasher` (`SipHash` with per-process random seed).
+    /// The hex-encoded hash avoids filename collisions that `sanitize_filename`
+    /// can cause (e.g. `a::b/c` and `a__b_c` mapping to the same name).
     fn key_to_path(&self, key: &str) -> PathBuf {
-        use std::hash::{DefaultHasher, Hash, Hasher};
-        let mut hasher = DefaultHasher::new();
-        key.hash(&mut hasher);
-        let hash = hasher.finish();
+        // FNV-1a 64-bit: deterministic, no dependencies.
+        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+        const FNV_PRIME: u64 = 0x0100_0000_01b3;
+        let mut hash = FNV_OFFSET;
+        for byte in key.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(FNV_PRIME);
+        }
         self.cache_dir.join(format!("{hash:016x}.json"))
     }
 

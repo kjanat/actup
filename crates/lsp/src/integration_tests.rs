@@ -322,9 +322,7 @@ async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMe
     }
 }
 
-// ---------------------------------------------------------------------------
 // Protocol tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn initialize_returns_capabilities() {
@@ -590,9 +588,7 @@ async fn full_lifecycle_open_change_close() {
     harness.shutdown().await;
 }
 
-// ---------------------------------------------------------------------------
 // Hover protocol tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn hover_on_uses_line_returns_response() {
@@ -678,9 +674,7 @@ async fn hover_without_open_document_returns_null() {
     harness.shutdown().await;
 }
 
-// ---------------------------------------------------------------------------
 // Completion protocol tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn completion_on_uses_line_returns_response() {
@@ -769,9 +763,7 @@ async fn completion_without_open_document_returns_null() {
     harness.shutdown().await;
 }
 
-// ---------------------------------------------------------------------------
 // executeCommand protocol tests
-// ---------------------------------------------------------------------------
 
 #[tokio::test]
 async fn execute_command_fix_all_returns_response() {
@@ -827,9 +819,7 @@ async fn execute_command_unknown_command_returns_null() {
     harness.shutdown().await;
 }
 
-// ---------------------------------------------------------------------------
 // Snapshot tests: YAML before/after edits
-// ---------------------------------------------------------------------------
 
 #[test]
 fn snapshot_yaml_edit_preserves_formatting() {

@@ -187,6 +187,8 @@ async fn process_file(
     }
 
     let Some(uri) = Uri::from_file_path(path) else {
+        tracing::warn!(path = %rel, "failed to convert path to URI");
+        failures.push((rel, "failed to convert path to URI".into()));
         return FileOutcome {
             edits: None,
             actions_checked: 0,
