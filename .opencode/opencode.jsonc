@@ -11,12 +11,10 @@
 		},
 	},
 	"lsp": {
-		"gh-actions": {
-			"command": ["bunx", "gh-actions-language-server", "--stdio"],
+		"actup": {
+			"command": ["cargo", "run", "--bin=actup-lsp", "--manifest-path=crates/lsp/Cargo.toml"],
 			"extensions": [".yaml", ".yml"],
-			"disabled": true,
-			"initialization": { "sessionToken": "${env:GITHUB_TOKEN}" },
+			"disabled": false,
 		},
 	},
-	// "mcp": { "serena": { "enabled": false } }
 }
