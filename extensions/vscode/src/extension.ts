@@ -2,12 +2,12 @@ import * as vscode from "vscode";
 import { type Executable, LanguageClient, type LanguageClientOptions, type ServerOptions, TransportKind } from "vscode-languageclient/node";
 
 let client: LanguageClient | undefined;
-let outputChannel: vscode.OutputChannel;
+let outputChannel: vscode.LogOutputChannel;
 
 export async function activate(
 	context: vscode.ExtensionContext,
 ): Promise<void> {
-	outputChannel = vscode.window.createOutputChannel("actup");
+	outputChannel = vscode.window.createOutputChannel("actup", { log: true });
 
 	context.subscriptions.push(
 		vscode.commands.registerCommand("actup.fixAllInWorkspace", fixAll),
@@ -79,10 +79,10 @@ async function startClient(): Promise<void> {
 	);
 	try {
 		await client.start();
-		outputChannel.appendLine(`actup-lsp started (${command})`);
+		outputChannel.info(`actup-lsp started (${command})`);
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		outputChannel.appendLine(`Failed to start actup-lsp: ${message}`);
+		outputChannel.error(`Failed to start actup-lsp: ${message}`);
 		void vscode.window.showErrorMessage(
 			"actup: Failed to start language server. Is 'actup-lsp' installed? See output for details.",
 		);
@@ -98,7 +98,7 @@ async function stopClient(): Promise<void> {
 }
 
 async function restartServer(): Promise<void> {
-	outputChannel.appendLine("Restarting actup-lsp...");
+	outputChannel.info("Restarting actup-lsp...");
 	await stopClient();
 	await startClient();
 }
@@ -110,12 +110,12 @@ async function fixAll(): Promise<void> {
 	}
 	try {
 		await client.sendRequest("workspace/executeCommand", {
-			command: "actup.fixAllInWorkspace",
+			command: "actup-lsp/fixAllInWorkspace",
 			arguments: [],
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
-		outputChannel.appendLine(`actup.fixAllInWorkspace failed: ${message}`);
+		outputChannel.error(`actup-lsp/fixAllInWorkspace failed: ${message}`);
 		void vscode.window.showErrorMessage("actup: Fix all failed. See output for details.");
 	}
 }
