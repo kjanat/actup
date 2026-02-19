@@ -28,7 +28,7 @@
 			"description": "Integrate with actup-core config system. Done when:\n- On initialized, find workspace root from InitializeParams\n- Call find_repo_config to load actup.toml\n- Store resolved Config in backend state\n- Config respects update_policy, ignore_actions, pin_to\n- LSP initializationOptions can override config path",
 			"depends": ["document-state"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "provider-setup",

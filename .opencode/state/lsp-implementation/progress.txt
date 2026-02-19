@@ -33,6 +33,14 @@ Started: 2026-02-19
 - `InitializeResult` has only 2 non-feature-gated fields: `capabilities` + `server_info`
 - Tracing must write to stderr (stdout is the LSP transport)
 - `Uri` has no `Display` — use `uri.as_str()` in tracing fields, not `%uri`
+- `Uri::to_file_path()` returns `Option<Cow<'_, Path>>` — call `.into_owned()` for `PathBuf`
+- `Uri::from_file_path(path)` returns `Option<Uri>` — useful in tests
+
+### Config Loading
+- `Config::load(config_path, start_dir)` — layered (env > explicit > repo > user > defaults)
+- `Config::discover(start_dir)` — never fails, convenience wrapper
+- `config.policy_for(owner, repo)` / `config.should_ignore(owner, repo, ref_str)` for per-action queries
+- Use `tokio::sync::RwLock<Config>` for async-safe interior mutability (future config reload)
 
 ---
 
@@ -61,3 +69,15 @@ Started: 2026-02-19
 - 3 unit tests for `has_uses_keyword` and `DocumentState` initialization
 - Files changed: `crates/lsp/src/backend.rs`
 - **Learnings:** `ls_types::Uri` has no `Display` impl — use `uri.as_str()` for tracing fields (not `%uri`); `Uri` derefs to `fluent_uri::Uri<String>`
+
+## Task - config-loading
+
+- Added `actup-core`, `serde`, `serde_json` deps to `crates/lsp/Cargo.toml`
+- `LspBackend` now has `workspace_root: RwLock<Option<PathBuf>>` and `config: RwLock<Config>`
+- `extract_workspace_root()` extracts path from `InitializeParams` (workspace_folders > root_uri > root_path)
+- `extract_config_path()` parses `initializationOptions.configPath` for explicit override
+- `initialize` handler: loads config via `Config::load(config_path, start_dir)`, falls back to defaults on error
+- `initialized` handler: logs active policy + ignored pattern count via client notification
+- 5 new unit tests for workspace root extraction and config path extraction
+- Files changed: `crates/lsp/Cargo.toml`, `crates/lsp/src/backend.rs`
+- **Learnings:** `Uri::to_file_path()` returns `Option<Cow<'_, Path>>` (need `.into_owned()`); Rust 2024 edition supports let-chains in if-let for collapsible-if; `Config::discover()` is a convenience wrapper around `Config::load()` that never fails

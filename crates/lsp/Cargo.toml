@@ -13,7 +13,10 @@ name = "actup-lsp"
 path = "src/main.rs"
 
 [dependencies]
+actup-core         = { workspace = true }  # Core config + resolution engine
 dashmap            = { workspace = true }  # Concurrent document state
+serde              = { workspace = true }  # initializationOptions deserialization
+serde_json         = { workspace = true }  # initializationOptions parsing
 tokio              = { workspace = true }  # Async runtime
 tower-lsp-server   = { workspace = true }  # LSP framework
 tracing            = { workspace = true }  # Logging
