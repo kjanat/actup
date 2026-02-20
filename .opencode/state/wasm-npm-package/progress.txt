@@ -26,6 +26,7 @@ Started: 2026-02-20
 - npm: unscoped `actup-wasm` (not @actup/wasm)
 - wasm-opt -O2 stripped, .js.map shipped, no DWARF
 
+- npm package pattern: `packages/actup-wasm/` uses `--target web` wasm-pack output in `wasm/` subdir; TS wrapper in `src/` compiled to `dist/`; `initSync({ module })` for Node, `init()` for browser
 - Clock trait pattern: `_with_clock` variants keep existing API stable; `&dyn Clock` param, not generic
 - `Clock: fmt::Debug + MaybeSend + MaybeSync` — Debug required for structs that derive Debug (e.g. GraphQLClient)
 - `compat.rs` pattern: `MaybeSend`, `MaybeSync` trait aliases + `BoxFuture` type alias — all cfg-gated on `target_arch = "wasm32"`
@@ -106,3 +107,20 @@ Started: 2026-02-20
 - WASM bundle: 285KB raw / 119KB gzipped (was 36KB/17KB — grew due to full resolution + config logic)
 - Files changed: `crates/wasm/src/bridge.rs` (new), `crates/wasm/src/lib.rs` (updated), `crates/wasm/Cargo.toml` (updated), `crates/wasm/tests/node_check.mjs` (new), `Cargo.toml` (updated)
 - **Learnings:** wasm_bindgen extern `Result<JsValue, JsValue>` must use `std::result::Result` explicitly when `actup_core::Result` is in scope; `actup_core::Error::Internal` has both `context` and `message` fields; JS errors from providers map to `Error::Network` since they're environment errors; `check_action_remote` handles the full pipeline (provider lookup + version fetch + check_action + fallback); default Config `update_policy` is Patch but test showed major updates — `check_action` treats major-only refs (v3) specially, comparing against `latest_per_major` and finding a newer major
+
+## Task - npm-package
+
+- Created `packages/actup-wasm/` npm package with full TypeScript wrapper
+- `package.json`: ESM-only (`"type": "module"`), `exports` field, `files: ["dist/", "wasm/"]`
+- `tsconfig.json`: strict mode, `target: ES2022`, `moduleResolution: bundler`, `declarationMap + sourceMap`
+- `src/types.ts`: 15 TypeScript interfaces mirroring Rust serde types (UsesLocation, CheckResult, CheckStatus, UpdateEdit, ActupProvider, etc.)
+- `src/index.ts`: WASM loader + typed re-exports
+  - `initWasm()` — auto-detects Node.js vs browser: `initSync({ module })` for Node (readFileSync), `init()` for browser (fetch)
+  - `parseUsesRefs()`, `checkRefs()`, `planUpdates()` — typed wrappers over raw wasm-bindgen `any` returns
+  - Safe multi-call: `initWasm()` is idempotent, functions throw if not initialized
+- `scripts/build-wasm.sh`: wasm-pack `--target web`, removes generated package.json/.gitignore, reports size, fails if gzipped > 500KB
+- Node.js integration test (`tests/node_import.mjs`): verifies initWasm, parseUsesRefs, checkRefs with mock provider, planUpdates, empty input, double-init
+- npm pack: 136KB packed, 336KB unpacked, 13 files
+- WASM: 285KB raw / 119KB gzipped (well under 500KB budget)
+- Files changed: `packages/actup-wasm/package.json` (new), `tsconfig.json` (new), `src/index.ts` (new), `src/types.ts` (new), `scripts/build-wasm.sh` (new), `.gitignore` (new), `tests/node_import.mjs` (new)
+- **Learnings:** wasm-pack `--target web` generates `init()` (async, fetch-based) + `initSync({ module })` (sync, buffer-based) — object form avoids deprecation warning; `import.meta.url` resolves to `dist/index.js` at runtime so `../wasm/` reaches the wasm dir; `readFileSync` + `new Uint8Array()` is the cleanest Node.js WASM loading pattern; `extract_uses_from_yaml` returns 1-indexed lines (line 7 for 7th line); DOM + @types/node both needed in tsconfig for cross-platform types (URL, Response, BufferSource, node:fs)

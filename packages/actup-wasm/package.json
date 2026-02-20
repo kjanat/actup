@@ -1,0 +1,56 @@
+{
+	"name": "actup-wasm",
+	"version": "0.1.0",
+	"description": "Parse and check GitHub Actions uses: refs — powered by actup-core compiled to WASM",
+	"keywords": [
+		"github-actions",
+		"wasm",
+		"yaml",
+		"linter",
+		"checker",
+		"updater"
+	],
+	"homepage": "https://github.com/kjanat/actup-v2#readme",
+	"bugs": {
+		"url": "https://github.com/kjanat/actup-v2/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/kjanat/actup-v2",
+		"directory": "packages/actup-wasm"
+	},
+	"license": "MIT OR Apache-2.0",
+	"sideEffects": false,
+	"type": "module",
+	"exports": {
+		".": {
+			"import": {
+				"types": "./dist/index.d.ts",
+				"default": "./dist/index.js"
+			}
+		}
+	},
+	"main": "./dist/index.js",
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": [
+		"dist/",
+		"wasm/"
+	],
+	"scripts": {
+		"build": "bun run build:wasm && bun run build:ts",
+		"build:ts": "tsc",
+		"build:wasm": "bash scripts/build-wasm.sh",
+		"clean": "rm -rf dist/ wasm/",
+		"test": "node --experimental-vm-modules dist/test.js",
+		"typecheck": "tsc --noEmit"
+	},
+	"devDependencies": {
+		"@types/node": ">=18,<25",
+		"typescript": "^5.9.3"
+	},
+	"packageManager": "bun@1.3.9",
+	"engines": {
+		"node": ">=18"
+	}
+}

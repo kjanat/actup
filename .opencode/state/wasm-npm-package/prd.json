@@ -55,7 +55,7 @@
 			"description": "Create packages/actup-wasm/ with: package.json (name: actup-wasm), tsconfig, build script (wasm-pack build + tsc). src/index.ts re-exports wasm-bindgen generated bindings with proper TS types (UsesLocation, CheckResult, UpdateEdit, ActupProvider, ActupConfig interfaces). WASM loader that works in Node.js 18+ and browser. wasm-opt -O2 in build pipeline. .js.map included, no DWARF in .wasm. Done when: npm pack produces installable tarball, import { parseUsesRefs } from 'actup-wasm' works in Node.js.",
 			"depends": ["js-provider-bridge"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "fetch-github-provider",
