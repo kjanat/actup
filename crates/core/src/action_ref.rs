@@ -6,13 +6,14 @@
 //! - `host/owner/repo@ref` (explicit host for enterprise/self-hosted)
 //! - `./path` (local, not handled for version checks)
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// A parsed action reference from a `uses:` statement
 ///
 /// This is provider-neutral - it captures the structure without
 /// assuming any particular git hosting platform.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActionRef {
     /// Optional explicit host (e.g., "github.com", "ghe.mycorp.internal")
     /// If None, uses the default provider's host
@@ -161,7 +162,7 @@ impl fmt::Display for ActionRef {
 /// Identifies an action repository (without the ref/version)
 ///
 /// Used as a cache key and for provider lookups.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ActionRepoId {
     /// Optional explicit host
     host: Option<String>,
@@ -255,6 +256,7 @@ impl fmt::Display for ActionRepoId {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -465,5 +467,40 @@ mod tests {
 
         let with_host = ActionRepoId::new(Some("ghe.corp.com".to_string()), "org", "action", None);
         assert_eq!(format!("{with_host}"), "ghe.corp.com/org/action");
+    }
+
+    #[test]
+    fn test_action_ref_serde_round_trip() {
+        let action = ActionRef::new(
+            Some("github.com".to_string()),
+            "actions",
+            "checkout",
+            Some(".github/workflows/ci.yml".to_string()),
+            "v4.1.0",
+        );
+        let json = serde_json::to_string(&action).unwrap();
+        let deserialized: ActionRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, deserialized);
+    }
+
+    #[test]
+    fn test_action_ref_serde_round_trip_minimal() {
+        let action = ActionRef::new(None, "owner", "repo", None, "main");
+        let json = serde_json::to_string(&action).unwrap();
+        let deserialized: ActionRef = serde_json::from_str(&json).unwrap();
+        assert_eq!(action, deserialized);
+    }
+
+    #[test]
+    fn test_action_repo_id_serde_round_trip() {
+        let id = ActionRepoId::new(
+            Some("ghe.corp.com".to_string()),
+            "org",
+            "action",
+            Some("sub/path".to_string()),
+        );
+        let json = serde_json::to_string(&id).unwrap();
+        let deserialized: ActionRepoId = serde_json::from_str(&json).unwrap();
+        assert_eq!(id, deserialized);
     }
 }

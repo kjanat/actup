@@ -40,3 +40,17 @@ Started: 2026-02-20
 - 4 new tests: `system_clock_returns_recent_time`, `fixed_clock_returns_injected_time`, `cache_entry_with_fixed_clock`, `version_set_build_with_fixed_clock`
 - Files changed: `clock.rs` (new), `lib.rs`, `cache.rs`, `version.rs`, `graphql.rs`
 - **Learnings:** `clippy::module_name_repetitions` triggers on `SystemClock` in `clock` module; suppressed with allow attr since it's re-exported at crate root
+
+## Task - serde-bridge-types
+
+- Added `Serialize, Deserialize` derives to all WASM↔JS bridge types:
+  - `ActionRef`, `ActionRepoId` (action_ref.rs)
+  - `CheckResult`, `CheckStatus` (resolution.rs)
+  - `UsesLocation` (parser.rs)
+  - `ActionYml`, `ActionInput`, `ActionOutput`, `ActionRuns`, `ActionStep` (provider.rs)
+  - `provider::Kind`, `provider::Sha40` (provider.rs)
+- Added `#[serde(skip)]` on `version::Set::fetched_at` — `SystemTime` is platform-dependent, deserializes as `None`
+- Added `#[allow(clippy::unwrap_used)]` to `action_ref::tests` module (was missing, needed for serde test unwraps)
+- 16 new round-trip serde_json tests across 5 files covering all bridge types + all `CheckStatus` variants + all `Version` variants
+- Files changed: `action_ref.rs`, `resolution.rs`, `parser.rs`, `provider.rs`, `version.rs`
+- **Learnings:** `action_ref::tests` was the only test module in actup-core missing `#[allow(clippy::unwrap_used)]`; `serde_json` works as extern crate in test modules from dev-deps automatically; `Arc<T>` serialization works via workspace's `serde = { features = ["rc"] }`

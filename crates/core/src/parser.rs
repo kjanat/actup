@@ -173,7 +173,7 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
 }
 
 /// Location of a `uses:` value in a file
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct UsesLocation {
     /// Line number (1-indexed)
     line: usize,
@@ -321,5 +321,18 @@ jobs:
         assert_eq!(locations[0].value, "actions/checkout@v4");
         assert_eq!(locations[1].value, "actions/setup-node@v3");
         assert_eq!(locations[2].value, "./local/action");
+    }
+
+    #[test]
+    fn test_uses_location_serde_round_trip() {
+        let loc = UsesLocation::new(
+            10,
+            15,
+            "actions/checkout@v4".to_string(),
+            "      uses: actions/checkout@v4".to_string(),
+        );
+        let json = serde_json::to_string(&loc).unwrap();
+        let deserialized: UsesLocation = serde_json::from_str(&json).unwrap();
+        assert_eq!(loc, deserialized);
     }
 }

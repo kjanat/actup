@@ -293,7 +293,8 @@ pub struct Set {
     /// Default branch info
     default_branch: Option<BranchInfo>,
 
-    /// When this data was fetched
+    /// When this data was fetched (skipped in serialization — platform-dependent)
+    #[serde(skip)]
     fetched_at: Option<std::time::SystemTime>,
 }
 
@@ -966,5 +967,80 @@ mod tests {
         assert_eq!(vs.major_tags().len(), 2);
         assert!(vs.major_tags().contains_key(&1));
         assert!(vs.major_tags().contains_key(&2));
+    }
+
+    #[test]
+    fn test_version_set_serde_round_trip() {
+        let v1 = Arc::new(Info::new(Version::parse("v1.0.0"), "aaa"));
+        let v2 = Arc::new(Info::new(Version::parse("v2.0.0"), "bbb"));
+        let mut latest_per_major = std::collections::HashMap::new();
+        latest_per_major.insert(1, Arc::clone(&v1));
+        latest_per_major.insert(2, Arc::clone(&v2));
+        let mut major_tags = std::collections::HashMap::new();
+        major_tags.insert(2, Arc::clone(&v2));
+        let branch = BranchInfo::new("main", "ccc");
+
+        let set = Set::build_with_clock(
+            vec![Arc::clone(&v1), Arc::clone(&v2)],
+            latest_per_major,
+            major_tags,
+            Some(Arc::clone(&v2)),
+            &crate::clock::SystemClock,
+        )
+        .with_default_branch(branch);
+
+        let json = serde_json::to_string(&set).unwrap();
+        let deserialized: Set = serde_json::from_str(&json).unwrap();
+
+        // Data fields round-trip
+        assert_eq!(deserialized.semver_tags().len(), 2);
+        assert_eq!(deserialized.latest_per_major().len(), 2);
+        assert_eq!(deserialized.major_tags().len(), 1);
+        assert!(deserialized.latest().is_some());
+        assert!(deserialized.default_branch().is_some());
+
+        // fetched_at is skipped — should be None after deserialization
+        assert!(
+            deserialized.fetched_at().is_none(),
+            "fetched_at should be None after deserialization (serde skip)"
+        );
+    }
+
+    #[test]
+    fn test_version_info_serde_round_trip() {
+        let info = Info::new(Version::parse("v1.2.3"), "abc123");
+        let json = serde_json::to_string(&info).unwrap();
+        let deserialized: Info = serde_json::from_str(&json).unwrap();
+        assert_eq!(info, deserialized);
+    }
+
+    #[test]
+    fn test_version_serde_round_trip_all_variants() {
+        let versions = [
+            Version::parse("v1.2.3"),
+            Version::parse("v1"),
+            Version::parse("v1.2"),
+            Version::parse("1.2.3-beta.1"),
+            Version::parse("abc123def456abc123def456abc123def456abcd"),
+            Version::parse("main"),
+            Version::parse("nightly"),
+        ];
+        for version in &versions {
+            let json = serde_json::to_string(version).unwrap();
+            let deserialized: Version = serde_json::from_str(&json).unwrap();
+            assert_eq!(
+                version.to_string(),
+                deserialized.to_string(),
+                "round-trip failed for {version}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_branch_info_serde_round_trip() {
+        let branch = BranchInfo::new("develop", "def456");
+        let json = serde_json::to_string(&branch).unwrap();
+        let deserialized: BranchInfo = serde_json::from_str(&json).unwrap();
+        assert_eq!(branch, deserialized);
     }
 }

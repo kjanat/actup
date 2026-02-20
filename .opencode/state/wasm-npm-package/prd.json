@@ -19,7 +19,7 @@
 			"description": "Verify Serialize/Deserialize on all types crossing WASM↔JS: CheckResult, CheckStatus, UsesLocation, ActionRef, version::Set, ActionYml. Add #[serde(skip)] on fetched_at: SystemTime in version::Set. Test round-trip via serde_json. Done when: all bridge types serialize/deserialize without panic, fetched_at is skipped.",
 			"depends": [],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "maybe-send",

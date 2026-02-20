@@ -4,12 +4,13 @@
 //! different git hosting platforms (GitHub, GitLab, Gitea, etc.).
 
 use crate::{ActionRepoId, Result, version};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
 
 /// Identifies the type of provider
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Kind {
     /// GitHub.com or GitHub Enterprise
     GitHub,
@@ -50,7 +51,7 @@ impl Kind {
 }
 
 /// A 40-character commit SHA
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Sha40(String);
 
 impl Sha40 {
@@ -78,7 +79,7 @@ impl fmt::Display for Sha40 {
 }
 
 /// Parsed action.yml content
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActionYml {
     /// Raw YAML content
     raw: String,
@@ -195,7 +196,7 @@ impl ActionYml {
 }
 
 /// An input parameter for an action
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActionInput {
     /// Description of the input
     description: Option<String>,
@@ -273,7 +274,7 @@ impl ActionInput {
 }
 
 /// An output value from an action
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActionOutput {
     /// Description of the output
     description: Option<String>,
@@ -319,7 +320,7 @@ impl ActionOutput {
 }
 
 /// How the action executes
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActionRuns {
     /// Runtime: "composite", "node24", "node22", "node20", "node16", "docker"
     using: String,
@@ -422,7 +423,7 @@ impl ActionRuns {
 }
 
 /// A step in a composite action
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ActionStep {
     /// Step name
     name: Option<String>,
@@ -885,5 +886,72 @@ mod tests {
         assert!(debug.contains("Registry"));
         assert!(debug.contains("github.com"));
         assert!(debug.contains("provider_count: 1"));
+    }
+
+    #[test]
+    fn test_kind_serde_round_trip() {
+        for kind in [
+            Kind::GitHub,
+            Kind::GitLab,
+            Kind::Gitea,
+            Kind::Bitbucket,
+            Kind::Local,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            let deserialized: Kind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, deserialized);
+        }
+    }
+
+    #[test]
+    fn test_sha40_serde_round_trip() {
+        let sha = Sha40::new("abc123def456abc123def456abc123def456abcd").unwrap();
+        let json = serde_json::to_string(&sha).unwrap();
+        let deserialized: Sha40 = serde_json::from_str(&json).unwrap();
+        assert_eq!(sha, deserialized);
+    }
+
+    #[test]
+    fn test_action_yml_serde_round_trip() {
+        let yml = ActionYml::new("raw: content")
+            .with_name("My Action")
+            .with_description("Does things")
+            .with_author("test")
+            .with_runs(ActionRuns::new("node20").with_main("index.js"));
+        let json = serde_json::to_string(&yml).unwrap();
+        let deserialized: ActionYml = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.name(), Some("My Action"));
+        assert_eq!(deserialized.description(), Some("Does things"));
+        assert_eq!(deserialized.author(), Some("test"));
+        assert_eq!(deserialized.raw(), "raw: content");
+        assert_eq!(deserialized.runs().unwrap().using(), "node20");
+        assert_eq!(deserialized.runs().unwrap().main(), Some("index.js"));
+    }
+
+    #[test]
+    fn test_action_yml_with_inputs_outputs_serde_round_trip() {
+        let mut inputs = std::collections::HashMap::new();
+        inputs.insert(
+            "token".to_string(),
+            ActionInput::new()
+                .with_description("GitHub token")
+                .with_required(true)
+                .with_default("${{ github.token }}"),
+        );
+        let mut outputs = std::collections::HashMap::new();
+        outputs.insert(
+            "result".to_string(),
+            ActionOutput::new()
+                .with_description("The result")
+                .with_value("steps.run.outputs.result"),
+        );
+        let yml = ActionYml::new("raw")
+            .with_inputs(inputs)
+            .with_outputs(outputs);
+        let json = serde_json::to_string(&yml).unwrap();
+        let deserialized: ActionYml = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.inputs().len(), 1);
+        assert!(deserialized.inputs()["token"].required());
+        assert_eq!(deserialized.outputs().len(), 1);
     }
 }

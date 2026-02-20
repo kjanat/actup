@@ -9,6 +9,7 @@ use crate::error::Error;
 use crate::policy;
 use crate::provider;
 use crate::version;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
 /// Reason string for unresolvable status when no versions are found.
@@ -18,7 +19,7 @@ use std::sync::Arc;
 pub const NO_VERSIONS_FOUND_REASON: &str = "no versions found";
 
 /// Result of checking a single action reference
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CheckResult {
     /// The action reference that was checked
     action_ref: ActionRef,
@@ -47,7 +48,7 @@ impl CheckResult {
 }
 
 /// Status of an action version check
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CheckStatus {
     /// Action is at the latest allowed version
     UpToDate,
@@ -787,5 +788,70 @@ mod tests {
             }
             other => panic!("Expected Outdated, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_check_result_serde_round_trip_up_to_date() {
+        let result = CheckResult::new(
+            make_action_ref("actions", "checkout", "v4.2.0"),
+            CheckStatus::UpToDate,
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deserialized);
+    }
+
+    #[test]
+    fn test_check_result_serde_round_trip_outdated() {
+        let target = Arc::new(make_version_info("v4.2.0", "abc123"));
+        let result = CheckResult::new(
+            make_action_ref("actions", "checkout", "v4.0.0"),
+            CheckStatus::Outdated {
+                current: "v4.0.0".to_string(),
+                target,
+            },
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deserialized);
+    }
+
+    #[test]
+    fn test_check_result_serde_round_trip_pinned() {
+        let result = CheckResult::new(
+            make_action_ref("actions", "checkout", "abc123"),
+            CheckStatus::Pinned {
+                sha: "abc123def456abc123def456abc123def456abcd".to_string(),
+                tag: Some("v4.0.0".to_string()),
+            },
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deserialized);
+    }
+
+    #[test]
+    fn test_check_result_serde_round_trip_unresolvable() {
+        let result = CheckResult::new(
+            make_action_ref("actions", "checkout", "nonexistent"),
+            CheckStatus::Unresolvable {
+                reason: "tag not found".to_string(),
+                is_environment_error: false,
+            },
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deserialized);
+    }
+
+    #[test]
+    fn test_check_result_serde_round_trip_ignored() {
+        let result = CheckResult::new(
+            make_action_ref("ignored", "action", "v1"),
+            CheckStatus::Ignored,
+        );
+        let json = serde_json::to_string(&result).unwrap();
+        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        assert_eq!(result, deserialized);
     }
 }
