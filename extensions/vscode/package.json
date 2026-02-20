@@ -111,11 +111,22 @@
   },
   "preview": true,
   "markdown": "github",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Read-only diagnostics work; update/fix commands are disabled.",
+      "restrictedConfigurations": [
+        "actup.server.path",
+        "actup.server.extraArgs"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Requires filesystem access to read workflow files. WASM support planned."
+    }
+  },
   "extensionKind": [
     "workspace"
-  ],
-  "extensionRecommendations": [
-    "github.vscode-github-actions"
   ],
   "pricing": "Free"
 }
