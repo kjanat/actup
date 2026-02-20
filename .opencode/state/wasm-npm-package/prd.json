@@ -82,7 +82,7 @@
 			"description": "Investigate embedding actup-core logic in Zed's wasm32-wasip2 extension instead of shelling out to native actup-lsp. May need separate build target (wasip2 vs unknown-unknown) or adapter layer. If feasible: implement WASI HTTP-based provider, wire into slash command and LSP initialization. If not feasible (target conflicts): document blockers, keep native shim. Done when: decision documented with evidence, implementation started if feasible.",
 			"depends": ["js-provider-bridge"],
 			"priority": "spike",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "wasm-mcp-server",

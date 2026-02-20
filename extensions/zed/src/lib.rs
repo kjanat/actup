@@ -1,11 +1,24 @@
 //! Zed editor extension for actup — provides LSP integration and the
-//! `/actions:update` slash command.
+//! `/actions:update` slash command with embedded actup-core WASM logic.
 
+mod provider;
+
+use actup_core::{
+    ActionRef, CheckResult, CheckStatus, Config, UsesLocation, extract_uses_from_yaml,
+};
+use std::fmt::Write as _;
 use zed_extension_api::{
     self as zed, SlashCommand, SlashCommandOutput, SlashCommandOutputSection, settings::LspSettings,
 };
 
-/// Zed extension entry point. Delegates to `actup-lsp` for language intelligence.
+/// Known workflow file paths to scan (relative to worktree root).
+const WORKFLOW_GLOBS: &[&str] = &[".github/workflows"];
+
+/// Known action file names.
+const ACTION_FILES: &[&str] = &["action.yml", "action.yaml"];
+
+/// Zed extension entry point. Delegates to `actup-lsp` for language intelligence
+/// and embeds actup-core for the `/actions:update` slash command.
 struct ActupExtension;
 
 impl zed::Extension for ActupExtension {
@@ -17,41 +30,10 @@ impl zed::Extension for ActupExtension {
         &self,
         command: SlashCommand,
         _args: Vec<String>,
-        _worktree: Option<&zed::Worktree>,
+        worktree: Option<&zed::Worktree>,
     ) -> Result<SlashCommandOutput, String> {
         match command.name.as_str() {
-            "actions:update" => {
-                let text = concat!(
-                    "Update all GitHub Actions `uses:` refs in this workspace ",
-                    "to their latest versions.\n",
-                    "\n",
-                    "Instructions:\n",
-                    "1. Find all workflow files ",
-                    "(`.github/workflows/**/*.yml`, `.github/workflows/**/*.yaml`) ",
-                    "and composite action files ",
-                    "(`action.yml`, `action.yaml`) in this workspace.\n",
-                    "2. For each `uses:` reference (e.g. `actions/checkout@v3`), ",
-                    "check if a newer version exists.\n",
-                    "3. Update outdated refs to the latest stable version, ",
-                    "respecting semver constraints.\n",
-                    "4. Support all configured providers: GitHub, GitLab, Gitea, ",
-                    "or any other host configured in `actup.toml`.\n",
-                    "5. Preserve YAML formatting, comments, and quoting style.\n",
-                    "6. If `actup` CLI is available, prefer running ",
-                    "`actup check` then `actup update` for accurate results.\n",
-                    "7. If `actup-lsp` is running, use its workspace diagnostics ",
-                    "and code actions instead.\n",
-                    "8. Summarize what was updated (old ref -> new ref) ",
-                    "for each file.\n",
-                );
-                Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: (0..text.len()).into(),
-                        label: "actup: Update Actions".to_string(),
-                    }],
-                    text: text.to_string(),
-                })
-            }
+            "actions:update" => run_actions_check(worktree),
             cmd => Err(format!("unknown slash command: \"{cmd}\"")),
         }
     }
@@ -112,3 +94,305 @@ impl zed::Extension for ActupExtension {
 }
 
 zed::register_extension!(ActupExtension);
+
+/// Run the `/actions:update` slash command using embedded actup-core.
+///
+/// Reads workflow files from the worktree, parses `uses:` refs,
+/// fetches version info via Zed's HTTP client, and returns a summary.
+fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOutput, String> {
+    let worktree = worktree.ok_or("no worktree available")?;
+
+    // Try to read actup config from the worktree
+    let config = read_config(worktree);
+
+    // Discover and read workflow files
+    let files = discover_workflow_files(worktree);
+    if files.is_empty() {
+        let text = "No workflow or action files found in this workspace.\n\
+                    Looked for `.github/workflows/*.yml` and `action.yml`.\n";
+        return Ok(SlashCommandOutput {
+            sections: vec![SlashCommandOutputSection {
+                range: (0..text.len()).into(),
+                label: "actup: No files found".to_string(),
+            }],
+            text: text.to_string(),
+        });
+    }
+
+    // Collect all uses refs across all files
+    let mut all_refs: Vec<(String, UsesLocation, ActionRef)> = Vec::new();
+    for (path, content) in &files {
+        let uses = extract_uses_from_yaml(content);
+        for u in uses {
+            // parse_uses returns Ok(None) for local refs (./path, docker://)
+            if let Ok(Some(parsed)) = actup_core::parse_uses(u.value()) {
+                all_refs.push((path.clone(), u, parsed));
+            }
+        }
+    }
+
+    if all_refs.is_empty() {
+        let text = format!(
+            "Found {} workflow file(s), but no remote `uses:` references.\n",
+            files.len()
+        );
+        return Ok(SlashCommandOutput {
+            sections: vec![SlashCommandOutputSection {
+                range: (0..text.len()).into(),
+                label: "actup: No refs found".to_string(),
+            }],
+            text,
+        });
+    }
+
+    // Deduplicate repos to minimize API calls
+    let mut unique_repos: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    for (_, _, action_ref) in &all_refs {
+        let key = format!("{}/{}", action_ref.owner(), action_ref.repo());
+        unique_repos.entry(key).or_insert_with(|| {
+            (
+                action_ref.owner().to_string(),
+                action_ref.repo().to_string(),
+            )
+        });
+    }
+
+    // Resolve GitHub token from shell environment
+    let shell_env = worktree.shell_env();
+    let token = shell_env
+        .iter()
+        .find(|(k, _)| k == "GITHUB_TOKEN")
+        .map(|(_, v)| v.as_str());
+
+    let api_base = "https://api.github.com";
+
+    // Fetch versions for each unique repo
+    let mut version_cache: std::collections::HashMap<String, actup_core::version::Set> =
+        std::collections::HashMap::new();
+    let mut fetch_errors: Vec<(String, String)> = Vec::new();
+
+    for (key, (owner, repo)) in &unique_repos {
+        match provider::fetch_version_set(owner, repo, token, api_base, 3) {
+            Ok(versions) => {
+                version_cache.insert(key.clone(), versions);
+            }
+            Err(e) => {
+                fetch_errors.push((key.clone(), e));
+            }
+        }
+    }
+
+    // Check each ref
+    let mut results: Vec<(String, UsesLocation, CheckResult)> = Vec::new();
+    for (path, uses_loc, action_ref) in &all_refs {
+        let key = format!("{}/{}", action_ref.owner(), action_ref.repo());
+        if let Some(versions) = version_cache.get(&key) {
+            let result = actup_core::check_action(action_ref, versions, &config);
+            results.push((path.clone(), uses_loc.clone(), result));
+        }
+    }
+
+    // Format output
+    let text = format_check_output(&results, &fetch_errors, files.len(), all_refs.len());
+
+    Ok(SlashCommandOutput {
+        sections: vec![SlashCommandOutputSection {
+            range: (0..text.len()).into(),
+            label: "actup: Check Results".to_string(),
+        }],
+        text,
+    })
+}
+
+/// Try to read actup config from the worktree.
+fn read_config(worktree: &zed::Worktree) -> Config {
+    for name in &["actup.toml", ".actup.toml", ".config/actup.toml"] {
+        if let Ok(content) = worktree.read_text_file(name) {
+            return parse_config(&content);
+        }
+    }
+    Config::default()
+}
+
+/// Minimal config parsing (only fields used in `check_action`).
+///
+/// Full figment-based config loading is a follow-up; the spike uses defaults.
+fn parse_config(_content: &str) -> Config {
+    // For the spike: always use defaults.
+    // Full TOML config parsing requires figment or manual deserialization.
+    Config::default()
+}
+
+/// Discover workflow and action files from the worktree.
+///
+/// Since Zed doesn't have directory listing, we try known paths.
+fn discover_workflow_files(worktree: &zed::Worktree) -> Vec<(String, String)> {
+    let mut files = Vec::new();
+
+    // Try common workflow file names
+    for dir in WORKFLOW_GLOBS {
+        for name in &[
+            "ci.yml",
+            "ci.yaml",
+            "build.yml",
+            "build.yaml",
+            "test.yml",
+            "test.yaml",
+            "release.yml",
+            "release.yaml",
+            "deploy.yml",
+            "deploy.yaml",
+            "lint.yml",
+            "lint.yaml",
+            "pr.yml",
+            "pr.yaml",
+            "main.yml",
+            "main.yaml",
+            "push.yml",
+            "push.yaml",
+            "pull_request.yml",
+            "pull_request.yaml",
+            "publish.yml",
+            "publish.yaml",
+            "check.yml",
+            "check.yaml",
+            "codeql.yml",
+            "codeql.yaml",
+            "dependabot.yml",
+            "dependabot.yaml",
+            "docker.yml",
+            "docker.yaml",
+            "pages.yml",
+            "pages.yaml",
+            "security.yml",
+            "security.yaml",
+            "stale.yml",
+            "stale.yaml",
+            "greetings.yml",
+            "greetings.yaml",
+            "labeler.yml",
+            "labeler.yaml",
+        ] {
+            let path = format!("{dir}/{name}");
+            if let Ok(content) = worktree.read_text_file(&path) {
+                files.push((path, content));
+            }
+        }
+    }
+
+    // Try action files at root and common locations
+    for name in ACTION_FILES {
+        if let Ok(content) = worktree.read_text_file(name) {
+            files.push((name.to_string(), content));
+        }
+    }
+
+    // Try .github/actions/*/action.yml pattern (common composite actions)
+    for action_dir in &[
+        "setup", "build", "test", "deploy", "lint", "cache", "notify", "cleanup",
+    ] {
+        for ext in ACTION_FILES {
+            let path = format!(".github/actions/{action_dir}/{ext}");
+            if let Ok(content) = worktree.read_text_file(&path) {
+                files.push((path, content));
+            }
+        }
+    }
+
+    files
+}
+
+/// Format check results into human-readable output for the slash command.
+fn format_check_output(
+    results: &[(String, UsesLocation, CheckResult)],
+    fetch_errors: &[(String, String)],
+    file_count: usize,
+    ref_count: usize,
+) -> String {
+    let mut out = String::new();
+
+    let _ = writeln!(
+        out,
+        "Scanned {file_count} file(s), found {ref_count} remote `uses:` ref(s).\n"
+    );
+
+    // Group results by status
+    let mut outdated: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
+    let mut up_to_date = 0usize;
+    let mut pinned = 0usize;
+    let mut unresolvable: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
+    let mut ignored = 0usize;
+
+    for r in results {
+        match r.2.status() {
+            CheckStatus::UpToDate => up_to_date += 1,
+            CheckStatus::Outdated { .. } => outdated.push(r),
+            CheckStatus::Pinned { .. } => pinned += 1,
+            CheckStatus::Ignored => ignored += 1,
+            CheckStatus::Unresolvable { .. } => unresolvable.push(r),
+        }
+    }
+
+    // Summary line
+    let _ = writeln!(
+        out,
+        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} ignored\n",
+        outdated.len(),
+        up_to_date,
+        pinned,
+        ignored,
+    );
+
+    // Outdated refs
+    if !outdated.is_empty() {
+        out.push_str("### Outdated\n\n");
+        for (path, uses_loc, result) in &outdated {
+            if let CheckStatus::Outdated { current, target } = result.status() {
+                let _ = writeln!(
+                    out,
+                    "- `{path}` line {}: `{}` — **{current}** → **{}**",
+                    uses_loc.line(),
+                    uses_loc.value(),
+                    target.version(),
+                );
+            }
+        }
+        out.push('\n');
+    }
+
+    // Unresolvable refs
+    if !unresolvable.is_empty() {
+        out.push_str("### Unresolvable\n\n");
+        for (path, uses_loc, result) in &unresolvable {
+            if let CheckStatus::Unresolvable { reason, .. } = result.status() {
+                let _ = writeln!(
+                    out,
+                    "- `{path}` line {}: `{}` — {reason}",
+                    uses_loc.line(),
+                    uses_loc.value(),
+                );
+            }
+        }
+        out.push('\n');
+    }
+
+    // Fetch errors
+    if !fetch_errors.is_empty() {
+        out.push_str("### Fetch Errors\n\n");
+        for (repo, err) in fetch_errors {
+            let _ = writeln!(out, "- `{repo}`: {err}");
+        }
+        out.push('\n');
+    }
+
+    // Instructions for updating
+    if !outdated.is_empty() {
+        out.push_str(
+            "To update these refs, edit the files above and change the version after `@`.\n\
+             If `actup` CLI is available, run `actup update` for automated updates.\n",
+        );
+    }
+
+    out
+}

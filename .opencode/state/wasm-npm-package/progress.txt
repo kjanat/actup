@@ -20,6 +20,9 @@ Started: 2026-02-20
 - npm package subpath exports: `"./provider"` in package.json exports map for `src/provider.ts`, also re-exported from main entry
 - GitHub REST API patterns: `/repos/{o}/{r}/tags?per_page=N` (paginated via Link header), `/repos/{o}/{r}/git/ref/tags/{ref}` (resolve tag → SHA), `/repos/{o}/{r}/branches/{branch}` (fallback for branch refs), `/repos/{o}/{r}/contents/{path}?ref=R` (base64-encoded file content)
 - Mock fetch testing pattern: override `globalThis.fetch` with route-matching mock, restore after each test — no deps needed
+- Zed extension pattern: bypass async `Provider` trait, use Zed's sync `fetch()` directly → `version::Set` → `check_action()` (sync)
+- Zed worktree: no directory listing — probe known workflow filenames (ci.yml, build.yml, etc.)
+- Zed HTTP: host-proxied `zed:extension/http-client`, not WASI HTTP; synchronous, no URL restrictions
 
 ## Architecture Decisions
 - MaybeSend trait alias (not feature flags, not separate trait)
@@ -145,3 +148,25 @@ Started: 2026-02-20
 - 21 unit tests via mock fetch in `tests/provider.mjs`: all 5 provider methods, pagination, tag dereferencing, fallbacks, error handling, rate limiting, auth, config options
 - Files changed: `src/provider.ts` (new), `src/index.ts` (updated), `package.json` (updated), `tests/provider.mjs` (new)
 - **Learnings:** `globalThis.fetch` override is cleanest mock approach for provider tests — no deps needed, route-matching pattern scales well; `atob` + `TextDecoder` for base64 decoding works across all target runtimes (Node 16+, browsers, Bun, Deno); `parseActionYmlMinimal` avoids pulling in a YAML parser dep — extracts only top-level scalars via regex, raw content available for WASM-side full parsing; annotated tags require a two-step resolve (git/ref → git/tags dereference); `encodeURIComponent` needed for ref names that contain `/` (e.g. `release/v1`)
+
+## Task - zed-embed-wasm
+
+- **Decision:** Feasible. Implementation started.
+- **Key finding:** `actup-core` + `actup-providers` compile for `wasm32-wasip2` with zero modifications (MaybeSend/MaybeSync already handles it)
+- No separate build target or adapter layer needed — Zed extension stays separate workspace with path deps
+- Created `extensions/zed/src/provider.rs`: GitHub REST tag fetcher using Zed's sync `fetch()` → `version::Set`
+  - Pagination via Link header, auth via Bearer token from `GITHUB_TOKEN` env, per_page=100
+  - `build_version_set()` reconstructs `semver_tags`, `latest_per_major`, `major_tags`, `latest` from flat tag list
+  - Unit tests for JSON parsing, Link header extraction, version set building
+- Rewired `extensions/zed/src/lib.rs` slash command (`/actions:update`):
+  - `discover_workflow_files()` probes known paths (no dir listing in Zed API)
+  - `extract_uses_from_yaml()` + `parse_uses()` from actup-core (pure sync)
+  - Deduplicates repos, fetches versions via `provider::fetch_version_set()`
+  - `check_action()` from actup-core for resolution (sync, takes pre-fetched `version::Set`)
+  - Formats markdown output with outdated/up-to-date/pinned/unresolvable counts
+  - Config: reads `actup.toml` from worktree but uses defaults for spike (full figment loading is follow-up)
+- `WASM_EVALUATION.md` documents decision, architecture, limitations, follow-ups
+- WASM binary: 371KB release (from ~17KB before; acceptable for Zed extensions)
+- Added deps: `actup-core` (path), `actup-providers` (path), `serde_json`
+- Files changed: `Cargo.toml` (updated), `src/lib.rs` (rewritten), `src/provider.rs` (new), `WASM_EVALUATION.md` (new)
+- **Learnings:** Zed HTTP is sync (not async) — bypass Provider trait, call `fetch()` directly; `worktree.read_text_file()` is the only file access (no readdir/glob); `worktree.shell_env()` exposes GITHUB_TOKEN from user's shell; Zed extension unit tests compile for wasip2 but need wasmtime to execute; `std::fmt::Write` for `write!(String, ...)` avoids `format_push_string` clippy lint
