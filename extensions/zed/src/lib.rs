@@ -43,24 +43,31 @@ impl zed::Extension for ActupExtension {
         language_server_id: &zed::LanguageServerId,
         worktree: &zed::Worktree,
     ) -> zed::Result<zed::Command> {
-        let binary_settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)
+        let server_name = language_server_id.as_ref();
+        let binary_settings = LspSettings::for_worktree(server_name, worktree)
             .ok()
             .and_then(|s| s.binary);
 
         let args = binary_settings
             .as_ref()
             .and_then(|s| s.arguments.clone())
-            .unwrap_or_default();
+            .unwrap_or_else(|| match server_name {
+                "yaml-language-server" => vec!["--stdio".to_string()],
+                _ => Vec::new(),
+            });
 
         let command = if let Some(path) = binary_settings.as_ref().and_then(|s| s.path.clone()) {
             path
         } else {
-            let settings_key = format!("lsp.{}.binary.path", language_server_id.as_ref());
-            worktree.which("actup-lsp").ok_or_else(|| {
+            let binary_name = match server_name {
+                "yaml-language-server" => "yaml-language-server",
+                _ => "actup-lsp",
+            };
+            let settings_key = format!("lsp.{server_name}.binary.path");
+            worktree.which(binary_name).ok_or_else(|| {
                 format!(
-                    "`actup-lsp` not found in PATH. \
-                         Install: `cargo install --path crates/lsp` or \
-                         set binary path in Zed settings under {settings_key}"
+                    "`{binary_name}` not found in PATH. \
+                     Set binary path in Zed settings under {settings_key}"
                 )
             })?
         };

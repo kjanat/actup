@@ -9,16 +9,35 @@ authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
 repository     = "https://github.com/kjanat/actup-v2"
 
 [language_servers.actup-lsp]
-languages = ["YAML", "GitHub Actions"]
+languages = ["GitHub Actions", "YAML"]
+
+[language_servers.actup-lsp.language_ids]
+"GitHub Actions" = "yaml"
+"YAML"           = "yaml"
+
+[language_servers.yaml-language-server]
+languages = ["GitHub Actions"]
+
+[language_servers.yaml-language-server.language_ids]
+"GitHub Actions" = "yaml"
 
 [[capabilities]]
 kind    = "process:exec"
 command = "actup-lsp"
 args    = []
 
+[[capabilities]]
+kind    = "process:exec"
+command = "yaml-language-server"
+args    = ["--stdio"]
+
 [grammars.yaml]
 repository = "https://github.com/zed-industries/tree-sitter-yaml"
 rev        = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+
+[grammars.gh_actions_expressions]
+repository = "https://github.com/hdoc1509/tree-sitter-gh-actions-expressions"
+rev        = "823a5876dcf3a1f5aa8cf9df2ac69eea6e8d7068"                        # v0.5.1
 
 # [context_servers.actup-mcp]
 

@@ -1,0 +1,5 @@
+#:schema /home/kjanat/projects/zed-editor/crates/extension_api/schemas/language-config.schema.json
+
+name    = "GitHub Actions Expressions"
+grammar = "gh_actions_expressions"
+hidden  = true
