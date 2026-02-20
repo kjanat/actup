@@ -36,9 +36,12 @@ crates/
   actup/              # actup (binary)   — CLI: check, update, pin, cache commands
   lsp/                # actup-lsp        — LSP server: diagnostics, code actions, hover, completion
   mcp/                # actup-mcp        — MCP server (stub, not yet implemented)
+  wasm/               # actup-wasm       — WASM bindings (wasm32-only, excluded from default-members)
 extensions/
   vscode/             # VSCode extension — TypeScript, bun-based, wraps actup-lsp
   zed/                # Zed extension   — Rust WASM cdylib, slash command, tree-sitter grammar (separate workspace)
+packages/
+  actup-wasm/         # npm package      — TypeScript wrapper around crates/wasm WASM output
 schemas/              # JSON Schema for config
 docs/                 # Design notes, contributor docs
 specs/                # Implementation specs / RFCs
@@ -583,6 +586,7 @@ just self-check     # Run actup on this repo
 | `actup` (CLI)           | CLI binary: check, update, pin, cache commands                         |
 | `actup-lsp`             | Language Server Protocol implementation                                |
 | `actup-mcp`             | Model Context Protocol server for AI agents (stub)                     |
+| `actup-wasm`            | WASM bindings for browser/Node.js (wasm32-only, excluded from default) |
 
 ### Performance notes
 
