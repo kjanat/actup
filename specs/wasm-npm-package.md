@@ -7,12 +7,11 @@
 
 ## Summary
 
-Compile `actup-core` (parsing, policy, version resolution) to WebAssembly. Publish a thin TypeScript wrapper as `@actup/wasm` on npm.
-Enable:
+Compile `actup-core` (parsing, policy, version resolution) to WebAssembly. Publish a thin TypeScript wrapper as `actup-wasm` on npm. Enable:
 
 - VS Code web extension (vscode.dev) — `wasm32-unknown-unknown` with JS `fetch()` bridge
 - Zed extension — `wasm32-wasip2` with WASI HTTP (future: embed logic instead of shelling out)
-- Standalone Node.js/Bun/Deno usage — `@actup/wasm` as a library
+- Standalone Node.js/Bun/Deno usage — `actup-wasm` as a library
 - MCP server in JS/TS — wrapping the WASM module
 
 The CLI remains native-only. The existing native LSP binary is unaffected.
@@ -79,7 +78,7 @@ packages/
 | D3  | `Send` bound audit / `MaybeSend` for WASM   | S      | -          |
 | D4  | `actup-wasm` crate (parse — pure, sync)     | M      | D1, D2     |
 | D5  | `JsProviderAdapter` bridge + `check_refs`   | M      | D3, D4     |
-| D6  | npm package `@actup/wasm` + TS types        | M      | D5         |
+| D6  | npm package `actup-wasm` + TS types         | M      | D5         |
 | D7  | Default `fetch()`-based GitHub provider     | S      | D6         |
 | D8  | VS Code web extension (direct WASM, no LSP) | L      | D6, D7     |
 | D9  | Wire into Zed extension (embed vs shim)     | L      | D5         |
@@ -99,7 +98,7 @@ packages/
 
 ```rust
 /// Platform-agnostic time source.
-pub trait Clock: Send + Sync {
+pub trait Clock: fmt::Debug + MaybeSend + MaybeSync {
     fn now(&self) -> std::time::SystemTime;
 }
 
@@ -347,7 +346,8 @@ would break `tokio::spawn` in the LSP. A separate WASM trait creates a maintenan
 - [x] **npm scope** → `actup-wasm` (unscoped). No `@actup` org exists; one package doesn't justify it.
 - [x] **Workspace membership** → Workspace member. Unlike Zed (wasip2 + cdylib conflicts), `wasm32-unknown-unknown` via `wasm-pack` works
       fine in the workspace. Separate = duplicated lockfile.
-- [x] **WASM LSP transport** → Skip WASM LSP. VS Code web extension calls WASM functions directly via `registerDiagnosticsProvider` /
-      `registerCodeActionsProvider`. LSP protocol is overhead when engine runs in-process. This is what Biome/Ruff/OXC do.
+- [x] **WASM LSP transport** → Skip WASM LSP for D8 (web extension). The current desktop extension uses `LanguageClient` + `actup-lsp`
+      subprocess, which is correct for native. D8's web extension will call WASM functions directly via `registerDiagnosticsProvider` /
+      `registerCodeActionsProvider` — LSP protocol is overhead when the engine runs in-process. This is what Biome/Ruff/OXC do.
 - [x] **Source maps** → `wasm-opt -O2` without `-g` on `.wasm`. Ship `.js.map` for TS wrapper (tiny, useful). No DWARF-in-WASM (enormous,
       spotty devtools support).
