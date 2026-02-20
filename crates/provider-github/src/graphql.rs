@@ -3,6 +3,7 @@
 //! Fetches version information for multiple repositories in a single request.
 
 use actup_core::action_ref::ActionRepoId;
+use actup_core::clock::{Clock, SystemClock};
 use actup_core::error::{Error, Result};
 use actup_core::version;
 use actup_providers::{TagLike, process_tags};
@@ -10,7 +11,8 @@ use reqwest::Client;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, warn};
 
 /// GraphQL API endpoint
@@ -24,10 +26,11 @@ pub const DEFAULT_MAX_TAGS_PER_REPO: u8 = 10;
 pub struct GraphQLClient {
     client: Client,
     endpoint: String,
+    clock: Arc<dyn Clock>,
 }
 
 impl GraphQLClient {
-    /// Create a new GraphQL client (requires authentication)
+    /// Create a new GraphQL client (requires authentication, uses [`SystemClock`]).
     ///
     /// # Errors
     /// Returns error if HTTP client cannot be created or token is missing/invalid.
@@ -38,11 +41,23 @@ impl GraphQLClient {
     /// User-Agent header value derived from crate version at compile time
     const USER_AGENT_VALUE: &'static str = concat!("actup/", env!("CARGO_PKG_VERSION"));
 
-    /// Create a GraphQL client for a custom endpoint (GitHub Enterprise)
+    /// Create a GraphQL client for a custom endpoint (GitHub Enterprise, uses [`SystemClock`]).
     ///
     /// # Errors
     /// Returns error if HTTP client cannot be created or token is invalid.
     pub fn with_endpoint(endpoint: &str, token: &str) -> Result<Self> {
+        Self::with_endpoint_and_clock(endpoint, token, Arc::new(SystemClock))
+    }
+
+    /// Create a GraphQL client with a custom endpoint and [`Clock`].
+    ///
+    /// # Errors
+    /// Returns error if HTTP client cannot be created or token is invalid.
+    pub fn with_endpoint_and_clock(
+        endpoint: &str,
+        token: &str,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(USER_AGENT, HeaderValue::from_static(Self::USER_AGENT_VALUE));
 
@@ -67,6 +82,7 @@ impl GraphQLClient {
         Ok(Self {
             client,
             endpoint: endpoint.to_string(),
+            clock,
         })
     }
 
@@ -178,11 +194,14 @@ impl GraphQLClient {
                 .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
     }
 
-    /// Parse rate limit retry duration from response headers
+    /// Parse rate limit retry duration from response headers.
     ///
     /// Checks `Retry-After` (seconds) and `X-RateLimit-Reset` (Unix timestamp).
     /// Falls through to the next header if parsing fails.
-    fn parse_retry_after(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    fn parse_retry_after(
+        headers: &reqwest::header::HeaderMap,
+        clock: &dyn Clock,
+    ) -> Option<Duration> {
         // Try Retry-After header first (seconds until retry)
         if let Some(secs) = headers
             .get("retry-after")
@@ -197,7 +216,7 @@ impl GraphQLClient {
             .get("x-ratelimit-reset")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.parse::<u64>().ok())
-            && let Ok(now) = SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+            && let Ok(now) = clock.now().duration_since(std::time::UNIX_EPOCH)
         {
             let now_secs = now.as_secs();
             if timestamp > now_secs {
@@ -234,7 +253,7 @@ impl GraphQLClient {
 
         // Handle 429 Too Many Requests - always rate limited
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            let retry_after = Self::parse_retry_after(response.headers());
+            let retry_after = Self::parse_retry_after(response.headers(), &*self.clock);
             return Err(Error::RateLimited {
                 provider: "github".to_string(),
                 retry_after,
@@ -257,7 +276,7 @@ impl GraphQLClient {
                     .is_some_and(|s| s == "0");
 
             if is_rate_limited {
-                let retry_after = Self::parse_retry_after(headers);
+                let retry_after = Self::parse_retry_after(headers, &*self.clock);
                 return Err(Error::RateLimited {
                     provider: "github".to_string(),
                     retry_after,

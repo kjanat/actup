@@ -3,6 +3,7 @@
 //! This module defines the caching interface. The actual storage
 //! implementation is left to the caller (file-based, in-memory, etc.).
 
+use crate::clock::{Clock, SystemClock};
 use crate::{ActionRepoId, version};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
@@ -26,12 +27,18 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Create a new cache entry
+    /// Create a new cache entry (uses [`SystemClock`]).
     #[must_use]
     pub fn new(versions: version::Set) -> Self {
+        Self::with_clock(versions, &SystemClock)
+    }
+
+    /// Create a new cache entry using the provided [`Clock`].
+    #[must_use]
+    pub fn with_clock(versions: version::Set, clock: &dyn Clock) -> Self {
         Self {
             versions,
-            stored_at: SystemTime::now(),
+            stored_at: clock.now(),
             etag: None,
             last_modified: None,
         }

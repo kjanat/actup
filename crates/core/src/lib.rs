@@ -13,6 +13,7 @@
 pub mod action_ref;
 pub mod cache;
 pub mod caching_provider;
+pub mod clock;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -25,6 +26,7 @@ pub mod version;
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};
 pub use caching_provider::{CacheStats, CachingProvider};
+pub use clock::{Clock, SystemClock};
 pub use config::registration::{
     Capabilities, Preset, ProviderConfig, Registration, validate_no_duplicate_presets,
 };

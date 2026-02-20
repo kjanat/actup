@@ -10,7 +10,7 @@
 			"description": "Add platform-agnostic Clock trait to actup-core with SystemClock default impl. Thread into the 3 call sites: cache.rs:34 (Entry stored_at), version.rs:389 (Set freshness), provider-github/graphql.rs:200 (rate limit reset). Done when: all SystemTime::now() in WASM-relevant code paths go through Clock, existing tests pass, SystemClock is default so no API breakage.",
 			"depends": [],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "serde-bridge-types",

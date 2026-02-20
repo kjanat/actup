@@ -5,6 +5,7 @@
 //! - Commit SHAs
 //! - Branch names
 
+use crate::clock::{Clock, SystemClock};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::fmt;
@@ -369,7 +370,7 @@ impl Set {
         Self::default()
     }
 
-    /// Build a version set with all fields
+    /// Build a version set with all fields (uses [`SystemClock`]).
     ///
     /// This is the primary constructor for providers building version information.
     /// Use [`Set::new()`] for an empty set.
@@ -380,13 +381,31 @@ impl Set {
         major_tags: std::collections::HashMap<u32, Arc<Info>>,
         latest: Option<Arc<Info>>,
     ) -> Self {
+        Self::build_with_clock(
+            semver_tags,
+            latest_per_major,
+            major_tags,
+            latest,
+            &SystemClock,
+        )
+    }
+
+    /// Build a version set using the provided [`Clock`] for the `fetched_at` timestamp.
+    #[must_use]
+    pub fn build_with_clock(
+        semver_tags: Vec<Arc<Info>>,
+        latest_per_major: std::collections::HashMap<u32, Arc<Info>>,
+        major_tags: std::collections::HashMap<u32, Arc<Info>>,
+        latest: Option<Arc<Info>>,
+        clock: &dyn Clock,
+    ) -> Self {
         Self {
             semver_tags,
             latest_per_major,
             major_tags,
             latest,
             default_branch: None,
-            fetched_at: Some(std::time::SystemTime::now()),
+            fetched_at: Some(clock.now()),
         }
     }
 

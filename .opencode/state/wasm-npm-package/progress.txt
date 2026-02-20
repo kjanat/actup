@@ -23,5 +23,20 @@ Started: 2026-02-20
 - npm: unscoped `actup-wasm` (not @actup/wasm)
 - wasm-opt -O2 stripped, .js.map shipped, no DWARF
 
+- Clock trait pattern: `_with_clock` variants keep existing API stable; `&dyn Clock` param, not generic
+- `Clock: fmt::Debug + Send + Sync` — Debug required for structs that derive Debug (e.g. GraphQLClient)
+
 ---
 <!-- Task logs below - APPEND ONLY -->
+
+## Task - clock-trait
+
+- Created `crates/core/src/clock.rs` with `Clock` trait + `SystemClock` default impl
+- `cache::Entry::with_clock()` — accepts `&dyn Clock`, `Entry::new()` delegates to it via `SystemClock`
+- `version::Set::build_with_clock()` — accepts `&dyn Clock`, `Set::build()` delegates via `SystemClock`
+- `GraphQLClient` — stores `Arc<dyn Clock>` field, threads into `parse_retry_after()`
+- Added `with_endpoint_and_clock()` constructor on `GraphQLClient`
+- All 3 `SystemTime::now()` calls now go through `Clock`; only `SystemClock::now()` remains
+- 4 new tests: `system_clock_returns_recent_time`, `fixed_clock_returns_injected_time`, `cache_entry_with_fixed_clock`, `version_set_build_with_fixed_clock`
+- Files changed: `clock.rs` (new), `lib.rs`, `cache.rs`, `version.rs`, `graphql.rs`
+- **Learnings:** `clippy::module_name_repetitions` triggers on `SystemClock` in `clock` module; suppressed with allow attr since it's re-exported at crate root
