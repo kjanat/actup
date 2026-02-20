@@ -6,7 +6,13 @@
 	"formatter": [{ "external": { "command": "dprint", "arguments": ["fmt", "--stdin", "{buffer_path}"] } }],
 	"prettier": { "allowed": false },
 	"wrap_guides": [140],
-	"languages": { "Rust": { "wrap_guides": [100] } },
+	"languages": {
+		"Rust": { "wrap_guides": [100] },
+		"GitHub Actions": {
+			// "yaml-language-server",
+			"language_servers": ["actup-lsp", "..."]
+		}
+	},
 	"file_types": { "GitHub Actions": ["**/.github/workflows/*.yml", "**/.github/workflows/*.yaml"] },
 	"lsp": {
 		"rust-analyzer": {
