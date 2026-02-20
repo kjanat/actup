@@ -1,7 +1,11 @@
+//! Zed editor extension for actup — provides LSP integration and the
+//! `/actions:update` slash command.
+
 use zed_extension_api::{
     self as zed, SlashCommand, SlashCommandOutput, SlashCommandOutputSection, settings::LspSettings,
 };
 
+/// Zed extension entry point. Delegates to `actup-lsp` for language intelligence.
 struct ActupExtension;
 
 impl zed::Extension for ActupExtension {
@@ -66,24 +70,23 @@ impl zed::Extension for ActupExtension {
             .and_then(|s| s.arguments.clone())
             .unwrap_or_default();
 
-        let command = match binary_settings.as_ref().and_then(|s| s.path.clone()) {
-            Some(path) => path,
-            None => {
-                let settings_key = format!("lsp.{}.binary.path", language_server_id.as_ref());
-                worktree.which("actup-lsp").ok_or_else(|| {
-                    format!(
-                        "`actup-lsp` not found in PATH. \
+        let command = if let Some(path) = binary_settings.as_ref().and_then(|s| s.path.clone()) {
+            path
+        } else {
+            let settings_key = format!("lsp.{}.binary.path", language_server_id.as_ref());
+            worktree.which("actup-lsp").ok_or_else(|| {
+                format!(
+                    "`actup-lsp` not found in PATH. \
                          Install: `cargo install --path crates/lsp` or \
                          set binary path in Zed settings under {settings_key}"
-                    )
-                })?
-            }
+                )
+            })?
         };
 
         Ok(zed::Command {
             command,
             args,
-            env: Default::default(),
+            env: Vec::default(),
         })
     }
 

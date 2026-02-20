@@ -4,6 +4,9 @@
 set unstable := true
 set shell := ["bash", "-cu"]
 
+mod zed 'extensions/zed/justfile'
+mod vscode 'extensions/vscode/justfile'
+
 alias b := build
 alias t := test
 alias r := run
@@ -224,3 +227,13 @@ outdated:
 [group('deps')]
 loc:
     @tokei crates/
+
+# Extensions
+
+# Check all editor extensions
+[group('extensions')]
+ext-check: zed::clippy vscode::lint vscode::typecheck
+
+# Run full CI checks including extensions
+[group('ci')]
+ci-full: ci ext-check

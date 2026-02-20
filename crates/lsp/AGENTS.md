@@ -7,19 +7,21 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses `tower-lsp-s
 
 ## Module Map
 
-| Module                  | Lines | Purpose                                        |
-| ----------------------- | ----- | ---------------------------------------------- |
-| `backend.rs`            | 1516  | `LspBackend` — core LSP trait impl, lifecycle  |
-| `diagnostics.rs`        | 1103  | Diagnostic generation from `CheckResult`       |
-| `completion.rs`         | 841   | Version/tag completion for `uses:` refs        |
-| `hover.rs`              | 873   | Hover info: version status, README, action.yml |
-| `workspace_commands.rs` | 685   | Workspace-level scan + update all              |
-| `code_actions.rs`       | 625   | Quick-fix code actions (update, pin)           |
-| `file_cache.rs`         | 456   | LSP-specific file-based cache                  |
-| `error_ux.rs`           | 420   | User-friendly error messages                   |
-| `provider_setup.rs`     | ~100  | Provider registry construction for LSP         |
-| `position.rs`           | ~100  | Position/range conversion utilities            |
-| `main.rs`               | 47    | Entry point, tracing to stderr, service setup  |
+| Module                  | Lines | Purpose                                         |
+| ----------------------- | ----- | ----------------------------------------------- |
+| `backend.rs`            | 1546  | `LspBackend` — core LSP trait impl, lifecycle   |
+| `diagnostics.rs`        | 1109  | Diagnostic generation from `CheckResult`        |
+| `completion.rs`         | 839   | Version/tag completion for `uses:` refs         |
+| `hover.rs`              | 873   | Hover info: version status, README, action.yml  |
+| `workspace_commands.rs` | 839   | Workspace-level scan + update all               |
+| `code_actions.rs`       | 778   | Quick-fix code actions (update, pin)            |
+| `file_cache.rs`         | 460   | LSP-specific file-based cache                   |
+| `error_ux.rs`           | 420   | User-friendly error messages                    |
+| `provider_setup.rs`     | 218   | Provider registry construction for LSP          |
+| `position.rs`           | 316   | Position/range conversion utilities             |
+| `test_utils.rs`         | 287   | `MockProvider` with builder pattern (test-only) |
+| `integration_tests.rs`  | 994   | Full LSP protocol flow tests (test-only)        |
+| `main.rs`               | 51    | Entry point, tracing to stderr, service setup   |
 
 ## Where to Look
 
@@ -75,5 +77,5 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses `tower-lsp-s
 
 ## Complexity Hotspots
 
-`backend.rs` (1516 lines) and `diagnostics.rs` (1103 lines) are the most complex. `workspace_commands.rs` has both `too_many_lines` and
-`too_many_arguments` lint suppressions.
+`backend.rs` (1546 lines) and `diagnostics.rs` (1109 lines) are the most complex. `workspace_commands.rs` (839 lines) and `code_actions.rs`
+(778 lines) have `too_many_lines` and `too_many_arguments` lint suppressions.

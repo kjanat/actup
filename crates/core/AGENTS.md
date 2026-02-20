@@ -66,11 +66,12 @@ inferring api_base, resolving token_env, validating host configs.
 | ------------------------ | ----- | ---------------------------------------- |
 | `config/resolution.rs`   | 1834  | Host resolution, the most complex module |
 | `config/mod.rs`          | 1088  | Config struct + figment loading          |
-| `config/registration.rs` | 930   | Provider presets + registration          |
 | `version.rs`             | 951   | Semver parsing, `VersionSet` logic       |
+| `config/registration.rs` | 930   | Provider presets + registration          |
 | `provider.rs`            | 889   | Provider trait + `ProviderKind` enum     |
 | `resolution.rs`          | 791   | `check_action` orchestration             |
 | `config/validation.rs`   | 607   | Config validation rules                  |
-| `error.rs`               | 480   | Structured error types                   |
 | `policy.rs`              | 491   | Update policy matching                   |
+| `error.rs`               | 480   | Structured error types                   |
 | `action_ref.rs`          | 469   | ActionRef parsing                        |
+| `caching_provider.rs`    | 441   | In-memory dedup with call counting       |

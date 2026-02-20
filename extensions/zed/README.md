@@ -89,7 +89,7 @@ Files detected as plain YAML also work -- the extension attaches the LSP to both
 
 ```tree
 extensions/zed/
-  Cargo.toml                            # cdylib crate, wasm32-wasip1 target
+  Cargo.toml                            # cdylib crate, wasm32-wasip2 target
   extension.toml                        # Zed extension manifest
   src/lib.rs                            # Extension entry point
   languages/github_actions/config.toml  # "GitHub Actions" language definition
