@@ -5,9 +5,9 @@ Spec: specs/wasm-npm-package.md
 Started: 2026-02-20
 
 ## Codebase Patterns
-- Provider trait in `crates/core/src/provider.rs` — `Pin<Box<dyn Future>>` (manual async-trait)
+- Provider trait in `crates/core/src/provider.rs` — uses `BoxFuture` (cfg-gated Send on native, !Send on wasm32)
 - All providers use `reqwest` + `rustls`, retry via `tokio::time::sleep`
-- `CachingProvider` wraps `Provider` with `tokio::sync::RwLock` — only tokio dep in core
+- `CachingProvider` wraps `Provider` with `AsyncRwLock` (tokio on native, std on wasm32); tokio is cfg-gated dep
 - `actup-providers` (shared) is already WASM-compatible (pure computation)
 - Zed extension is separate workspace (wasip2 cdylib conflicts with root workspace)
 - SystemTime::now() in 3 places: cache.rs:34, version.rs:389, graphql.rs:200
@@ -24,7 +24,9 @@ Started: 2026-02-20
 - wasm-opt -O2 stripped, .js.map shipped, no DWARF
 
 - Clock trait pattern: `_with_clock` variants keep existing API stable; `&dyn Clock` param, not generic
-- `Clock: fmt::Debug + Send + Sync` — Debug required for structs that derive Debug (e.g. GraphQLClient)
+- `Clock: fmt::Debug + MaybeSend + MaybeSync` — Debug required for structs that derive Debug (e.g. GraphQLClient)
+- `compat.rs` pattern: `MaybeSend`, `MaybeSync` trait aliases + `BoxFuture` type alias — all cfg-gated on `target_arch = "wasm32"`
+- CLI/LSP `file_cache.rs` still uses raw `Pin<Box<dyn Future<...> + Send>>` — fine since native-only binaries
 
 ---
 <!-- Task logs below - APPEND ONLY -->
@@ -54,3 +56,20 @@ Started: 2026-02-20
 - 16 new round-trip serde_json tests across 5 files covering all bridge types + all `CheckStatus` variants + all `Version` variants
 - Files changed: `action_ref.rs`, `resolution.rs`, `parser.rs`, `provider.rs`, `version.rs`
 - **Learnings:** `action_ref::tests` was the only test module in actup-core missing `#[allow(clippy::unwrap_used)]`; `serde_json` works as extern crate in test modules from dev-deps automatically; `Arc<T>` serialization works via workspace's `serde = { features = ["rc"] }`
+
+## Task - maybe-send
+
+- Created `crates/core/src/compat.rs` with `MaybeSend`, `MaybeSync` trait aliases + `BoxFuture` type alias
+  - Native: `MaybeSend: Send`, `MaybeSync: Sync`, `BoxFuture = Pin<Box<dyn Future + Send>>`
+  - wasm32: unconditional impls, `BoxFuture = Pin<Box<dyn Future>>` (no Send)
+- Updated `Provider` trait: `Send + Sync` → `MaybeSend + MaybeSync`, all methods return `BoxFuture`
+- Updated `Cache` trait: same pattern as Provider
+- Updated `Clock` trait: `fmt::Debug + Send + Sync` → `fmt::Debug + MaybeSend + MaybeSync`
+- Updated `CachingProvider`: `tokio::sync::RwLock` → `AsyncRwLock` type alias (tokio on native, std on wasm32)
+  - Added `rw_read`/`rw_write` helper fns with cfg-gated implementations
+- Moved tokio from unconditional dep to `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`
+- Updated all 3 provider crates (github, gitlab, gitea) + LSP test_utils to use `BoxFuture` from compat
+- Re-exported `BoxFuture`, `MaybeSend`, `MaybeSync` from `crates/core/src/lib.rs`
+- Files changed: `compat.rs` (new), `lib.rs`, `provider.rs`, `cache.rs`, `clock.rs`, `caching_provider.rs`, `Cargo.toml`, plus provider crates + LSP test_utils
+- Verified: `cargo check` passes on native, `cargo check --target wasm32-unknown-unknown` passes for actup-core
+- **Learnings:** MaybeSend/MaybeSync cannot be used in trait-object position (`dyn Future + MaybeSend` is illegal) — must use `BoxFuture` type alias instead; `rw_read`/`rw_write` helpers keep `Send + Sync` bounds on native (required by tokio) inside cfg gates rather than using MaybeSend; CLI/LSP file_cache.rs still uses raw `+ Send` in return types — fine since native-only, but inconsistent

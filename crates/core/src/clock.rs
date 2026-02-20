@@ -4,15 +4,16 @@
 //! WASM compatibility. Native code uses [`SystemClock`] (the default);
 //! WASM hosts inject a `JsClock` backed by `Date.now()`.
 
+use crate::compat::{MaybeSend, MaybeSync};
 use std::fmt;
 use std::time::SystemTime;
 
 /// Platform-agnostic time source.
 ///
-/// Implementors must be `Send + Sync` so they can be shared across
-/// async tasks on native targets. On `wasm32` this will be relaxed
-/// to `MaybeSend + MaybeSync` in a future change.
-pub trait Clock: fmt::Debug + Send + Sync {
+/// On native targets this requires `Send + Sync` (via [`MaybeSend`] +
+/// [`MaybeSync`]) so clocks can be shared across async tasks. On
+/// `wasm32` (single-threaded) these bounds are automatically satisfied.
+pub trait Clock: fmt::Debug + MaybeSend + MaybeSync {
     /// Returns the current system time.
     fn now(&self) -> SystemTime;
 }

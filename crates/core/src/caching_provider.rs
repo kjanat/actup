@@ -3,12 +3,50 @@
 //! Wraps any `Provider` implementation with an in-memory cache to avoid
 //! duplicate network requests within a single command invocation.
 
+use crate::compat::BoxFuture;
 use crate::provider::{self, ActionYml, Provider, Sha40};
 use crate::{ActionRepoId, Result, version};
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use tokio::sync::RwLock;
+
+/// Async-compatible `RwLock`: `tokio::sync::RwLock` on native (supports
+/// holding across `.await`), `std::sync::RwLock` on `wasm32` (single-threaded,
+/// no contention).
+#[cfg(not(target_arch = "wasm32"))]
+type AsyncRwLock<T> = tokio::sync::RwLock<T>;
+
+#[cfg(target_arch = "wasm32")]
+type AsyncRwLock<T> = std::sync::RwLock<T>;
+
+/// Acquire a read guard from an [`AsyncRwLock`].
+///
+/// On native targets this awaits `tokio::sync::RwLock::read()`.
+/// On `wasm32` this calls `std::sync::RwLock::read()` synchronously
+/// (single-threaded — poisoning cannot occur).
+#[cfg(not(target_arch = "wasm32"))]
+async fn rw_read<T: Send + Sync>(lock: &AsyncRwLock<T>) -> tokio::sync::RwLockReadGuard<'_, T> {
+    lock.read().await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn rw_read<T>(lock: &AsyncRwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read()
+        .expect("wasm32 is single-threaded; lock cannot be poisoned")
+}
+
+/// Acquire a write guard from an [`AsyncRwLock`].
+///
+/// On native targets this awaits `tokio::sync::RwLock::write()`.
+/// On `wasm32` this calls `std::sync::RwLock::write()` synchronously.
+#[cfg(not(target_arch = "wasm32"))]
+async fn rw_write<T: Send + Sync>(lock: &AsyncRwLock<T>) -> tokio::sync::RwLockWriteGuard<'_, T> {
+    lock.write().await
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn rw_write<T>(lock: &AsyncRwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
+    lock.write()
+        .expect("wasm32 is single-threaded; lock cannot be poisoned")
+}
 
 /// A provider wrapper that caches results to avoid duplicate API calls.
 ///
@@ -29,9 +67,9 @@ use tokio::sync::RwLock;
 /// ```
 pub struct CachingProvider<P> {
     inner: P,
-    version_cache: RwLock<HashMap<ActionRepoId, version::Set>>,
-    sha_cache: RwLock<HashMap<(ActionRepoId, String), Sha40>>,
-    branch_cache: RwLock<HashMap<ActionRepoId, String>>,
+    version_cache: AsyncRwLock<HashMap<ActionRepoId, version::Set>>,
+    sha_cache: AsyncRwLock<HashMap<(ActionRepoId, String), Sha40>>,
+    branch_cache: AsyncRwLock<HashMap<ActionRepoId, String>>,
 }
 
 impl<P: Provider> CachingProvider<P> {
@@ -40,25 +78,25 @@ impl<P: Provider> CachingProvider<P> {
     pub fn new(inner: P) -> Self {
         Self {
             inner,
-            version_cache: RwLock::new(HashMap::new()),
-            sha_cache: RwLock::new(HashMap::new()),
-            branch_cache: RwLock::new(HashMap::new()),
+            version_cache: AsyncRwLock::new(HashMap::new()),
+            sha_cache: AsyncRwLock::new(HashMap::new()),
+            branch_cache: AsyncRwLock::new(HashMap::new()),
         }
     }
 
     /// Clear all cached data.
     pub async fn clear_cache(&self) {
-        self.version_cache.write().await.clear();
-        self.sha_cache.write().await.clear();
-        self.branch_cache.write().await.clear();
+        rw_write(&self.version_cache).await.clear();
+        rw_write(&self.sha_cache).await.clear();
+        rw_write(&self.branch_cache).await.clear();
     }
 
     /// Get cache statistics for debugging.
     pub async fn cache_stats(&self) -> CacheStats {
         CacheStats {
-            versions: self.version_cache.read().await.len(),
-            shas: self.sha_cache.read().await.len(),
-            branches: self.branch_cache.read().await.len(),
+            versions: rw_read(&self.version_cache).await.len(),
+            shas: rw_read(&self.sha_cache).await.len(),
+            branches: rw_read(&self.branch_cache).await.len(),
         }
     }
 }
@@ -107,15 +145,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
         self.inner.cache_namespace()
     }
 
-    fn get_versions(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
         let repo = repo.clone();
 
         Box::pin(async move {
             // Check cache first (short-lived lock)
-            if let Some(cached) = self.version_cache.read().await.get(&repo) {
+            if let Some(cached) = rw_read(&self.version_cache).await.get(&repo) {
                 return Ok(cached.clone());
             }
 
@@ -123,7 +158,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let versions = self.inner.get_versions(&repo).await?;
 
             // Store in cache (entry API handles TOCTOU race)
-            let mut guard = self.version_cache.write().await;
+            let mut guard = rw_write(&self.version_cache).await;
             let result = guard.entry(repo).or_insert_with(|| versions).clone();
             drop(guard);
 
@@ -135,7 +170,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<Sha40>> {
         let repo = repo.clone();
         let ref_name = ref_name.to_string();
 
@@ -143,7 +178,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let cache_key = (repo.clone(), ref_name.clone());
 
             // Check cache first
-            if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
+            if let Some(cached) = rw_read(&self.sha_cache).await.get(&cache_key) {
                 return Ok(cached.clone());
             }
 
@@ -151,7 +186,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let sha = self.inner.resolve_ref_to_sha(&repo, &ref_name).await?;
 
             // Store in cache (entry API handles TOCTOU race)
-            let mut guard = self.sha_cache.write().await;
+            let mut guard = rw_write(&self.sha_cache).await;
             let result = guard.entry(cache_key).or_insert_with(|| sha).clone();
             drop(guard);
 
@@ -159,15 +194,12 @@ impl<P: Provider> Provider for CachingProvider<P> {
         })
     }
 
-    fn get_default_branch(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
         let repo = repo.clone();
 
         Box::pin(async move {
             // Check cache first
-            if let Some(cached) = self.branch_cache.read().await.get(&repo) {
+            if let Some(cached) = rw_read(&self.branch_cache).await.get(&repo) {
                 return Ok(cached.clone());
             }
 
@@ -175,7 +207,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let branch = self.inner.get_default_branch(&repo).await?;
 
             // Store in cache (entry API handles TOCTOU race)
-            let mut guard = self.branch_cache.write().await;
+            let mut guard = rw_write(&self.branch_cache).await;
             let result = guard.entry(repo).or_insert_with(|| branch).clone();
             drop(guard);
 
@@ -187,7 +219,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
         &self,
         repo: &ActionRepoId,
         ref_name: Option<&str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<Option<String>>> {
         // README content is typically not fetched repeatedly in a single run,
         // so we don't cache it to avoid memory bloat.
         self.inner.get_readme(repo, ref_name)
@@ -197,7 +229,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<ActionYml>> {
         // action.yml content is typically not fetched repeatedly in a single run,
         // so we don't cache it to avoid memory bloat.
         self.inner.get_action_yml(repo, ref_name)
@@ -238,10 +270,7 @@ mod tests {
             "github.com"
         }
 
-        fn get_versions(
-            &self,
-            _repo: &ActionRepoId,
-        ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+        fn get_versions(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async {
                 Ok(version::Set::build(
@@ -260,15 +289,12 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
             _ref_name: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
+        ) -> BoxFuture<'_, Result<Sha40>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
         }
 
-        fn get_default_branch(
-            &self,
-            _repo: &ActionRepoId,
-        ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok("main".to_string()) })
         }
@@ -277,7 +303,7 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
             _ref_name: Option<&str>,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+        ) -> BoxFuture<'_, Result<Option<String>>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(Some("# README".to_string())) })
         }
@@ -286,7 +312,7 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
             _ref_name: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
+        ) -> BoxFuture<'_, Result<ActionYml>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(ActionYml::default()) })
         }

@@ -2,13 +2,12 @@
 
 use crate::client::GitLabClient;
 use actup_core::action_ref::ActionRepoId;
+use actup_core::compat::BoxFuture;
 use actup_core::error::Result;
 use actup_core::provider::{self, ActionYml, Provider, Sha40};
 use actup_core::version;
 use actup_providers::{parse_action_yml, process_tags};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use std::future::Future;
-use std::pin::Pin;
 use tracing::debug;
 
 /// GitLab provider for resolving action versions
@@ -60,10 +59,7 @@ impl Provider for GitLabProvider {
         &self.host
     }
 
-    fn get_versions(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
 
@@ -96,7 +92,7 @@ impl Provider for GitLabProvider {
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<Sha40>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
         let ref_name = ref_name.to_string();
@@ -116,10 +112,7 @@ impl Provider for GitLabProvider {
         })
     }
 
-    fn get_default_branch(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
 
@@ -135,7 +128,7 @@ impl Provider for GitLabProvider {
         &self,
         repo: &ActionRepoId,
         ref_name: Option<&str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<Option<String>>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
         let ref_name = ref_name.unwrap_or("HEAD").to_string();
@@ -175,7 +168,7 @@ impl Provider for GitLabProvider {
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<ActionYml>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
         let ref_name = ref_name.to_string();

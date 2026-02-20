@@ -28,7 +28,7 @@
 			"description": "Create crates/core/src/compat.rs with MaybeSend and MaybeSync trait aliases: Send+Sync on native, unconditional on wasm32. Update Provider trait bounds from Send+Sync to MaybeSend+MaybeSync. Update future return types from +Send to +MaybeSend. Update CachingProvider RwLock: tokio::sync::RwLock on native, std::sync::RwLock on wasm32. Done when: cargo check passes on native, cargo check --target wasm32-unknown-unknown passes for actup-core (may need feature gates on tokio dep).",
 			"depends": [],
 			"priority": "architecture",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "wasm-crate-parse",

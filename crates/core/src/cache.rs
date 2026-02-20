@@ -4,10 +4,9 @@
 //! implementation is left to the caller (file-based, in-memory, etc.).
 
 use crate::clock::{Clock, SystemClock};
+use crate::compat::{BoxFuture, MaybeSend, MaybeSync};
 use crate::{ActionRepoId, version};
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
 use std::time::{Duration, SystemTime};
 
 /// A cached entry with metadata
@@ -131,19 +130,18 @@ impl std::error::Error for Error {}
 ///
 /// This is provider-neutral - cache keys are constructed from
 /// `ActionRepoId` + provider namespace.
-pub trait Cache: Send + Sync {
+pub trait Cache: MaybeSend + MaybeSync {
     /// Get a cached entry by key
-    fn get(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<Entry>> + Send + '_>>;
+    fn get(&self, key: &str) -> BoxFuture<'_, Result<Entry>>;
 
     /// Store an entry in the cache
-    fn set(&self, key: &str, entry: Entry)
-    -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    fn set(&self, key: &str, entry: Entry) -> BoxFuture<'_, Result<()>>;
 
     /// Remove an entry from the cache
-    fn remove(&self, key: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    fn remove(&self, key: &str) -> BoxFuture<'_, Result<()>>;
 
     /// Clear all cache entries
-    fn clear(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    fn clear(&self) -> BoxFuture<'_, Result<()>>;
 
     /// Check if caching is enabled
     fn is_enabled(&self) -> bool {
@@ -156,23 +154,19 @@ pub trait Cache: Send + Sync {
 pub struct Noop;
 
 impl Cache for Noop {
-    fn get(&self, _key: &str) -> Pin<Box<dyn Future<Output = Result<Entry>> + Send + '_>> {
+    fn get(&self, _key: &str) -> BoxFuture<'_, Result<Entry>> {
         Box::pin(async { Err(Error::Disabled) })
     }
 
-    fn set(
-        &self,
-        _key: &str,
-        _entry: Entry,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+    fn set(&self, _key: &str, _entry: Entry) -> BoxFuture<'_, Result<()>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn remove(&self, _key: &str) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+    fn remove(&self, _key: &str) -> BoxFuture<'_, Result<()>> {
         Box::pin(async { Ok(()) })
     }
 
-    fn clear(&self) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
+    fn clear(&self) -> BoxFuture<'_, Result<()>> {
         Box::pin(async { Ok(()) })
     }
 

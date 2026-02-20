@@ -8,10 +8,9 @@
 // Test utilities are only used in #[cfg(test)] contexts where unwrap is acceptable.
 
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 
+use actup_core::compat::BoxFuture;
 use actup_core::provider::{self, ActionYml, Kind, Provider, Sha40};
 use actup_core::version;
 use actup_core::{ActionRepoId, Error as CoreError};
@@ -149,10 +148,7 @@ impl Provider for MockProvider {
         &self.host
     }
 
-    fn get_versions(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = actup_core::Result<version::Set>> + Send + '_>> {
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<version::Set>> {
         let key = Self::repo_key(repo);
         let result = self.versions.get(&key).map_or_else(
             || Ok(version::Set::default()),
@@ -168,14 +164,14 @@ impl Provider for MockProvider {
         &self,
         _repo: &ActionRepoId,
         _ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = actup_core::Result<Sha40>> + Send + '_>> {
+    ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
         Box::pin(async { Ok(Sha40::new(DUMMY_SHA.to_string()).unwrap()) })
     }
 
     fn get_default_branch(
         &self,
         _repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = actup_core::Result<String>> + Send + '_>> {
+    ) -> BoxFuture<'_, actup_core::Result<String>> {
         Box::pin(async { Ok("main".to_string()) })
     }
 
@@ -183,7 +179,7 @@ impl Provider for MockProvider {
         &self,
         _repo: &ActionRepoId,
         _ref_name: Option<&str>,
-    ) -> Pin<Box<dyn Future<Output = actup_core::Result<Option<String>>> + Send + '_>> {
+    ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
         Box::pin(async { Ok(None) })
     }
 
@@ -191,7 +187,7 @@ impl Provider for MockProvider {
         &self,
         _repo: &ActionRepoId,
         _ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = actup_core::Result<ActionYml>> + Send + '_>> {
+    ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
         Box::pin(async { Ok(ActionYml::default()) })
     }
 }

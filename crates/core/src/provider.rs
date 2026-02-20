@@ -3,11 +3,10 @@
 //! Providers implement the interface for querying action versions from
 //! different git hosting platforms (GitHub, GitLab, Gitea, etc.).
 
+use crate::compat::{BoxFuture, MaybeSend, MaybeSync};
 use crate::{ActionRepoId, Result, version};
 use serde::{Deserialize, Serialize};
 use std::fmt;
-use std::future::Future;
-use std::pin::Pin;
 
 /// Identifies the type of provider
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -536,7 +535,7 @@ impl ActionStep {
 ///
 /// This is the core abstraction that allows actup-core to remain
 /// host-agnostic. Implementations live in separate crates.
-pub trait Provider: Send + Sync {
+pub trait Provider: MaybeSend + MaybeSync {
     /// Get the provider kind
     fn kind(&self) -> Kind;
 
@@ -549,37 +548,31 @@ pub trait Provider: Send + Sync {
     }
 
     /// Get available versions for an action repository
-    fn get_versions(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>>;
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>>;
 
     /// Resolve a ref (tag/branch) to a full commit SHA
     fn resolve_ref_to_sha(
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>>;
+    ) -> BoxFuture<'_, Result<Sha40>>;
 
     /// Get the default branch name for a repository
-    fn get_default_branch(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>>;
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>>;
 
     /// Get the README content (if available)
     fn get_readme(
         &self,
         repo: &ActionRepoId,
         ref_name: Option<&str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>>;
+    ) -> BoxFuture<'_, Result<Option<String>>>;
 
     /// Get the action.yml content
     fn get_action_yml(
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>>;
+    ) -> BoxFuture<'_, Result<ActionYml>>;
 }
 
 /// Registry for managing multiple providers
@@ -665,7 +658,6 @@ impl fmt::Debug for Registry {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use std::pin::Pin;
 
     /// Mock provider for testing
     struct MockProvider {
@@ -691,10 +683,7 @@ mod tests {
             &self.host
         }
 
-        fn get_versions(
-            &self,
-            _repo: &ActionRepoId,
-        ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+        fn get_versions(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
             Box::pin(async { Ok(version::Set::default()) })
         }
 
@@ -702,14 +691,11 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
             _ref_name: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
+        ) -> BoxFuture<'_, Result<Sha40>> {
             Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
         }
 
-        fn get_default_branch(
-            &self,
-            _repo: &ActionRepoId,
-        ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+        fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
             Box::pin(async { Ok("main".to_string()) })
         }
 
@@ -717,7 +703,7 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
             _ref_name: Option<&str>,
-        ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+        ) -> BoxFuture<'_, Result<Option<String>>> {
             Box::pin(async { Ok(None) })
         }
 
@@ -725,7 +711,7 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
             _ref_name: &str,
-        ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
+        ) -> BoxFuture<'_, Result<ActionYml>> {
             Box::pin(async { Ok(ActionYml::default()) })
         }
     }

@@ -14,6 +14,7 @@ pub mod action_ref;
 pub mod cache;
 pub mod caching_provider;
 pub mod clock;
+pub mod compat;
 pub mod config;
 pub mod discovery;
 pub mod error;
@@ -27,6 +28,7 @@ pub mod version;
 pub use action_ref::{ActionRef, ActionRepoId};
 pub use caching_provider::{CacheStats, CachingProvider};
 pub use clock::{Clock, SystemClock};
+pub use compat::{BoxFuture, MaybeSend, MaybeSync};
 pub use config::registration::{
     Capabilities, Preset, ProviderConfig, Registration, validate_no_duplicate_presets,
 };

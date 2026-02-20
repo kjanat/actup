@@ -15,11 +15,14 @@ glob          = { workspace = true }  # File discovery (glob patterns)
 json_comments = { workspace = true }  # JSONC parsing
 schemars      = { workspace = true }  # Schema generation
 serde         = { workspace = true }  # Serialization
-tokio         = { workspace = true }  # Async runtime (for RwLock)
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tokio      = { workspace = true }
 toml       = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio = { workspace = true }  # Async RwLock (native only; wasm32 uses std::sync::RwLock)
 
 [lints]
 workspace = true
