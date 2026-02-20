@@ -171,7 +171,7 @@ jobs:
              [[ "${{ needs.doc.result }}" != "success" ]] || \
              [[ "${{ needs.deny.result }}" != "success" ]] || \
              [[ "${{ needs.coverage.result }}" != "success" ]] || \
-             [[ "${{ needs.check-extensions.result }}" == "failure" ]]; then
+             [[ "${{ needs.check-extensions.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi
