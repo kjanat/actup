@@ -72,18 +72,18 @@ packages/
 
 ## Scope & Deliverables
 
-| #   | Deliverable                               | Effort | Depends On |
-| --- | ----------------------------------------- | ------ | ---------- |
-| D1  | `Clock` trait + thread into call sites    | S      | -          |
-| D2  | `Serialize`/`Deserialize` on bridge types | S      | -          |
-| D3  | `Send` bound audit / `MaybeSend` for WASM | S      | -          |
-| D4  | `actup-wasm` crate (parse — pure, sync)   | M      | D1, D2     |
-| D5  | `JsProviderAdapter` bridge + `check_refs` | M      | D3, D4     |
-| D6  | npm package `@actup/wasm` + TS types      | M      | D5         |
-| D7  | Default `fetch()`-based GitHub provider   | S      | D6         |
-| D8  | Wire into VS Code extension (web mode)    | L      | D6, D7     |
-| D9  | Wire into Zed extension (embed vs shim)   | L      | D5         |
-| D10 | WASM-based MCP server                     | L      | D6, D7     |
+| #   | Deliverable                                 | Effort | Depends On |
+| --- | ------------------------------------------- | ------ | ---------- |
+| D1  | `Clock` trait + thread into call sites      | S      | -          |
+| D2  | `Serialize`/`Deserialize` on bridge types   | S      | -          |
+| D3  | `Send` bound audit / `MaybeSend` for WASM   | S      | -          |
+| D4  | `actup-wasm` crate (parse — pure, sync)     | M      | D1, D2     |
+| D5  | `JsProviderAdapter` bridge + `check_refs`   | M      | D3, D4     |
+| D6  | npm package `@actup/wasm` + TS types        | M      | D5         |
+| D7  | Default `fetch()`-based GitHub provider     | S      | D6         |
+| D8  | VS Code web extension (direct WASM, no LSP) | L      | D6, D7     |
+| D9  | Wire into Zed extension (embed vs shim)     | L      | D5         |
+| D10 | WASM-based MCP server                       | L      | D6, D7     |
 
 ## Non-Goals
 
@@ -277,16 +277,26 @@ Single type alias, not scattered `#[cfg]`.
 
 ## Send Bound Strategy
 
-The `Provider` trait requires `Send + Sync` and returns `+ Send` futures. WASM (`wasm32-unknown-unknown`) is single-threaded — `Send` is
-unnecessary and some JS-bridged types won't implement it.
+**Decision: `MaybeSend` trait alias** — `Send` on native, empty trait on WASM.
 
-Options:
+```rust
+// crates/core/src/compat.rs
+#[cfg(not(target_arch = "wasm32"))]
+pub trait MaybeSend: Send {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send> MaybeSend for T {}
 
-1. **`MaybeSend` trait alias** — `Send` on native, nothing on WASM
-2. **Drop `Send` from trait** — use `Arc` + single-threaded executor everywhere
-3. **Separate WASM provider trait** — `WasmProvider` without `Send`, adapter in `actup-wasm`
+#[cfg(target_arch = "wasm32")]
+pub trait MaybeSend {}
+#[cfg(target_arch = "wasm32")]
+impl<T> MaybeSend for T {}
+// (same pattern for MaybeSync)
+```
 
-Decision deferred to D3 (audit). Likely option 1 or 3.
+Then `pub trait Provider: MaybeSend + MaybeSync`, futures return `+ MaybeSend`.
+
+**Why:** Established pattern (futures, tower). Mechanical find-replace — every native impl already satisfies `Send + Sync`. Dropping `Send`
+would break `tokio::spawn` in the LSP. A separate WASM trait creates a maintenance fork.
 
 ## Acceptance Criteria
 
@@ -311,13 +321,12 @@ Decision deferred to D3 (audit). Likely option 1 or 3.
 
 ## Risks & Mitigations
 
-| Risk                                | Likelihood | Impact | Mitigation                                                       |
-| ----------------------------------- | ---------- | ------ | ---------------------------------------------------------------- |
-| `Send` bound incompatible with WASM | High       | M      | D3 audit first; `MaybeSend` or separate trait                    |
-| `serde_yaml_ng` bloats WASM         | Medium     | M      | Profile with `twiggy`; consider `serde_yaml_ng` → lighter parser |
-| `version::Set` not serializable     | High       | S      | D2 adds derives; flatten `Arc<Info>` if needed                   |
-| Async executor mismatch in WASM     | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4             |
-| Zed wasip2 needs different build    | Medium     | L      | Defer D9; may need separate crate or build profile               |
+| Risk                              | Likelihood | Impact | Mitigation                                                       |
+| --------------------------------- | ---------- | ------ | ---------------------------------------------------------------- |
+| `serde_yaml_ng` bloats WASM       | Medium     | M      | Profile with `twiggy`; consider `serde_yaml_ng` → lighter parser |
+| `SystemTime` in `Set::fetched_at` | Low        | S      | `#[serde(skip)]` — WASM consumer won't use cache timestamps      |
+| Async executor mismatch in WASM   | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4             |
+| Zed wasip2 needs different build  | Medium     | L      | Defer D9; may need separate crate or build profile               |
 
 ## Trade-offs Made
 
@@ -330,11 +339,15 @@ Decision deferred to D3 (audit). Likely option 1 or 3.
 | `wasm32-unknown-unknown` primary | `wasm32-wasip2` primary          | Broadest compat (browser + Node); wasip2 only for Zed        |
 | `wasm-bindgen` + `wasm-pack`     | Manual WASM instantiation        | Mature toolchain, good TS type generation                    |
 
-## Open Questions
+## Resolved Questions
 
-- [ ] `Send` bound resolution — `MaybeSend`, drop `Send`, or separate trait? → Owner: D3 audit
-- [ ] `version::Set` internal `Arc<Info>` — serializable across WASM↔JS? → Owner: D2 investigation
-- [ ] npm scope: `@actup/wasm` vs `actup-wasm`? → Owner: publisher (kjanat)
-- [ ] `actup-wasm` as workspace member or separate workspace (like Zed)? → Owner: spec author
-- [ ] WASM LSP transport: `tower-lsp-server` WASM compat, or postMessage adapter? → Owner: D8
-- [ ] Ship source maps in WASM npm package? → Owner: packaging decision
+- [x] **`Send` bound** → `MaybeSend` trait alias. Mechanical find-replace, no breakage.
+- [x] **`version::Set` serialization** → Already derives `Serialize`/`Deserialize`. `Arc` handled by serde `rc` feature (already enabled).
+      Only gap: `#[serde(skip)]` on `fetched_at: SystemTime`.
+- [x] **npm scope** → `actup-wasm` (unscoped). No `@actup` org exists; one package doesn't justify it.
+- [x] **Workspace membership** → Workspace member. Unlike Zed (wasip2 + cdylib conflicts), `wasm32-unknown-unknown` via `wasm-pack` works
+      fine in the workspace. Separate = duplicated lockfile.
+- [x] **WASM LSP transport** → Skip WASM LSP. VS Code web extension calls WASM functions directly via `registerDiagnosticsProvider` /
+      `registerCodeActionsProvider`. LSP protocol is overhead when engine runs in-process. This is what Biome/Ruff/OXC do.
+- [x] **Source maps** → `wasm-opt -O2` without `-g` on `.wasm`. Ship `.js.map` for TS wrapper (tiny, useful). No DWARF-in-WASM (enormous,
+      spotty devtools support).

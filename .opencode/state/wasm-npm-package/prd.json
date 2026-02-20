@@ -1,0 +1,106 @@
+{
+	"prdName": "wasm-npm-package",
+	"spec": "specs/wasm-npm-package.md",
+	"description": "Compile actup-core to WASM, publish actup-wasm npm package with TS wrapper",
+	"tasks": [
+		{
+			"id": "clock-trait",
+			"phase": 1,
+			"title": "Create Clock trait and thread into call sites",
+			"description": "Add platform-agnostic Clock trait to actup-core with SystemClock default impl. Thread into the 3 call sites: cache.rs:34 (Entry stored_at), version.rs:389 (Set freshness), provider-github/graphql.rs:200 (rate limit reset). Done when: all SystemTime::now() in WASM-relevant code paths go through Clock, existing tests pass, SystemClock is default so no API breakage.",
+			"depends": [],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "serde-bridge-types",
+			"phase": 1,
+			"title": "Ensure bridge types are serializable across WASM boundary",
+			"description": "Verify Serialize/Deserialize on all types crossing WASM↔JS: CheckResult, CheckStatus, UsesLocation, ActionRef, version::Set, ActionYml. Add #[serde(skip)] on fetched_at: SystemTime in version::Set. Test round-trip via serde_json. Done when: all bridge types serialize/deserialize without panic, fetched_at is skipped.",
+			"depends": [],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "maybe-send",
+			"phase": 1,
+			"title": "Add MaybeSend/MaybeSync trait aliases for WASM compat",
+			"description": "Create crates/core/src/compat.rs with MaybeSend and MaybeSync trait aliases: Send+Sync on native, unconditional on wasm32. Update Provider trait bounds from Send+Sync to MaybeSend+MaybeSync. Update future return types from +Send to +MaybeSend. Update CachingProvider RwLock: tokio::sync::RwLock on native, std::sync::RwLock on wasm32. Done when: cargo check passes on native, cargo check --target wasm32-unknown-unknown passes for actup-core (may need feature gates on tokio dep).",
+			"depends": [],
+			"priority": "architecture",
+			"passes": false
+		},
+		{
+			"id": "wasm-crate-parse",
+			"phase": 2,
+			"title": "Create actup-wasm crate with parseUsesRefs export",
+			"description": "Create crates/wasm/ as workspace member. Cargo.toml with crate-type=[cdylib], wasm-bindgen dep, actup-core dep. Implement #[wasm_bindgen] parseUsesRefs(yaml: &str) -> JsValue that calls actup-core parser and returns UsesLocation[] via serde-wasm-bindgen. Add JsClock impl (Date.now() via js_sys). Done when: wasm-pack build succeeds, parseUsesRefs callable from Node.js test, returns correct line/offset for 'uses: actions/checkout@v4'.",
+			"depends": ["clock-trait", "serde-bridge-types"],
+			"priority": "integration",
+			"passes": false
+		},
+		{
+			"id": "js-provider-bridge",
+			"phase": 2,
+			"title": "Implement JsProviderAdapter and check_refs export",
+			"description": "Create crates/wasm/src/bridge.rs: define JsProvider extern type with wasm_bindgen methods (getVersions, resolveRefToSha, getDefaultBranch, getReadme, getActionYml). Implement JsProviderAdapter wrapping JsProvider to satisfy actup_core::Provider trait. Export #[wasm_bindgen] async check_refs(yaml, JsProvider, config_json?) -> JsValue returning CheckResult[]. Export planUpdates(yaml, results_json) -> JsValue returning UpdateEdit[]. Done when: check_refs callable from Node.js with mock JS provider object, returns correct status for outdated/up-to-date refs.",
+			"depends": ["maybe-send", "wasm-crate-parse"],
+			"priority": "integration",
+			"passes": false
+		},
+		{
+			"id": "npm-package",
+			"phase": 3,
+			"title": "Create actup-wasm npm package with TS types and loader",
+			"description": "Create packages/actup-wasm/ with: package.json (name: actup-wasm), tsconfig, build script (wasm-pack build + tsc). src/index.ts re-exports wasm-bindgen generated bindings with proper TS types (UsesLocation, CheckResult, UpdateEdit, ActupProvider, ActupConfig interfaces). WASM loader that works in Node.js 18+ and browser. wasm-opt -O2 in build pipeline. .js.map included, no DWARF in .wasm. Done when: npm pack produces installable tarball, import { parseUsesRefs } from 'actup-wasm' works in Node.js.",
+			"depends": ["js-provider-bridge"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "fetch-github-provider",
+			"phase": 3,
+			"title": "Implement default fetch()-based GitHub provider in TS",
+			"description": "Create packages/actup-wasm/src/provider.ts: export createGitHubProvider({ token?, apiBase? }) -> ActupProvider. Implements ActupProvider interface using native fetch() against GitHub REST API (tags, git refs, contents). Handles pagination (Link header), auth (Bearer token), rate limit headers. Works in browser, Node 18+, Bun, Deno. Done when: createGitHubProvider().getVersions('github.com', 'actions', 'checkout') returns valid VersionSet (integration test with real API, skippable in CI).",
+			"depends": ["npm-package"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "vscode-web-extension",
+			"phase": 4,
+			"title": "Wire WASM into VS Code web extension (no LSP)",
+			"description": "Update extensions/vscode/ to support web mode: add browser entry point using WASM directly (not LSP). Register DiagnosticsCollection, CodeActionProvider, HoverProvider, CompletionItemProvider that call actup-wasm functions. Use createGitHubProvider with VS Code's auth session for token. Existing native LSP mode unchanged (desktop). Conditional: web -> WASM direct, desktop -> native LSP. Done when: extension loads in vscode.dev, shows diagnostics for outdated refs in .github/workflows/*.yml.",
+			"depends": ["npm-package", "fetch-github-provider"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "zed-embed-wasm",
+			"phase": 4,
+			"title": "Evaluate and wire WASM into Zed extension",
+			"description": "Investigate embedding actup-core logic in Zed's wasm32-wasip2 extension instead of shelling out to native actup-lsp. May need separate build target (wasip2 vs unknown-unknown) or adapter layer. If feasible: implement WASI HTTP-based provider, wire into slash command and LSP initialization. If not feasible (target conflicts): document blockers, keep native shim. Done when: decision documented with evidence, implementation started if feasible.",
+			"depends": ["js-provider-bridge"],
+			"priority": "spike",
+			"passes": false
+		},
+		{
+			"id": "wasm-mcp-server",
+			"phase": 4,
+			"title": "Implement WASM-based MCP server in TS",
+			"description": "Create MCP server wrapping actup-wasm npm package. Expose tools: actionGetReadme, actionGetActionYml, getVersions, getLatest, updateFile (returns diffs), updateAllUsesToVersion. Use createGitHubProvider for network. Read tools are pure (no side effects). Mutators return unified diffs + reversal plans, never write files directly. Respect config passed via tool args. Done when: MCP server responds correctly to tool calls via stdio, matches tool shapes in AGENTS.md spec.",
+			"depends": ["npm-package", "fetch-github-provider"],
+			"priority": "standard",
+			"passes": false
+		},
+		{
+			"id": "ci-wasm-checks",
+			"phase": 3,
+			"title": "Add CI jobs for WASM build and bundle size check",
+			"description": "Add GitHub Actions CI job: wasm-pack build actup-wasm, run Node.js integration tests, check bundle size < 500KB gzipped (fail if exceeded). Ensure existing native CI unaffected. Done when: CI runs on PR, catches WASM build failures and size regressions.",
+			"depends": ["npm-package"],
+			"priority": "polish",
+			"passes": false
+		}
+	]
+}
