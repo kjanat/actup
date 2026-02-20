@@ -37,7 +37,7 @@
 			"description": "Create crates/wasm/ as workspace member. Cargo.toml with crate-type=[cdylib], wasm-bindgen dep, actup-core dep. Implement #[wasm_bindgen] parseUsesRefs(yaml: &str) -> JsValue that calls actup-core parser and returns UsesLocation[] via serde-wasm-bindgen. Add JsClock impl (Date.now() via js_sys). Done when: wasm-pack build succeeds, parseUsesRefs callable from Node.js test, returns correct line/offset for 'uses: actions/checkout@v4'.",
 			"depends": ["clock-trait", "serde-bridge-types"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "js-provider-bridge",

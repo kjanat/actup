@@ -1,0 +1,26 @@
+[package]
+name                 = "actup-wasm"
+version.workspace    = true
+edition.workspace    = true
+description          = "WASM bindings for actup-core — parse and check GitHub Actions uses: refs"
+homepage.workspace   = true
+repository.workspace = true
+license.workspace    = true
+publish              = false                                                                       # Published via npm, not crates.io
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+actup-core           = { workspace = true }
+js-sys               = "0.3"
+serde                = { workspace = true }
+serde-wasm-bindgen   = "0.6"
+wasm-bindgen         = "0.2"
+wasm-bindgen-futures = "0.4"
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[lints]
+workspace = true

@@ -27,6 +27,8 @@ Started: 2026-02-20
 - `Clock: fmt::Debug + MaybeSend + MaybeSync` — Debug required for structs that derive Debug (e.g. GraphQLClient)
 - `compat.rs` pattern: `MaybeSend`, `MaybeSync` trait aliases + `BoxFuture` type alias — all cfg-gated on `target_arch = "wasm32"`
 - CLI/LSP `file_cache.rs` still uses raw `Pin<Box<dyn Future<...> + Send>>` — fine since native-only binaries
+- WASM exports use `serde-wasm-bindgen` (not `serde_json` string round-trip) — native JS objects cross boundary
+- `wasm-pack build crates/wasm --target nodejs --out-dir ../../target/wasm-pkg` for Node.js testing
 
 ---
 <!-- Task logs below - APPEND ONLY -->
@@ -73,3 +75,15 @@ Started: 2026-02-20
 - Files changed: `compat.rs` (new), `lib.rs`, `provider.rs`, `cache.rs`, `clock.rs`, `caching_provider.rs`, `Cargo.toml`, plus provider crates + LSP test_utils
 - Verified: `cargo check` passes on native, `cargo check --target wasm32-unknown-unknown` passes for actup-core
 - **Learnings:** MaybeSend/MaybeSync cannot be used in trait-object position (`dyn Future + MaybeSend` is illegal) — must use `BoxFuture` type alias instead; `rw_read`/`rw_write` helpers keep `Send + Sync` bounds on native (required by tokio) inside cfg gates rather than using MaybeSend; CLI/LSP file_cache.rs still uses raw `+ Send` in return types — fine since native-only, but inconsistent
+
+## Task - wasm-crate-parse
+
+- Created `crates/wasm/` as workspace member with `crate-type = ["cdylib", "rlib"]`
+- `Cargo.toml` deps: `actup-core`, `wasm-bindgen`, `serde-wasm-bindgen`, `js-sys`, `wasm-bindgen-futures`
+- `src/clock.rs`: `JsClock` impl using `js_sys::Date::now()` → `SystemTime` conversion
+- `src/lib.rs`: `#[wasm_bindgen] parseUsesRefs(yaml: &str) -> JsValue` via `serde_wasm_bindgen::to_value`
+- `tests/node_parse.mjs`: Node.js integration test verifying parseUsesRefs output (line, column, value, raw_line)
+- wasm-pack build: success, 36KB raw / 17KB gzipped (well under 500KB budget)
+- Node.js test: PASS — correct line/column for `actions/checkout@v4`, handles quoted values, local refs, subpaths
+- Files changed: `crates/wasm/Cargo.toml` (new), `crates/wasm/src/lib.rs` (new), `crates/wasm/src/clock.rs` (new), `crates/wasm/tests/node_parse.mjs` (new)
+- **Learnings:** `clippy::module_name_repetitions` triggers on `JsClock` (same as `SystemClock`); `wasm-pack build --target nodejs` generates CommonJS compatible wrapper with `.d.ts` types; `serde-wasm-bindgen` serializes Rust structs to native JS objects (not JSON strings) — fields map directly; `extract_uses_from_yaml` returns 1-indexed lines matching editor conventions
