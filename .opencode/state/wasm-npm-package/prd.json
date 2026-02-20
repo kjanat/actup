@@ -64,7 +64,7 @@
 			"description": "Create packages/actup-wasm/src/provider.ts: export createGitHubProvider({ token?, apiBase? }) -> ActupProvider. Implements ActupProvider interface using native fetch() against GitHub REST API (tags, git refs, contents). Handles pagination (Link header), auth (Bearer token), rate limit headers. Works in browser, Node 18+, Bun, Deno. Done when: createGitHubProvider().getVersions('github.com', 'actions', 'checkout') returns valid VersionSet (integration test with real API, skippable in CI).",
 			"depends": ["npm-package"],
 			"priority": "standard",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "vscode-web-extension",

@@ -28,6 +28,12 @@
 				"types": "./dist/index.d.ts",
 				"default": "./dist/index.js"
 			}
+		},
+		"./provider": {
+			"import": {
+				"types": "./dist/provider.d.ts",
+				"default": "./dist/provider.js"
+			}
 		}
 	},
 	"main": "./dist/index.js",

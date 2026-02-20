@@ -33,6 +33,9 @@ export type {
 	VersionSet,
 } from "./types.js";
 
+export { createGitHubProvider, GitHubProviderError } from "./provider.js";
+export type { GitHubProviderOptions } from "./provider.js";
+
 import type { ActupConfig, ActupProvider, CheckResult, UpdateEdit, UsesLocation } from "./types.js";
 
 /**

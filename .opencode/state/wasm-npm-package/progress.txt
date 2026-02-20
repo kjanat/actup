@@ -17,6 +17,10 @@ Started: 2026-02-20
 - `default-members` in root Cargo.toml excludes actup-wasm from native builds (JsValue is !Send/!Sync)
 - JsProvider → Provider adapter: decompose ActionRepoId into (host, owner, repo) for JS boundary; JS returns camelCase objects
 
+- npm package subpath exports: `"./provider"` in package.json exports map for `src/provider.ts`, also re-exported from main entry
+- GitHub REST API patterns: `/repos/{o}/{r}/tags?per_page=N` (paginated via Link header), `/repos/{o}/{r}/git/ref/tags/{ref}` (resolve tag → SHA), `/repos/{o}/{r}/branches/{branch}` (fallback for branch refs), `/repos/{o}/{r}/contents/{path}?ref=R` (base64-encoded file content)
+- Mock fetch testing pattern: override `globalThis.fetch` with route-matching mock, restore after each test — no deps needed
+
 ## Architecture Decisions
 - MaybeSend trait alias (not feature flags, not separate trait)
 - Clock trait injection (not platform crates)
@@ -124,3 +128,20 @@ Started: 2026-02-20
 - WASM: 285KB raw / 119KB gzipped (well under 500KB budget)
 - Files changed: `packages/actup-wasm/package.json` (new), `tsconfig.json` (new), `src/index.ts` (new), `src/types.ts` (new), `scripts/build-wasm.sh` (new), `.gitignore` (new), `tests/node_import.mjs` (new)
 - **Learnings:** wasm-pack `--target web` generates `init()` (async, fetch-based) + `initSync({ module })` (sync, buffer-based) — object form avoids deprecation warning; `import.meta.url` resolves to `dist/index.js` at runtime so `../wasm/` reaches the wasm dir; `readFileSync` + `new Uint8Array()` is the cleanest Node.js WASM loading pattern; `extract_uses_from_yaml` returns 1-indexed lines (line 7 for 7th line); DOM + @types/node both needed in tsconfig for cross-platform types (URL, Response, BufferSource, node:fs)
+
+## Task - fetch-github-provider
+
+- Created `packages/actup-wasm/src/provider.ts`: `createGitHubProvider({ token?, apiBase?, perPage? }) -> ActupProvider`
+- Implements all 5 `ActupProvider` methods using native `fetch()` against GitHub REST API
+- `getVersions`: paginated tag listing via Link header + default branch info (graceful degradation on branch fetch failure)
+- `resolveRefToSha`: tries tag ref first, dereferences annotated tags, falls back to branch lookup on 404
+- `getDefaultBranch`: reads repo info endpoint
+- `getReadme`: reads `contents/README.md` with optional ref, base64-decodes, returns null on 404
+- `getActionYml`: tries `action.yml` then `action.yaml`, base64-decodes, minimal YAML scalar extraction (name/description/author)
+- `GitHubProviderError` class: structured errors with `status`, `rateLimitRemaining`, `retryAfter` fields
+- Rate limit handling: 429 + 403 detection, `Retry-After` and `X-RateLimit-Reset` header parsing, low-remaining console warning
+- Auth: optional Bearer token, proper API headers (`Accept`, `User-Agent`, `X-GitHub-Api-Version`)
+- Added subpath export `"./provider"` in package.json + re-exported from main entry point (`index.ts`)
+- 21 unit tests via mock fetch in `tests/provider.mjs`: all 5 provider methods, pagination, tag dereferencing, fallbacks, error handling, rate limiting, auth, config options
+- Files changed: `src/provider.ts` (new), `src/index.ts` (updated), `package.json` (updated), `tests/provider.mjs` (new)
+- **Learnings:** `globalThis.fetch` override is cleanest mock approach for provider tests — no deps needed, route-matching pattern scales well; `atob` + `TextDecoder` for base64 decoding works across all target runtimes (Node 16+, browsers, Bun, Deno); `parseActionYmlMinimal` avoids pulling in a YAML parser dep — extracts only top-level scalars via regex, raw content available for WASM-side full parsing; annotated tags require a two-step resolve (git/ref → git/tags dereference); `encodeURIComponent` needed for ref names that contain `/` (e.g. `release/v1`)
