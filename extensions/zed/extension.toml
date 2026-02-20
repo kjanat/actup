@@ -4,7 +4,7 @@ name           = "actup — Actions Updater"
 id             = "actup"
 schema_version = 1
 version        = "0.1.0"
-description    = "Keep GitHub Actions uses: refs up-to-date — diagnostics, code actions, hover, completion"
+description    = "Keep GitHub Actions up-to-date — diagnostics, code actions, hover, completion"
 authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
 repository     = "https://github.com/kjanat/actup-v2"
 

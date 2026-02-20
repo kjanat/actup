@@ -48,7 +48,7 @@ Acceptable for a Zed extension (no explicit size limit; extensions like Biome/Ru
 
 ## Architecture
 
-```
+```txt
 Slash command (/actions:update)
   |
   +-> discover_workflow_files()  [probes known paths via worktree API]

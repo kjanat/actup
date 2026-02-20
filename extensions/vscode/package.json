@@ -2,7 +2,7 @@
   "name": "actup-vscode",
   "displayName": "actup — Actions Updater",
   "version": "0.1.0",
-  "description": "Keep GitHub Actions uses: refs up-to-date — diagnostics, code actions, hover, completion",
+  "description": "Keep GitHub Actions up-to-date — diagnostics, code actions, hover, completion",
   "categories": [
     "Linters"
   ],
