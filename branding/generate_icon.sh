@@ -49,6 +49,14 @@ while getopts ":s:p:r:h" opt; do
 done
 shift $((OPTIND - 1))
 
+for _pair in s:CANVAS_SIZE p:PADDING_PCT r:CORNER_RADIUS; do
+	_flag="${_pair%%:*}" _name="${_pair#*:}"
+	[[ "${!_name}" =~ ^[0-9]+$ ]] || {
+		echo "Error: -${_flag} requires a positive integer" >&2
+		exit 1
+	}
+done
+
 (($# == 3)) || usage
 
 BG_COLOR="$1"
