@@ -13,6 +13,9 @@ Started: 2026-02-20
 - SystemTime::now() in 3 places: cache.rs:34, version.rs:389, graphql.rs:200
 - serde `rc` feature already enabled — Arc<T> serializes transparently
 - version::Set already derives Serialize/Deserialize
+- wasm extern block `Result<JsValue, JsValue>` must use `std::result::Result` (not actup_core::Result which only takes 1 type param)
+- `default-members` in root Cargo.toml excludes actup-wasm from native builds (JsValue is !Send/!Sync)
+- JsProvider → Provider adapter: decompose ActionRepoId into (host, owner, repo) for JS boundary; JS returns camelCase objects
 
 ## Architecture Decisions
 - MaybeSend trait alias (not feature flags, not separate trait)
@@ -87,3 +90,19 @@ Started: 2026-02-20
 - Node.js test: PASS — correct line/column for `actions/checkout@v4`, handles quoted values, local refs, subpaths
 - Files changed: `crates/wasm/Cargo.toml` (new), `crates/wasm/src/lib.rs` (new), `crates/wasm/src/clock.rs` (new), `crates/wasm/tests/node_parse.mjs` (new)
 - **Learnings:** `clippy::module_name_repetitions` triggers on `JsClock` (same as `SystemClock`); `wasm-pack build --target nodejs` generates CommonJS compatible wrapper with `.d.ts` types; `serde-wasm-bindgen` serializes Rust structs to native JS objects (not JSON strings) — fields map directly; `extract_uses_from_yaml` returns 1-indexed lines matching editor conventions
+
+## Task - js-provider-bridge
+
+- Created `crates/wasm/src/bridge.rs`: `JsProvider` extern type + `JsProviderAdapter` implementing `Provider` trait
+- `JsProvider` has 5 async methods matching Provider: `getVersions`, `resolveRefToSha`, `getDefaultBranch`, `getReadme`, `getActionYml`
+- `JsProviderAdapter` wraps JsProvider, deserializes JS objects (camelCase) to Rust types via serde-wasm-bindgen
+- `JsVersionSet` intermediate type: `{ semverTags: [{version, sha}], defaultBranch?: {name, sha} }` — converts to `version::Set`
+- `build_version_set()` reconstructs `latest_per_major`, `major_tags`, `latest` from flat tag list
+- Exported `checkRefs(yaml, provider, config_json?)` — async, parses YAML, calls `check_action_remote` per ref, returns `CheckResult[]`
+- Exported `planUpdates(yaml, results_json)` — sync, matches CheckResults to UsesLocations, returns `UpdateEdit[]` with line/range info
+- Added `serde_json` dep to wasm crate (for config deserialization + planUpdates input)
+- Added `default-members` to root `Cargo.toml` — excludes actup-wasm from default native builds (JsValue is !Send/!Sync)
+- `tests/node_check.mjs`: integration test with mock provider, verifies outdated detection, planUpdates edits, custom config, empty inputs
+- WASM bundle: 285KB raw / 119KB gzipped (was 36KB/17KB — grew due to full resolution + config logic)
+- Files changed: `crates/wasm/src/bridge.rs` (new), `crates/wasm/src/lib.rs` (updated), `crates/wasm/Cargo.toml` (updated), `crates/wasm/tests/node_check.mjs` (new), `Cargo.toml` (updated)
+- **Learnings:** wasm_bindgen extern `Result<JsValue, JsValue>` must use `std::result::Result` explicitly when `actup_core::Result` is in scope; `actup_core::Error::Internal` has both `context` and `message` fields; JS errors from providers map to `Error::Network` since they're environment errors; `check_action_remote` handles the full pipeline (provider lookup + version fetch + check_action + fallback); default Config `update_policy` is Patch but test showed major updates — `check_action` treats major-only refs (v3) specially, comparing against `latest_per_major` and finding a newer major

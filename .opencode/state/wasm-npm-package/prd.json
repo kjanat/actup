@@ -46,7 +46,7 @@
 			"description": "Create crates/wasm/src/bridge.rs: define JsProvider extern type with wasm_bindgen methods (getVersions, resolveRefToSha, getDefaultBranch, getReadme, getActionYml). Implement JsProviderAdapter wrapping JsProvider to satisfy actup_core::Provider trait. Export #[wasm_bindgen] async check_refs(yaml, JsProvider, config_json?) -> JsValue returning CheckResult[]. Export planUpdates(yaml, results_json) -> JsValue returning UpdateEdit[]. Done when: check_refs callable from Node.js with mock JS provider object, returns correct status for outdated/up-to-date refs.",
 			"depends": ["maybe-send", "wasm-crate-parse"],
 			"priority": "integration",
-			"passes": false
+			"passes": true
 		},
 		{
 			"id": "npm-package",

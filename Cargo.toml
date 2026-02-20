@@ -1,6 +1,17 @@
 [workspace]
-resolver = "3"
-members  = ["crates/*"]
+resolver        = "3"
+members         = ["crates/*"]
+# actup-wasm is wasm32-only (JsValue is !Send); exclude from default native builds
+default-members = [
+  "crates/actup",
+  "crates/core",
+  "crates/lsp",
+  "crates/mcp",
+  "crates/provider-gitea",
+  "crates/provider-github",
+  "crates/provider-gitlab",
+  "crates/providers",
+]
 
 [workspace.package]
 version    = "0.1.0"

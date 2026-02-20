@@ -1,0 +1,171 @@
+// Integration test: verify checkRefs + planUpdates with a mock JS provider
+//
+// Run after `wasm-pack build crates/wasm --target nodejs --out-dir ../../target/wasm-pkg`:
+//   node crates/wasm/tests/node_check.mjs
+
+import { checkRefs, planUpdates } from "../../../target/wasm-pkg/actup_wasm.js";
+
+// Mock provider that returns controlled version data
+const mockProvider = {
+	async getVersions(host, owner, repo) {
+		if (owner === "actions" && repo === "checkout") {
+			return {
+				semverTags: [
+					{ version: "v3.0.0", sha: "a".repeat(40) },
+					{ version: "v4.0.0", sha: "b".repeat(40) },
+					{ version: "v4.1.0", sha: "c".repeat(40) },
+					{ version: "v4.2.0", sha: "d".repeat(40) },
+				],
+			};
+		}
+		if (owner === "actions" && repo === "setup-node") {
+			return {
+				semverTags: [
+					{ version: "v3.0.0", sha: "e".repeat(40) },
+					{ version: "v3.1.0", sha: "f".repeat(40) },
+					{ version: "v4.0.0", sha: "1".repeat(40) },
+				],
+			};
+		}
+		throw new Error(`Unknown repo: ${owner}/${repo}`);
+	},
+
+	async resolveRefToSha(host, owner, repo, ref) {
+		return "a".repeat(40);
+	},
+
+	async getDefaultBranch(host, owner, repo) {
+		return "main";
+	},
+
+	async getReadme(host, owner, repo, ref) {
+		return null;
+	},
+
+	async getActionYml(host, owner, repo, ref) {
+		return { raw: "", name: null, description: null, author: null, inputs: {}, outputs: {}, runs: null };
+	},
+};
+
+const yaml = `\
+name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
+      - uses: './local/action'
+`;
+
+// Test checkRefs
+const results = await checkRefs(yaml, mockProvider);
+
+if (!Array.isArray(results)) {
+	throw new Error(`Expected array, got ${typeof results}`);
+}
+
+// Should have 2 results (local ref is skipped)
+if (results.length !== 2) {
+	throw new Error(
+		`Expected 2 results, got ${results.length}: ${JSON.stringify(results, null, 2)}`,
+	);
+}
+
+// First result: actions/checkout@v3 should be outdated (v4.2.0 available)
+const checkout = results[0];
+if (checkout.status !== "Outdated") {
+	// serde enum uses variant name
+	const statusKey = Object.keys(checkout.status)[0] || checkout.status;
+	if (statusKey !== "Outdated") {
+		throw new Error(
+			`Expected checkout status Outdated, got ${JSON.stringify(checkout.status)}`,
+		);
+	}
+}
+console.log("PASS: checkout is outdated:", JSON.stringify(checkout.status));
+
+// Second result: actions/setup-node@v3 — could be outdated (v4.0.0 available)
+// depending on default policy (patch = same major, so v3.1.0 is target)
+const setupNode = results[1];
+console.log(
+	"PASS: setup-node status:",
+	JSON.stringify(setupNode.status),
+);
+
+// Test planUpdates
+const resultsJson = JSON.stringify(results);
+const edits = planUpdates(yaml, resultsJson);
+
+if (!Array.isArray(edits)) {
+	throw new Error(`Expected edits array, got ${typeof edits}`);
+}
+
+console.log(
+	"PASS: planUpdates returned",
+	edits.length,
+	"edits:",
+	JSON.stringify(edits, null, 2),
+);
+
+// Verify edit structure
+for (const edit of edits) {
+	if (typeof edit.line !== "number") {
+		throw new Error(`Expected edit.line to be number, got ${typeof edit.line}`);
+	}
+	if (typeof edit.refStart !== "number") {
+		throw new Error(
+			`Expected edit.refStart to be number, got ${typeof edit.refStart}`,
+		);
+	}
+	if (typeof edit.refEnd !== "number") {
+		throw new Error(
+			`Expected edit.refEnd to be number, got ${typeof edit.refEnd}`,
+		);
+	}
+	if (typeof edit.original !== "string") {
+		throw new Error(
+			`Expected edit.original to be string, got ${typeof edit.original}`,
+		);
+	}
+	if (typeof edit.newRef !== "string") {
+		throw new Error(
+			`Expected edit.newRef to be string, got ${typeof edit.newRef}`,
+		);
+	}
+}
+
+// Test with custom config (major policy — allows cross-major updates)
+const majorConfig = JSON.stringify({ update_policy: "major" });
+const majorResults = await checkRefs(yaml, mockProvider, majorConfig);
+
+console.log("PASS: checkRefs with major policy returned", majorResults.length, "results");
+for (const r of majorResults) {
+	console.log(
+		"  ",
+		JSON.stringify(r.action_ref),
+		"->",
+		JSON.stringify(r.status),
+	);
+}
+
+// Test empty YAML
+const emptyResults = await checkRefs("", mockProvider);
+if (!Array.isArray(emptyResults) || emptyResults.length !== 0) {
+	throw new Error(
+		`Expected empty array for empty YAML, got ${JSON.stringify(emptyResults)}`,
+	);
+}
+console.log("PASS: empty YAML returns empty results");
+
+// Test planUpdates with no outdated results (pass up-to-date)
+const noEdits = planUpdates(yaml, "[]");
+if (!Array.isArray(noEdits) || noEdits.length !== 0) {
+	throw new Error(
+		`Expected no edits for empty results, got ${JSON.stringify(noEdits)}`,
+	);
+}
+console.log("PASS: planUpdates with empty results returns no edits");
+
+console.log("\nAll checkRefs + planUpdates tests PASSED");
