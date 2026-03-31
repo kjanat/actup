@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action as core_check_action, provider,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider,
 };
 use owo_colors::OwoColorize;
 
@@ -87,7 +87,7 @@ pub async fn run(
             };
 
             // Use core check_action to determine if update needed
-            let result = core_check_action(&action_ref, &versions, config);
+            let result = check_action_with_provider(&action_ref, &versions, config, provider).await;
             let CheckStatus::Outdated { target, .. } = result.status() else {
                 continue; // Not outdated, skip
             };

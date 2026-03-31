@@ -45,5 +45,6 @@ pub use policy::Update;
 pub use provider::Provider;
 pub use resolution::{
     CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, check_action, check_action_remote,
+    check_action_with_provider,
 };
 pub use version::{BranchInfo, Info, Version};

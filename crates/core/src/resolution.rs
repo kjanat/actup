@@ -124,6 +124,59 @@ fn status_for_no_target(current: &version::Version) -> CheckStatus {
     }
 }
 
+fn should_respect_branch_policy_for_major_ref(
+    action_ref: &ActionRef,
+    versions: &version::Set,
+    status: &CheckStatus,
+) -> bool {
+    let current = version::Version::parse(action_ref.ref_str());
+    let Some(current_major) = current.major() else {
+        return false;
+    };
+
+    current.is_major_only()
+        && action_ref.ref_str().starts_with('v')
+        && !versions.has_exact_tag(action_ref.ref_str())
+        && !versions.major_tags().contains_key(&current_major)
+        && matches!(status, CheckStatus::Outdated { target, .. } if target.version().major() == Some(current_major))
+}
+
+/// Check action using pre-fetched versions and provider ref resolution.
+///
+/// Uses the provider only to disambiguate floating major refs like `v2` when
+/// the fetched tag set contains only concrete tags like `v2.0.4`.
+pub async fn check_action_with_provider(
+    action_ref: &ActionRef,
+    versions: &version::Set,
+    config: &Config,
+    provider: &dyn provider::Provider,
+) -> CheckResult {
+    let result = check_action(action_ref, versions, config);
+    if !should_respect_branch_policy_for_major_ref(action_ref, versions, result.status()) {
+        return result;
+    }
+
+    if provider
+        .resolve_ref_to_sha(&action_ref.to_repo_id(), action_ref.ref_str())
+        .await
+        .is_ok()
+    {
+        return CheckResult::new(
+            action_ref.clone(),
+            status_for_non_semver(
+                &version::Version::Other {
+                    tag: action_ref.ref_str().to_string(),
+                },
+                config.branch_policy,
+                versions,
+                config.allow_prerelease,
+            ),
+        );
+    }
+
+    result
+}
+
 /// Check action against already-fetched versions.
 ///
 /// This is the synchronous version for when you already have the [`version::Set`].
@@ -305,7 +358,7 @@ pub async fn check_action_remote(
         })?;
 
     let versions = provider.get_versions(&action_ref.to_repo_id()).await?;
-    let result = check_action(action_ref, &versions, config);
+    let result = check_action_with_provider(action_ref, &versions, config, provider).await;
 
     // Fallback: if batch fetch returned no versions but the ref actually exists,
     // treat as up-to-date. This handles edge cases like:
@@ -332,7 +385,76 @@ pub async fn check_action_remote(
 mod tests {
     use super::*;
     use crate::policy;
+    use crate::provider::{ActionYml, Kind, Provider, Sha40};
     use std::collections::HashMap;
+
+    struct ResolveMockProvider {
+        resolve_ref: bool,
+    }
+
+    impl ResolveMockProvider {
+        const fn new(resolve_ref: bool) -> Self {
+            Self { resolve_ref }
+        }
+    }
+
+    impl Provider for ResolveMockProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &crate::ActionRepoId,
+        ) -> crate::BoxFuture<'_, crate::Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            repo: &crate::ActionRepoId,
+            ref_name: &str,
+        ) -> crate::BoxFuture<'_, crate::Result<Sha40>> {
+            let result = if self.resolve_ref {
+                Ok(Sha40::new("a".repeat(40)).unwrap())
+            } else {
+                Err(Error::RefNotFound {
+                    owner: repo.owner().to_string(),
+                    repo: repo.repo().to_string(),
+                    ref_name: ref_name.to_string(),
+                    host: repo.host().map(ToOwned::to_owned),
+                })
+            };
+            Box::pin(async move { result })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &crate::ActionRepoId,
+        ) -> crate::BoxFuture<'_, crate::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &crate::ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> crate::BoxFuture<'_, crate::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &crate::ActionRepoId,
+            _ref_name: &str,
+        ) -> crate::BoxFuture<'_, crate::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
 
     fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
         ActionRef::new(None, owner, repo, None, ref_str)
@@ -745,6 +867,56 @@ mod tests {
             }
             other => panic!("Expected Outdated, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_check_action_with_provider_treats_resolved_v_major_ref_as_floating() {
+        let action = make_action_ref("denoland", "setup-deno", "v2");
+        let v2_0_4 = make_version_info("v2.0.4", "sha2");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(2, v2_0_4.clone());
+
+        let versions = make_version_set(
+            vec![v2_0_4.clone()],
+            Some(v2_0_4),
+            latest_per_major,
+            HashMap::new(),
+        );
+        let config = Config {
+            branch_policy: policy::Branch::Ignore,
+            ..Default::default()
+        };
+
+        let provider = ResolveMockProvider::new(true);
+        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+
+        assert!(matches!(result.status(), CheckStatus::UpToDate));
+    }
+
+    #[tokio::test]
+    async fn test_check_action_with_provider_keeps_missing_no_v_major_outdated() {
+        let action = make_action_ref("actions", "setup-node", "6");
+        let v6_tag = make_version_info("v6", "sha6");
+        let v6_0_2 = make_version_info("v6.0.2", "sha6full");
+
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(6, v6_0_2.clone());
+        let mut major_tags = HashMap::new();
+        major_tags.insert(6, v6_tag.clone());
+
+        let versions = make_version_set(
+            vec![v6_tag, v6_0_2.clone()],
+            Some(v6_0_2),
+            latest_per_major,
+            major_tags,
+        );
+        let config = Config::default();
+
+        let provider = ResolveMockProvider::new(true);
+        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+
+        assert!(matches!(result.status(), CheckStatus::Outdated { current, .. } if current == "6"));
     }
 
     #[test]

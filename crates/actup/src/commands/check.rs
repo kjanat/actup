@@ -7,7 +7,7 @@ use itertools::Itertools;
 
 use actup_core::{
     ActionRef, ActionRepoId, CheckStatus, Config, NO_VERSIONS_FOUND_REASON, cache::Cache,
-    check_action as core_check_action, provider, version,
+    check_action_with_provider, provider, version,
 };
 use tracing::debug;
 
@@ -59,13 +59,11 @@ fn to_finding_status(status: CheckStatus, versions: Option<&version::Set>) -> Fi
 ///
 /// When `versions_result` is `None` (no fetch attempted) or `Some(Err(...))` (fetch failed),
 /// creates an Unresolvable finding with proper error classification.
-fn check_action_with_versions(
-    action_ref: &ActionRef,
-    file: &str,
-    line: usize,
+async fn check_action_with_versions(
+    action: &CollectedAction,
     versions_result: Option<&Result<version::Set, actup_core::Error>>,
     config: &Config,
-    provider: &str,
+    registry: &provider::Registry,
 ) -> Finding {
     let status = match versions_result {
         None => {
@@ -82,19 +80,26 @@ fn check_action_with_versions(
                 is_environment_error: e.is_environment_error(),
             }
         }
-        Some(Ok(versions)) => {
-            // Success - check for updates
-            let result = core_check_action(action_ref, versions, config);
-            to_finding_status(result.status().clone(), Some(versions))
-        }
+        Some(Ok(versions)) => match registry.find_for_repo(&action.repo_id) {
+            Some(provider) => {
+                let result =
+                    check_action_with_provider(&action.action_ref, versions, config, provider)
+                        .await;
+                to_finding_status(result.status().clone(), Some(versions))
+            }
+            None => FindingStatus::Unresolvable {
+                reason: "no provider for fetched repo".to_string(),
+                is_environment_error: true,
+            },
+        },
     };
 
     Finding::new(
-        file.to_string(),
-        line,
-        action_ref.clone(),
+        action.file.clone(),
+        action.line,
+        action.action_ref.clone(),
         status,
-        provider.to_string(),
+        action.provider.clone(),
     )
 }
 
@@ -194,14 +199,7 @@ pub async fn run(
 
     for action in collected_actions {
         let versions_result = versions_map.get(&action.repo_id);
-        let finding = check_action_with_versions(
-            &action.action_ref,
-            &action.file,
-            action.line,
-            versions_result,
-            config,
-            &action.provider,
-        );
+        let finding = check_action_with_versions(&action, versions_result, config, registry).await;
 
         // Track semver refs that weren't found in batch fetch for fallback resolution
         if matches!(finding.status(), FindingStatus::Unresolvable { reason, .. }
@@ -402,9 +400,67 @@ async fn batch_fetch_versions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actup_core::provider::{ActionYml, Kind, Provider, Sha40};
     use actup_core::version;
     use std::collections::HashMap;
     use std::sync::Arc;
+
+    struct TestProvider;
+
+    impl Provider for TestProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<Sha40>> {
+            Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap_or_else(|| unreachable!())) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    fn test_registry() -> provider::Registry {
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(TestProvider));
+        registry
+    }
 
     fn make_version_info(tag: &str, sha: &str) -> Arc<version::Info> {
         Arc::new(version::Info::new(version::Version::parse(tag), sha))
@@ -613,8 +669,8 @@ mod tests {
     }
 
     /// Test `check_action_with_versions` when versions are available.
-    #[test]
-    fn test_check_action_with_versions_success() {
+    #[tokio::test]
+    async fn test_check_action_with_versions_success() {
         use actup_core::{ActionRef, policy};
 
         let action_ref = ActionRef::simple(
@@ -638,15 +694,17 @@ mod tests {
             update_policy: policy::Update::Major,
             ..Default::default()
         };
+        let registry = test_registry();
+        let collected = CollectedAction {
+            file: "test.yml".to_string(),
+            line: 10,
+            repo_id: action_ref.to_repo_id(),
+            action_ref,
+            provider: "github".to_string(),
+        };
 
-        let finding = check_action_with_versions(
-            &action_ref,
-            "test.yml",
-            10,
-            Some(&Ok(versions)),
-            &config,
-            "github",
-        );
+        let finding =
+            check_action_with_versions(&collected, Some(&Ok(versions)), &config, &registry).await;
 
         assert_eq!(finding.file(), "test.yml");
         assert_eq!(finding.line(), 10);
@@ -656,8 +714,8 @@ mod tests {
     }
 
     /// Test `check_action_with_versions` when versions are None (fetch failed).
-    #[test]
-    fn test_check_action_with_versions_no_versions() {
+    #[tokio::test]
+    async fn test_check_action_with_versions_no_versions() {
         use actup_core::ActionRef;
 
         let action_ref = ActionRef::simple(
@@ -667,9 +725,16 @@ mod tests {
         );
 
         let config = Config::default();
+        let registry = test_registry();
+        let collected = CollectedAction {
+            file: "test.yml".to_string(),
+            line: 5,
+            repo_id: action_ref.to_repo_id(),
+            action_ref,
+            provider: "github".to_string(),
+        };
 
-        let finding =
-            check_action_with_versions(&action_ref, "test.yml", 5, None, &config, "github");
+        let finding = check_action_with_versions(&collected, None, &config, &registry).await;
 
         assert_eq!(finding.file(), "test.yml");
         assert_eq!(finding.line(), 5);
@@ -687,8 +752,8 @@ mod tests {
     }
 
     /// Test `check_action_with_versions` propagates provider error message.
-    #[test]
-    fn test_check_action_with_versions_provider_error() {
+    #[tokio::test]
+    async fn test_check_action_with_versions_provider_error() {
         use actup_core::ActionRef;
 
         let action_ref = ActionRef::simple(
@@ -702,15 +767,18 @@ mod tests {
             provider: "github".to_string(),
             reason: "authentication failed".to_string(),
         };
+        let registry = test_registry();
+        let collected = CollectedAction {
+            file: "test.yml".to_string(),
+            line: 5,
+            repo_id: action_ref.to_repo_id(),
+            action_ref,
+            provider: "github".to_string(),
+        };
 
-        let finding = check_action_with_versions(
-            &action_ref,
-            "test.yml",
-            5,
-            Some(&Err(auth_error)),
-            &config,
-            "github",
-        );
+        let finding =
+            check_action_with_versions(&collected, Some(&Err(auth_error)), &config, &registry)
+                .await;
 
         match finding.status() {
             FindingStatus::Unresolvable {
@@ -725,8 +793,8 @@ mod tests {
     }
 
     /// Test that user errors (`NotFound`) are classified as `is_environment_error: false`.
-    #[test]
-    fn test_check_action_with_versions_user_error() {
+    #[tokio::test]
+    async fn test_check_action_with_versions_user_error() {
         use actup_core::ActionRef;
 
         let action_ref = ActionRef::simple(
@@ -741,15 +809,18 @@ mod tests {
             repo: "nonexistent".to_string(),
             host: Some("github.com".to_string()),
         };
+        let registry = test_registry();
+        let collected = CollectedAction {
+            file: "test.yml".to_string(),
+            line: 10,
+            repo_id: action_ref.to_repo_id(),
+            action_ref,
+            provider: "github".to_string(),
+        };
 
-        let finding = check_action_with_versions(
-            &action_ref,
-            "test.yml",
-            10,
-            Some(&Err(not_found_error)),
-            &config,
-            "github",
-        );
+        let finding =
+            check_action_with_versions(&collected, Some(&Err(not_found_error)), &config, &registry)
+                .await;
 
         match finding.status() {
             FindingStatus::Unresolvable {

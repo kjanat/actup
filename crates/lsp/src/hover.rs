@@ -7,7 +7,9 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use actup_core::resolution::CheckStatus;
-use actup_core::{ActionRef, Config, check_action, extract_uses_from_yaml, parse_uses, provider};
+use actup_core::{
+    ActionRef, Config, check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
+};
 use dashmap::DashMap;
 use tower_lsp_server::ls_types::{
     Hover, HoverContents, MarkupContent, MarkupKind, Position, Range,
@@ -331,17 +333,22 @@ pub async fn compute_hover(
         };
 
     // Check status
-    let status = versions.as_ref().map_or_else(
-        || CheckStatus::Unresolvable {
+    let status = match versions.as_ref() {
+        None => CheckStatus::Unresolvable {
             reason: "no provider available".into(),
             is_environment_error: true,
         },
-        |v| {
-            check_action(&located.action_ref, v, config)
+        Some(v) => match registry.find_for_repo(&repo_id) {
+            Some(provider) => check_action_with_provider(&located.action_ref, v, config, provider)
+                .await
                 .status()
-                .clone()
+                .clone(),
+            None => CheckStatus::Unresolvable {
+                reason: "no provider available".into(),
+                is_environment_error: true,
+            },
         },
-    );
+    };
 
     let latest_version = versions
         .as_ref()

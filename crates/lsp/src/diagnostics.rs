@@ -8,8 +8,8 @@ use std::collections::HashMap;
 use actup_core::cache::Cache as _;
 use actup_core::resolution::{CheckResult, CheckStatus};
 use actup_core::{
-    ActionRef, ActionRepoId, Config, Error as CoreError, check_action, extract_uses_from_yaml,
-    parse_uses, provider,
+    ActionRef, ActionRepoId, Config, Error as CoreError, check_action_with_provider,
+    extract_uses_from_yaml, parse_uses, provider,
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -321,7 +321,18 @@ pub async fn compute_diagnostics(
 
         let repo_id = action.action_ref.to_repo_id();
         let result = match versions_map.get(&repo_id) {
-            Some(Ok(versions)) => check_action(&action.action_ref, versions, config),
+            Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
+                Some(provider) => {
+                    check_action_with_provider(&action.action_ref, versions, config, provider).await
+                }
+                None => CheckResult::new(
+                    action.action_ref.clone(),
+                    CheckStatus::Unresolvable {
+                        reason: "internal: provider not found for fetched repo".into(),
+                        is_environment_error: true,
+                    },
+                ),
+            },
             Some(Err(e)) => {
                 errors.record(e);
                 CheckResult::new(
@@ -773,6 +784,55 @@ jobs:
                 .diagnostics
                 .iter()
                 .map(|d| &d.message)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_respects_branch_policy_for_v_major_ref() {
+        let v2_0_4 = Arc::new(version::Info::new(
+            version::Version::parse("v2.0.4"),
+            DUMMY_SHA,
+        ));
+        let mut latest_per_major = std::collections::HashMap::new();
+        latest_per_major.insert(2, Arc::clone(&v2_0_4));
+        let versions = version::Set::build(
+            vec![Arc::clone(&v2_0_4)],
+            latest_per_major,
+            std::collections::HashMap::new(),
+            Some(v2_0_4),
+        );
+        let provider = test_utils::MockProvider::new("github.com").with_versions(
+            "denoland",
+            "setup-deno",
+            versions,
+        );
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config {
+            branch_policy: actup_core::policy::Branch::Ignore,
+            ..Default::default()
+        };
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: denoland/setup-deno@v2\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert!(
+            result.diagnostics.is_empty(),
+            "unexpected diagnostics: {:?}",
+            result
+                .diagnostics
+                .iter()
+                .map(|diag| diag.message.as_str())
                 .collect::<Vec<_>>()
         );
     }
