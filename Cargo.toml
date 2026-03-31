@@ -46,7 +46,7 @@ miette                = { version = "7.6", features = ["fancy"] }           # er
 node-semver           = "2"                                                 # semver
 octocrab              = "0.49"                                              # github
 owo-colors            = "4"                                                 # colors
-rust-mcp-sdk          = "0.8"                                               # mcp
+rust-mcp-sdk          = "0.9"                                               # mcp
 sanitize-filename     = "0.6"                                               # filesystem
 schemars              = "1"                                                 # schema
 schemars_derive       = "1"                                                 # schema

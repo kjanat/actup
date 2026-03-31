@@ -12,6 +12,7 @@ alias t := test
 alias r := run
 alias ch := check
 alias c := clippy
+alias l := lint
 
 schema_dir := "schemas"
 actup_config := "actup-config.schema.json"

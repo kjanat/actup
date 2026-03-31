@@ -150,6 +150,23 @@ mod discovery_tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].kind(), FileKind::Custom);
     }
+
+    #[test]
+    fn test_discover_explicit_workflow_file() {
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
+        let workflows_dir = temp.path().join(".github/workflows");
+        ok_or_panic(fs::create_dir_all(&workflows_dir), "create workflows dir");
+        let workflow = workflows_dir.join("release.yml");
+        ok_or_panic(
+            fs::write(&workflow, "name: Release"),
+            "write release fixture",
+        );
+
+        let files = discover_files(&workflow, &[]);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].kind(), FileKind::Workflow);
+        assert_eq!(files[0].path(), workflow.as_path());
+    }
 }
 
 mod config_tests {

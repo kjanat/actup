@@ -84,9 +84,11 @@ impl FileKind {
     }
 }
 
-/// Discover all action-related files in a directory
+/// Discover action-related files from a directory or explicit file path.
 ///
-/// Searches for:
+/// When `root` is a file, returns that YAML file directly.
+///
+/// When `root` is a directory, searches for:
 /// - action.yml and action.yaml in root
 /// - .github/workflows/*.yml and .yaml
 /// - .github/actions/*/action.yml and .yaml
@@ -95,6 +97,15 @@ impl FileKind {
 pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredFile> {
     let mut files = Vec::new();
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
+
+    // Explicit file input: scan that file directly instead of treating it as a repo root.
+    if root.is_file() && has_yaml_ext(root) {
+        files.push(DiscoveredFile::new(
+            root.to_path_buf(),
+            classify_explicit_file(root),
+        ));
+        return files;
+    }
 
     // Discover workflows
     for pattern in DEFAULT_WORKFLOW_PATTERNS {
@@ -138,17 +149,35 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
     files
 }
 
+fn has_yaml_ext(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "yml" || ext == "yaml")
+}
+
+fn classify_explicit_file(path: &Path) -> FileKind {
+    let path_str = path.to_string_lossy();
+
+    if path_str.contains(".github/workflows/") || path_str.contains(".github\\workflows\\") {
+        return FileKind::Workflow;
+    }
+
+    if let Some(name) = path.file_name() {
+        let name = name.to_string_lossy();
+        if name == "action.yml" || name == "action.yaml" {
+            return FileKind::CompositeAction;
+        }
+    }
+
+    FileKind::Custom
+}
+
 /// Check if a path looks like a GitHub Actions file
 #[must_use]
 pub fn is_actions_file(path: &Path) -> bool {
     let path_str = path.to_string_lossy();
 
     // Check extension
-    let has_yaml_ext = path
-        .extension()
-        .is_some_and(|ext| ext == "yml" || ext == "yaml");
-
-    if !has_yaml_ext {
+    if !has_yaml_ext(path) {
         return false;
     }
 
@@ -178,6 +207,19 @@ pub fn relative_path(root: &Path, path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn make_temp_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let unique = format!(
+            "actup-discovery-test-{}-{}",
+            std::process::id(),
+            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+        );
+        let dir = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
 
     #[test]
     fn test_is_actions_file() {
@@ -198,5 +240,39 @@ mod tests {
         assert_eq!(FileKind::Workflow.as_str(), "workflow");
         assert_eq!(FileKind::CompositeAction.as_str(), "composite action");
         assert_eq!(FileKind::Custom.as_str(), "custom");
+    }
+
+    #[test]
+    fn test_discover_files_accepts_explicit_workflow_file() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = make_temp_dir()?;
+        let workflows_dir = temp.join(".github/workflows");
+        fs::create_dir_all(&workflows_dir)?;
+        let workflow = workflows_dir.join("release.yml");
+        fs::write(&workflow, "name: Release")?;
+
+        let files = discover_files(&workflow, &[]);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path(), workflow.as_path());
+        assert_eq!(files[0].kind(), FileKind::Workflow);
+
+        fs::remove_dir_all(temp)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_discover_files_accepts_explicit_custom_yaml_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = make_temp_dir()?;
+        let custom = temp.join("custom.yml");
+        fs::write(&custom, "name: Custom")?;
+
+        let files = discover_files(&custom, &[]);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path(), custom.as_path());
+        assert_eq!(files[0].kind(), FileKind::Custom);
+
+        fs::remove_dir_all(temp)?;
+        Ok(())
     }
 }

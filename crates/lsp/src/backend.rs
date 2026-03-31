@@ -419,6 +419,7 @@ impl LanguageServer for LspBackend {
                 }),
                 ..Default::default()
             },
+            ..Default::default()
         })
     }
 

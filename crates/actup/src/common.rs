@@ -301,10 +301,15 @@ impl<'a> WorkflowScanner<'a> {
     /// Print "no files found" message (human format only).
     pub fn print_empty_message(&self) {
         if matches!(self.format, OutputFormat::Human) {
-            println!(
-                "{}",
-                "No workflow files found in .github/workflows/".dimmed()
-            );
+            let message = if looks_like_yaml_input(self.path) {
+                format!(
+                    "No workflow or action file found at {}",
+                    self.path.display()
+                )
+            } else {
+                format!("No workflow files found under {}", self.path.display())
+            };
+            println!("{}", message.dimmed());
         }
     }
 
@@ -324,11 +329,20 @@ impl<'a> WorkflowScanner<'a> {
     /// Get relative path for display.
     #[must_use]
     pub fn relative_path(&self, file: &DiscoveredFile) -> String {
-        file.path()
+        if self.path.is_file() {
+            return file.path().display().to_string();
+        }
+
+        let relative = file
+            .path()
             .strip_prefix(self.path)
-            .unwrap_or_else(|_| file.path())
-            .display()
-            .to_string()
+            .unwrap_or_else(|_| file.path());
+
+        if relative.as_os_str().is_empty() {
+            file.path().display().to_string()
+        } else {
+            relative.display().to_string()
+        }
     }
 
     /// Extract action references from content, filtering as appropriate.
@@ -354,6 +368,11 @@ impl<'a> WorkflowScanner<'a> {
     pub fn provider_for(&self, action: &ActionRef) -> Option<&dyn Provider> {
         self.registry.find(action.host())
     }
+}
+
+fn looks_like_yaml_input(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|ext| ext == "yml" || ext == "yaml")
 }
 
 // EditResult - result of applying edits across files
@@ -408,7 +427,9 @@ impl EditResult {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use actup_core::provider;
+    use actup_core::{Config, DiscoveredFile, FileKind};
+    use std::path::{Path, PathBuf};
 
     // ErrorTally tests
 
@@ -618,6 +639,37 @@ mod tests {
         assert_eq!(
             result,
             "  - uses: actions/checkout@v4\n  - uses: actions/setup-node@v5\n"
+        );
+    }
+
+    #[test]
+    fn test_workflow_scanner_relative_path_for_directory_input() {
+        let config = Config::default();
+        let registry = provider::Registry::new();
+        let root = Path::new("/repo");
+        let scanner = WorkflowScanner::new(root, &config, &registry, OutputFormat::Human);
+        let file = DiscoveredFile::new(
+            PathBuf::from("/repo/.github/workflows/release.yml"),
+            FileKind::Workflow,
+        );
+
+        assert_eq!(
+            scanner.relative_path(&file),
+            ".github/workflows/release.yml"
+        );
+    }
+
+    #[test]
+    fn test_workflow_scanner_relative_path_for_file_input() {
+        let config = Config::default();
+        let registry = provider::Registry::new();
+        let path = Path::new(".github/workflows/release.yml");
+        let scanner = WorkflowScanner::new(path, &config, &registry, OutputFormat::Human);
+        let file = DiscoveredFile::new(path.to_path_buf(), FileKind::Workflow);
+
+        assert_eq!(
+            scanner.relative_path(&file),
+            ".github/workflows/release.yml"
         );
     }
 
