@@ -25,20 +25,16 @@ publish    = true
 
 [workspace.dependencies]
 actup-core            = { path = "crates/core", version = "*" }
-actup-provider-gitea  = { path = "crates/provider-gitea", version = "*" }
 actup-provider-github = { path = "crates/provider-github", version = "*" }
-actup-provider-gitlab = { path = "crates/provider-gitlab", version = "*" }
 actup-providers       = { path = "crates/providers", version = "*" }
 base64                = "0.22"                                              # encoding
 clap_complete         = "4.5"                                               # completions
-console               = "0.16"                                              # terminal
 dashmap               = "6"                                                 # concurrency
 directories           = "6"                                                 # paths
 dirs                  = "6"                                                 # paths
 futures               = "0.3"                                               # async
 glob                  = "0.3"                                               # patterns
 human-panic           = "2"                                                 # panics
-indicatif             = "0.18"                                              # progress
 insta                 = { version = "1.42", features = ["yaml"] }           # snapshots
 itertools             = "0.14"                                              # iterator utilities
 js-sys                = "0.3"                                               # wasm js interop
@@ -51,13 +47,11 @@ rust-mcp-sdk          = "0.9"                                               # mc
 sanitize-filename     = "0.6"                                               # filesystem
 schemars              = "1"                                                 # schema
 schemars_derive       = "1"                                                 # schema
-semver                = "1"                                                 # semver
 serde                 = { version = "1", features = ["derive", "rc"] }      # serialization
 serde_json            = "1"                                                 # json
 serde-wasm-bindgen    = "0.6"                                               # wasm serde bridge
 serde_yaml_ng         = "0.10"                                              # yaml
 tempfile              = "3"                                                 # testing
-thiserror             = "2"                                                 # errors
 tokio                 = { version = "1", features = ["full"] }              # async
 toml                  = "1"                                                 # config
 tower                 = "0.5"                                               # service
@@ -68,7 +62,7 @@ url                   = "2"                                                 # ur
 urlencoding           = "2.1"                                               # url encoding
 walkdir               = "2"                                                 # filesystem
 wasm-bindgen          = "0.2"                                               # wasm bindings
-wasm-bindgen-futures  = "0.4"                                               # wasm async bridge
+wasm-bindgen-futures  = "0.4"                                               # async wasm-bindgen exports
 wasm-bindgen-test     = "0.3"                                               # wasm test harness
 wiremock              = "0.6"                                               # mocking
 zed_extension_api     = "0.7.0"                                             # zed extension

@@ -13,36 +13,32 @@ name = "actup"
 path = "src/main.rs"
 
 [dependencies]
-actup-core            = { workspace = true }                   # Core engine
-actup-provider-gitea  = { workspace = true, optional = true }  # Gitea/Forgejo provider
-actup-provider-github = { workspace = true }                   # GitHub provider
-actup-provider-gitlab = { workspace = true, optional = true }  # GitLab provider
-clap                  = { workspace = true }                   # CLI parsing
-clap_complete         = { workspace = true }                   # Shell completions
-console               = { workspace = true }                   # Terminal utilities
-dirs                  = { workspace = true }                   # Directory paths
-futures               = { workspace = true }                   # Async utilities
-indicatif             = { workspace = true }                   # Progress bars
-itertools             = { workspace = true }                   # Iterator utilities
-owo-colors            = { workspace = true }                   # Terminal colors
-sanitize-filename     = { workspace = true }                   # Safe filenames
-schemars              = { workspace = true }                   # JSON schema
-serde                 = { workspace = true }                   # Serialization
-serde_json            = { workspace = true }                   # JSON
-tokio                 = { workspace = true }                   # Async runtime
-toml                  = { workspace = true }                   # TOML serialization
-tracing               = { workspace = true }                   # Logging
-tracing-subscriber    = { workspace = true }                   # Log formatting
+actup-core            = { workspace = true }  # Core engine
+actup-provider-github = { workspace = true }  # GitHub provider
+clap                  = { workspace = true }  # CLI parsing
+clap_complete         = { workspace = true }  # Shell completions
+dirs                  = { workspace = true }  # Directory paths
+futures               = { workspace = true }  # Async utilities
+itertools             = { workspace = true }  # Iterator utilities
+owo-colors            = { workspace = true }  # Terminal colors
+sanitize-filename     = { workspace = true }  # Safe filenames
+schemars              = { workspace = true }  # JSON schema
+serde                 = { workspace = true }  # Serialization
+serde_json            = { workspace = true }  # JSON
+tokio                 = { workspace = true }  # Async runtime
+toml                  = { workspace = true }  # TOML serialization
+tracing               = { workspace = true }  # Logging
+tracing-subscriber    = { workspace = true }  # Log formatting
 
 [dev-dependencies]
 tempfile = { workspace = true }  # Temp files for tests
 wiremock = { workspace = true }  # HTTP mocking
 
 [features]
-default = ["gitea", "github", "gitlab"]
-gitea   = ["actup-provider-gitea"]
-github  = []                             # Placeholder for API symmetry; `actup-provider-github` is non-optional, so this feature does not toggle compilation.
-gitlab  = ["actup-provider-gitlab"]
+default = ["github"]
+gitea   = []          # Placeholder until provider registration is wired.
+github  = []          # Placeholder for API symmetry; `actup-provider-github` is non-optional.
+gitlab  = []          # Placeholder until provider registration is wired.
 
 [lints]
 workspace = true

@@ -13,7 +13,6 @@ path       = "src/lib.rs"
 
 [dependencies]
 actup-core        = { workspace = true }
-actup-providers   = { workspace = true }
 serde_json        = { workspace = true }
 zed_extension_api = { workspace = true }
 

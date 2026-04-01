@@ -17,11 +17,8 @@ actup-core      = { workspace = true }
 actup-providers = { workspace = true }
 base64          = { workspace = true }  # Base64 decoding for Gitea API content
 reqwest         = { workspace = true }  # HTTP client
-semver          = { workspace = true }  # Semver parsing
 serde           = { workspace = true }  # Serialization
 serde_json      = { workspace = true }  # JSON parsing
-serde_yaml_ng   = { workspace = true }  # YAML parsing
-thiserror       = { workspace = true }  # Error handling
 tokio           = { workspace = true }  # Async runtime
 tracing         = { workspace = true }  # Logging
 
