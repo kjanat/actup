@@ -1,7 +1,7 @@
 [workspace]
 resolver        = "3"
-members         = ["crates/*"]
-# actup-wasm is wasm32-only (JsValue is !Send); exclude from default native builds
+members         = ["crates/*", "extensions/zed"]
+# actup-wasm and zed-actup are wasm32-only; exclude from default native builds
 default-members = [
   "crates/actup",
   "crates/core",
@@ -41,6 +41,7 @@ human-panic           = "2"                                                 # pa
 indicatif             = "0.18"                                              # progress
 insta                 = { version = "1.42", features = ["yaml"] }           # snapshots
 itertools             = "0.14"                                              # iterator utilities
+js-sys                = "0.3"                                               # wasm js interop
 json_comments         = "0.2"                                               # jsonc
 miette                = { version = "7.6", features = ["fancy"] }           # errors
 node-semver           = "2"                                                 # semver
@@ -53,6 +54,7 @@ schemars_derive       = "1"                                                 # sc
 semver                = "1"                                                 # semver
 serde                 = { version = "1", features = ["derive", "rc"] }      # serialization
 serde_json            = "1"                                                 # json
+serde-wasm-bindgen    = "0.6"                                               # wasm serde bridge
 serde_yaml_ng         = "0.10"                                              # yaml
 tempfile              = "3"                                                 # testing
 thiserror             = "2"                                                 # errors
@@ -65,7 +67,11 @@ tracing-subscriber    = { version = "0.3", features = ["env-filter"] }      # lo
 url                   = "2"                                                 # urls
 urlencoding           = "2.1"                                               # url encoding
 walkdir               = "2"                                                 # filesystem
+wasm-bindgen          = "0.2"                                               # wasm bindings
+wasm-bindgen-futures  = "0.4"                                               # wasm async bridge
+wasm-bindgen-test     = "0.3"                                               # wasm test harness
 wiremock              = "0.6"                                               # mocking
+zed_extension_api     = "0.7.0"                                             # zed extension
 
 [workspace.dependencies.clap]  # CLI
 version  = "4.5"

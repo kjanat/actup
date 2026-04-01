@@ -185,22 +185,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_tags_json() {
+    fn test_parse_tags_json() -> Result<(), String> {
         let json = r#"[
             {"name": "v4.2.2", "commit": {"sha": "abc123"}},
             {"name": "v4.2.1", "commit": {"sha": "def456"}},
             {"name": "v4", "commit": {"sha": "abc123"}}
         ]"#;
-        let tags = parse_tags_json(json).unwrap();
+        let tags = parse_tags_json(json)?;
         assert_eq!(tags.len(), 3);
         assert_eq!(tags[0].name, "v4.2.2");
         assert_eq!(tags[0].sha, "abc123");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_tags_json_empty() {
-        let tags = parse_tags_json("[]").unwrap();
+    fn test_parse_tags_json_empty() -> Result<(), String> {
+        let tags = parse_tags_json("[]")?;
         assert!(tags.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -226,7 +228,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_version_set() {
+    fn test_build_version_set() -> Result<(), &'static str> {
         let tags = vec![
             GitTag {
                 name: "v4.2.2".to_string(),
@@ -255,32 +257,20 @@ mod tests {
         assert_eq!(set.semver_tags().len(), 4);
 
         // latest overall should be v4.2.2
-        let latest = set.latest().unwrap();
+        let latest = set.latest().ok_or("expected latest")?;
         assert_eq!(latest.version().to_string(), "v4.2.2");
 
         // latest per major: v3 -> v3.5.0, v4 -> v4.2.2
-        assert_eq!(
-            set.latest_per_major()
-                .get(&3)
-                .unwrap()
-                .version()
-                .to_string(),
-            "v3.5.0"
-        );
-        assert_eq!(
-            set.latest_per_major()
-                .get(&4)
-                .unwrap()
-                .version()
-                .to_string(),
-            "v4.2.2"
-        );
+        let v3 = set.latest_per_major().get(&3).ok_or("expected major 3")?;
+        assert_eq!(v3.version().to_string(), "v3.5.0");
+
+        let v4 = set.latest_per_major().get(&4).ok_or("expected major 4")?;
+        assert_eq!(v4.version().to_string(), "v4.2.2");
 
         // major tag: v4 exists
         assert!(set.major_tags().contains_key(&4));
-        assert_eq!(
-            set.major_tags().get(&4).unwrap().version().to_string(),
-            "v4"
-        );
+        let major4 = set.major_tags().get(&4).ok_or("expected major tag 4")?;
+        assert_eq!(major4.version().to_string(), "v4");
+        Ok(())
     }
 }

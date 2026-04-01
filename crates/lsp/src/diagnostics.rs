@@ -1000,7 +1000,7 @@ jobs:
         let temp = tempfile::TempDir::new().unwrap();
         let cache = crate::file_cache::FileCache::with_path(
             temp.path().to_path_buf(),
-            std::time::Duration::from_secs(3600),
+            std::time::Duration::from_hours(1),
         );
 
         let repo = ActionRepoId::simple("owner", "repo");

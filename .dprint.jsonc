@@ -24,7 +24,16 @@
 		],
 	},
 	// File inclusions/exclusions
-	"excludes": ["**/*-lock.json", "**/node_modules", "**/target", "**/fixtures", "**/*invalid*", "**/schemas/*.json", "**/.idea"],
+	"excludes": [
+		"**/*-lock.json",
+		"**/node_modules",
+		"**/target",
+		"**/fixtures",
+		"**/*invalid*",
+		"**/schemas/*.json",
+		"**/.idea",
+		"**/grammars",
+	],
 	// Plugins
 	"plugins": [
 		"https://plugins.dprint.dev/typescript-0.95.15.wasm",

@@ -189,7 +189,7 @@ pub struct Cache {
 impl Default for Cache {
     fn default() -> Self {
         Self {
-            ttl: Duration::from_secs(24 * 60 * 60), // 24 hours
+            ttl: Duration::from_hours(24),
             path: None,
             enabled: true,
         }
@@ -620,17 +620,17 @@ mod tests {
     fn test_cache_config_default() {
         let cache = Cache::default();
         assert!(cache.enabled);
-        assert_eq!(cache.ttl, Duration::from_secs(24 * 60 * 60));
+        assert_eq!(cache.ttl, Duration::from_hours(24));
         assert!(cache.path.is_none());
     }
 
     #[test]
     fn test_cache_config_custom_ttl() {
         let cache = Cache {
-            ttl: Duration::from_secs(12 * 3600),
+            ttl: Duration::from_hours(12),
             ..Default::default()
         };
-        assert_eq!(cache.ttl, Duration::from_secs(12 * 3600));
+        assert_eq!(cache.ttl, Duration::from_hours(12));
     }
 
     // ActionOverride tests

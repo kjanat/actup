@@ -119,6 +119,11 @@ cov-lcov:
 clippy:
     cargo clippy --all-targets --all-features
 
+# Run all nightly lints
+[group('lint')]
+clippy-nightly:
+    env RUSTFLAGS="-Zmacro-backtrace" cargo +nightly clippy --all-targets --all-features --workspace -- -D clippy::all
+
 # Run clippy strict (fail on warnings)
 [group('lint')]
 clippy-strict:

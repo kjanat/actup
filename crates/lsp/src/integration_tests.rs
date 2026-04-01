@@ -919,7 +919,7 @@ jobs:
         },
     ];
     // Apply in reverse to avoid offset shifts.
-    edits.sort_by(|a, b| b.range.start.line.cmp(&a.range.start.line));
+    edits.sort_by_key(|e| std::cmp::Reverse(e.range.start.line));
     let mut result = original.to_owned();
     for edit in &edits {
         result = apply_text_edit(&result, edit);

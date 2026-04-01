@@ -81,7 +81,7 @@ pub fn make_pinned_diagnostic(range: Range, sha: &str, tag: Option<&str>) -> Dia
         severity: Some(DiagnosticSeverity::HINT),
         code: Some(NumberOrString::String("pinned".into())),
         source: Some(DIAGNOSTIC_SOURCE.into()),
-        message: format!("owner/repo@{short_sha}: pinned to {short_sha} ({tag_info})",),
+        message: format!("owner/repo@{short_sha}: pinned to {short_sha} ({tag_info})"),
         ..Default::default()
     }
 }
