@@ -1,0 +1,18 @@
+set shell := ["bash", "-cu"]
+
+build: build-wasm build-ts
+
+build-wasm:
+    bun run build:wasm
+
+build-ts:
+    bun run build:ts
+
+test: build
+    bun run test
+
+typecheck:
+    bun run typecheck
+
+clean:
+    rm -rf dist/ wasm/

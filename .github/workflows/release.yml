@@ -135,3 +135,47 @@ jobs:
       - name: Publish crates
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         run: cargo publish --workspace # https://doc.rust-lang.org/cargo/CHANGELOG.html#cargo-190-2025-09-18
+
+  publish-npm:
+    name: Publish to npm
+    needs: release
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.repository.private }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install deps
+        working-directory: packages/actup-wasm
+        run: bun install --frozen-lockfile
+      - name: Build
+        working-directory: packages/actup-wasm
+        run: bun run build
+      - name: Verify tarball
+        working-directory: packages/actup-wasm
+        run: |
+          npm pack --dry-run
+          test -f dist/index.js
+          test -f dist/provider.js
+          test -f wasm/actup_wasm_bg.wasm
+      - name: Smoke test
+        working-directory: packages/actup-wasm
+        run: node tests/node_import.mjs
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish
+        if: ${{ secrets.NPM_TOKEN != '' }}
+        working-directory: packages/actup-wasm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

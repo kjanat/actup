@@ -154,11 +154,36 @@ jobs:
         working-directory: extensions/vscode
         run: bun run lint && bun run typecheck
 
+  wasm:
+    name: WASM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - uses: oven-sh/setup-bun@v2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+      - name: Install npm deps
+        working-directory: packages/actup-wasm
+        run: bun install --frozen-lockfile
+      - name: Build
+        working-directory: packages/actup-wasm
+        run: bun run build
+      - name: Typecheck
+        working-directory: packages/actup-wasm
+        run: bun run typecheck
+      - name: Test
+        working-directory: packages/actup-wasm
+        run: bun run test
+
   # Final status check for branch protection
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, test-platforms, doc, deny, coverage, check-extensions]
+    needs: [fmt, clippy, test, test-platforms, doc, deny, coverage, check-extensions, wasm]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
@@ -171,7 +196,8 @@ jobs:
              [[ "${{ needs.doc.result }}" != "success" ]] || \
              [[ "${{ needs.deny.result }}" != "success" ]] || \
              [[ "${{ needs.coverage.result }}" != "success" ]] || \
-             [[ "${{ needs.check-extensions.result }}" != "success" ]]; then
+             [[ "${{ needs.check-extensions.result }}" != "success" ]] || \
+             [[ "${{ needs.wasm.result }}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

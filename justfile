@@ -6,6 +6,7 @@ set shell := ["bash", "-cu"]
 
 mod zed 'extensions/zed/justfile'
 mod vscode 'extensions/vscode/justfile'
+mod wasm 'packages/actup-wasm/justfile'
 
 alias b := build
 alias t := test

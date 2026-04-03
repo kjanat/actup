@@ -2,3 +2,5 @@ dist/
 wasm/
 node_modules/
 *.tgz
+LICENSE-MIT
+LICENSE-APACHE

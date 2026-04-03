@@ -48,7 +48,10 @@
 		"build:ts": "tsc",
 		"build:wasm": "bash scripts/build-wasm.sh",
 		"clean": "rm -rf dist/ wasm/",
-		"test": "node --experimental-vm-modules dist/test.js",
+		"prepack": "cp ../../LICENSE-MIT ../../LICENSE-APACHE .",
+		"postpack": "rm -f LICENSE-MIT LICENSE-APACHE",
+		"prepublishOnly": "bun run build",
+		"test": "node --test tests/node_import.mjs tests/provider.mjs",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
