@@ -1,0 +1,20 @@
+{
+	"compilerOptions": {
+		"module": "ES2022",
+		"target": "ES2022",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "WebWorker"],
+		"outDir": "dist/web",
+		"rootDir": "src/web",
+		"strict": true,
+		"sourceMap": true,
+		"noUncheckedIndexedAccess": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"forceConsistentCasingInFileNames": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"verbatimModuleSyntax": true
+	},
+	"include": ["src/web/**/*"]
+}

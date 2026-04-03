@@ -28,14 +28,18 @@
   "license": "SEE LICENSE IN LICENSE",
   "publisher": "kjanat",
   "main": "./out/extension.js",
+  "browser": "./dist/web/extension.js",
   "scripts": {
     "compile": "tsc -p ./",
+    "compile:web": "node esbuild.mjs",
     "generate:icon": "bash ../../branding/generate_icon.sh -p 0 'none' ../../branding/icon.svg icon.png",
     "lint": "eslint .",
     "package": "vsce package",
     "typecheck": "tsc --noEmit",
-    "vscode:prepublish": "bun run generate:icon && bun run lint && bun run typecheck && bun run compile",
-    "watch": "tsc -watch -p ./"
+    "typecheck:web": "tsc -p tsconfig.web.json --noEmit",
+    "vscode:prepublish": "bun run generate:icon && bun run lint && bun run typecheck && bun run typecheck:web && bun run compile && bun run compile:web",
+    "watch": "tsc -watch -p ./",
+    "watch:web": "node esbuild.mjs --watch"
   },
   "contributes": {
     "commands": [
@@ -88,6 +92,7 @@
     "workspaceContains:**/.*/workflows/**/*.yaml"
   ],
   "dependencies": {
+    "actup-wasm": "file:../../packages/actup-wasm",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
@@ -96,6 +101,7 @@
     "@types/node": ">=24,<25",
     "@types/vscode": "^1.109.0",
     "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.25",
     "eslint": "^10.0.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.0"
@@ -121,12 +127,13 @@
       ]
     },
     "virtualWorkspaces": {
-      "supported": false,
-      "description": "Requires filesystem access to read workflow files. WASM support planned."
+      "supported": true,
+      "description": "Uses WASM engine for diagnostics in virtual workspaces."
     }
   },
   "extensionKind": [
-    "workspace"
+    "workspace",
+    "web"
   ],
   "pricing": "Free"
 }
