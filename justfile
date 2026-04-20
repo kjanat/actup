@@ -127,7 +127,7 @@ cov-lcov:
 # Run clippy on all packages
 [group('lint')]
 clippy:
-    cargo clippy --all-targets --all-features
+    cargo clippy --all-targets --all-features --workspace -- -D clippy::all
 
 # Run all nightly lints
 [group('lint'),env("RUSTFLAGS", "-Zmacro-backtrace")]
@@ -151,7 +151,7 @@ fmt-check:
 
 # Run all lints (fmt + clippy strict)
 [group('lint')]
-lint: fmt-check clippy-strict
+lint: fmt-check clippy clippy-strict
 
 # Run
 
