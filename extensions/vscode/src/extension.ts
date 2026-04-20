@@ -1,5 +1,11 @@
 import * as vscode from "vscode";
-import { type Executable, LanguageClient, type LanguageClientOptions, type ServerOptions, TransportKind } from "vscode-languageclient/node";
+import {
+	type Executable,
+	LanguageClient,
+	type LanguageClientOptions,
+	type ServerOptions,
+	TransportKind,
+} from "vscode-languageclient/node.js";
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.LogOutputChannel;

@@ -1,11 +1,12 @@
 {
 	"compilerOptions": {
-		"module": "CommonJS",
+		"module": "Node16",
+		"moduleResolution": "Node16",
 		"target": "ES2024",
 		"lib": ["ES2024"],
-		"outDir": "out",
+		"rootDir": "./src",
+		"outDir": "./out",
 		"sourceMap": true,
-		"rootDir": "src",
 		"strict": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
@@ -13,7 +14,10 @@
 		"noUncheckedIndexedAccess": true,
 		"noUnusedLocals": true,
 		"noUnusedParameters": true,
-		"verbatimModuleSyntax": true
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true,
+		"noEmit": true
 	},
-	"exclude": ["node_modules", ".vscode-test", "src/web"]
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules", ".vscode-test"]
 }

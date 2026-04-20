@@ -3,7 +3,17 @@
 // Run after `bun run build`:
 //   node packages/actup-wasm/tests/node_import.mjs
 
-import { checkRefs, initWasm, parseUsesRefs, planUpdates } from "../dist/index.js";
+import file from "node:fs/promises";
+
+// check if dist file exists
+try {
+	await file.access("../dist/index.js");
+} catch (err) {
+	console.error("Error: ../dist/index.js not found. Please run `bun run build` first.", err);
+	process.exit(1);
+}
+
+const { checkRefs, initWasm, parseUsesRefs, planUpdates } = await import("../dist/index.js");
 
 // Test 1: initWasm + parseUsesRefs
 await initWasm();

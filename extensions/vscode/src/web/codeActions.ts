@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { type DiagnosticData, diagnosticDataByUri, diagnosticKey } from "./diagnostics.js";
+import { type DiagnosticData, diagnosticDataByUri, diagnosticKey } from "./diagnostics.ts";
 
 const SOURCE_FIX_ALL_ACTUP = vscode.CodeActionKind.SourceFixAll.append("actup");
 

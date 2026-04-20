@@ -27,9 +27,11 @@
   },
   "license": "SEE LICENSE IN LICENSE",
   "publisher": "kjanat",
+  "type": "module",
   "main": "./out/extension.js",
   "browser": "./dist/web/extension.mjs",
   "scripts": {
+    "bd": "bun compile && bun compile:web && bun run package",
     "compile": "tsc -p ./",
     "compile:web": "tsdown && bash -c 'mkdir -p dist/web/wasm && cp ../../packages/actup-wasm/wasm/actup_wasm_bg.wasm dist/web/wasm/'",
     "generate:icon": "bash ../../branding/generate_icon.sh -p 0 'none' ../../branding/icon.svg icon.png",

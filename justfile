@@ -2,7 +2,7 @@
 # Run `just` or `just --list` to see available recipes
 
 set unstable := true
-set shell := ["bash", "-cu"]
+# set shell := ["bash", "-cu"]
 
 mod zed 'extensions/zed/justfile'
 mod vscode 'extensions/vscode/justfile'
@@ -14,10 +14,18 @@ alias r := run
 alias ch := check
 alias c := clippy
 alias l := lint
-alias i := install
+alias i := inst-all
+
+actup-dir := "crates" / "actup"
+lsp-dir := "crates" / "lsp"
+mcp-dir := "crates" / "mcp"
+
+coverage-lcov := "target" / "lcov.info"
+coverage-html := "target" / "llvm-cov" / "html" / "index.html"
 
 schema_dir := "schemas"
 actup_config := "actup-config.schema.json"
+config-schema := schema_dir / actup_config
 
 # List available recipes
 default:
@@ -27,22 +35,22 @@ default:
 
 # Install all binaries to ~/.cargo/bin
 [group('install')]
-install: install-actup install-actup-lsp install-actup-mcp
+inst-all: install-actup install-actup-lsp install-actup-mcp
 
 # Install actup CLI
 [group('install')]
 install-actup:
-    cargo install --bin=actup --path crates/actup
+    cargo install --bin=actup --path {{ actup-dir }}
 
 # Install actup-lsp language server
 [group('install')]
 install-actup-lsp:
-    cargo install --bin=actup-lsp --path crates/lsp
+    cargo install --bin=actup-lsp --path {{ lsp-dir }}
 
 # Install actup-mcp server (stub)
 [group('install')]
 install-actup-mcp:
-    -cargo install --bin=actup-mcp --path crates/mcp
+    -cargo install --bin=actup-mcp --path {{ mcp-dir }}
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]
@@ -106,13 +114,13 @@ cov:
 # Run tests with coverage and generate HTML report
 [group('test')]
 cov-html:
-    cargo llvm-cov nextest --all --html
-    @echo "Coverage report: target/llvm-cov/html/index.html"
+    cargo llvm-cov nextest --all --html --output-path {{ coverage-html }}
+    @echo "Coverage report: {{ coverage-html }}"
 
 # Run tests with coverage and generate lcov report
 [group('test')]
 cov-lcov:
-    cargo llvm-cov nextest --all --lcov --output-path target/lcov.info
+    cargo llvm-cov nextest --all --lcov --output-path {{ coverage-lcov }}
 
 # Lint
 
@@ -122,9 +130,9 @@ clippy:
     cargo clippy --all-targets --all-features
 
 # Run all nightly lints
-[group('lint')]
+[group('lint'),env("RUSTFLAGS", "-Zmacro-backtrace")]
 clippy-nightly:
-    env RUSTFLAGS="-Zmacro-backtrace" cargo +nightly clippy --all-targets --all-features --workspace -- -D clippy::all
+    cargo +nightly clippy --all-targets --all-features --workspace -- -D clippy::all
 
 # Run clippy strict (fail on warnings)
 [group('lint')]
@@ -200,7 +208,7 @@ doc-open:
 [group('docs')]
 schema:
     @mkdir -p {{ schema_dir }}
-    cargo run --bin actup -- schema > {{ schema_dir }}/{{ actup_config }}
+    cargo run --bin actup -- schema > {{ config-schema }}
 
 # CI
 

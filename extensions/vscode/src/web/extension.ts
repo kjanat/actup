@@ -1,12 +1,12 @@
 import type { ActupProvider, CheckResult } from "actup-wasm";
 import * as vscode from "vscode";
-import { ACTION_SELECTOR, ActupCodeActionProvider } from "./codeActions.js";
-import { ActupCompletionProvider } from "./completion.js";
-import { clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.js";
-import { DocumentTracker } from "./documentTracker.js";
-import { ActupHoverProvider } from "./hover.js";
-import { createVSCodeGitHubProvider } from "./provider.js";
-import { ensureWasmInitialized } from "./wasmLoader.js";
+import { ACTION_SELECTOR, ActupCodeActionProvider } from "./codeActions.ts";
+import { ActupCompletionProvider } from "./completion.ts";
+import { clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.ts";
+import { DocumentTracker } from "./documentTracker.ts";
+import { ActupHoverProvider } from "./hover.ts";
+import { createVSCodeGitHubProvider } from "./provider.ts";
+import { ensureWasmInitialized } from "./wasmLoader.ts";
 
 let outputChannel: vscode.LogOutputChannel;
 

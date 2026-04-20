@@ -6,7 +6,17 @@
 // Uses Node.js built-in test runner (no deps) and a mock fetch via
 // globalThis override.
 
-import { createGitHubProvider, GitHubProviderError } from "../dist/provider.js";
+import file from "node:fs/promises";
+
+// check if dist file exists
+try {
+	await file.access("../dist/provider.js");
+} catch (err) {
+	console.error("Error: ../dist/provider.js not found. Please run `bun run build` first.", err);
+	process.exit(1);
+}
+
+const { createGitHubProvider, GitHubProviderError } = await import("../dist/provider.js");
 
 const originalFetch = globalThis.fetch;
 let fetchLog = [];
