@@ -1,4 +1,4 @@
-#:schema /home/kjanat/projects/zed-editor/crates/extension_api/schemas/extension.schema.json
+#:schema https://github.com/kjanat/zed-editor/raw/refs/heads/feature/extension-toml-schema/crates/extension_api/schemas/extension.schema.json
 
 name           = "actup — Actions Updater"
 id             = "actup"

@@ -19,7 +19,7 @@ wasm-pack build "${REPO_ROOT}/crates/wasm" \
 	--out-dir "${OUT_DIR}" \
 	--out-name actup_wasm
 
-# wasm-pack generates a package.json and .gitignore we don't need
+# wasm-pack generates a package.json and .gitignore we don't need it in the npm package, so remove them.
 rm -f "${OUT_DIR}/package.json" "${OUT_DIR}/.gitignore"
 
 # Report size
