@@ -20,7 +20,9 @@ export class DocumentTracker {
 	change(doc: vscode.TextDocument): void {
 		const key = doc.uri.toString();
 		const prev = this.timers.get(key);
-		if (prev !== undefined) clearTimeout(prev);
+		if (prev !== undefined) {
+			clearTimeout(prev);
+		}
 
 		this.timers.set(
 			key,

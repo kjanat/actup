@@ -19,7 +19,7 @@ export default defineConfig(
 			"@stylistic": stylistic,
 		},
 		rules: {
-			"curly": "warn",
+			"curly": "off",
 			"@stylistic/semi": ["warn", "always"],
 			"@typescript-eslint/no-empty-function": "off",
 			"@typescript-eslint/naming-convention": [

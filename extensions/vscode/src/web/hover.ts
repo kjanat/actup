@@ -20,10 +20,14 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 			const line = l.line - 1; // 1-indexed -> 0-indexed
 			return line === position.line;
 		});
-		if (loc === undefined) return undefined;
+		if (loc === undefined) {
+			return undefined;
+		}
 
 		const ref = parseActionRef(loc.value);
-		if (ref === undefined) return undefined;
+		if (ref === undefined) {
+			return undefined;
+		}
 
 		const results = this.resultCache.get(document.uri.toString());
 		const matchingResult = results?.find(

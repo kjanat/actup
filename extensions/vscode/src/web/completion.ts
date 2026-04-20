@@ -36,7 +36,9 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 
 		// Only complete on `uses:` lines
 		const usesMatch = /^\s*-?\s*uses:\s*(.*)$/.exec(line);
-		if (usesMatch === null) return undefined;
+		if (usesMatch === null) {
+			return undefined;
+		}
 
 		const valueStart = line.indexOf(usesMatch[1] ?? "");
 		const typed = line.slice(valueStart, position.character);

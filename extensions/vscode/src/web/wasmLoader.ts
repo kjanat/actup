@@ -7,7 +7,9 @@ let initialized = false;
 export async function ensureWasmInitialized(
 	context: vscode.ExtensionContext,
 ): Promise<void> {
-	if (initialized) return;
+	if (initialized) {
+		return;
+	}
 
 	const wasmUri = vscode.Uri.joinPath(
 		context.extensionUri,

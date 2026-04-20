@@ -4,12 +4,12 @@
 # causes the full repo to be packaged.
 **
 
-# Runtime entrypoints (bundled by tsdown; no node_modules needed at runtime)
-!out/extension.js
-!out/extension.js.map
-!dist/web/extension.js
-!dist/web/extension.js.map
-!dist/web/wasm/actup_wasm_bg.wasm
+# Runtime entrypoints (bundled by tsdown; no node_modules needed at runtime).
+# Wildcards allow code-split chunks (e.g. `actup_wasm-*.js`) alongside the
+# main entry without needing to list each one.
+!out/*.js
+!out/*.js.map
+!dist/web/**
 
 # Extension metadata
 !package.json

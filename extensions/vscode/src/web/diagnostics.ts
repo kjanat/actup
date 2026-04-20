@@ -48,10 +48,14 @@ export async function computeDiagnostics(
 		const loc = locations.find(
 			l => l.value === formatUsesValue(result.action_ref),
 		);
-		if (loc === undefined) continue;
+		if (loc === undefined) {
+			continue;
+		}
 
 		const diag = statusToDiagnostic(result.status, loc, text);
-		if (diag === undefined) continue;
+		if (diag === undefined) {
+			continue;
+		}
 
 		diagnostics.push(diag.diagnostic);
 		if (diag.data !== undefined) {
@@ -78,7 +82,9 @@ function formatUsesValue(
 	},
 ): string {
 	let value = "";
-	if (ref.host !== null) value += `${ref.host}/`;
+	if (ref.host !== null) {
+		value += `${ref.host}/`;
+	}
 	value += `${ref.owner}/${ref.repo}`;
 	if (ref.subpath !== null) value += `/${ref.subpath}`;
 	value += `@${ref.git_ref}`;

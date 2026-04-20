@@ -71,10 +71,14 @@ export async function activate(
 
 	context.subscriptions.push(
 		vscode.workspace.onDidOpenTextDocument((doc) => {
-			if (DocumentTracker.isActionDocument(doc)) tracker.open(doc);
+			if (DocumentTracker.isActionDocument(doc)) {
+				tracker.open(doc);
+			}
 		}),
 		vscode.workspace.onDidChangeTextDocument((e) => {
-			if (DocumentTracker.isActionDocument(e.document)) tracker.change(e.document);
+			if (DocumentTracker.isActionDocument(e.document)) {
+				tracker.change(e.document);
+			}
 		}),
 		vscode.workspace.onDidCloseTextDocument((doc) => {
 			tracker.close(doc.uri);
