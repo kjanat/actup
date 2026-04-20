@@ -1,0 +1,24 @@
+{
+	"$schema": "https://www.schemastore.org/tsconfig.json",
+	"compilerOptions": {
+		"target": "ES2024",
+		"module": "ES2022",
+		"moduleResolution": "bundler",
+		"lib": ["ES2024"],
+		"types": ["bun"],
+		"strict": true,
+		"noUncheckedIndexedAccess": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"forceConsistentCasingInFileNames": true,
+		"esModuleInterop": true,
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"allowImportingTsExtensions": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"noEmit": true
+	},
+	"include": ["branding/**/*.ts"],
+	"exclude": ["node_modules", "target", "dist", "out", "extensions", "packages", "crates"]
+}

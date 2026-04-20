@@ -10,6 +10,7 @@
     "bd": "bun --filter '*' bd"
   },
   "devDependencies": {
+    "@kjanat/dreamcli": "latest",
     "@types/bun": "latest",
     "sort-package-json": "latest",
     "tombi": "latest"
