@@ -4,12 +4,17 @@
   "workspaces": {
     "": {
       "name": "actup",
+      "devDependencies": {
+        "@types/bun": "latest",
+        "sort-package-json": "latest",
+        "tombi": "latest",
+      },
     },
     "extensions/vscode": {
       "name": "actup-vscode",
       "version": "0.1.0",
       "dependencies": {
-        "actup-wasm": "file:../../packages/actup-wasm",
+        "actup-wasm": "workspace:*",
         "vscode-languageclient": "^9.0.1",
       },
       "devDependencies": {
@@ -196,7 +201,25 @@
 
     "@textlint/types": ["@textlint/types@15.5.4", "", { "dependencies": { "@textlint/ast-node-types": "15.5.4" } }, "sha512-mY28j2U7nrWmZbxyKnRvB8vJxJab4AxqOobLfb6iozrLelJbqxcOTvBQednadWPfAk9XWaZVMqUr9Nird3mutg=="],
 
+    "@tombi-toml/cli-darwin-arm64": ["@tombi-toml/cli-darwin-arm64@0.9.20", "", { "os": "darwin", "cpu": "arm64" }, "sha512-W8AFlVVYfIiMX1LUbcEqHazEAgJ8ys/shT7OhzDp3lYBmmbEeHFKp6GFqnJdjuws76l7FgII9qL5qg7Pn1QAWQ=="],
+
+    "@tombi-toml/cli-darwin-x64": ["@tombi-toml/cli-darwin-x64@0.9.20", "", { "os": "darwin", "cpu": "x64" }, "sha512-AAOeUFvb+/M073PEBNB2mRKtXb0GciTYeIQQXaknpQXtJJ/jDTsvREJCt4mAiWYTZpZuUkvJC55iG/SDOlivqA=="],
+
+    "@tombi-toml/cli-linux-arm64": ["@tombi-toml/cli-linux-arm64@0.9.20", "", { "os": "linux", "cpu": "arm64" }, "sha512-idaJW07gEws9OLu/wlv0EA8dDkkgmufWuoy+HS+bLhO6LG47qyaKl+nfISzjHmGN9BP1h/e1Z1JMKEp3Sd/Vaw=="],
+
+    "@tombi-toml/cli-linux-arm64-musl": ["@tombi-toml/cli-linux-arm64-musl@0.9.20", "", { "os": "linux", "cpu": "arm64" }, "sha512-XCAyn4pKcQyek4Tm9OGu3Z0ytHmHQ0KVPZ/pZhl7zoQct9GUprgbQ687HhS9DBXQiaOh2vAOmcwlVOAs2N0dxA=="],
+
+    "@tombi-toml/cli-linux-x64": ["@tombi-toml/cli-linux-x64@0.9.20", "", { "os": "linux", "cpu": "x64" }, "sha512-wcc3Pw0CEX9sctnwtPYx+4xysPS+uybDJCbyu4k1U/pBOAfErzx6W0YOvkoDYC6xY9hoE2Lqu0s70OSbRF7/vg=="],
+
+    "@tombi-toml/cli-linux-x64-musl": ["@tombi-toml/cli-linux-x64-musl@0.9.20", "", { "os": "linux", "cpu": "x64" }, "sha512-s++w2H9GRL11QMlo97PbXpUrFcd0Mzrhd71q+Yrndv7M5KgQ/iokhvFYt50Oup5068ftnSWKNPgYkWP7fxFINg=="],
+
+    "@tombi-toml/cli-win32-arm64": ["@tombi-toml/cli-win32-arm64@0.9.20", "", { "os": "win32", "cpu": "arm64" }, "sha512-E8pqCUpGLmlAWHP94JF7TV6QksLiZ8y933cHEUVKQ5GipvjCORKh45j/R+Xm/WgxALTTMlZGwZz2RILJRVlC7A=="],
+
+    "@tombi-toml/cli-win32-x64": ["@tombi-toml/cli-win32-x64@0.9.20", "", { "os": "win32", "cpu": "x64" }, "sha512-vHOeKqhrrRW8PtQDlaNOFn0TO39eLO0HHOukqXWyiBAhFzjSYjLDq2ailIMeOypF0lMeS+o96Xg/xIwIhB+zkw=="],
+
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg=="],
+
+    "@types/bun": ["@types/bun@1.3.12", "", { "dependencies": { "bun-types": "1.3.12" } }, "sha512-DBv81elK+/VSwXHDlnH3Qduw+KxkTIWi7TXkAeh24zpi5l0B2kUg9Ga3tb4nJaPcOFswflgi/yAvMVBPrxMB+A=="],
 
     "@types/esrecurse": ["@types/esrecurse@4.3.1", "", {}, "sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw=="],
 
@@ -310,6 +333,8 @@
 
     "buffer-equal-constant-time": ["buffer-equal-constant-time@1.0.1", "", {}, "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA=="],
 
+    "bun-types": ["bun-types@1.3.12", "", { "dependencies": { "@types/node": "*" } }, "sha512-HqOLj5PoFajAQciOMRiIZGNoKxDJSr6qigAttOX40vJuSp6DN/CxWp9s3C1Xwm4oH7ybueITwiaOcWXoYVoRkA=="],
+
     "bundle-name": ["bundle-name@4.1.0", "", { "dependencies": { "run-applescript": "^7.0.0" } }, "sha512-tjwM5exMg6BGRI+kNmTntNsvdZS1X8BFYS6tnJ2hdH0kVxM6/eVZ2xy+FqStSWvYmtfFMDLIxurorHwDKfDz5Q=="],
 
     "cac": ["cac@6.7.14", "", {}, "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ=="],
@@ -364,7 +389,11 @@
 
     "delayed-stream": ["delayed-stream@1.0.0", "", {}, "sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ=="],
 
+    "detect-indent": ["detect-indent@7.0.2", "", {}, "sha512-y+8xyqdGLL+6sh0tVeHcfP/QDd8gUgbasolJJpY7NgeQGSZ739bDtSiaiDgtoicy+mtYB81dKLxO9xRhCyIB3A=="],
+
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
+
+    "detect-newline": ["detect-newline@4.0.1", "", {}, "sha512-qE3Veg1YXzGHQhlA6jzebZN2qVf6NX+A7m7qlhCGG30dJixrAQhYOsJjsnBjJkCSmuOPpCk30145fr8FV0bzog=="],
 
     "diff": ["diff@8.0.4", "", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
 
@@ -464,6 +493,8 @@
 
     "get-tsconfig": ["get-tsconfig@4.14.0", "", { "dependencies": { "resolve-pkg-maps": "^1.0.0" } }, "sha512-yTb+8DXzDREzgvYmh6s9vHsSVCHeC0G3PI5bEXNBHtmshPnO+S5O7qgLEOn0I5QvMy6kpZN8K1NKGyilLb93wA=="],
 
+    "git-hooks-list": ["git-hooks-list@4.2.1", "", {}, "sha512-WNvqJjOxxs/8ZP9+DWdwWJ7cDsd60NHf39XnD82pDVrKO5q7xfPqpkK6hwEAmBa/ZSEE4IOoR75EzbbIuwGlMw=="],
+
     "github-from-package": ["github-from-package@0.0.0", "", {}, "sha512-SyHy3T1v2NUXn29OsWdxmK6RwHD+vkj3v8en8AOBZ1wBQ/hCAQ5bAQTD02kW4W9tUp/3Qh6J8r9EvntiyCmOOw=="],
 
     "glob": ["glob@11.1.0", "", { "dependencies": { "foreground-child": "^3.3.1", "jackspeak": "^4.1.1", "minimatch": "^10.1.1", "minipass": "^7.1.2", "package-json-from-dist": "^1.0.0", "path-scurry": "^2.0.0" }, "bin": { "glob": "dist/esm/bin.mjs" } }, "sha512-vuNwKSaKiqm7g0THUBu2x7ckSs3XJLXE+2ssL7/MfTGPLLcrJQ/4Uq1CjPTtO5cCIiRxqvN6Twy1qOwhL0Xjcw=="],
@@ -519,6 +550,8 @@
     "is-inside-container": ["is-inside-container@1.0.0", "", { "dependencies": { "is-docker": "^3.0.0" }, "bin": { "is-inside-container": "cli.js" } }, "sha512-KIYLCCJghfHZxqjYBE7rEy0OBuTd5xCHS7tHVgvCLkx7StIoaxwNW3hCALgEUjFfeRk+MG/Qxmp/vtETEF3tRA=="],
 
     "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+
+    "is-plain-obj": ["is-plain-obj@4.1.0", "", {}, "sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg=="],
 
     "is-wsl": ["is-wsl@3.1.1", "", { "dependencies": { "is-inside-container": "^1.0.0" } }, "sha512-e6rvdUCiQCAuumZslxRJWR/Doq4VpPR82kqclvcS0efgt430SlGIk05vdCN58+VrzgtIcfNODjozVielycD4Sw=="],
 
@@ -748,6 +781,10 @@
 
     "slice-ansi": ["slice-ansi@4.0.0", "", { "dependencies": { "ansi-styles": "^4.0.0", "astral-regex": "^2.0.0", "is-fullwidth-code-point": "^3.0.0" } }, "sha512-qMCMfhY040cVHT43K9BFygqYbUPFZKHOg7K73mtTWJRb8pyP3fzf4Ixd5SzdEJQ6MRUg/WBnOLxghZtKKurENQ=="],
 
+    "sort-object-keys": ["sort-object-keys@2.1.0", "", {}, "sha512-SOiEnthkJKPv2L6ec6HMwhUcN0/lppkeYuN1x63PbyPRrgSPIuBJCiYxYyvWRTtjMlOi14vQUCGUJqS6PLVm8g=="],
+
+    "sort-package-json": ["sort-package-json@3.6.1", "", { "dependencies": { "detect-indent": "^7.0.2", "detect-newline": "^4.0.1", "git-hooks-list": "^4.1.1", "is-plain-obj": "^4.1.0", "semver": "^7.7.3", "sort-object-keys": "^2.0.1", "tinyglobby": "^0.2.15" }, "bin": { "sort-package-json": "cli.js" } }, "sha512-Chgejw1+10p2D0U2tB7au1lHtz6TkFnxmvZktyBCRyV0GgmF6nl1IxXxAsPtJVsUyg/fo+BfCMAVVFUVRkAHrQ=="],
+
     "spdx-correct": ["spdx-correct@3.2.0", "", { "dependencies": { "spdx-expression-parse": "^3.0.0", "spdx-license-ids": "^3.0.0" } }, "sha512-kN9dJbvnySHULIluDHy32WHRUu3Og7B9sbY7tsFLctQkIqnMh3hErYgdMjTYuqmcXX+lK5T1lnUt3G7zNswmZA=="],
 
     "spdx-exceptions": ["spdx-exceptions@2.5.0", "", {}, "sha512-PiU42r+xO4UbUS1buo3LPJkjlO7430Xn5SVAhdpzzsPHsjbYVflnnFdATgabnLude+Cqu25p6N+g2lw/PFsa4w=="],
@@ -789,6 +826,8 @@
     "tmp": ["tmp@0.2.5", "", {}, "sha512-voyz6MApa1rQGUxT3E+BK7/ROe8itEx7vD8/HEvt4xwXucvQ5G5oeEiHkmHZJuBO21RpOf+YYm9MOivj709jow=="],
 
     "to-regex-range": ["to-regex-range@5.0.1", "", { "dependencies": { "is-number": "^7.0.0" } }, "sha512-65P7iz6X5yEr1cwcgvQxbbIw7Uk3gOy5dIdtZ4rDveLqhrdJP+Li/Hx6tyK0NEb+2GCyneCMJiGqrADCSNk8sQ=="],
+
+    "tombi": ["tombi@0.9.20", "", { "optionalDependencies": { "@tombi-toml/cli-darwin-arm64": "0.9.20", "@tombi-toml/cli-darwin-x64": "0.9.20", "@tombi-toml/cli-linux-arm64": "0.9.20", "@tombi-toml/cli-linux-arm64-musl": "0.9.20", "@tombi-toml/cli-linux-x64": "0.9.20", "@tombi-toml/cli-linux-x64-musl": "0.9.20", "@tombi-toml/cli-win32-arm64": "0.9.20", "@tombi-toml/cli-win32-x64": "0.9.20" }, "bin": { "tombi": "bin/tombi" } }, "sha512-eZ7ypC2p0LIfXoPx+a7t/MOMQaG3AFxz1eL5jqLjEnJRu4KaUsmHMj0SkU6bFOUndhZ4IHnb+Cpak1GHlQ5fNQ=="],
 
     "ts-api-utils": ["ts-api-utils@2.5.0", "", { "peerDependencies": { "typescript": ">=4.8.4" } }, "sha512-OJ/ibxhPlqrMM0UiNHJ/0CKQkoKF243/AEmplt3qpRgkW8VG7IfOS41h7V8TjITqdByHzrjcS/2si+y4lIh8NA=="],
 
@@ -887,8 +926,6 @@
     "@typescript-eslint/typescript-estree/minimatch": ["minimatch@10.2.5", "", { "dependencies": { "brace-expansion": "^5.0.5" } }, "sha512-MULkVLfKGYDFYejP07QOurDLLQpcjk7Fw+7jXS2R2czRQzR56yHRveU5NDJEOviH+hETZKSkIk5c+T23GjFUMg=="],
 
     "@typescript-eslint/visitor-keys/eslint-visitor-keys": ["eslint-visitor-keys@5.0.1", "", {}, "sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA=="],
-
-    "actup-vscode/actup-wasm": ["actup-wasm@file:packages/actup-wasm", { "devDependencies": { "@types/node": ">=18,<25", "typescript": "^5.9.3" } }],
 
     "eslint/eslint-visitor-keys": ["eslint-visitor-keys@5.0.1", "", {}, "sha512-tD40eHxA35h0PEIZNeIjkHoDR4YjjJp34biM0mDvplBe//mB+IHCqHDGV7pxF+7MklTvighcCPPZC7ynWyjdTA=="],
 

@@ -8,7 +8,7 @@
  * @module
  */
 
-import type { ActionYml, ActupProvider, VersionSet } from "./types.js";
+import type { ActionYml, ActupProvider, VersionSet } from "./types.ts";
 
 /** Options for {@link createGitHubProvider}. */
 export interface GitHubProviderOptions {

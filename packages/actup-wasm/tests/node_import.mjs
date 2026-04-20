@@ -2,14 +2,15 @@
 //
 // Run after `bun run build`:
 //   node packages/actup-wasm/tests/node_import.mjs
-
 import file from "node:fs/promises";
+import { resolve } from "node:path";
 
 // check if dist file exists
+const indexPath = resolve(import.meta.dirname, "../dist/index.js");
 try {
-	await file.access("../dist/index.js");
+	await file.access(indexPath);
 } catch (err) {
-	console.error("Error: ../dist/index.js not found. Please run `bun run build` first.", err);
+	console.error(err.message, `\nPlease run \`bun run build\` first.`);
 	process.exit(1);
 }
 

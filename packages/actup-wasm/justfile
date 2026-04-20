@@ -1,18 +1,16 @@
-set shell := ["bash", "-cu"]
-
 build: build-wasm build-ts
 
 build-wasm:
-    bun run build:wasm
+    bun scripts/build-wasm.ts
 
 build-ts:
-    bun run build:ts
+    bunx tsc
 
 test: build
     bun run test
 
 typecheck:
-    bun run typecheck
+    bunx tsc --noEmit
 
 clean:
     rm -rf dist/ wasm/

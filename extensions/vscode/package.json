@@ -94,7 +94,7 @@
     "workspaceContains:**/.*/workflows/**/*.yaml"
   ],
   "dependencies": {
-    "actup-wasm": "file:../../packages/actup-wasm",
+    "actup-wasm": "workspace:*",
     "vscode-languageclient": "^9.0.1"
   },
   "devDependencies": {
@@ -133,8 +133,7 @@
     }
   },
   "extensionKind": [
-    "workspace",
-    "web"
+    "workspace"
   ],
   "pricing": "Free"
 }

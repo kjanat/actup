@@ -47,7 +47,7 @@
 		"bd": "bun run build",
 		"build": "bun build:wasm && bun build:ts",
 		"build:ts": "tsc",
-		"build:wasm": "bash scripts/build-wasm.sh",
+		"build:wasm": "bun scripts/build-wasm.ts",
 		"clean": "rm -rf dist/ wasm/",
 		"prepack": "cp ../../LICENSE-MIT ../../LICENSE-APACHE .",
 		"postpack": "rm -f LICENSE-MIT LICENSE-APACHE",

@@ -7,12 +7,14 @@
 // globalThis override.
 
 import file from "node:fs/promises";
+import { resolve } from "node:path";
 
 // check if dist file exists
+const providerPath = resolve(import.meta.dirname, "../dist/provider.js");
 try {
-	await file.access("../dist/provider.js");
+	await file.access(providerPath);
 } catch (err) {
-	console.error("Error: ../dist/provider.js not found. Please run `bun run build` first.", err);
+	console.error(err.message, `\nPlease run \`bun run build\` first.`);
 	process.exit(1);
 }
 
