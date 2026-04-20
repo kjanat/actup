@@ -10,7 +10,7 @@ export default defineConfig([
 		sourcemap: false,
 		clean: true,
 		minify: "dce-only",
-		external: ["vscode"],
+		external: ["vscode", "node:url", "node:fs"],
 	},
 	{
 		entry: ["src/web/extension.ts"],
@@ -20,6 +20,6 @@ export default defineConfig([
 		sourcemap: false,
 		clean: true,
 		minify: "dce-only",
-		external: ["vscode"],
+		external: ["vscode", "node:url", "node:fs"],
 	},
 ]);
