@@ -126,21 +126,19 @@ async fn batch_fetch_versions(
     // Phase 1: check file cache
     let mut uncached = Vec::new();
     for repo in repos {
+        let version_repo = repo.without_subpath();
         let provider = registry.find_for_repo(repo);
-        let cache_key = provider.map(|p| {
-            let default_host = registry.default_host().unwrap_or("github.com");
-            repo.cache_key(p.cache_namespace(), default_host)
-        });
+        let cache_key = provider.map(|p| version_repo.cache_key(p.cache_namespace(), p.host()));
 
         if let Some(key) = &cache_key
             && let Ok(entry) = file_cache.get(key).await
         {
-            tracing::debug!(repo = %format!("{}/{}", repo.owner(), repo.repo()), "cache hit");
-            results.insert(repo.clone(), Ok(entry.versions().clone()));
+            tracing::debug!(repo = %format!("{}/{}", version_repo.owner(), version_repo.repo()), "cache hit");
+            results.insert(version_repo, Ok(entry.versions().clone()));
             continue;
         }
 
-        uncached.push((repo.clone(), cache_key));
+        uncached.push((version_repo, cache_key));
     }
 
     // Phase 2: fetch uncached from providers sequentially.
@@ -296,7 +294,7 @@ pub async fn compute_diagnostics(
         actions
             .iter()
             .filter_map(|a| {
-                let id = a.action_ref.to_repo_id();
+                let id = a.action_ref.to_repo_id().without_subpath();
                 seen.insert(id.clone()).then_some(id)
             })
             .collect()
@@ -319,7 +317,7 @@ pub async fn compute_diagnostics(
             },
         };
 
-        let repo_id = action.action_ref.to_repo_id();
+        let repo_id = action.action_ref.to_repo_id().without_subpath();
         let result = match versions_map.get(&repo_id) {
             Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
                 Some(provider) => {

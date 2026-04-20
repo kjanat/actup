@@ -156,8 +156,10 @@ pub async fn check_action_with_provider(
         return result;
     }
 
+    let repo_id = action_ref.to_repo_id().without_subpath();
+
     if provider
-        .resolve_ref_to_sha(&action_ref.to_repo_id(), action_ref.ref_str())
+        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
         .await
         .is_ok()
     {
@@ -357,7 +359,8 @@ pub async fn check_action_remote(
                 .map_or_else(|| "(default)".into(), String::from),
         })?;
 
-    let versions = provider.get_versions(&action_ref.to_repo_id()).await?;
+    let repo_id = action_ref.to_repo_id().without_subpath();
+    let versions = provider.get_versions(&repo_id).await?;
     let result = check_action_with_provider(action_ref, &versions, config, provider).await;
 
     // Fallback: if batch fetch returned no versions but the ref actually exists,
@@ -369,7 +372,7 @@ pub async fn check_action_remote(
     // all tags, so we optimistically assume up-to-date.
     let no_versions_but_ref_exists = matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
         && provider
-            .resolve_ref_to_sha(&action_ref.to_repo_id(), action_ref.ref_str())
+            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
             .await
             .is_ok();
 

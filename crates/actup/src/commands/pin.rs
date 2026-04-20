@@ -33,7 +33,7 @@ async fn resolve_sha(
     action_ref: &ActionRef,
     errors: &mut ErrorTally,
 ) -> Option<String> {
-    let repo_id = action_ref.to_repo_id();
+    let repo_id = action_ref.to_repo_id().without_subpath();
 
     // Try to get versions first
     let versions = match provider.get_versions(&repo_id).await {

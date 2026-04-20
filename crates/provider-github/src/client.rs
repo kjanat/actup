@@ -159,6 +159,47 @@ impl GitHubClient {
         Ok(all_tags)
     }
 
+    /// List tags for a repository, stopping after `max_tags` entries.
+    ///
+    /// This avoids walking every pagination page when actup only needs the
+    /// newest N tags for policy evaluation.
+    pub async fn list_tags_limited(
+        &self,
+        owner: &str,
+        repo: &str,
+        max_tags: u8,
+    ) -> Result<Vec<GitHubTag>> {
+        let max_tags = max_tags.max(MIN_PER_PAGE);
+        let per_page = max_tags.min(MAX_PER_PAGE);
+
+        let mut all_tags = Vec::with_capacity(usize::from(max_tags));
+        let mut url = Some(format!(
+            "{}/repos/{owner}/{repo}/tags?per_page={per_page}",
+            self.api_base
+        ));
+
+        while let Some(current_url) = url {
+            if all_tags.len() >= usize::from(max_tags) {
+                break;
+            }
+
+            debug!(url = %current_url, max_tags, "fetching limited tags page");
+
+            let response = self.get(&current_url).await?;
+            url = Self::parse_next_link(&response);
+
+            let tags: Vec<GitHubTag> = self.handle_response(response, owner, repo).await?;
+            let remaining = usize::from(max_tags).saturating_sub(all_tags.len());
+            all_tags.extend(tags.into_iter().take(remaining));
+
+            if all_tags.len() >= usize::from(max_tags) {
+                break;
+            }
+        }
+
+        Ok(all_tags)
+    }
+
     /// Parse Link header for next page URL
     fn parse_next_link(response: &Response) -> Option<String> {
         let link_header = response.headers().get("link")?.to_str().ok()?;

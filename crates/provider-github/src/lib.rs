@@ -78,7 +78,12 @@ fn infer_github_api_base(hostname: &str) -> Option<String> {
 #[allow(clippy::needless_pass_by_value)]
 fn create_github_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
     let token = std::env::var(&config.token_env).ok();
-    let provider = GitHubProvider::with_host(&config.api_base, &config.host, token.as_deref())?;
+    let provider = GitHubProvider::with_host_and_max_tags(
+        &config.api_base,
+        &config.host,
+        token.as_deref(),
+        config.max_tags_per_repo.get(),
+    )?;
     Ok(Box::new(provider))
 }
 

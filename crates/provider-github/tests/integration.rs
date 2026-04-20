@@ -3,7 +3,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use actup_provider_github::GitHubClient;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const TAGS_RESPONSE: &str = include_str!("fixtures/tags_response.json");
@@ -34,6 +34,38 @@ async fn test_list_tags() {
         tags[0].commit.sha,
         "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
     );
+}
+
+#[tokio::test]
+async fn test_list_tags_limited_stops_after_requested_count() {
+    let mock_server = MockServer::start().await;
+    let next_url = format!(
+        "{}/repos/actions/checkout/tags?per_page=2&page=2",
+        mock_server.uri()
+    );
+
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout/tags"))
+        .and(query_param("per_page", "2"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("link", format!("<{next_url}>; rel=\"next\""))
+                .set_body_string(TAGS_RESPONSE),
+        )
+        .mount(&mock_server)
+        .await;
+
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
+        .expect("failed to create client");
+
+    let tags = client
+        .list_tags_limited("actions", "checkout", 2)
+        .await
+        .expect("failed to list limited tags");
+
+    assert_eq!(tags.len(), 2);
+    assert_eq!(tags[0].name, "v6.0.2");
+    assert_eq!(tags[1].name, "v6.0.1");
 }
 
 #[tokio::test]

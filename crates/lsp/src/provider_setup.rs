@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use actup_core::{
-    Config, Registration, effective_host, provider, resolve_default_host,
+    CachingProvider, Config, Registration, effective_host, provider, resolve_default_host,
     validate_no_duplicate_presets,
 };
 
@@ -52,7 +52,7 @@ fn resolve_and_register(
         })?;
 
     let provider = (registration.create)(provider_config)?;
-    registry.register(provider);
+    registry.register(Box::new(CachingProvider::new(provider)));
     Ok(())
 }
 

@@ -14,6 +14,7 @@ use tracing::debug;
 pub struct GitHubProvider {
     client: GitHubClient,
     host: String,
+    max_tags: u8,
 }
 
 impl GitHubProvider {
@@ -23,11 +24,12 @@ impl GitHubProvider {
     ///
     /// Returns error if HTTP client cannot be created.
     pub fn new(token: Option<&str>) -> Result<Self> {
-        let client = GitHubClient::new(token)?;
-        Ok(Self {
-            host: crate::GITHUB_HOST.to_string(),
-            client,
-        })
+        Self::with_host_and_max_tags(
+            crate::GITHUB_API_HOST,
+            crate::GITHUB_HOST,
+            token,
+            crate::graphql::DEFAULT_MAX_TAGS_PER_REPO,
+        )
     }
 
     /// Create a GitHub provider for a custom host (e.g., GitHub Enterprise)
@@ -36,10 +38,30 @@ impl GitHubProvider {
     ///
     /// Returns error if HTTP client cannot be created or token is invalid.
     pub fn with_host(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
+        Self::with_host_and_max_tags(
+            api_base,
+            host,
+            token,
+            crate::graphql::DEFAULT_MAX_TAGS_PER_REPO,
+        )
+    }
+
+    /// Create a GitHub provider with an explicit tag fetch cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if HTTP client cannot be created or token is invalid.
+    pub fn with_host_and_max_tags(
+        api_base: &str,
+        host: &str,
+        token: Option<&str>,
+        max_tags: u8,
+    ) -> Result<Self> {
         let client = GitHubClient::with_api_base(api_base, host, token)?;
         Ok(Self {
             host: host.to_string(),
             client,
+            max_tags: max_tags.max(1),
         })
     }
 }
@@ -60,8 +82,12 @@ impl Provider for GitHubProvider {
         Box::pin(async move {
             debug!(owner = %owner, repo = %repo_name, "fetching versions from GitHub");
 
-            // Get tags
-            let tags = self.client.list_tags(&owner, &repo_name, None).await?;
+            // Only fetch the newest configured tags. Older refs fall back to
+            // direct resolution when needed instead of walking the full tag history.
+            let tags = self
+                .client
+                .list_tags_limited(&owner, &repo_name, self.max_tags)
+                .await?;
 
             // Process into [`version::Set`]
             let mut version_set = process_tags(tags);

@@ -200,6 +200,20 @@ impl ActionRepoId {
         Self::new(None, owner, repo, None)
     }
 
+    /// Return a copy without any action subpath.
+    ///
+    /// Repo-level operations like version discovery and ref resolution should
+    /// reuse the same cache/network entry regardless of action subpath.
+    #[must_use]
+    pub fn without_subpath(&self) -> Self {
+        Self {
+            host: self.host.clone(),
+            owner: self.owner.clone(),
+            repo: self.repo.clone(),
+            subpath: None,
+        }
+    }
+
     /// Get the host as an optional string slice
     #[must_use]
     pub fn host(&self) -> Option<&str> {
@@ -436,6 +450,23 @@ mod tests {
         let id = ActionRepoId::simple("actions", "checkout");
         assert!(id.host().is_none());
         assert!(id.subpath().is_none());
+    }
+
+    #[test]
+    fn test_action_repo_id_without_subpath() {
+        let id = ActionRepoId::new(
+            Some("github.com".to_string()),
+            "actions",
+            "cache",
+            Some("restore".to_string()),
+        );
+
+        let stripped = id.without_subpath();
+
+        assert_eq!(stripped.host(), Some("github.com"));
+        assert_eq!(stripped.owner(), "actions");
+        assert_eq!(stripped.repo(), "cache");
+        assert_eq!(stripped.subpath(), None);
     }
 
     #[test]

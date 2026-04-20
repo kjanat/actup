@@ -72,6 +72,10 @@ pub struct CachingProvider<P> {
     branch_cache: AsyncRwLock<HashMap<ActionRepoId, String>>,
 }
 
+fn repo_cache_key(repo: &ActionRepoId) -> ActionRepoId {
+    repo.without_subpath()
+}
+
 impl<P: Provider> CachingProvider<P> {
     /// Create a new caching provider wrapping the given provider.
     #[must_use]
@@ -146,7 +150,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
     }
 
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
-        let repo = repo.clone();
+        let repo = repo_cache_key(repo);
 
         Box::pin(async move {
             // Check cache first (short-lived lock)
@@ -171,7 +175,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
         repo: &ActionRepoId,
         ref_name: &str,
     ) -> BoxFuture<'_, Result<Sha40>> {
-        let repo = repo.clone();
+        let repo = repo_cache_key(repo);
         let ref_name = ref_name.to_string();
 
         Box::pin(async move {
@@ -195,7 +199,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
     }
 
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
-        let repo = repo.clone();
+        let repo = repo_cache_key(repo);
 
         Box::pin(async move {
             // Check cache first
@@ -463,5 +467,24 @@ mod tests {
         assert_eq!(cached.kind(), provider::Kind::GitHub);
         assert_eq!(cached.host(), "github.com");
         assert_eq!(cached.cache_namespace(), "github");
+    }
+
+    #[tokio::test]
+    async fn test_get_versions_ignores_subpath() {
+        let inner = CountingProvider::new();
+        let calls = Arc::clone(&inner.call_count);
+        let cached = CachingProvider::new(Box::new(inner) as Box<dyn Provider>);
+        let composite = ActionRepoId::new(None, "actions", "cache", Some("restore".to_string()));
+        let reusable = ActionRepoId::new(
+            None,
+            "actions",
+            "cache",
+            Some(".github/workflows/reusable.yml".to_string()),
+        );
+
+        cached.get_versions(&composite).await.unwrap();
+        cached.get_versions(&reusable).await.unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

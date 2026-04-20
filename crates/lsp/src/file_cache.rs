@@ -108,8 +108,8 @@ pub async fn fetch_versions_cached(
     file_cache: &FileCache,
 ) -> Option<Result<version::Set, actup_core::Error>> {
     let provider = registry.find_for_repo(repo_id)?;
-    let default_host = registry.default_host().unwrap_or("github.com");
-    let cache_key = repo_id.cache_key(provider.cache_namespace(), default_host);
+    let version_repo = repo_id.without_subpath();
+    let cache_key = version_repo.cache_key(provider.cache_namespace(), provider.host());
 
     // Try file cache first.
     if let Ok(entry) = file_cache.get(&cache_key).await {
@@ -117,7 +117,7 @@ pub async fn fetch_versions_cached(
     }
 
     // Fetch from provider.
-    match provider.get_versions(repo_id).await {
+    match provider.get_versions(&version_repo).await {
         Ok(versions) => {
             // Write back to cache (best effort).
             let entry = actup_core::cache::Entry::new(versions.clone());
@@ -261,6 +261,7 @@ impl Cache for FileCache {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use crate::test_utils::{DUMMY_SHA, MockProvider, simple_version_set};
     use actup_core::version;
     use tempfile::TempDir;
 
@@ -456,5 +457,29 @@ mod tests {
         let path = cache.key_to_path("atomic_test");
         let tmp_path = path.with_extension("json.tmp");
         assert!(!tokio::fs::try_exists(&tmp_path).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn fetch_versions_cached_uses_provider_host_for_cache_key() {
+        let (cache, _temp) = make_test_cache(3600);
+        let mock_provider = MockProvider::new("ghe.corp.com");
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(mock_provider));
+        let repo = ActionRepoId::new(
+            Some("ghe.corp.com".to_string()),
+            "actions",
+            "checkout",
+            Some("restore".to_string()),
+        );
+        let cached_versions = simple_version_set("v4.0.0", DUMMY_SHA);
+        let cache_key = repo.without_subpath().cache_key("github", "ghe.corp.com");
+        let entry = cache::Entry::new(cached_versions.clone());
+        cache.set(&cache_key, entry).await.unwrap();
+
+        let result = fetch_versions_cached(&repo, &registry, &cache).await;
+
+        let versions = result.unwrap().unwrap();
+        assert_eq!(versions.latest().unwrap().version().to_string(), "v4.0.0");
     }
 }

@@ -128,7 +128,8 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
         return CliExitCode::EnvironmentError.into();
     };
 
-    let versions = match provider.get_versions(&action_ref.to_repo_id()).await {
+    let repo_id = action_ref.to_repo_id().without_subpath();
+    let versions = match provider.get_versions(&repo_id).await {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{e}");

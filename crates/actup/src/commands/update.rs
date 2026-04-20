@@ -76,7 +76,7 @@ pub async fn run(
                 continue;
             };
 
-            let repo_id = action_ref.to_repo_id();
+            let repo_id = action_ref.to_repo_id().without_subpath();
             let versions = match provider.get_versions(&repo_id).await {
                 Ok(v) => v,
                 Err(e) => {

@@ -575,6 +575,55 @@ pub trait Provider: MaybeSend + MaybeSync {
     ) -> BoxFuture<'_, Result<ActionYml>>;
 }
 
+impl<P> Provider for Box<P>
+where
+    P: Provider + ?Sized,
+{
+    fn kind(&self) -> Kind {
+        (**self).kind()
+    }
+
+    fn host(&self) -> &str {
+        (**self).host()
+    }
+
+    fn cache_namespace(&self) -> &str {
+        (**self).cache_namespace()
+    }
+
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+        (**self).get_versions(repo)
+    }
+
+    fn resolve_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>> {
+        (**self).resolve_ref_to_sha(repo, ref_name)
+    }
+
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+        (**self).get_default_branch(repo)
+    }
+
+    fn get_readme(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: Option<&str>,
+    ) -> BoxFuture<'_, Result<Option<String>>> {
+        (**self).get_readme(repo, ref_name)
+    }
+
+    fn get_action_yml(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<ActionYml>> {
+        (**self).get_action_yml(repo, ref_name)
+    }
+}
+
 /// Registry for managing multiple providers
 ///
 /// Resolves providers by host, with support for default provider

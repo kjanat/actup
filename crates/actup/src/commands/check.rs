@@ -163,7 +163,7 @@ pub async fn run(
             };
 
             // Collect for batch fetching
-            let repo_id = action_ref.to_repo_id();
+            let repo_id = action_ref.to_repo_id().without_subpath();
             collected_actions.push(CollectedAction {
                 file: relative.clone(),
                 line: loc.line(),
