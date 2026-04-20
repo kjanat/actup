@@ -23,27 +23,16 @@
 	"sideEffects": false,
 	"type": "module",
 	"exports": {
-		".": {
-			"import": {
-				"types": "./dist/index.d.ts",
-				"default": "./dist/index.js"
-			}
-		},
-		"./provider": {
-			"import": {
-				"types": "./dist/provider.d.ts",
-				"default": "./dist/provider.js"
-			}
-		},
+		".": "./src/index.ts",
+		"./provider": "./src/provider.ts",
 		"./wasm": "./wasm/actup_wasm_bg.wasm",
-		"./wasm/*": "./wasm/*"
+		"./*": "./*"
 	},
-	"main": "./dist/index.js",
-	"module": "./dist/index.js",
-	"types": "./dist/index.d.ts",
+	"module": "./src/index.ts",
+	"types": "./src/types.ts",
 	"files": [
-		"dist/",
-		"wasm/"
+		"wasm/",
+		"src/"
 	],
 	"scripts": {
 		"bd": "bun run build",

@@ -69,25 +69,34 @@ export function createGitHubProvider(options?: GitHubProviderOptions): ActupProv
 	const headers = buildHeaders(options?.token);
 
 	return {
-		getVersions: (host, owner, repo) => getVersions(apiBase, headers, perPage, owner, repo),
-		resolveRefToSha: (host, owner, repo, ref) => resolveRefToSha(apiBase, headers, owner, repo, ref),
-		getDefaultBranch: (host, owner, repo) => getDefaultBranch(apiBase, headers, owner, repo),
-		getReadme: (host, owner, repo, ref) => getReadme(apiBase, headers, owner, repo, ref ?? undefined),
-		getActionYml: (host, owner, repo, ref) => getActionYml(apiBase, headers, owner, repo, ref),
+		getVersions: (_host, owner, repo) => getVersions(apiBase, headers, perPage, owner, repo),
+		resolveRefToSha: (_host, owner, repo, ref) => resolveRefToSha(apiBase, headers, owner, repo, ref),
+		getDefaultBranch: (_host, owner, repo) => getDefaultBranch(apiBase, headers, owner, repo),
+		getReadme: (_host, owner, repo, ref) => getReadme(apiBase, headers, owner, repo, ref ?? undefined),
+		getActionYml: (_host, owner, repo, ref) => getActionYml(apiBase, headers, owner, repo, ref),
 	};
 }
 
 // -- Implementation --
 
 /** Build standard headers for GitHub REST API requests. */
-function buildHeaders(token: string | undefined): Record<string, string> {
+function buildHeaders(
+	/** Optional token for Authorization header. */
+	token: string | undefined,
+	/** Optional Accept header. @default "application/vnd.github+json". */
+	accept: string = "application/vnd.github+json",
+	/** Optional client version for User-Agent. @default "0.1.0". */
+	version: string = "0.1.0",
+	/** Optional API version for X-GitHub-Api-Version. @default "2022-11-28". */
+	apiVersion: string = "2022-11-28",
+): Record<string, string> {
 	const h: Record<string, string> = {
-		"Accept": "application/vnd.github+json",
-		"User-Agent": "actup-wasm/0.1",
-		"X-GitHub-Api-Version": "2022-11-28",
+		"Accept": accept,
+		"X-GitHub-Api-Version": apiVersion,
+		"User-Agent": `actup-wasm/${version}`,
 	};
 	if (token !== undefined && token.length > 0) {
-		h["Authorization"] = `Bearer ${token}`;
+		h.Authorization = `Bearer ${token}`;
 	}
 	return h;
 }

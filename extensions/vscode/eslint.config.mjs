@@ -9,6 +9,7 @@ export default defineConfig(
 	globalIgnores([
 		".vscode-test/",
 		"out/",
+		"dist/",
 	]),
 	js.configs.recommended,
 	tseslint.configs.recommended,

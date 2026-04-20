@@ -1,5 +1,5 @@
-import { checkRefs, type CheckResult, type CheckStatus, parseUsesRefs } from "actup-wasm";
 import type { ActupProvider } from "actup-wasm";
+import { checkRefs, type CheckResult, type CheckStatus, parseUsesRefs } from "actup-wasm";
 import * as vscode from "vscode";
 
 const DIAGNOSTIC_SOURCE = "actup";

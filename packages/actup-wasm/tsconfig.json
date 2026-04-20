@@ -21,7 +21,8 @@
 		"verbatimModuleSyntax": true,
 		"allowImportingTsExtensions": true,
 		"noEmit": true,
-		"types": ["node", "bun"]
+		"types": ["node", "bun"],
+		"composite": true
 	},
 	"include": ["src/**/*.ts"],
 	"exclude": ["node_modules", "dist", "wasm"]

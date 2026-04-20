@@ -1,13 +1,18 @@
-src/**
-node_modules/**
-tsconfig.json
-tsconfig.web.json
-esbuild.mjs
-eslint.config.mjs
-.gitignore
-bun.lock
-*.vsix
-**/*.ts
-**/*.map
-!out/**
-!dist/web/**
+# Deny everything by default; re-include only what the extension needs at
+# runtime. Required because node_modules/* entries are symlinks into the
+# workspace store — vsce follows them, so anything but a tight allowlist
+# causes the full repo to be packaged.
+**
+
+# Runtime entrypoints (bundled by tsdown; no node_modules needed at runtime)
+!out/extension.js
+!out/extension.js.map
+!dist/web/extension.js
+!dist/web/extension.js.map
+!dist/web/wasm/actup_wasm_bg.wasm
+
+# Extension metadata
+!package.json
+!README.md
+!LICENSE
+!icon.png

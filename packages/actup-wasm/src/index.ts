@@ -14,6 +14,11 @@
  * @packageDocumentation
  */
 
+import type { ActupConfig, ActupProvider, CheckResult, UpdateEdit, UsesLocation } from "./types.ts";
+
+export type { GitHubProviderOptions } from "./provider.ts";
+
+export { createGitHubProvider, GitHubProviderError } from "./provider.ts";
 export type {
 	ActionInput,
 	ActionOutput,
@@ -31,12 +36,7 @@ export type {
 	UsesLocation,
 	VersionInfo,
 	VersionSet,
-} from "./types.js";
-
-export { createGitHubProvider, GitHubProviderError } from "./provider.ts";
-export type { GitHubProviderOptions } from "./provider.ts";
-
-import type { ActupConfig, ActupProvider, CheckResult, UpdateEdit, UsesLocation } from "./types.js";
+} from "./types.ts";
 
 /**
  * Low-level wasm-bindgen bindings.

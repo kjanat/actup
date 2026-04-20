@@ -3,11 +3,13 @@
   "version": "0.0.0+dev",
   "private": true,
   "workspaces": [
-    "extensions/*",
-    "packages/*"
+    "extensions/**",
+    "packages/**"
   ],
   "scripts": {
-    "bd": "bun --filter '*' bd"
+    "bd": "bun --filter '*' bd",
+    "build:ts": "bun --filter '*' build:ts",
+    "build:wasm": "bun --filter 'actup-wasm' build:wasm"
   },
   "devDependencies": {
     "@kjanat/dreamcli": "latest",

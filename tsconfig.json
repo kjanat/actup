@@ -20,5 +20,10 @@
 		"noEmit": true
 	},
 	"include": ["branding/**/*.ts"],
-	"exclude": ["node_modules", "target", "dist", "out", "extensions", "packages", "crates"]
+	"exclude": ["node_modules", "target", "dist", "out", "extensions", "packages", "crates"],
+	"references": [
+		{ "path": "extensions/vscode/tsconfig.json" },
+		{ "path": "extensions/vscode/tsconfig.web.json" },
+		{ "path": "packages/actup-wasm/tsconfig.web.json" }
+	]
 }

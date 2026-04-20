@@ -16,8 +16,10 @@
 		"noUnusedParameters": true,
 		"verbatimModuleSyntax": true,
 		"allowImportingTsExtensions": true,
-		"noEmit": true
+		"emitDeclarationOnly": true,
+		"composite": true
 	},
 	"include": ["src/**/*.ts"],
-	"exclude": ["node_modules", ".vscode-test"]
+	"exclude": ["node_modules", ".vscode-test", "src/web"],
+	"references": [{ "path": "./tsconfig.web.json" }]
 }

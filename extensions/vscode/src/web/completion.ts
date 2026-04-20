@@ -2,12 +2,12 @@ import type { ActupProvider } from "actup-wasm";
 import * as vscode from "vscode";
 
 /** Popular actions for name completion, matching the LSP's list. */
-const POPULAR_ACTIONS: ReadonlyArray<{
+const POPULAR_ACTIONS: readonly {
 	readonly owner: string;
 	readonly repo: string;
 	readonly description: string;
 	readonly defaultRef: string;
-}> = [
+}[] = [
 	{ owner: "actions", repo: "checkout", description: "Check out a repository", defaultRef: "v6" },
 	{ owner: "actions", repo: "setup-node", description: "Set up Node.js environment", defaultRef: "v6" },
 	{ owner: "actions", repo: "setup-python", description: "Set up Python environment", defaultRef: "v6" },

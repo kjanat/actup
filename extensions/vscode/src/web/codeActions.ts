@@ -30,7 +30,7 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 		const dataMap = diagnosticDataByUri.get(document.uri.toString());
 		if (dataMap === undefined) return actions;
 
-		const outdatedDiags: Array<{ diagnostic: vscode.Diagnostic; data: DiagnosticData }> = [];
+		const outdatedDiags: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
 
 		for (const diag of context.diagnostics) {
 			if (diag.source !== "actup") continue;

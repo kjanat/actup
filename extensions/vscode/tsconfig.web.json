@@ -14,7 +14,10 @@
 		"forceConsistentCasingInFileNames": true,
 		"esModuleInterop": true,
 		"skipLibCheck": true,
-		"verbatimModuleSyntax": true
+		"verbatimModuleSyntax": true,
+		"composite": true,
+		"allowImportingTsExtensions": true,
+		"emitDeclarationOnly": true
 	},
-	"include": ["src/web/**/*"]
+	"include": ["./src/web/**/*.ts"]
 }
