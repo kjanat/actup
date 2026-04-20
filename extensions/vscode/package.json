@@ -33,8 +33,8 @@
   "scripts": {
     "bd": "bun compile && bun compile:web && bun run package",
     "compile": "tsc -p ./",
-    "compile:web": "tsdown && bash -c 'mkdir -p dist/web/wasm && cp ../../packages/actup-wasm/wasm/actup_wasm_bg.wasm dist/web/wasm/'",
-    "generate:icon": "bash ../../branding/generate_icon.sh -p 0 'none' ../../branding/icon.svg icon.png",
+    "compile:web": "tsdown && bash -c 'mkdir -p dist/web/wasm && cp node_modules/actup-wasm/wasm/actup_wasm_bg.wasm dist/web/wasm/'",
+    "generate:icon": "bun --cwd=../../branding/ generate-icon.ts -p 0 'none' icon.svg \"${PWD}/icon.png\"",
     "lint": "eslint .",
     "package": "vsce package",
     "typecheck": "tsc --noEmit",

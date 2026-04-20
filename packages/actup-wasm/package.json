@@ -34,7 +34,9 @@
 				"types": "./dist/provider.d.ts",
 				"default": "./dist/provider.js"
 			}
-		}
+		},
+		"./wasm": "./wasm/actup_wasm_bg.wasm",
+		"./wasm/*": "./wasm/*"
 	},
 	"main": "./dist/index.js",
 	"module": "./dist/index.js",
@@ -49,8 +51,8 @@
 		"build:ts": "tsc",
 		"build:wasm": "bun scripts/build-wasm.ts",
 		"clean": "rm -rf dist/ wasm/",
-		"prepack": "cp ../../LICENSE-MIT ../../LICENSE-APACHE .",
-		"postpack": "rm -f LICENSE-MIT LICENSE-APACHE",
+		"prepack": "cp ../../LICENSE* .",
+		"postpack": "rm -f LICENSE*",
 		"prepublishOnly": "bun bd && bun run test",
 		"test": "node --test tests/node_import.mjs tests/provider.mjs",
 		"typecheck": "tsc --noEmit"

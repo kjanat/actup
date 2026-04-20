@@ -1,7 +1,5 @@
 # VSCode extension recipes
 
-set shell := ["bash", "-cu"]
-
 # Run ESLint
 lint:
     bun run lint
