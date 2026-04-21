@@ -17,7 +17,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use actup_core::{Config, DiscoveredFile, discover_files, provider};
+use actup_core::{ActionRepoId, Config, DiscoveredFile, discover_files, provider};
 use dashmap::DashMap;
 use tower_lsp_server::Client;
 use tower_lsp_server::ls_types::{
@@ -156,26 +156,33 @@ struct FileOutcome {
     actions_checked: usize,
 }
 
-/// Process a single discovered file: read, compute diagnostics, extract edits.
+struct LoadedFile {
+    file: DiscoveredFile,
+    uri: Uri,
+    text: String,
+    version: Option<i32>,
+}
+
+enum PreparedFile {
+    Loaded(LoadedFile),
+    Failed(DiscoveredFile),
+}
+
+/// Load a discovered file once so workspace commands can reuse the same text
+/// for repo prefetch and final edit generation.
 ///
 /// For files open in the editor, reads from the document store and snapshots
 /// the version atomically with the text content. For files not open in the
 /// editor, reads from disk with `version = None`.
 ///
-/// Returns a [`FileOutcome`] with optional edits (including the snapshotted
-/// version) and the count of actions checked. Read/parse failures are pushed
-/// to `failures` without propagating.
-#[allow(clippy::too_many_arguments)]
-async fn process_file(
+/// Read/URI failures are recorded in `failures` and returned as
+/// [`PreparedFile::Failed`] so the progress loop still counts the file.
+async fn prepare_file(
     file: &DiscoveredFile,
     workspace_root: &Path,
-    config: &Config,
-    registry: &provider::Registry,
-    file_cache: &FileCache,
     documents: &DashMap<Uri, DocumentState>,
     failures: &mut Vec<(String, String)>,
-    encoding: crate::position::PositionEncoding,
-) -> FileOutcome {
+) -> PreparedFile {
     let path = file.path();
     let rel = path
         .strip_prefix(workspace_root)
@@ -186,10 +193,7 @@ async fn process_file(
     let Some(uri) = Uri::from_file_path(path) else {
         tracing::warn!(path = %rel, "failed to convert path to URI");
         failures.push((rel, "failed to convert path to URI".into()));
-        return FileOutcome {
-            edits: None,
-            actions_checked: 0,
-        };
+        return PreparedFile::Failed(file.clone());
     };
 
     // Read text + version atomically: prefer editor buffer (document store)
@@ -205,30 +209,80 @@ async fn process_file(
             Err(e) => {
                 tracing::warn!(path = %rel, error = %e, "failed to read file");
                 failures.push((rel, e.to_string()));
-                return FileOutcome {
-                    edits: None,
-                    actions_checked: 0,
-                };
+                return PreparedFile::Failed(file.clone());
             }
         }
     };
 
-    if !text.contains("uses:") {
+    PreparedFile::Loaded(LoadedFile {
+        file: file.clone(),
+        uri,
+        text,
+        version,
+    })
+}
+
+async fn prefetch_workspace_versions(
+    prepared_files: &[PreparedFile],
+    config: &Config,
+    registry: &provider::Registry,
+    file_cache: &FileCache,
+    encoding: crate::position::PositionEncoding,
+) -> std::collections::HashMap<ActionRepoId, Result<actup_core::version::Set, actup_core::Error>> {
+    let mut seen = std::collections::HashSet::new();
+    let mut unique_repos = Vec::new();
+
+    for prepared in prepared_files {
+        let PreparedFile::Loaded(loaded) = prepared else {
+            continue;
+        };
+
+        if !loaded.text.contains("uses:") {
+            continue;
+        }
+
+        for repo in crate::diagnostics::extract_unique_repo_ids(&loaded.text, encoding) {
+            if seen.insert(repo.clone()) {
+                unique_repos.push(repo);
+            }
+        }
+    }
+
+    diagnostics::batch_fetch_versions(&unique_repos, config, registry, file_cache).await
+}
+
+async fn process_loaded_file(
+    loaded: &LoadedFile,
+    config: &Config,
+    registry: &provider::Registry,
+    versions_map: &std::collections::HashMap<
+        ActionRepoId,
+        Result<actup_core::version::Set, actup_core::Error>,
+    >,
+    encoding: crate::position::PositionEncoding,
+) -> FileOutcome {
+    if !loaded.text.contains("uses:") {
         return FileOutcome {
             edits: None,
             actions_checked: 0,
         };
     }
 
-    let result =
-        diagnostics::compute_diagnostics(&text, &uri, config, registry, file_cache, encoding).await;
+    let result = diagnostics::compute_diagnostics_with_versions(
+        &loaded.text,
+        config,
+        registry,
+        versions_map,
+        encoding,
+    )
+    .await;
     let actions_checked = result.refs_checked;
     let edits = edits_from_diagnostics(&result.diagnostics);
 
     let result_edits = if edits.is_empty() {
         None
     } else {
-        Some((uri, version, edits))
+        Some((loaded.uri.clone(), loaded.version, edits))
     };
 
     FileOutcome {
@@ -349,8 +403,34 @@ async fn scan_files(
     let mut total_refs = 0usize;
     let mut total_actions = 0usize;
     let mut files_completed = 0usize;
+    let mut prepared_files = Vec::with_capacity(file_count);
 
-    for (i, file) in discovered.iter().enumerate() {
+    for file in discovered {
+        if cancelled.is_cancelled() {
+            tracing::info!(
+                completed = files_completed,
+                total = file_count,
+                "workspace fix cancelled during preload"
+            );
+            return FixAllResult {
+                edit: WorkspaceEdit::default(),
+                total_files: file_count,
+                files_scanned: files_completed,
+                files_changed: 0,
+                refs_updated: 0,
+                actions_checked: 0,
+                failures,
+                cancelled: true,
+            };
+        }
+
+        prepared_files.push(prepare_file(file, workspace_root, documents, &mut failures).await);
+    }
+
+    let versions_map =
+        prefetch_workspace_versions(&prepared_files, config, registry, file_cache, encoding).await;
+
+    for (i, prepared) in prepared_files.iter().enumerate() {
         if cancelled.is_cancelled() {
             tracing::info!(
                 completed = files_completed,
@@ -370,17 +450,19 @@ async fn scan_files(
             };
         }
 
-        let outcome = process_file(
-            file,
-            workspace_root,
-            config,
-            registry,
-            file_cache,
-            documents,
-            &mut failures,
-            encoding,
-        )
-        .await;
+        let (file, outcome) = match prepared {
+            PreparedFile::Loaded(loaded) => (
+                &loaded.file,
+                process_loaded_file(loaded, config, registry, &versions_map, encoding).await,
+            ),
+            PreparedFile::Failed(file) => (
+                file,
+                FileOutcome {
+                    edits: None,
+                    actions_checked: 0,
+                },
+            ),
+        };
 
         total_actions += outcome.actions_checked;
         if let Some((uri, version, edits)) = outcome.edits {
@@ -505,7 +587,10 @@ fn progress_id() -> u64 {
 mod tests {
     use super::*;
 
+    use std::sync::atomic::Ordering;
+
     use crate::test_utils;
+    use dashmap::DashMap;
 
     fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
         test_utils::make_range(line, col_start, col_end)
@@ -835,5 +920,48 @@ mod tests {
         let file_edits = &changes[&uri];
         assert_eq!(file_edits.len(), 1);
         assert_eq!(file_edits[0].new_text, "v4");
+    }
+
+    #[tokio::test]
+    async fn scan_files_prefetches_versions_once_for_duplicate_repo() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workflows_dir = temp.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows_dir).unwrap();
+
+        let workflow_a = workflows_dir.join("a.yml");
+        let workflow_b = workflows_dir.join("b.yml");
+        let yaml = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v3\n";
+        std::fs::write(&workflow_a, yaml).unwrap();
+        std::fs::write(&workflow_b, yaml).unwrap();
+
+        let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let calls = provider.call_count();
+        let registry = test_utils::mock_registry(provider);
+        let cache = FileCache::disabled();
+        let documents = DashMap::new();
+        let cancelled = Cancelled::new();
+        let discovered = discover_files(temp.path(), &[]);
+
+        let result = scan_files(
+            &discovered,
+            temp.path(),
+            &Config::default(),
+            &registry,
+            &cache,
+            &documents,
+            &cancelled,
+            false,
+            None,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(result.total_files, 2);
+        assert_eq!(result.files_scanned, 2);
+        assert_eq!(result.files_changed, 2);
+        assert_eq!(result.refs_updated, 2);
     }
 }

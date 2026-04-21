@@ -112,11 +112,29 @@ fn extract_located_actions(
     actions
 }
 
+fn unique_repo_ids(actions: &[LocatedAction]) -> Vec<ActionRepoId> {
+    let mut seen = std::collections::HashSet::new();
+    actions
+        .iter()
+        .filter_map(|action| {
+            let id = action.action_ref.to_repo_id().without_subpath();
+            seen.insert(id.clone()).then_some(id)
+        })
+        .collect()
+}
+
+pub(crate) fn extract_unique_repo_ids(
+    text: &str,
+    encoding: crate::position::PositionEncoding,
+) -> Vec<ActionRepoId> {
+    unique_repo_ids(&extract_located_actions(text, encoding))
+}
+
 /// Fetch version sets for a batch of unique repos, using file cache first.
 ///
 /// Returns a map from `ActionRepoId` to either a fetched `version::Set`
 /// or an error. Repos found in cache are not re-fetched.
-async fn batch_fetch_versions(
+pub(crate) async fn batch_fetch_versions(
     repos: &[ActionRepoId],
     config: &Config,
     registry: &provider::Registry,
@@ -229,6 +247,91 @@ async fn batch_fetch_versions(
     }
 
     results
+}
+
+async fn compute_diagnostics_for_actions(
+    actions: Vec<LocatedAction>,
+    config: &Config,
+    registry: &provider::Registry,
+    versions_map: &HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>>,
+) -> DiagnosticResult {
+    let mut diagnostics = Vec::with_capacity(actions.len());
+    let mut errors = DiagnosticErrors::default();
+
+    for action in &actions {
+        let range = Range {
+            start: Position {
+                line: action.line,
+                character: action.col_start,
+            },
+            end: Position {
+                line: action.line,
+                character: action.col_end,
+            },
+        };
+
+        let repo_id = action.action_ref.to_repo_id().without_subpath();
+        let result = match versions_map.get(&repo_id) {
+            Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
+                Some(provider) => {
+                    check_action_with_provider(&action.action_ref, versions, config, provider).await
+                }
+                None => CheckResult::new(
+                    action.action_ref.clone(),
+                    CheckStatus::Unresolvable {
+                        reason: "internal: provider not found for fetched repo".into(),
+                        is_environment_error: true,
+                    },
+                ),
+            },
+            Some(Err(e)) => {
+                errors.record(e);
+                CheckResult::new(
+                    action.action_ref.clone(),
+                    CheckStatus::Unresolvable {
+                        reason: e.to_string(),
+                        is_environment_error: e.is_environment_error(),
+                    },
+                )
+            }
+            None => CheckResult::new(
+                action.action_ref.clone(),
+                CheckStatus::Unresolvable {
+                    reason: "internal: repo not in version map".into(),
+                    is_environment_error: true,
+                },
+            ),
+        };
+
+        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value) {
+            diagnostics.push(diag);
+        }
+    }
+
+    DiagnosticResult {
+        diagnostics,
+        refs_checked: actions.len(),
+        errors,
+    }
+}
+
+pub(crate) async fn compute_diagnostics_with_versions(
+    text: &str,
+    config: &Config,
+    registry: &provider::Registry,
+    versions_map: &HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>>,
+    encoding: crate::position::PositionEncoding,
+) -> DiagnosticResult {
+    let actions = extract_located_actions(text, encoding);
+    if actions.is_empty() {
+        return DiagnosticResult {
+            diagnostics: Vec::new(),
+            refs_checked: 0,
+            errors: DiagnosticErrors::default(),
+        };
+    }
+
+    compute_diagnostics_for_actions(actions, config, registry, versions_map).await
 }
 
 /// Map a [`CheckStatus`] to an LSP [`Diagnostic`].
@@ -349,81 +452,11 @@ pub async fn compute_diagnostics(
         };
     }
 
-    // Deduplicate repos for batch fetching.
-    let unique_repos: Vec<ActionRepoId> = {
-        let mut seen = std::collections::HashSet::new();
-        actions
-            .iter()
-            .filter_map(|a| {
-                let id = a.action_ref.to_repo_id().without_subpath();
-                seen.insert(id.clone()).then_some(id)
-            })
-            .collect()
-    };
+    let unique_repos = unique_repo_ids(&actions);
 
     let versions_map = batch_fetch_versions(&unique_repos, config, registry, file_cache).await;
 
-    let mut diagnostics = Vec::with_capacity(actions.len());
-    let mut errors = DiagnosticErrors::default();
-
-    for action in &actions {
-        let range = Range {
-            start: Position {
-                line: action.line,
-                character: action.col_start,
-            },
-            end: Position {
-                line: action.line,
-                character: action.col_end,
-            },
-        };
-
-        let repo_id = action.action_ref.to_repo_id().without_subpath();
-        let result = match versions_map.get(&repo_id) {
-            Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
-                Some(provider) => {
-                    check_action_with_provider(&action.action_ref, versions, config, provider).await
-                }
-                None => CheckResult::new(
-                    action.action_ref.clone(),
-                    CheckStatus::Unresolvable {
-                        reason: "internal: provider not found for fetched repo".into(),
-                        is_environment_error: true,
-                    },
-                ),
-            },
-            Some(Err(e)) => {
-                errors.record(e);
-                CheckResult::new(
-                    action.action_ref.clone(),
-                    CheckStatus::Unresolvable {
-                        reason: e.to_string(),
-                        is_environment_error: e.is_environment_error(),
-                    },
-                )
-            }
-            None => {
-                // Should not happen (all repos are in the map), but handle gracefully.
-                CheckResult::new(
-                    action.action_ref.clone(),
-                    CheckStatus::Unresolvable {
-                        reason: "internal: repo not in version map".into(),
-                        is_environment_error: true,
-                    },
-                )
-            }
-        };
-
-        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value) {
-            diagnostics.push(diag);
-        }
-    }
-
-    DiagnosticResult {
-        diagnostics,
-        refs_checked: actions.len(),
-        errors,
-    }
+    compute_diagnostics_for_actions(actions, config, registry, &versions_map).await
 }
 
 #[cfg(test)]
