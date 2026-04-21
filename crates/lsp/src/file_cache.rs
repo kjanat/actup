@@ -17,6 +17,7 @@ use actup_core::{ActionRepoId, provider, version};
 /// - Linux: `~/.cache/actup/`
 /// - macOS: `~/Library/Caches/actup/`
 /// - Windows: `%LOCALAPPDATA%\actup\cache\`
+#[derive(Clone)]
 pub struct FileCache {
     cache_dir: PathBuf,
     ttl: Duration,

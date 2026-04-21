@@ -141,6 +141,10 @@ impl<P: Provider> Provider for CachingProvider<P> {
         self.inner.kind()
     }
 
+    fn supports_batch_fetch(&self) -> bool {
+        self.inner.supports_batch_fetch()
+    }
+
     fn host(&self) -> &str {
         self.inner.host()
     }

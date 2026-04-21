@@ -4,12 +4,13 @@
 //! configured providers, and maps [`CheckStatus`] to LSP [`Diagnostic`]s.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use actup_core::cache::Cache as _;
 use actup_core::resolution::{CheckResult, CheckStatus};
 use actup_core::{
-    ActionRef, ActionRepoId, Config, Error as CoreError, check_action_with_provider,
-    extract_uses_from_yaml, parse_uses, provider,
+    ActionRef, ActionRepoId, Config, Error as CoreError, HostKind, check_action_with_provider,
+    effective_host, extract_uses_from_yaml, parse_uses, provider,
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -117,11 +118,13 @@ fn extract_located_actions(
 /// or an error. Repos found in cache are not re-fetched.
 async fn batch_fetch_versions(
     repos: &[ActionRepoId],
+    config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
 ) -> HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>> {
     let mut results: HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>> =
         HashMap::with_capacity(repos.len());
+    let cache = Arc::new(file_cache.clone());
 
     // Phase 1: check file cache
     let mut uncached = Vec::new();
@@ -141,23 +144,81 @@ async fn batch_fetch_versions(
         uncached.push((version_repo, cache_key));
     }
 
-    // Phase 2: fetch uncached from providers sequentially.
-    // TODO: parallelize with semaphore-bounded concurrency (tokio::sync::Semaphore).
-    for (repo, cache_key) in &uncached {
+    let mut github_hosts: HashMap<String, Vec<ActionRepoId>> = HashMap::new();
+    let mut fallback_repos = Vec::new();
+
+    for (repo, _) in uncached {
+        let Some(provider) = registry.find_for_repo(&repo) else {
+            let host = repo
+                .host()
+                .or_else(|| registry.default_host())
+                .unwrap_or("(default)")
+                .to_string();
+            results.insert(repo, Err(CoreError::ProviderNotFound { host }));
+            continue;
+        };
+
+        if provider.kind() == provider::Kind::GitHub && provider.supports_batch_fetch() {
+            let host = repo
+                .host()
+                .or_else(|| registry.default_host())
+                .unwrap_or("github.com")
+                .to_string();
+            github_hosts.entry(host).or_default().push(repo);
+        } else {
+            fallback_repos.push(repo);
+        }
+    }
+
+    let registrations = crate::provider_setup::available_registrations();
+    for (host, host_repos) in github_hosts {
+        match effective_host(&host, config, &registrations, &config.fetch) {
+            Ok(provider_config) if provider_config.kind == HostKind::GitHub => {
+                match actup_provider_github::create_batch_fetcher(
+                    &provider_config,
+                    Arc::clone(&cache),
+                ) {
+                    Ok(fetcher) => {
+                        let batch_results = fetcher.fetch_versions(&host_repos).await;
+                        for repo in &host_repos {
+                            if let Some(versions) = batch_results.get(repo) {
+                                results.insert(repo.clone(), Ok(versions.clone()));
+                            } else {
+                                fallback_repos.push(repo.clone());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!(host = %host, error = %e, "failed to build GitHub batch fetcher, falling back to per-repo fetches");
+                        fallback_repos.extend(host_repos);
+                    }
+                }
+            }
+            Ok(_) | Err(_) => {
+                fallback_repos.extend(host_repos);
+            }
+        }
+    }
+
+    // Phase 2: fetch remaining uncached repos sequentially.
+    for repo in &fallback_repos {
         let Some(provider) = registry.find_for_repo(repo) else {
-            let host = repo.host().map_or_else(|| "(default)".into(), String::from);
+            let host = repo
+                .host()
+                .or_else(|| registry.default_host())
+                .unwrap_or("(default)")
+                .to_string();
             results.insert(repo.clone(), Err(CoreError::ProviderNotFound { host }));
             continue;
         };
 
+        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
+
         match provider.get_versions(repo).await {
             Ok(versions) => {
-                // Write to file cache (best effort)
-                if let Some(key) = cache_key {
-                    let entry = actup_core::cache::Entry::new(versions.clone());
-                    if let Err(e) = file_cache.set(key, entry).await {
-                        tracing::debug!(error = %e, "failed to write cache");
-                    }
+                let entry = actup_core::cache::Entry::new(versions.clone());
+                if let Err(e) = file_cache.set(&cache_key, entry).await {
+                    tracing::debug!(error = %e, "failed to write cache");
                 }
                 results.insert(repo.clone(), Ok(versions));
             }
@@ -300,7 +361,7 @@ pub async fn compute_diagnostics(
             .collect()
     };
 
-    let versions_map = batch_fetch_versions(&unique_repos, registry, file_cache).await;
+    let versions_map = batch_fetch_versions(&unique_repos, config, registry, file_cache).await;
 
     let mut diagnostics = Vec::with_capacity(actions.len());
     let mut errors = DiagnosticErrors::default();
@@ -960,9 +1021,11 @@ jobs:
             test_utils::MockProvider::new("github.com").with_versions("owner", "repo", versions);
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
 
         let repo = ActionRepoId::simple("owner", "repo");
-        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        let results =
+            batch_fetch_versions(std::slice::from_ref(&repo), &config, &registry, &cache).await;
 
         assert!(results.contains_key(&repo));
         assert!(results[&repo].is_ok());
@@ -981,9 +1044,11 @@ jobs:
         );
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
 
         let repo = ActionRepoId::simple("bad", "repo");
-        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        let results =
+            batch_fetch_versions(std::slice::from_ref(&repo), &config, &registry, &cache).await;
 
         assert!(results[&repo].is_err());
     }
@@ -994,6 +1059,7 @@ jobs:
         let provider =
             test_utils::MockProvider::new("github.com").with_versions("owner", "repo", versions);
         let registry = test_utils::mock_registry(provider);
+        let config = Config::default();
 
         let temp = tempfile::TempDir::new().unwrap();
         let cache = crate::file_cache::FileCache::with_path(
@@ -1002,12 +1068,14 @@ jobs:
         );
 
         let repo = ActionRepoId::simple("owner", "repo");
-        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        let results =
+            batch_fetch_versions(std::slice::from_ref(&repo), &config, &registry, &cache).await;
         assert!(results[&repo].is_ok());
 
         // Second fetch should hit file cache (even though provider would return
         // the same data, this tests the caching path works without error).
-        let results2 = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        let results2 =
+            batch_fetch_versions(std::slice::from_ref(&repo), &config, &registry, &cache).await;
         assert!(results2[&repo].is_ok());
     }
 
@@ -1152,6 +1220,7 @@ jobs:
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
 
         let repo = ActionRepoId::new(
             Some("gitlab.com".to_string()),
@@ -1159,7 +1228,8 @@ jobs:
             "repo".to_string(),
             None,
         );
-        let results = batch_fetch_versions(std::slice::from_ref(&repo), &registry, &cache).await;
+        let results =
+            batch_fetch_versions(std::slice::from_ref(&repo), &config, &registry, &cache).await;
 
         assert!(results.contains_key(&repo));
         assert!(results[&repo].is_err());

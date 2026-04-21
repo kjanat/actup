@@ -369,7 +369,7 @@ async fn batch_fetch_versions(
             continue;
         };
 
-        if provider.kind() == provider::Kind::GitHub {
+        if provider.kind() == provider::Kind::GitHub && provider.supports_batch_fetch() {
             let host = repo
                 .host()
                 .or_else(|| registry.default_host())

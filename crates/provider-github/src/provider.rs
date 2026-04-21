@@ -84,6 +84,10 @@ impl Provider for GitHubProvider {
         provider::Kind::GitHub
     }
 
+    fn supports_batch_fetch(&self) -> bool {
+        true
+    }
+
     fn host(&self) -> &str {
         &self.host
     }

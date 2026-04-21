@@ -539,6 +539,14 @@ pub trait Provider: MaybeSend + MaybeSync {
     /// Get the provider kind
     fn kind(&self) -> Kind;
 
+    /// Whether this concrete provider can serve batched multi-repo lookups.
+    ///
+    /// Defaults to `false` so test doubles and non-GitHub providers do not
+    /// accidentally opt into GitHub-specific batching paths.
+    fn supports_batch_fetch(&self) -> bool {
+        false
+    }
+
     /// Get the host this provider serves (e.g., "github.com")
     fn host(&self) -> &str;
 
@@ -581,6 +589,10 @@ where
 {
     fn kind(&self) -> Kind {
         (**self).kind()
+    }
+
+    fn supports_batch_fetch(&self) -> bool {
+        (**self).supports_batch_fetch()
     }
 
     fn host(&self) -> &str {
