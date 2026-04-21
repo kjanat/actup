@@ -123,7 +123,7 @@ fn unique_repo_ids(actions: &[LocatedAction]) -> Vec<ActionRepoId> {
         .collect()
 }
 
-pub(crate) fn extract_unique_repo_ids(
+pub fn extract_unique_repo_ids(
     text: &str,
     encoding: crate::position::PositionEncoding,
 ) -> Vec<ActionRepoId> {
@@ -134,7 +134,7 @@ pub(crate) fn extract_unique_repo_ids(
 ///
 /// Returns a map from `ActionRepoId` to either a fetched `version::Set`
 /// or an error. Repos found in cache are not re-fetched.
-pub(crate) async fn batch_fetch_versions(
+pub async fn batch_fetch_versions(
     repos: &[ActionRepoId],
     config: &Config,
     registry: &provider::Registry,
@@ -315,7 +315,7 @@ async fn compute_diagnostics_for_actions(
     }
 }
 
-pub(crate) async fn compute_diagnostics_with_versions(
+pub async fn compute_diagnostics_with_versions(
     text: &str,
     config: &Config,
     registry: &provider::Registry,

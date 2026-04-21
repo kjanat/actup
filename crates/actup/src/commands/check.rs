@@ -411,7 +411,7 @@ async fn batch_fetch_versions(
         }
     }
 
-    let fetched: Vec<_> = futures::stream::iter(fallback_repos.into_iter())
+    let fetched: Vec<_> = futures::stream::iter(fallback_repos)
         .map(|repo| async move {
             let provider = registry.find_for_repo(&repo)?;
             let cache_ns = provider.cache_namespace().to_string();
