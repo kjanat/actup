@@ -145,6 +145,13 @@ fn should_respect_branch_policy_for_major_ref(
 ///
 /// Uses the provider only to disambiguate floating major refs like `v2` when
 /// the fetched tag set contains only concrete tags like `v2.0.4`.
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::future_not_send,
+        reason = "wasm32 providers intentionally use non-Send boxed futures"
+    )
+)]
 pub async fn check_action_with_provider(
     action_ref: &ActionRef,
     versions: &version::Set,
@@ -339,6 +346,13 @@ fn find_best_target(
 ///
 /// # Errors
 /// Returns error if provider not found or version fetch fails.
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::future_not_send,
+        reason = "wasm32 providers intentionally use non-Send boxed futures"
+    )
+)]
 pub async fn check_action_remote(
     action_ref: &ActionRef,
     config: &Config,

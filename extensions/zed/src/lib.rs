@@ -100,7 +100,14 @@ impl zed::Extension for ActupExtension {
     }
 }
 
-zed::register_extension!(ActupExtension);
+mod extension_entrypoint {
+    #![allow(missing_docs)]
+
+    use super::ActupExtension;
+    use zed_extension_api as zed;
+
+    zed::register_extension!(ActupExtension);
+}
 
 /// Run the `/actions:update` slash command using embedded actup-core.
 ///

@@ -28,6 +28,12 @@ async fn rw_read<T: Send + Sync>(lock: &AsyncRwLock<T>) -> tokio::sync::RwLockRe
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(
+    clippy::unused_async,
+    clippy::future_not_send,
+    clippy::expect_used,
+    reason = "wasm32 uses std::sync::RwLock behind an async-compatible shim"
+)]
 async fn rw_read<T>(lock: &AsyncRwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
     lock.read()
         .expect("wasm32 is single-threaded; lock cannot be poisoned")
@@ -43,6 +49,12 @@ async fn rw_write<T: Send + Sync>(lock: &AsyncRwLock<T>) -> tokio::sync::RwLockW
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(
+    clippy::unused_async,
+    clippy::future_not_send,
+    clippy::expect_used,
+    reason = "wasm32 uses std::sync::RwLock behind an async-compatible shim"
+)]
 async fn rw_write<T>(lock: &AsyncRwLock<T>) -> std::sync::RwLockWriteGuard<'_, T> {
     lock.write()
         .expect("wasm32 is single-threaded; lock cannot be poisoned")
@@ -89,6 +101,14 @@ impl<P: Provider> CachingProvider<P> {
     }
 
     /// Clear all cached data.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(
+            clippy::await_holding_lock,
+            clippy::future_not_send,
+            reason = "wasm32 compat layer uses sync guards with no cross-thread scheduling"
+        )
+    )]
     pub async fn clear_cache(&self) {
         rw_write(&self.version_cache).await.clear();
         rw_write(&self.sha_cache).await.clear();
@@ -96,6 +116,14 @@ impl<P: Provider> CachingProvider<P> {
     }
 
     /// Get cache statistics for debugging.
+    #[cfg_attr(
+        target_arch = "wasm32",
+        allow(
+            clippy::await_holding_lock,
+            clippy::future_not_send,
+            reason = "wasm32 compat layer uses sync guards with no cross-thread scheduling"
+        )
+    )]
     pub async fn cache_stats(&self) -> CacheStats {
         CacheStats {
             versions: rw_read(&self.version_cache).await.len(),

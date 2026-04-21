@@ -10,6 +10,7 @@
 //! Trigger characters: `@` (for version completion after typing the `@`).
 
 use actup_core::provider;
+use actup_core::version;
 use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,
     CompletionResponse, Documentation, MarkupContent, MarkupKind, Position,
@@ -277,18 +278,23 @@ pub async fn version_completions(
     version_prefix: &str,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
 ) -> Vec<CompletionItem> {
     let repo_id = actup_core::ActionRepoId::new(None, owner.to_owned(), repo.to_owned(), None);
 
-    let versions =
-        match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
-            Some(Ok(v)) => v,
-            Some(Err(e)) => {
-                tracing::debug!(owner, repo, error = %e, "failed to fetch versions for completion");
-                return Vec::new();
+    let versions = match document_versions.and_then(|versions| versions.get(&repo_id).cloned()) {
+        Some(versions) => versions,
+        None => {
+            match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
+                Some(Ok(v)) => v,
+                Some(Err(e)) => {
+                    tracing::debug!(owner, repo, error = %e, "failed to fetch versions for completion");
+                    return Vec::new();
+                }
+                None => return Vec::new(),
             }
-            None => return Vec::new(),
-        };
+        }
+    };
 
     let prefix_lower = version_prefix.to_lowercase();
     let mut items = Vec::new();
@@ -385,6 +391,7 @@ pub async fn compute_completions(
     position: Position,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
     encoding: crate::position::PositionEncoding,
 ) -> Option<CompletionResponse> {
     let context = detect_completion_context(text, position, encoding)?;
@@ -407,8 +414,15 @@ pub async fn compute_completions(
             repo,
             version_prefix,
         } => {
-            let items =
-                version_completions(&owner, &repo, &version_prefix, registry, file_cache).await;
+            let items = version_completions(
+                &owner,
+                &repo,
+                &version_prefix,
+                registry,
+                file_cache,
+                document_versions,
+            )
+            .await;
             if items.is_empty() {
                 None
             } else {
@@ -426,6 +440,7 @@ pub async fn compute_completions(
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
 
     const ENC: crate::position::PositionEncoding = crate::position::PositionEncoding::Utf16;
 
@@ -677,7 +692,7 @@ mod tests {
             character: 14,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache, ENC).await;
+        let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
         let response = result.unwrap();
         match response {
             CompletionResponse::List(list) => {
@@ -706,7 +721,7 @@ mod tests {
             character: 15,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache, ENC).await;
+        let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
         assert!(
             result.is_none(),
             "expected no completions for non-uses line"
@@ -729,7 +744,7 @@ mod tests {
             character: 30,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache, ENC).await;
+        let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
         let response = result.unwrap();
         match response {
             CompletionResponse::List(list) => {
@@ -747,6 +762,52 @@ mod tests {
                 assert!(!items.is_empty());
             }
         }
+    }
+
+    #[tokio::test]
+    async fn compute_completions_reuses_diagnostics_version_data() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let calls = provider.call_count();
+        let registry = test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let config = actup_core::Config::default();
+        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml").unwrap();
+        let diagnostics_text = "      - uses: actions/checkout@v3\n";
+
+        let diagnostics = crate::diagnostics::compute_diagnostics(
+            diagnostics_text,
+            &uri,
+            &config,
+            &registry,
+            &file_cache,
+            ENC,
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let completion_text = "      - uses: actions/checkout@\n";
+        let position = Position {
+            line: 0,
+            character: 30,
+        };
+
+        let result = compute_completions(
+            completion_text,
+            position,
+            &registry,
+            &file_cache,
+            Some(&diagnostics.version_sets),
+            ENC,
+        )
+        .await;
+
+        assert!(result.is_some());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

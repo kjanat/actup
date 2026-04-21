@@ -1,5 +1,6 @@
 //! LSP backend implementing the [`LanguageServer`] trait.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -49,15 +50,18 @@ pub struct DocumentState {
     pub version: i32,
     /// Cached diagnostics from the last analysis. Empty until first check.
     pub diagnostics: Vec<Diagnostic>,
+    /// Successful version lookups from the last diagnostics pass.
+    pub version_sets: Arc<HashMap<actup_core::ActionRepoId, actup_core::version::Set>>,
 }
 
 impl DocumentState {
     /// Create initial state from a newly opened document.
-    const fn new(text: String, version: i32) -> Self {
+    fn new(text: String, version: i32) -> Self {
         Self {
             text,
             version,
             diagnostics: Vec::new(),
+            version_sets: Arc::new(HashMap::new()),
         }
     }
 }
@@ -266,11 +270,13 @@ impl LspBackend {
             }
 
             let diagnostics = result.diagnostics;
+            let version_sets = Arc::new(result.version_sets);
 
             // Update cached diagnostics in document state, checking for staleness.
             let should_publish = if let Some(mut doc) = documents.get_mut(&uri) {
                 if doc.version == version {
                     doc.diagnostics.clone_from(&diagnostics);
+                    doc.version_sets = Arc::clone(&version_sets);
                     true
                 } else {
                     tracing::debug!(
@@ -565,6 +571,7 @@ impl LanguageServer for LspBackend {
             &config,
             &registry,
             &file_cache,
+            Some(doc.version_sets.as_ref()),
             &self.action_meta_cache,
             encoding,
         )
@@ -602,6 +609,7 @@ impl LanguageServer for LspBackend {
             position,
             &registry,
             &file_cache,
+            Some(doc.version_sets.as_ref()),
             encoding,
         )
         .await;

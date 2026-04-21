@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 
 use actup_core::resolution::CheckStatus;
+use actup_core::version;
 use actup_core::{
     ActionRef, Config, check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
 };
@@ -309,28 +310,34 @@ fn build_hover_content(
 ///
 /// Returns `None` if the cursor is not on a `uses:` reference or if the
 /// reference is local/docker.
+#[allow(clippy::too_many_arguments)]
 pub async fn compute_hover(
     text: &str,
     position: Position,
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
+    document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
     meta_cache: &ActionMetaCache,
     encoding: crate::position::PositionEncoding,
 ) -> Option<Hover> {
     let located = find_action_at_position(text, position, encoding)?;
 
     // Fetch version info via shared cache-then-fetch helper.
-    let repo_id = located.action_ref.to_repo_id();
-    let versions =
-        match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
-            Some(Ok(v)) => Some(v),
-            Some(Err(e)) => {
-                tracing::debug!(error = %e, "failed to fetch versions for hover");
-                None
+    let repo_id = located.action_ref.to_repo_id().without_subpath();
+    let versions = match document_versions.and_then(|versions| versions.get(&repo_id).cloned()) {
+        Some(versions) => Some(versions),
+        None => {
+            match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
+                Some(Ok(v)) => Some(v),
+                Some(Err(e)) => {
+                    tracing::debug!(error = %e, "failed to fetch versions for hover");
+                    None
+                }
+                None => None,
             }
-            None => None,
-        };
+        }
+    };
 
     // Check status
     let status = match versions.as_ref() {
@@ -393,6 +400,7 @@ mod tests {
     use super::*;
     use actup_core::resolution::CheckStatus;
     use actup_core::version;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn find_action_at_cursor_on_uses_line() {
@@ -679,6 +687,7 @@ mod tests {
             &config,
             &registry,
             &file_cache,
+            None,
             &meta_cache,
             crate::position::PositionEncoding::Utf16,
         )
@@ -718,6 +727,7 @@ mod tests {
             &config,
             &registry,
             &file_cache,
+            None,
             &meta_cache,
             crate::position::PositionEncoding::Utf16,
         )
@@ -749,6 +759,7 @@ mod tests {
             &config,
             &registry,
             &file_cache,
+            None,
             &meta_cache,
             crate::position::PositionEncoding::Utf16,
         )
@@ -766,6 +777,53 @@ mod tests {
             }
             other => panic!("expected Markup, got: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn compute_hover_reuses_diagnostics_version_data() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let calls = provider.call_count();
+        let registry = test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml").unwrap();
+        let text = "      - uses: actions/checkout@v3\n";
+
+        let diagnostics = crate::diagnostics::compute_diagnostics(
+            text,
+            &uri,
+            &config,
+            &registry,
+            &file_cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
+        let hover = compute_hover(
+            text,
+            position,
+            &config,
+            &registry,
+            &file_cache,
+            Some(&diagnostics.version_sets),
+            &meta_cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        assert!(hover.is_some());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[test]

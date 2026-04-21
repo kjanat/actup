@@ -210,6 +210,7 @@ async fn compute_diagnostics_for_actions(
         diagnostics,
         refs_checked: actions.len(),
         errors,
+        version_sets: successful_version_sets(versions_map),
     }
 }
 
@@ -226,6 +227,7 @@ pub async fn compute_diagnostics_with_versions(
             diagnostics: Vec::new(),
             refs_checked: 0,
             errors: DiagnosticErrors::default(),
+            version_sets: HashMap::new(),
         };
     }
 
@@ -322,6 +324,22 @@ pub struct DiagnosticResult {
     pub refs_checked: usize,
     /// Environment errors encountered during version fetching.
     pub errors: DiagnosticErrors,
+    /// Successful version lookups keyed by repo, reused by hover/completion.
+    pub version_sets: HashMap<ActionRepoId, actup_core::version::Set>,
+}
+
+fn successful_version_sets(
+    versions_map: &HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>>,
+) -> HashMap<ActionRepoId, actup_core::version::Set> {
+    versions_map
+        .iter()
+        .filter_map(|(repo, result)| {
+            result
+                .as_ref()
+                .ok()
+                .map(|versions| (repo.clone(), versions.clone()))
+        })
+        .collect()
 }
 
 /// Compute diagnostics for all `uses:` references in a document.
@@ -347,6 +365,7 @@ pub async fn compute_diagnostics(
             diagnostics: Vec::new(),
             refs_checked: 0,
             errors: DiagnosticErrors::default(),
+            version_sets: HashMap::new(),
         };
     }
 
