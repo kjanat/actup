@@ -60,7 +60,7 @@ jobs:
       - run: cargo test --doc --workspace --all-features
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: target/nextest/ci/junit.xml
           report_type: test_results
@@ -85,7 +85,7 @@ jobs:
       - run: cargo test --doc --workspace --all-features
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: target/nextest/ci/junit.xml
           report_type: test_results
@@ -128,7 +128,7 @@ jobs:
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           files: lcov.info
           fail_ci_if_error: true
