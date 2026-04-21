@@ -24,7 +24,7 @@ use actup_core::cache::Cache;
 use actup_core::config::registration::{Capabilities, Preset, ProviderConfig, Registration};
 use actup_core::provider::Provider;
 
-pub use batch::BatchFetcher;
+pub use batch::{BatchFetcher, fetch_versions_with_registry};
 pub use client::{
     DEFAULT_MAX_RETRIES, DEFAULT_PER_PAGE, DEFAULT_RETRY_BASE_DELAY_MS, GitHubClient, MAX_PER_PAGE,
     MIN_PER_PAGE,

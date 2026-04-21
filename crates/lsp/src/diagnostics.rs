@@ -4,13 +4,11 @@
 //! configured providers, and maps [`CheckStatus`] to LSP [`Diagnostic`]s.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
-use actup_core::cache::Cache as _;
 use actup_core::resolution::{CheckResult, CheckStatus};
 use actup_core::{
-    ActionRef, ActionRepoId, Config, Error as CoreError, HostKind, check_action_with_provider,
-    effective_host, extract_uses_from_yaml, parse_uses, provider,
+    ActionRef, ActionRepoId, Config, Error as CoreError, check_action_with_provider,
+    extract_uses_from_yaml, parse_uses, provider,
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -140,113 +138,13 @@ pub async fn batch_fetch_versions(
     registry: &provider::Registry,
     file_cache: &FileCache,
 ) -> HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>> {
-    let mut results: HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>> =
-        HashMap::with_capacity(repos.len());
-    let cache = Arc::new(file_cache.clone());
-
-    // Phase 1: check file cache
-    let mut uncached = Vec::new();
-    for repo in repos {
-        let version_repo = repo.without_subpath();
-        let provider = registry.find_for_repo(repo);
-        let cache_key = provider.map(|p| version_repo.cache_key(p.cache_namespace(), p.host()));
-
-        if let Some(key) = &cache_key
-            && let Ok(entry) = file_cache.get(key).await
-        {
-            tracing::debug!(repo = %format!("{}/{}", version_repo.owner(), version_repo.repo()), "cache hit");
-            results.insert(version_repo, Ok(entry.versions().clone()));
-            continue;
-        }
-
-        uncached.push((version_repo, cache_key));
-    }
-
-    let mut github_hosts: HashMap<String, Vec<ActionRepoId>> = HashMap::new();
-    let mut fallback_repos = Vec::new();
-
-    for (repo, _) in uncached {
-        let Some(provider) = registry.find_for_repo(&repo) else {
-            let host = repo
-                .host()
-                .or_else(|| registry.default_host())
-                .unwrap_or("(default)")
-                .to_string();
-            results.insert(repo, Err(CoreError::ProviderNotFound { host }));
-            continue;
-        };
-
-        if provider.kind() == provider::Kind::GitHub && provider.supports_batch_fetch() {
-            let host = repo
-                .host()
-                .or_else(|| registry.default_host())
-                .unwrap_or("github.com")
-                .to_string();
-            github_hosts.entry(host).or_default().push(repo);
-        } else {
-            fallback_repos.push(repo);
-        }
-    }
-
-    let registrations = crate::provider_setup::available_registrations();
-    for (host, host_repos) in github_hosts {
-        match effective_host(&host, config, &registrations, &config.fetch) {
-            Ok(provider_config) if provider_config.kind == HostKind::GitHub => {
-                match actup_provider_github::create_batch_fetcher(
-                    &provider_config,
-                    Arc::clone(&cache),
-                ) {
-                    Ok(fetcher) => {
-                        let batch_results = fetcher.fetch_versions(&host_repos).await;
-                        for repo in &host_repos {
-                            if let Some(versions) = batch_results.get(repo) {
-                                results.insert(repo.clone(), Ok(versions.clone()));
-                            } else {
-                                fallback_repos.push(repo.clone());
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::debug!(host = %host, error = %e, "failed to build GitHub batch fetcher, falling back to per-repo fetches");
-                        fallback_repos.extend(host_repos);
-                    }
-                }
-            }
-            Ok(_) | Err(_) => {
-                fallback_repos.extend(host_repos);
-            }
-        }
-    }
-
-    // Phase 2: fetch remaining uncached repos sequentially.
-    for repo in &fallback_repos {
-        let Some(provider) = registry.find_for_repo(repo) else {
-            let host = repo
-                .host()
-                .or_else(|| registry.default_host())
-                .unwrap_or("(default)")
-                .to_string();
-            results.insert(repo.clone(), Err(CoreError::ProviderNotFound { host }));
-            continue;
-        };
-
-        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
-
-        match provider.get_versions(repo).await {
-            Ok(versions) => {
-                let entry = actup_core::cache::Entry::new(versions.clone());
-                if let Err(e) = file_cache.set(&cache_key, entry).await {
-                    tracing::debug!(error = %e, "failed to write cache");
-                }
-                results.insert(repo.clone(), Ok(versions));
-            }
-            Err(e) => {
-                results.insert(repo.clone(), Err(e));
-            }
-        }
-    }
-
-    results
+    actup_provider_github::fetch_versions_with_registry(
+        repos,
+        config,
+        registry,
+        std::sync::Arc::new(file_cache.clone()),
+    )
+    .await
 }
 
 async fn compute_diagnostics_for_actions(
