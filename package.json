@@ -3,8 +3,8 @@
   "version": "0.0.0+dev",
   "private": true,
   "workspaces": [
-    "extensions/**",
-    "packages/**"
+    "extensions/*",
+    "packages/*"
   ],
   "scripts": {
     "bd": "bun --filter '*' bd",
