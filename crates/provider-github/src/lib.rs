@@ -16,7 +16,11 @@ mod graphql;
 mod provider;
 mod types;
 
+use std::sync::Arc;
+
+use actup_core::ApiMode;
 use actup_core::HostKind;
+use actup_core::cache::Cache;
 use actup_core::config::registration::{Capabilities, Preset, ProviderConfig, Registration};
 use actup_core::provider::Provider;
 
@@ -87,12 +91,54 @@ fn create_github_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn 
     Ok(Box::new(provider))
 }
 
+/// Construct a [`BatchFetcher`] from a fully-resolved GitHub [`ProviderConfig`].
+///
+/// # Errors
+/// Returns error if the config is not for a GitHub host or the underlying
+/// provider cannot be created.
+pub fn create_batch_fetcher<C: Cache>(
+    config: &ProviderConfig,
+    cache: Arc<C>,
+) -> actup_core::Result<BatchFetcher<C>> {
+    let token = std::env::var(&config.token_env).ok();
+    create_batch_fetcher_with_token(config, cache, token.as_deref())
+}
+
+fn create_batch_fetcher_with_token<C: Cache>(
+    config: &ProviderConfig,
+    cache: Arc<C>,
+    token: Option<&str>,
+) -> actup_core::Result<BatchFetcher<C>> {
+    if config.kind != HostKind::GitHub {
+        return Err(actup_core::Error::InvalidConfig {
+            path: format!("host \"{}\"", config.host),
+            reason: format!("expected GitHub host config, found {:?}", config.kind),
+        });
+    }
+
+    let provider = GitHubProvider::with_host_and_max_tags(
+        &config.api_base,
+        &config.host,
+        token,
+        config.max_tags_per_repo.get(),
+    )?;
+
+    Ok(match config.api_mode {
+        ApiMode::Graphql => {
+            BatchFetcher::with_graphql(provider, cache, token, config.max_tags_per_repo.get())
+        }
+        ApiMode::Rest => BatchFetcher::rest_only(provider, cache, config.max_tags_per_repo.get()),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
 
     use std::num::NonZeroU8;
+    use std::sync::Arc;
 
+    use actup_core::cache;
     use actup_core::config::registration::ProviderConfig;
     use actup_core::{ApiMode, HostKind};
 
@@ -213,5 +259,39 @@ mod tests {
         assert!(debug.contains(".."));
         assert!(!debug.contains("infer_api_base"));
         assert!(!debug.contains("create"));
+    }
+
+    #[test]
+    fn create_batch_fetcher_uses_rest_mode_when_configured() {
+        let config = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::GitHub,
+            api_base: "https://api.github.com".into(),
+            token_env: "_ACTUP_TEST_BATCH_FETCHER_REST".into(),
+            api_mode: ApiMode::Rest,
+            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+        };
+
+        let fetcher = create_batch_fetcher(&config, Arc::new(cache::Noop)).unwrap();
+
+        assert!(!fetcher.has_graphql());
+    }
+
+    #[test]
+    fn create_batch_fetcher_enables_graphql_when_token_present() {
+        let config = ProviderConfig {
+            host: "github.com".into(),
+            kind: HostKind::GitHub,
+            api_base: "https://api.github.com".into(),
+            token_env: "_ACTUP_UNUSED_TEST_TOKEN".into(),
+            api_mode: ApiMode::Graphql,
+            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+        };
+
+        let fetcher =
+            create_batch_fetcher_with_token(&config, Arc::new(cache::Noop), Some("test-token"))
+                .unwrap();
+
+        assert!(fetcher.has_graphql());
     }
 }

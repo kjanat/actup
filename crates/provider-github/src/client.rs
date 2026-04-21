@@ -120,6 +120,12 @@ impl GitHubClient {
         &self.host
     }
 
+    /// Get the API base URL this client targets.
+    #[must_use]
+    pub fn api_base(&self) -> &str {
+        &self.api_base
+    }
+
     /// List tags for a repository (paginated, fetches all)
     ///
     /// # Arguments

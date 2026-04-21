@@ -64,6 +64,19 @@ impl GitHubProvider {
             max_tags: max_tags.max(1),
         })
     }
+
+    #[must_use]
+    pub(crate) fn graphql_endpoint(&self) -> String {
+        if self.host == crate::GITHUB_HOST {
+            return crate::GITHUB_GRAPHQL_URL.to_string();
+        }
+
+        if let Some(api_root) = self.client.api_base().strip_suffix("/api/v3") {
+            return format!("{api_root}/api/graphql");
+        }
+
+        format!("{}/graphql", self.client.api_base().trim_end_matches('/'))
+    }
 }
 
 impl Provider for GitHubProvider {
@@ -427,5 +440,22 @@ mod tests {
         // Non-semver should be ignored
         assert_eq!(result.semver_tags().len(), 1);
         assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+    }
+
+    #[test]
+    fn test_graphql_endpoint_public_github() {
+        let provider = GitHubProvider::new(None).unwrap();
+        assert_eq!(provider.graphql_endpoint(), crate::GITHUB_GRAPHQL_URL);
+    }
+
+    #[test]
+    fn test_graphql_endpoint_ghe() {
+        let provider =
+            GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None).unwrap();
+
+        assert_eq!(
+            provider.graphql_endpoint(),
+            "https://ghe.corp.com/api/graphql"
+        );
     }
 }

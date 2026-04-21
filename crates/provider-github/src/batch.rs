@@ -46,8 +46,9 @@ impl<C: Cache> BatchFetcher<C> {
         token: Option<&str>,
         max_tags: u8,
     ) -> Self {
+        let graphql_endpoint = provider.graphql_endpoint();
         let graphql = token.and_then(|t| {
-            GraphQLClient::new(t)
+            GraphQLClient::with_endpoint(&graphql_endpoint, t)
                 .inspect_err(|e| warn!(error = %e, "failed to create GraphQL client, using REST"))
                 .ok()
         });

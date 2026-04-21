@@ -2,12 +2,14 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 
+use futures::StreamExt;
 use itertools::Itertools;
 
 use actup_core::{
-    ActionRef, ActionRepoId, CheckStatus, Config, NO_VERSIONS_FOUND_REASON, cache::Cache,
-    check_action_with_provider, provider, version,
+    ActionRef, ActionRepoId, CheckStatus, Config, HostKind, NO_VERSIONS_FOUND_REASON, cache::Cache,
+    check_action_with_provider, effective_host, provider, version,
 };
 use tracing::debug;
 
@@ -280,21 +282,22 @@ async fn batch_fetch_versions(
 ) -> HashMap<ActionRepoId, Result<version::Set, actup_core::Error>> {
     use actup_core::cache;
 
+    const CONCURRENCY_LIMIT: usize = 50;
+
     // Create file cache based on config
-    let cache = if config.cache.enabled {
+    let cache = Arc::new(if config.cache.enabled {
         config.cache.path.as_ref().map_or_else(
             || FileCache::new(config.cache.ttl),
             |path| FileCache::with_path(path.clone(), config.cache.ttl),
         )
     } else {
         FileCache::disabled()
-    };
+    });
 
     let mut results = HashMap::new();
     let mut uncached = Vec::new();
 
     // Check file cache first (concurrently)
-    let cache_ref = &cache;
     let cache_futures: Vec<_> = repos
         .iter()
         .filter_map(|repo| {
@@ -302,9 +305,12 @@ async fn batch_fetch_versions(
             let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
             Some((repo.clone(), cache_key))
         })
-        .map(|(repo, cache_key)| async move {
-            let cache_result = cache_ref.get(&cache_key).await;
-            (repo, cache_result)
+        .map(|(repo, cache_key)| {
+            let cache = Arc::clone(&cache);
+            async move {
+                let cache_result = cache.get(&cache_key).await;
+                (repo, cache_result)
+            }
         })
         .collect();
 
@@ -345,23 +351,78 @@ async fn batch_fetch_versions(
         "fetching uncached repos via registry providers"
     );
 
-    // Parallel fetch uncached repos using registry providers
-    let fetch_futures: Vec<_> = uncached
-        .iter()
-        .filter_map(|repo| {
-            registry.find_for_repo(repo).map(|provider| {
-                let repo = repo.clone();
-                let cache_ns = provider.cache_namespace().to_string();
-                let host = provider.host().to_string();
-                async move {
-                    let result = provider.get_versions(&repo).await;
-                    (repo, cache_ns, host, result)
-                }
-            })
-        })
-        .collect();
+    let mut github_hosts: HashMap<String, Vec<ActionRepoId>> = HashMap::new();
+    let mut fallback_repos = Vec::new();
 
-    let fetched = futures::future::join_all(fetch_futures).await;
+    for repo in uncached {
+        let Some(provider) = registry.find_for_repo(&repo) else {
+            results.insert(
+                repo.clone(),
+                Err(actup_core::Error::ProviderNotFound {
+                    host: repo
+                        .host()
+                        .or_else(|| registry.default_host())
+                        .unwrap_or("(default)")
+                        .to_string(),
+                }),
+            );
+            continue;
+        };
+
+        if provider.kind() == provider::Kind::GitHub {
+            let host = repo
+                .host()
+                .or_else(|| registry.default_host())
+                .unwrap_or("github.com")
+                .to_string();
+            github_hosts.entry(host).or_default().push(repo);
+        } else {
+            fallback_repos.push(repo);
+        }
+    }
+
+    let registrations = crate::available_registrations();
+    for (host, host_repos) in github_hosts {
+        match effective_host(&host, config, &registrations, &config.fetch) {
+            Ok(provider_config) if provider_config.kind == HostKind::GitHub => {
+                match actup_provider_github::create_batch_fetcher(
+                    &provider_config,
+                    Arc::clone(&cache),
+                ) {
+                    Ok(fetcher) => {
+                        let batch_results = fetcher.fetch_versions(&host_repos).await;
+                        for repo in &host_repos {
+                            if let Some(versions) = batch_results.get(repo) {
+                                results.insert(repo.clone(), Ok(versions.clone()));
+                            } else {
+                                fallback_repos.push(repo.clone());
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        debug!(host = %host, error = %e, "failed to build GitHub batch fetcher, falling back to provider fetches");
+                        fallback_repos.extend(host_repos);
+                    }
+                }
+            }
+            Ok(_) | Err(_) => {
+                fallback_repos.extend(host_repos);
+            }
+        }
+    }
+
+    let fetched: Vec<_> = futures::stream::iter(fallback_repos.into_iter())
+        .map(|repo| async move {
+            let provider = registry.find_for_repo(&repo)?;
+            let cache_ns = provider.cache_namespace().to_string();
+            let host = provider.host().to_string();
+            let result = provider.get_versions(&repo).await;
+            Some((repo, cache_ns, host, result))
+        })
+        .buffer_unordered(CONCURRENCY_LIMIT)
+        .filter_map(futures::future::ready)
+        .collect()
+        .await;
 
     // Process results and update cache
     for (repo, cache_ns, host, result) in fetched {

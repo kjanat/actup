@@ -151,7 +151,7 @@ async fn run(cli: Cli) -> i32 {
 ///
 /// Panics if two or more registrations share the same preset hostname.
 #[must_use]
-fn available_registrations() -> Vec<&'static Registration> {
+pub(crate) fn available_registrations() -> Vec<&'static Registration> {
     let registrations = vec![
         &actup_provider_github::REGISTRATION,
         // GitLab and Gitea providers will be added here once they export
