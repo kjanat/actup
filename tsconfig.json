@@ -24,6 +24,6 @@
 	"references": [
 		{ "path": "extensions/vscode/tsconfig.json" },
 		{ "path": "extensions/vscode/tsconfig.web.json" },
-		{ "path": "packages/actup-wasm/tsconfig.web.json" }
+		{ "path": "packages/actup-wasm/tsconfig.json" }
 	]
 }
