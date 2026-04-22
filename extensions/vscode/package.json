@@ -94,17 +94,17 @@
   ],
   "dependencies": {},
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
-    "@stylistic/eslint-plugin": "^5.9.0",
-    "@types/node": ">=24,<25",
-    "@types/vscode": "^1.109.0",
-    "@vscode/vsce": "^3.7.1",
+    "@eslint/js": "catalog:",
+    "@stylistic/eslint-plugin": "catalog:",
+    "@types/node": "catalog:vscode",
+    "@types/vscode": "catalog:",
+    "@vscode/vsce": "catalog:",
     "actup-wasm": "workspace:*",
-    "eslint": "^10.0.0",
-    "tsdown": "^0.12",
-    "typescript": "^5.9.3",
-    "typescript-eslint": "^8.56.0",
-    "vscode-languageclient": "^9.0.1"
+    "eslint": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "typescript-eslint": "catalog:",
+    "vscode-languageclient": "catalog:"
   },
   "engines": {
     "vscode": "^1.109.0"

@@ -19,7 +19,7 @@
 		"rust-analyzer": {
 			"initialization_options": {
 				"diagnostics": { "experimental": { "enable": true } },
-				"cargo": { "allFeatures": true }, // "allTargets": true
+				"cargo": { "allFeatures": true, "allTargets": true },
 				"check": { "workspace": true },
 				"completion": { "snippets": { "custom": {} } }
 			}

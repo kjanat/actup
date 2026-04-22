@@ -2,7 +2,6 @@
 # Run `just` or `just --list` to see available recipes
 
 set unstable := true
-# set shell := ["bash", "-cu"]
 
 mod zed 'extensions/zed/justfile'
 mod vscode 'extensions/vscode/justfile'
@@ -253,3 +252,12 @@ ext-check: zed::clippy vscode::lint vscode::typecheck
 # Run full CI checks including extensions
 [group('ci')]
 ci-full: ci ext-check
+
+# Branding
+
+# Regenerate canonical icon PNGs from SVG sources (gitignored output, ad-hoc usage)
+[group('branding')]
+icons:
+    bun branding/generate-icon.ts -s 128 -p 20 -r 18 "#0d1117" branding/icon.svg branding/icon-128.png
+    bun branding/generate-icon.ts -s 256 -p 20 -r 36 "#0d1117" branding/icon.svg branding/icon-256.png
+    bun branding/generate-icon.ts -s 512 -p 20 -r 72 "#0d1117" branding/icon.svg branding/icon-512.png

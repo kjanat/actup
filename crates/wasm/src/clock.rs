@@ -5,18 +5,19 @@ use std::time::{Duration, SystemTime};
 
 /// Clock implementation for WASM environments.
 ///
-/// Uses [`js_sys::Date::now()`] which returns milliseconds since the
-/// Unix epoch, then converts to [`SystemTime`] for compatibility with
-/// `actup-core`'s `Clock` trait.
+/// Uses [`js_sys::Date::now()`] (ms since Unix epoch as `f64`) and converts
+/// via [`Duration::try_from_secs_f64`] — avoiding lossy `as` casts while
+/// gracefully handling NaN, negatives, and out-of-range values by falling
+/// back to the Unix epoch.
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(clippy::module_name_repetitions)]
 pub struct JsClock;
 
 impl Clock for JsClock {
     #[inline]
     fn now(&self) -> SystemTime {
-        #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-        let millis = js_sys::Date::now() as u64;
-        SystemTime::UNIX_EPOCH + Duration::from_millis(millis)
+        let secs = js_sys::Date::now() / 1000.0;
+        Duration::try_from_secs_f64(secs)
+            .map(|d| SystemTime::UNIX_EPOCH + d)
+            .unwrap_or(SystemTime::UNIX_EPOCH)
     }
 }

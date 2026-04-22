@@ -14,6 +14,8 @@
  * @packageDocumentation
  */
 
+/// <reference types="node" />
+
 import type { ActupConfig, ActupProvider, CheckResult, UpdateEdit, UsesLocation } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
@@ -45,14 +47,8 @@ export type {
  * initialization and `initSync()` for synchronous initialization with a
  * buffer. The actual WASM functions (`parseUsesRefs`, `checkRefs`,
  * `planUpdates`) are only usable after initialization.
- *
- * This module wraps those with proper TypeScript types and automatic
- * initialization on first call.
  */
 
-// These are the raw wasm-bindgen exports. They return `any` — our typed
-// wrappers below narrow the types.
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
 type WasmBindings = typeof import("../wasm/actup_wasm.js");
 
 let wasm: WasmBindings | undefined;
@@ -81,10 +77,7 @@ export async function initWasm(wasmSource?: URL | Response | BufferSource): Prom
 async function doInit(wasmSource?: URL | Response | BufferSource): Promise<void> {
 	// Dynamic import so the wasm glue JS isn't evaluated at module load time.
 	// The path is relative to the compiled output in dist/.
-	const mod = await import("../wasm/actup_wasm.js") as WasmBindings & {
-		default: (input?: unknown) => Promise<unknown>;
-		initSync: (input: { module: BufferSource } | BufferSource) => unknown;
-	};
+	const mod = await import("../wasm/actup_wasm.js");
 
 	if (wasmSource !== undefined) {
 		if (wasmSource instanceof ArrayBuffer || ArrayBuffer.isView(wasmSource)) {
@@ -124,7 +117,7 @@ function requireInit(): WasmBindings {
  */
 export function parseUsesRefs(yaml: string): UsesLocation[] {
 	const w = requireInit();
-	return w.parseUsesRefs(yaml) as UsesLocation[];
+	return w.parseUsesRefs(yaml);
 }
 
 /**
@@ -146,7 +139,7 @@ export async function checkRefs(
 ): Promise<CheckResult[]> {
 	const w = requireInit();
 	const configJson = config !== undefined ? JSON.stringify(config) : undefined;
-	return await (w.checkRefs(yaml, provider, configJson) as Promise<CheckResult[]>);
+	return await w.checkRefs(yaml, provider, configJson);
 }
 
 /**
@@ -164,7 +157,7 @@ export async function checkRefs(
 export function planUpdates(yaml: string, results: CheckResult[]): UpdateEdit[] {
 	const w = requireInit();
 	const resultsJson = JSON.stringify(results);
-	return w.planUpdates(yaml, resultsJson) as UpdateEdit[];
+	return w.planUpdates(yaml, resultsJson);
 }
 
 /** Detect Node.js / Bun / Deno (with node compat) runtime. */

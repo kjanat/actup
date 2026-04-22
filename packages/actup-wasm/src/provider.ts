@@ -142,6 +142,63 @@ interface GhContent {
 	readonly encoding?: string | undefined;
 }
 
+// -- Runtime type guards (validate untyped fetch responses) --
+
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasString(obj: Record<string, unknown>, key: string): boolean {
+	return typeof obj[key] === "string";
+}
+
+function isCommitSha(obj: unknown): obj is { readonly sha: string } {
+	return isObject(obj) && hasString(obj, "sha");
+}
+
+function isGhTag(value: unknown): value is GhTag {
+	return isObject(value) && hasString(value, "name") && isCommitSha(value.commit);
+}
+
+function isGhTagArray(value: unknown): value is readonly GhTag[] {
+	return Array.isArray(value) && value.every(isGhTag);
+}
+
+function isGhRepo(value: unknown): value is GhRepo {
+	return isObject(value) && hasString(value, "default_branch");
+}
+
+function isGhBranch(value: unknown): value is GhBranch {
+	return isObject(value) && hasString(value, "name") && isCommitSha(value.commit);
+}
+
+function isGhObject(obj: unknown): obj is { readonly type: string; readonly sha: string } {
+	return isObject(obj) && hasString(obj, "type") && hasString(obj, "sha");
+}
+
+function isGhRef(value: unknown): value is GhRef {
+	return isObject(value) && hasString(value, "ref") && isGhObject(value.object);
+}
+
+function isGhTagObject(value: unknown): value is GhTagObject {
+	return isObject(value) && isGhObject(value.object);
+}
+
+function isGhContent(value: unknown): value is GhContent {
+	if (!isObject(value) || !hasString(value, "type")) return false;
+	if (value.content !== undefined && typeof value.content !== "string") return false;
+	if (value.encoding !== undefined && typeof value.encoding !== "string") return false;
+	return true;
+}
+
+async function readJson(response: Response): Promise<unknown> {
+	return await response.json();
+}
+
+function invalidShape(endpoint: string): GitHubProviderError {
+	return new GitHubProviderError(`Unexpected response shape from GitHub ${endpoint}`, 0);
+}
+
 // -- Fetch helpers --
 
 /**
@@ -273,7 +330,8 @@ async function getVersions(
 
 	while (url !== undefined) {
 		const response = await ghFetch(url, headers);
-		const tags: GhTag[] = (await response.json()) as GhTag[];
+		const tags = await readJson(response);
+		if (!isGhTagArray(tags)) throw invalidShape("/tags");
 		for (const tag of tags) {
 			allTags.push({ version: tag.name, sha: tag.commit.sha });
 		}
@@ -283,11 +341,13 @@ async function getVersions(
 	// Fetch default branch info
 	let defaultBranch: { readonly name: string; readonly sha: string } | undefined;
 	try {
-		const repoInfo = (await (await ghFetch(`${apiBase}/repos/${owner}/${repo}`, headers)).json()) as GhRepo;
+		const repoInfo = await readJson(await ghFetch(`${apiBase}/repos/${owner}/${repo}`, headers));
+		if (!isGhRepo(repoInfo)) throw invalidShape("/repos/{owner}/{repo}");
 		const branchName = repoInfo.default_branch;
-		const branchInfo = (await (
-			await ghFetch(`${apiBase}/repos/${owner}/${repo}/branches/${encodeURIComponent(branchName)}`, headers)
-		).json()) as GhBranch;
+		const branchInfo = await readJson(
+			await ghFetch(`${apiBase}/repos/${owner}/${repo}/branches/${encodeURIComponent(branchName)}`, headers),
+		);
+		if (!isGhBranch(branchInfo)) throw invalidShape("/repos/{owner}/{repo}/branches/{branch}");
 		defaultBranch = { name: branchInfo.name, sha: branchInfo.commit.sha };
 	} catch {
 		// Default branch info is supplementary; don't fail the whole call
@@ -308,9 +368,10 @@ async function resolveRefToSha(
 ): Promise<string> {
 	// Try as tag first
 	try {
-		const refData = (await (
-			await ghFetch(`${apiBase}/repos/${owner}/${repo}/git/ref/tags/${encodeURIComponent(refName)}`, headers)
-		).json()) as GhRef;
+		const refData = await readJson(
+			await ghFetch(`${apiBase}/repos/${owner}/${repo}/git/ref/tags/${encodeURIComponent(refName)}`, headers),
+		);
+		if (!isGhRef(refData)) throw invalidShape("/git/ref/tags/{ref}");
 
 		// Lightweight tag: object is the commit directly
 		if (refData.object.type === "commit") {
@@ -319,9 +380,10 @@ async function resolveRefToSha(
 
 		// Annotated tag: dereference to get the commit
 		if (refData.object.type === "tag") {
-			const tagObj = (await (
-				await ghFetch(`${apiBase}/repos/${owner}/${repo}/git/tags/${refData.object.sha}`, headers)
-			).json()) as GhTagObject;
+			const tagObj = await readJson(
+				await ghFetch(`${apiBase}/repos/${owner}/${repo}/git/tags/${refData.object.sha}`, headers),
+			);
+			if (!isGhTagObject(tagObj)) throw invalidShape("/git/tags/{sha}");
 			return tagObj.object.sha;
 		}
 
@@ -329,9 +391,10 @@ async function resolveRefToSha(
 	} catch (err) {
 		// 404 = not a tag, try as branch
 		if (err instanceof GitHubProviderError && err.status === 404) {
-			const branchInfo = (await (
-				await ghFetch(`${apiBase}/repos/${owner}/${repo}/branches/${encodeURIComponent(refName)}`, headers)
-			).json()) as GhBranch;
+			const branchInfo = await readJson(
+				await ghFetch(`${apiBase}/repos/${owner}/${repo}/branches/${encodeURIComponent(refName)}`, headers),
+			);
+			if (!isGhBranch(branchInfo)) throw invalidShape("/branches/{branch}");
 			return branchInfo.commit.sha;
 		}
 		throw err;
@@ -344,7 +407,8 @@ async function getDefaultBranch(
 	owner: string,
 	repo: string,
 ): Promise<string> {
-	const repoInfo = (await (await ghFetch(`${apiBase}/repos/${owner}/${repo}`, headers)).json()) as GhRepo;
+	const repoInfo = await readJson(await ghFetch(`${apiBase}/repos/${owner}/${repo}`, headers));
+	if (!isGhRepo(repoInfo)) throw invalidShape("/repos/{owner}/{repo}");
 	return repoInfo.default_branch;
 }
 
@@ -358,10 +422,10 @@ async function getReadme(
 	const refParam = ref !== undefined ? `?ref=${encodeURIComponent(ref)}` : "";
 
 	try {
-		const content = (await (
-			await ghFetch(`${apiBase}/repos/${owner}/${repo}/contents/README.md${refParam}`, headers)
-		).json()) as GhContent;
-
+		const content = await readJson(
+			await ghFetch(`${apiBase}/repos/${owner}/${repo}/contents/README.md${refParam}`, headers),
+		);
+		if (!isGhContent(content)) throw invalidShape("/contents/README.md");
 		if (content.type !== "file" || content.content === undefined) return null;
 		if (content.encoding !== "base64") return null;
 		return decodeContent(content.content);
@@ -383,9 +447,10 @@ async function getActionYml(
 	// Try action.yml first, then action.yaml
 	for (const filename of ["action.yml", "action.yaml"]) {
 		try {
-			const content = (await (
-				await ghFetch(`${apiBase}/repos/${owner}/${repo}/contents/${filename}${refParam}`, headers)
-			).json()) as GhContent;
+			const content = await readJson(
+				await ghFetch(`${apiBase}/repos/${owner}/${repo}/contents/${filename}${refParam}`, headers),
+			);
+			if (!isGhContent(content)) throw invalidShape(`/contents/${filename}`);
 
 			if (content.type !== "file" || content.content === undefined || content.encoding !== "base64") {
 				continue;

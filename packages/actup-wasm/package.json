@@ -47,8 +47,8 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
-		"@types/node": ">=18,<25",
-		"typescript": "^5.9.3"
+		"@types/node": "catalog:",
+		"typescript": "catalog:"
 	},
 	"engines": {
 		"node": ">=18"

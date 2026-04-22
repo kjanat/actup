@@ -20,6 +20,8 @@ export async function ensureWasmInitialized(
 	);
 
 	const wasmBytes = await vscode.workspace.fs.readFile(wasmUri);
-	await initWasm(wasmBytes.buffer as ArrayBuffer);
+	// .slice() narrows Uint8Array<ArrayBufferLike> to Uint8Array<ArrayBuffer>,
+	// which is what BufferSource wants in TS 5.7+. Copies ~290KB once at activation.
+	await initWasm(wasmBytes.slice());
 	initialized = true;
 }

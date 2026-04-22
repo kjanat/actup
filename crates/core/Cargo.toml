@@ -22,7 +22,10 @@ tokio      = { workspace = true }
 toml       = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true }  # Async RwLock (native only; wasm32 uses std::sync::RwLock)
+tokio = { workspace = true }  # Full async runtime on native
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tokio = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
 
 [lints]
 workspace = true

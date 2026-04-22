@@ -2,10 +2,29 @@
   "name": "actup",
   "version": "0.0.0+dev",
   "private": true,
-  "workspaces": [
-    "extensions/*",
-    "packages/*"
-  ],
+  "workspaces": {
+    "packages": [
+      "extensions/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "@eslint/js": "^10.0.1",
+      "@stylistic/eslint-plugin": "^5.9.0",
+      "@types/node": ">=18,<25",
+      "@types/vscode": "^1.109.0",
+      "@vscode/vsce": "^3.7.1",
+      "eslint": "^10.0.0",
+      "tsdown": "^0.12",
+      "typescript": "^6.0.3",
+      "typescript-eslint": "^8.56.0",
+      "vscode-languageclient": "^9.0.1"
+    },
+    "catalogs": {
+      "vscode": {
+        "@types/node": ">=24,<25"
+      }
+    }
+  },
   "scripts": {
     "bd": "bun --filter '*' bd",
     "build:ts": "bun --filter '*' build:ts",
