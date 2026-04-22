@@ -28,7 +28,7 @@
   "license": "SEE LICENSE IN LICENSE",
   "publisher": "kjanat",
   "type": "module",
-  "main": "./out/extension.js",
+  "main": "./out/extension.mjs",
   "browser": "./dist/web/extension.js",
   "scripts": {
     "bd": "bun compile && bun run package",
@@ -96,8 +96,8 @@
   "devDependencies": {
     "@eslint/js": "catalog:",
     "@stylistic/eslint-plugin": "catalog:",
-    "@types/node": "catalog:vscode",
-    "@types/vscode": "catalog:",
+    "@types/node": "catalog:",
+    "@types/vscode": "^1.116.0",
     "@vscode/vsce": "catalog:",
     "actup-wasm": "workspace:*",
     "eslint": "catalog:",
@@ -107,7 +107,7 @@
     "vscode-languageclient": "catalog:"
   },
   "engines": {
-    "vscode": "^1.109.0"
+    "vscode": "^1.116.0"
   },
   "icon": "icon.png",
   "galleryBanner": {

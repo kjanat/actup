@@ -9,20 +9,14 @@
     ],
     "catalog": {
       "@eslint/js": "^10.0.1",
-      "@stylistic/eslint-plugin": "^5.9.0",
-      "@types/node": ">=18,<25",
-      "@types/vscode": "^1.109.0",
-      "@vscode/vsce": "^3.7.1",
-      "eslint": "^10.0.0",
-      "tsdown": "^0.12",
+      "@stylistic/eslint-plugin": "^5.10.0",
+      "@types/node": "^24.0.0",
+      "@vscode/vsce": "^3.9.1",
+      "eslint": "^10.2.1",
+      "tsdown": "^0.21.10",
       "typescript": "^6.0.3",
-      "typescript-eslint": "^8.56.0",
+      "typescript-eslint": "^8.59.0",
       "vscode-languageclient": "^9.0.1"
-    },
-    "catalogs": {
-      "vscode": {
-        "@types/node": ">=24,<25"
-      }
     }
   },
   "scripts": {
