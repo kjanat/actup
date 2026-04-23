@@ -32,7 +32,9 @@
 	"types": "./src/types.ts",
 	"files": [
 		"wasm/",
-		"src/"
+		"src/",
+		"LICENSE-MIT",
+		"LICENSE-APACHE"
 	],
 	"scripts": {
 		"bd": "bun run build",
