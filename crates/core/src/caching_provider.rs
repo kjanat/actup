@@ -6,9 +6,9 @@
 use crate::compat::BoxFuture;
 use crate::provider::{self, ActionYml, Provider, Sha40};
 use crate::{ActionRepoId, Result, version};
-use std::collections::HashMap;
+use std::collections::{HashMap, hash_map::Entry};
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify, RwLock};
+use tokio::sync::{Mutex, RwLock, Semaphore};
 
 /// A provider wrapper that caches results to avoid duplicate API calls.
 ///
@@ -33,21 +33,24 @@ pub struct CachingProvider<P> {
     sha_cache: RwLock<HashMap<(ActionRepoId, String), Sha40>>,
     branch_cache: RwLock<HashMap<ActionRepoId, String>>,
     // Singleflight coordination: concurrent callers for the same key share
-    // one provider fetch. The `Notify` is inserted by the first caller and
-    // removed after the fetch completes (success or error). Waiters wake up,
-    // re-check the cache, and either return the cached value or fall through
-    // to their own fetch if the peer errored.
+    // one provider fetch. Each flight is represented by a `Semaphore` with
+    // zero permits; followers `acquire().await` on it, leader calls
+    // `close()` when the fetch completes. `Semaphore::close` is durable —
+    // callers that `acquire()` AFTER close returns `AcquireError`
+    // immediately rather than deadlocking. This avoids the classic
+    // `Notify::notify_waiters` footgun where the signal is lost if no
+    // waiter is registered at the moment of notification.
     //
-    // On peer error, waiters do NOT re-register in the flight map — they each
-    // run their own fetch. This is deliberate: serializing retries through
-    // another singleflight leader would mean a single persistent failure
-    // (e.g. auth) blocks all callers sequentially instead of letting each
-    // surface the error quickly. Worst case on a transient burst failure is
-    // N parallel retries — same as no singleflight at all, which is the
-    // pre-existing bound.
-    version_flights: Mutex<HashMap<ActionRepoId, Arc<Notify>>>,
-    sha_flights: Mutex<HashMap<(ActionRepoId, String), Arc<Notify>>>,
-    branch_flights: Mutex<HashMap<ActionRepoId, Arc<Notify>>>,
+    // On peer error, waiters do NOT re-register in the flight map — they
+    // each run their own fetch. This is deliberate: serializing retries
+    // through another singleflight leader would mean a single persistent
+    // failure (e.g. auth) blocks all callers sequentially instead of
+    // letting each surface the error quickly. Worst case on a transient
+    // burst failure is N parallel retries — same as no singleflight at
+    // all, which is the pre-existing bound.
+    version_flights: Mutex<HashMap<ActionRepoId, Arc<Semaphore>>>,
+    sha_flights: Mutex<HashMap<(ActionRepoId, String), Arc<Semaphore>>>,
+    branch_flights: Mutex<HashMap<ActionRepoId, Arc<Semaphore>>>,
 }
 
 fn repo_cache_key(repo: &ActionRepoId) -> ActionRepoId {
@@ -143,24 +146,28 @@ impl<P: Provider> Provider for CachingProvider<P> {
             }
 
             // Singleflight: claim the slot or await a peer's fetch.
-            let notify = {
-                let mut flights = self.version_flights.lock().await;
-                if let Some(existing) = flights.get(&repo) {
-                    let notify = Arc::clone(existing);
-                    drop(flights);
-                    notify.notified().await;
-                    // Peer done. If it succeeded, cache is populated.
-                    if let Some(cached) = self.version_cache.read().await.get(&repo) {
-                        return Ok(cached.clone());
+            let follower_sem: Option<Arc<Semaphore>> =
+                match self.version_flights.lock().await.entry(repo.clone()) {
+                    Entry::Occupied(o) => Some(Arc::clone(o.get())),
+                    Entry::Vacant(v) => {
+                        v.insert(Arc::new(Semaphore::new(0)));
+                        None
                     }
-                    // Peer errored — do our own fetch without joining another flight.
-                    return self.inner.get_versions(&repo).await;
-                }
-                let notify = Arc::new(Notify::new());
-                flights.insert(repo.clone(), Arc::clone(&notify));
-                notify
-            };
+                };
 
+            if let Some(sem) = follower_sem {
+                // Wait for leader. `acquire()` returns Err once the semaphore
+                // is closed — which is durable, so no race if the leader
+                // closes before we start awaiting.
+                let _ = sem.acquire().await;
+                if let Some(cached) = self.version_cache.read().await.get(&repo) {
+                    return Ok(cached.clone());
+                }
+                // Leader errored — do our own fetch without rejoining a flight.
+                return self.inner.get_versions(&repo).await;
+            }
+
+            // Leader path.
             let result = self.inner.get_versions(&repo).await;
             if let Ok(ref versions) = result {
                 self.version_cache
@@ -168,8 +175,10 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     .await
                     .insert(repo.clone(), versions.clone());
             }
-            self.version_flights.lock().await.remove(&repo);
-            notify.notify_waiters();
+            let sem = self.version_flights.lock().await.remove(&repo);
+            if let Some(sem) = sem {
+                sem.close();
+            }
 
             result
         })
@@ -190,21 +199,22 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 return Ok(cached.clone());
             }
 
-            let notify = {
-                let mut flights = self.sha_flights.lock().await;
-                if let Some(existing) = flights.get(&cache_key) {
-                    let notify = Arc::clone(existing);
-                    drop(flights);
-                    notify.notified().await;
-                    if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                        return Ok(cached.clone());
+            let follower_sem: Option<Arc<Semaphore>> =
+                match self.sha_flights.lock().await.entry(cache_key.clone()) {
+                    Entry::Occupied(o) => Some(Arc::clone(o.get())),
+                    Entry::Vacant(v) => {
+                        v.insert(Arc::new(Semaphore::new(0)));
+                        None
                     }
-                    return self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
+                };
+
+            if let Some(sem) = follower_sem {
+                let _ = sem.acquire().await;
+                if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
+                    return Ok(cached.clone());
                 }
-                let notify = Arc::new(Notify::new());
-                flights.insert(cache_key.clone(), Arc::clone(&notify));
-                notify
-            };
+                return self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
+            }
 
             let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
             if let Ok(ref sha) = result {
@@ -213,8 +223,10 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     .await
                     .insert(cache_key.clone(), sha.clone());
             }
-            self.sha_flights.lock().await.remove(&cache_key);
-            notify.notify_waiters();
+            let sem = self.sha_flights.lock().await.remove(&cache_key);
+            if let Some(sem) = sem {
+                sem.close();
+            }
 
             result
         })
@@ -228,21 +240,22 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 return Ok(cached.clone());
             }
 
-            let notify = {
-                let mut flights = self.branch_flights.lock().await;
-                if let Some(existing) = flights.get(&repo) {
-                    let notify = Arc::clone(existing);
-                    drop(flights);
-                    notify.notified().await;
-                    if let Some(cached) = self.branch_cache.read().await.get(&repo) {
-                        return Ok(cached.clone());
+            let follower_sem: Option<Arc<Semaphore>> =
+                match self.branch_flights.lock().await.entry(repo.clone()) {
+                    Entry::Occupied(o) => Some(Arc::clone(o.get())),
+                    Entry::Vacant(v) => {
+                        v.insert(Arc::new(Semaphore::new(0)));
+                        None
                     }
-                    return self.inner.get_default_branch(&repo).await;
+                };
+
+            if let Some(sem) = follower_sem {
+                let _ = sem.acquire().await;
+                if let Some(cached) = self.branch_cache.read().await.get(&repo) {
+                    return Ok(cached.clone());
                 }
-                let notify = Arc::new(Notify::new());
-                flights.insert(repo.clone(), Arc::clone(&notify));
-                notify
-            };
+                return self.inner.get_default_branch(&repo).await;
+            }
 
             let result = self.inner.get_default_branch(&repo).await;
             if let Ok(ref branch) = result {
@@ -251,8 +264,10 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     .await
                     .insert(repo.clone(), branch.clone());
             }
-            self.branch_flights.lock().await.remove(&repo);
-            notify.notify_waiters();
+            let sem = self.branch_flights.lock().await.remove(&repo);
+            if let Some(sem) = sem {
+                sem.close();
+            }
 
             result
         })
@@ -598,7 +613,7 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_singleflight_dedupes_concurrent_get_versions() {
         let calls = Arc::new(AtomicUsize::new(0));
         let inner = SlowProvider {
@@ -608,7 +623,7 @@ mod tests {
         let repo = make_repo("actions", "checkout");
 
         // Spawn 4 concurrent calls for the same repo. Only the first should
-        // hit the inner provider; the rest wait on the singleflight notify.
+        // hit the inner provider; the rest wait on the singleflight semaphore.
         let mut handles = Vec::new();
         for _ in 0..4 {
             let c = Arc::clone(&cached);
@@ -624,7 +639,90 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test]
+    /// Regression: a fast-completing leader must not leave a follower
+    /// deadlocked. The classic `Notify` implementation had a race where
+    /// `notify_waiters()` fired before any follower registered as a waiter,
+    /// losing the signal. This test uses a provider that returns instantly
+    /// and still expects all followers to complete without timeout.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_singleflight_no_deadlock_on_fast_leader() {
+        // Fast provider: returns immediately with no yields — maximizes the
+        // chance that the leader finishes before followers register.
+        struct FastProvider {
+            call_count: Arc<AtomicUsize>,
+        }
+        impl Provider for FastProvider {
+            fn kind(&self) -> provider::Kind {
+                provider::Kind::GitHub
+            }
+            fn host(&self) -> &'static str {
+                "github.com"
+            }
+            fn get_versions(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+                self.call_count.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async { Ok(version::Set::default()) })
+            }
+            fn resolve_ref_to_sha(
+                &self,
+                _: &ActionRepoId,
+                _: &str,
+            ) -> BoxFuture<'_, Result<Sha40>> {
+                Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+            }
+            fn get_default_branch(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+                Box::pin(async { Ok("main".into()) })
+            }
+            fn get_readme(
+                &self,
+                _: &ActionRepoId,
+                _: Option<&str>,
+            ) -> BoxFuture<'_, Result<Option<String>>> {
+                Box::pin(async { Ok(None) })
+            }
+            fn get_action_yml(
+                &self,
+                _: &ActionRepoId,
+                _: &str,
+            ) -> BoxFuture<'_, Result<ActionYml>> {
+                Box::pin(async { Ok(ActionYml::default()) })
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cached = Arc::new(CachingProvider::new(Box::new(FastProvider {
+            call_count: Arc::clone(&calls),
+        }) as Box<dyn Provider>));
+
+        // Many concurrent callers across many distinct keys so at least some
+        // hit the race window. Guarded by an explicit timeout so a regression
+        // fails instead of hanging.
+        let fut = async {
+            for iter in 0..32 {
+                let mut handles = Vec::new();
+                for _ in 0..8 {
+                    let c = Arc::clone(&cached);
+                    let r = make_repo("actions", &format!("repo-{iter}"));
+                    handles.push(tokio::spawn(async move {
+                        c.get_versions(&r).await.unwrap();
+                    }));
+                }
+                for h in handles {
+                    h.await.unwrap();
+                }
+            }
+        };
+        if tokio::time::timeout(std::time::Duration::from_secs(5), fut)
+            .await
+            .is_err()
+        {
+            panic!("follower deadlocked — singleflight signal was lost");
+        }
+
+        // Each of 32 distinct keys should hit the inner exactly once.
+        assert_eq!(calls.load(Ordering::SeqCst), 32);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_singleflight_dedupes_concurrent_resolve_ref_to_sha() {
         let calls = Arc::new(AtomicUsize::new(0));
         let inner = SlowProvider {
@@ -648,7 +746,7 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn test_singleflight_dedupes_concurrent_get_default_branch() {
         let calls = Arc::new(AtomicUsize::new(0));
         let inner = SlowProvider {

@@ -19,16 +19,10 @@ use wasm_bindgen::prelude::*;
 extern "C" {
     /// A JavaScript object implementing the provider interface.
     ///
-    /// Expected shape:
-    /// ```typescript
-    /// interface ActupProvider {
-    ///     getVersions(host: string, owner: string, repo: string): Promise<VersionSet>;
-    ///     resolveRefToSha(host: string, owner: string, repo: string, ref: string): Promise<string>;
-    ///     getDefaultBranch(host: string, owner: string, repo: string): Promise<string>;
-    ///     getReadme(host: string, owner: string, repo: string, ref?: string): Promise<string | null>;
-    ///     getActionYml(host: string, owner: string, repo: string, ref: string): Promise<ActionYml>;
-    /// }
-    /// ```
+    /// The `typescript_type` attribute surfaces this in the generated
+    /// `.d.ts` as `import("../src/types").ActupProvider` rather than the
+    /// wasm-bindgen default `any`.
+    #[wasm_bindgen(typescript_type = "import(\"../src/types\").ActupProvider")]
     pub type JsProvider;
 
     #[wasm_bindgen(method, catch, js_name = "getVersions")]

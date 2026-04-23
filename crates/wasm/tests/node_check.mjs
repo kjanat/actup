@@ -209,26 +209,31 @@ console.log("PASS: planUpdates with empty results returns no edits");
 	}
 	console.log("PASS: roundtrip — edits apply cleanly and re-parse to expected refs");
 
-	// Negative path: provider that throws should surface as a rejected promise.
+	// Negative path: provider throws → each affected ref surfaces as
+	// Unresolvable status with the provider's error message. checkRefs
+	// itself does not reject — errors are converted per-ref so one bad
+	// repo doesn't break the whole batch.
 	const failingProvider = {
 		...mockProvider,
 		async getVersions() {
 			throw new Error("synthetic provider failure");
 		},
 	};
-	let surfaced = false;
-	try {
-		await checkRefs(yaml, failingProvider);
-	} catch (err) {
-		surfaced = true;
-		if (!String(err).includes("synthetic provider failure")) {
-			throw new Error(`Negative path: error did not propagate provider message: ${err}`);
-		}
+	const failingResults = await checkRefs(yaml, failingProvider);
+	if (failingResults.length === 0) {
+		throw new Error("Negative path: expected at least one result from failing provider");
 	}
-	if (!surfaced) {
-		throw new Error("Negative path: expected checkRefs to reject when provider throws");
+	const firstStatus = failingResults[0].status;
+	const unresolvable = typeof firstStatus === "object" && firstStatus !== null
+		? firstStatus.Unresolvable
+		: undefined;
+	if (unresolvable === undefined) {
+		throw new Error(`Negative path: expected Unresolvable status, got ${JSON.stringify(firstStatus)}`);
 	}
-	console.log("PASS: negative path — provider errors surface as rejected promises");
+	if (!unresolvable.reason.includes("synthetic provider failure")) {
+		throw new Error(`Negative path: reason did not propagate provider message: ${unresolvable.reason}`);
+	}
+	console.log("PASS: negative path — provider errors surface as Unresolvable results");
 }
 
 console.log("\nAll checkRefs + planUpdates tests PASSED");
