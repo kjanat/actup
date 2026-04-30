@@ -118,6 +118,61 @@ fn extract_config_path(params: &InitializeParams) -> Option<PathBuf> {
     Some(PathBuf::from(path_str))
 }
 
+/// Build the LSP [`ServerCapabilities`] advertised during `initialize`.
+///
+/// Kept separate from the handler so each capability co-locates with a
+/// comment about what implements it, not buried inside 100+ lines of
+/// handler orchestration.
+fn server_capabilities(encoding: crate::position::PositionEncoding) -> ServerCapabilities {
+    ServerCapabilities {
+        position_encoding: Some(encoding.to_lsp()),
+        // Full text sync: we re-parse the whole document on each change.
+        // Incremental sync would require tracking ranges — not worth the
+        // complexity for workflow files which are small.
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                ..Default::default()
+            },
+        )),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        // `@` triggers version completion on `owner/repo@<cursor>`.
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec!["@".to_owned()]),
+            ..Default::default()
+        }),
+        // Quick-fix + source.fixAll.actup for the "Update outdated action"
+        // flow. Resolve not needed since edits are computed eagerly.
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![
+                tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
+                crate::code_actions::SOURCE_FIX_ALL_ACTUP,
+            ]),
+            work_done_progress_options: WorkDoneProgressOptions {
+                work_done_progress: Some(false),
+            },
+            resolve_provider: Some(false),
+        })),
+        // The workspace-wide fix command reports progress, hence the flag.
+        execute_command_provider: Some(ExecuteCommandOptions {
+            commands: vec![crate::workspace_commands::FIX_ALL_IN_WORKSPACE.to_owned()],
+            work_done_progress_options: WorkDoneProgressOptions {
+                work_done_progress: Some(true),
+            },
+        }),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(OneOf::Left(true)),
+            }),
+            ..Default::default()
+        }),
+        ..Default::default()
+    }
+}
+
 /// Core LSP backend for actup.
 ///
 /// Holds the LSP [`Client`] handle for sending notifications (diagnostics,
@@ -304,7 +359,6 @@ impl LspBackend {
 }
 
 impl LanguageServer for LspBackend {
-    #[allow(clippy::too_many_lines)]
     async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
         tracing::info!("actup-lsp initializing");
 
@@ -383,48 +437,7 @@ impl LanguageServer for LspBackend {
                 name: "actup-lsp".to_owned(),
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
-            capabilities: ServerCapabilities {
-                position_encoding: Some(encoding.to_lsp()),
-                text_document_sync: Some(TextDocumentSyncCapability::Options(
-                    TextDocumentSyncOptions {
-                        open_close: Some(true),
-                        change: Some(TextDocumentSyncKind::FULL),
-                        save: Some(TextDocumentSyncSaveOptions::Supported(true)),
-                        ..Default::default()
-                    },
-                )),
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec!["@".to_owned()]),
-                    ..Default::default()
-                }),
-                code_action_provider: Some(CodeActionProviderCapability::Options(
-                    CodeActionOptions {
-                        code_action_kinds: Some(vec![
-                            tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
-                            crate::code_actions::SOURCE_FIX_ALL_ACTUP,
-                        ]),
-                        work_done_progress_options: WorkDoneProgressOptions {
-                            work_done_progress: Some(false),
-                        },
-                        resolve_provider: Some(false),
-                    },
-                )),
-                execute_command_provider: Some(ExecuteCommandOptions {
-                    commands: vec![crate::workspace_commands::FIX_ALL_IN_WORKSPACE.to_owned()],
-                    work_done_progress_options: WorkDoneProgressOptions {
-                        work_done_progress: Some(true),
-                    },
-                }),
-                workspace: Some(WorkspaceServerCapabilities {
-                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
-                        supported: Some(true),
-                        change_notifications: Some(OneOf::Left(true)),
-                    }),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
+            capabilities: server_capabilities(encoding),
             ..Default::default()
         })
     }
@@ -565,17 +578,16 @@ impl LanguageServer for LspBackend {
             file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
 
         let encoding = self.position_encoding.get().copied().unwrap_or_default();
-        let hover = crate::hover::compute_hover(
-            &doc.text,
-            position,
-            &config,
-            &registry,
-            &file_cache,
-            Some(doc.version_sets.as_ref()),
-            &self.action_meta_cache,
+        let ctx = crate::hover::HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &self.action_meta_cache,
             encoding,
-        )
-        .await;
+        };
+        let hover =
+            crate::hover::compute_hover(&doc.text, position, Some(doc.version_sets.as_ref()), &ctx)
+                .await;
 
         Ok(hover)
     }
@@ -732,18 +744,18 @@ impl LanguageServer for LspBackend {
         let encoding = self.position_encoding.get().copied().unwrap_or_default();
         let supports_doc_changes = self.supports_document_changes().await;
         let cancelled = crate::workspace_commands::Cancelled::new();
-        let result = crate::workspace_commands::fix_all_in_workspace(
-            self.client.clone(),
-            &workspace_root,
-            &config,
-            &registry,
-            &file_cache,
-            &self.documents,
-            &cancelled,
-            supports_doc_changes,
+        let ctx = crate::workspace_commands::ScanContext {
+            workspace_root: &workspace_root,
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            documents: &self.documents,
+            cancelled: &cancelled,
+            supports_document_changes: supports_doc_changes,
             encoding,
-        )
-        .await;
+        };
+        let result =
+            crate::workspace_commands::fix_all_in_workspace(self.client.clone(), &ctx).await;
 
         self.apply_fix_all_result(result).await;
         Ok(None)

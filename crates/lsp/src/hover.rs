@@ -18,6 +18,19 @@ use tower_lsp_server::ls_types::{
 
 use crate::file_cache::FileCache;
 
+/// Shared, read-only state threaded through a single hover request.
+///
+/// Introduced to collapse the 8-arg signature on `compute_hover`. All
+/// fields are borrowed for the duration of the request — nothing is
+/// cloned or stored.
+pub struct HoverContext<'a> {
+    pub config: &'a Config,
+    pub registry: &'a provider::Registry,
+    pub file_cache: &'a FileCache,
+    pub meta_cache: &'a ActionMetaCache,
+    pub encoding: crate::position::PositionEncoding,
+}
+
 /// Cached action.yml metadata for hover display.
 ///
 /// Stored in an in-memory cache keyed by `ActionRepoId` + ref to avoid
@@ -310,68 +323,30 @@ fn build_hover_content(
 ///
 /// Returns `None` if the cursor is not on a `uses:` reference or if the
 /// reference is local/docker.
-#[allow(clippy::too_many_arguments)]
 pub async fn compute_hover(
     text: &str,
     position: Position,
-    config: &Config,
-    registry: &provider::Registry,
-    file_cache: &FileCache,
     document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
-    meta_cache: &ActionMetaCache,
-    encoding: crate::position::PositionEncoding,
+    ctx: &HoverContext<'_>,
 ) -> Option<Hover> {
-    let located = find_action_at_position(text, position, encoding)?;
-
-    // Fetch version info via shared cache-then-fetch helper.
+    let located = find_action_at_position(text, position, ctx.encoding)?;
     let repo_id = located.action_ref.to_repo_id().without_subpath();
-    let versions = match document_versions.and_then(|versions| versions.get(&repo_id).cloned()) {
-        Some(versions) => Some(versions),
-        None => {
-            match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
-                Some(Ok(v)) => Some(v),
-                Some(Err(e)) => {
-                    tracing::debug!(error = %e, "failed to fetch versions for hover");
-                    None
-                }
-                None => None,
-            }
-        }
-    };
 
-    // Check status
-    let status = match versions.as_ref() {
-        None => CheckStatus::Unresolvable {
-            reason: "no provider available".into(),
-            is_environment_error: true,
-        },
-        Some(v) => match registry.find_for_repo(&repo_id) {
-            Some(provider) => check_action_with_provider(&located.action_ref, v, config, provider)
-                .await
-                .status()
-                .clone(),
-            None => CheckStatus::Unresolvable {
-                reason: "no provider available".into(),
-                is_environment_error: true,
-            },
-        },
-    };
+    let versions = resolve_hover_versions(&repo_id, document_versions, ctx).await;
+    let status = compute_hover_status(&located.action_ref, &repo_id, versions.as_ref(), ctx).await;
 
     let latest_version = versions
         .as_ref()
         .and_then(|v| v.latest())
         .map(|info| info.version().to_string());
 
-    // Fetch action.yml metadata (cached).
-    let meta = get_action_meta(&located.action_ref, registry, meta_cache).await;
-
-    let default_host = registry.default_host();
+    let meta = get_action_meta(&located.action_ref, ctx.registry, ctx.meta_cache).await;
     let content = build_hover_content(
         &located.action_ref,
         meta.as_deref(),
         &status,
         latest_version.as_deref(),
-        default_host,
+        ctx.registry.default_host(),
     );
 
     let range = Range {
@@ -392,6 +367,53 @@ pub async fn compute_hover(
         }),
         range: Some(range),
     })
+}
+
+/// Resolve version data for a hover request.
+///
+/// Prefers the document-level cache populated by the most recent diagnostic
+/// pass (avoids re-fetching on every hover). Falls back to the file cache
+/// + provider if the document cache has no entry for this repo.
+async fn resolve_hover_versions(
+    repo_id: &actup_core::ActionRepoId,
+    document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
+    ctx: &HoverContext<'_>,
+) -> Option<version::Set> {
+    if let Some(v) = document_versions.and_then(|vs| vs.get(repo_id).cloned()) {
+        return Some(v);
+    }
+    match crate::file_cache::fetch_versions_cached(repo_id, ctx.registry, ctx.file_cache).await {
+        Some(Ok(v)) => Some(v),
+        Some(Err(e)) => {
+            tracing::debug!(error = %e, "failed to fetch versions for hover");
+            None
+        }
+        None => None,
+    }
+}
+
+/// Run the policy check against the resolved versions, or produce an
+/// `Unresolvable` status if versions / provider lookup failed.
+async fn compute_hover_status(
+    action_ref: &ActionRef,
+    repo_id: &actup_core::ActionRepoId,
+    versions: Option<&version::Set>,
+    ctx: &HoverContext<'_>,
+) -> CheckStatus {
+    let env_err = || CheckStatus::Unresolvable {
+        reason: "no provider available".into(),
+        is_environment_error: true,
+    };
+    let Some(v) = versions else {
+        return env_err();
+    };
+    let Some(provider) = ctx.registry.find_for_repo(repo_id) else {
+        return env_err();
+    };
+    check_action_with_provider(action_ref, v, ctx.config, provider)
+        .await
+        .status()
+        .clone()
 }
 
 #[cfg(test)]
@@ -681,17 +703,14 @@ mod tests {
             character: 20,
         };
 
-        let hover = compute_hover(
-            text,
-            position,
-            &config,
-            &registry,
-            &file_cache,
-            None,
-            &meta_cache,
-            crate::position::PositionEncoding::Utf16,
-        )
-        .await;
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let hover = compute_hover(text, position, None, &ctx).await;
         let hover = hover.unwrap();
 
         match &hover.contents {
@@ -721,17 +740,14 @@ mod tests {
             character: 10,
         };
 
-        let hover = compute_hover(
-            text,
-            position,
-            &config,
-            &registry,
-            &file_cache,
-            None,
-            &meta_cache,
-            crate::position::PositionEncoding::Utf16,
-        )
-        .await;
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let hover = compute_hover(text, position, None, &ctx).await;
         assert!(hover.is_none(), "expected no hover for non-uses line");
     }
 
@@ -753,18 +769,14 @@ mod tests {
             character: 20,
         };
 
-        let hover = compute_hover(
-            text,
-            position,
-            &config,
-            &registry,
-            &file_cache,
-            None,
-            &meta_cache,
-            crate::position::PositionEncoding::Utf16,
-        )
-        .await
-        .unwrap();
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let hover = compute_hover(text, position, None, &ctx).await.unwrap();
 
         match &hover.contents {
             HoverContents::Markup(mc) => {
@@ -810,17 +822,14 @@ mod tests {
             line: 0,
             character: 20,
         };
-        let hover = compute_hover(
-            text,
-            position,
-            &config,
-            &registry,
-            &file_cache,
-            Some(&diagnostics.version_sets),
-            &meta_cache,
-            crate::position::PositionEncoding::Utf16,
-        )
-        .await;
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let hover = compute_hover(text, position, Some(&diagnostics.version_sets), &ctx).await;
 
         assert!(hover.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);

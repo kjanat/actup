@@ -87,149 +87,161 @@ pub struct RawStep {
     pub working_directory: Option<String>,
 }
 
-/// Parse action.yml content into `ActionYml` struct
+fn yaml_err(path: &str, reason: impl Into<String>) -> actup_core::Error {
+    actup_core::Error::YamlParse {
+        path: path.into(),
+        reason: reason.into(),
+    }
+}
+
+/// Chainable helper: apply `setter` iff `value` is `Some`. Removes the
+/// repetitive `if let Some(v) = opt { b = b.with_x(v); }` idiom at each
+/// builder step.
+fn set_if_some<B, T>(builder: B, value: Option<T>, setter: impl FnOnce(B, T) -> B) -> B {
+    match value {
+        Some(v) => setter(builder, v),
+        None => builder,
+    }
+}
+
+impl From<RawInput> for ActionInput {
+    fn from(raw: RawInput) -> Self {
+        let b = Self::new().with_required(raw.required);
+        let b = set_if_some(b, raw.description, Self::with_description);
+        let b = set_if_some(b, raw.default, Self::with_default);
+        set_if_some(b, raw.deprecation_message, Self::with_deprecation_message)
+    }
+}
+
+impl From<RawOutput> for ActionOutput {
+    fn from(raw: RawOutput) -> Self {
+        let b = Self::new();
+        let b = set_if_some(b, raw.description, Self::with_description);
+        set_if_some(b, raw.value, Self::with_value)
+    }
+}
+
+impl From<RawStep> for ActionStep {
+    fn from(raw: RawStep) -> Self {
+        let b = Self::new();
+        let b = set_if_some(b, raw.name, Self::with_name);
+        let b = set_if_some(b, raw.id, Self::with_id);
+        let b = set_if_some(b, raw.uses, Self::with_uses);
+        let b = set_if_some(b, raw.run, Self::with_run);
+        let b = set_if_some(b, raw.shell, Self::with_shell);
+        set_if_some(b, raw.working_directory, Self::with_working_directory)
+    }
+}
+
+/// Is `using` a Node.js runtime spec?
+///
+/// Matches `node` followed by at least one ASCII digit (e.g. `node16`,
+/// `node20`, `node24`). Rejects prefix-only matches like `nodeify` or
+/// `node-custom` that the previous `starts_with("node")` check let through.
+fn is_node_runtime(using: &str) -> bool {
+    using
+        .strip_prefix("node")
+        .is_some_and(|tail| !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Validate the invariants GitHub enforces for `runs.using`.
+///
+/// - `node*`: `main` must be present and non-blank.
+/// - `docker`: `image` must be present and non-blank.
+/// - `composite`: at least one step.
+///
+/// `path` is the filename (e.g. `action.yml` or `action.yaml`) surfaced in
+/// error messages so callers trying both variants produce accurate output.
+fn validate_runs(
+    path: &str,
+    using: &str,
+    main: Option<&str>,
+    image: Option<&str>,
+    steps: &[ActionStep],
+) -> Result<()> {
+    let non_blank = |s: Option<&str>| s.is_some_and(|t| !t.trim().is_empty());
+
+    if is_node_runtime(using) && !non_blank(main) {
+        return Err(yaml_err(
+            path,
+            format!("'runs.using: {using}' requires 'runs.main' to be set"),
+        ));
+    }
+    if using == "docker" && !non_blank(image) {
+        return Err(yaml_err(
+            path,
+            "'runs.using: docker' requires 'runs.image' to be set",
+        ));
+    }
+    if using == "composite" && steps.is_empty() {
+        return Err(yaml_err(
+            path,
+            "'runs.using: composite' requires at least one step",
+        ));
+    }
+    Ok(())
+}
+
+/// Build an [`ActionRuns`] from raw deserialized form.
+///
+/// Free function (rather than `TryFrom`) because the error case needs the
+/// file path for accurate diagnostics, and `TryFrom::try_from` takes only
+/// the value.
+fn build_runs(path: &str, raw: RawRuns) -> Result<ActionRuns> {
+    let steps: Vec<ActionStep> = raw.steps.into_iter().map(Into::into).collect();
+    validate_runs(
+        path,
+        &raw.using,
+        raw.main.as_deref(),
+        raw.image.as_deref(),
+        &steps,
+    )?;
+
+    let b = ActionRuns::new(&raw.using).with_steps(steps);
+    let b = set_if_some(b, raw.main, ActionRuns::with_main);
+    let b = set_if_some(b, raw.pre, ActionRuns::with_pre);
+    let b = set_if_some(b, raw.post, ActionRuns::with_post);
+    let b = set_if_some(b, raw.image, ActionRuns::with_image);
+    Ok(b)
+}
+
+/// Build an [`ActionYml`] from raw deserialized form.
+///
+/// `source` is the original YAML text (stored in the returned struct so
+/// `.raw()` keeps working); `path` is the filename used in error messages.
+fn build_action_yml(path: &str, source: &str, raw: RawActionYml) -> Result<ActionYml> {
+    let inputs = raw.inputs.into_iter().map(|(k, v)| (k, v.into())).collect();
+    let outputs = raw
+        .outputs
+        .into_iter()
+        .map(|(k, v)| (k, v.into()))
+        .collect();
+    let runs = raw.runs.map(|r| build_runs(path, r)).transpose()?;
+
+    let b = ActionYml::new(source)
+        .with_inputs(inputs)
+        .with_outputs(outputs);
+    let b = set_if_some(b, raw.name, ActionYml::with_name);
+    let b = set_if_some(b, raw.description, ActionYml::with_description);
+    let b = set_if_some(b, raw.author, ActionYml::with_author);
+    Ok(set_if_some(b, runs, ActionYml::with_runs))
+}
+
+/// Parse action.yml / action.yaml content into [`ActionYml`].
+///
+/// `path` is the filename (e.g. `"action.yml"` or `"action.yaml"`) used
+/// in error messages — GitHub accepts both extensions, and callers that
+/// fall back from one to the other pass the filename they actually loaded
+/// so diagnostics don't lie.
 ///
 /// # Errors
 ///
-/// Returns error if the YAML content cannot be parsed.
-#[allow(clippy::cognitive_complexity, clippy::too_many_lines)]
-pub fn parse_action_yml(raw: &str) -> Result<ActionYml> {
+/// Returns error if the YAML content cannot be parsed or if `runs.using`
+/// invariants are violated (missing `main`/`image`/empty `steps` per type).
+pub fn parse_action_yml(raw: &str, path: &str) -> Result<ActionYml> {
     let parsed: RawActionYml =
-        serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {
-            path: "action.yml".into(),
-            reason: e.to_string(),
-        })?;
-
-    let inputs = parsed
-        .inputs
-        .into_iter()
-        .map(|(k, v)| {
-            let mut input = ActionInput::new();
-            if let Some(desc) = v.description {
-                input = input.with_description(desc);
-            }
-            if v.required {
-                input = input.with_required(true);
-            }
-            if let Some(def) = v.default {
-                input = input.with_default(def);
-            }
-            if let Some(msg) = v.deprecation_message {
-                input = input.with_deprecation_message(msg);
-            }
-            (k, input)
-        })
-        .collect();
-
-    let outputs = parsed
-        .outputs
-        .into_iter()
-        .map(|(k, v)| {
-            let mut output = ActionOutput::new();
-            if let Some(desc) = v.description {
-                output = output.with_description(desc);
-            }
-            if let Some(val) = v.value {
-                output = output.with_value(val);
-            }
-            (k, output)
-        })
-        .collect();
-
-    let runs = parsed
-        .runs
-        .map(|r| {
-            let steps: Vec<ActionStep> = r
-                .steps
-                .into_iter()
-                .map(|s| {
-                    let mut step = ActionStep::new();
-                    if let Some(name) = s.name {
-                        step = step.with_name(name);
-                    }
-                    if let Some(id) = s.id {
-                        step = step.with_id(id);
-                    }
-                    if let Some(uses) = s.uses {
-                        step = step.with_uses(uses);
-                    }
-                    if let Some(run) = s.run {
-                        step = step.with_run(run);
-                    }
-                    if let Some(shell) = s.shell {
-                        step = step.with_shell(shell);
-                    }
-                    if let Some(wd) = s.working_directory {
-                        step = step.with_working_directory(wd);
-                    }
-                    step
-                })
-                .collect();
-
-            let mut runs = ActionRuns::new(&r.using);
-            if let Some(main) = r.main.clone() {
-                runs = runs.with_main(main);
-            }
-            if let Some(pre) = r.pre {
-                runs = runs.with_pre(pre);
-            }
-            if let Some(post) = r.post {
-                runs = runs.with_post(post);
-            }
-            if let Some(image) = r.image.clone() {
-                runs = runs.with_image(image);
-            }
-            runs = runs.with_steps(steps.clone());
-
-            // Validate runs based on using type
-            let using = r.using.as_str();
-            let has_main = r
-                .main
-                .as_deref()
-                .is_some_and(|main| !main.trim().is_empty());
-            if using.starts_with("node") && !has_main {
-                return Err(actup_core::Error::YamlParse {
-                    path: "action.yml".into(),
-                    reason: format!("'runs.using: {using}' requires 'runs.main' to be set"),
-                });
-            }
-            let has_image = r
-                .image
-                .as_deref()
-                .is_some_and(|image| !image.trim().is_empty());
-            if using == "docker" && !has_image {
-                return Err(actup_core::Error::YamlParse {
-                    path: "action.yml".into(),
-                    reason: "'runs.using: docker' requires 'runs.image' to be set".into(),
-                });
-            }
-            if using == "composite" && steps.is_empty() {
-                return Err(actup_core::Error::YamlParse {
-                    path: "action.yml".into(),
-                    reason: "'runs.using: composite' requires at least one step".into(),
-                });
-            }
-
-            Ok(runs)
-        })
-        .transpose()?;
-
-    let mut yml = ActionYml::new(raw);
-    if let Some(name) = parsed.name {
-        yml = yml.with_name(name);
-    }
-    if let Some(desc) = parsed.description {
-        yml = yml.with_description(desc);
-    }
-    if let Some(author) = parsed.author {
-        yml = yml.with_author(author);
-    }
-    yml = yml.with_inputs(inputs).with_outputs(outputs);
-    if let Some(runs) = runs {
-        yml = yml.with_runs(runs);
-    }
-
-    Ok(yml)
+        serde_yaml_ng::from_str(raw).map_err(|e| yaml_err(path, e.to_string()))?;
+    build_action_yml(path, raw, parsed)
 }
 
 #[cfg(test)]
@@ -243,7 +255,7 @@ mod tests {
 name: Test Action
 description: A test action
 ";
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert_eq!(result.name(), Some("Test Action"));
         assert_eq!(result.description(), Some("A test action"));
         assert!(result.author().is_none());
@@ -263,7 +275,7 @@ inputs:
     required: false
     default: "30"
 "#;
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert_eq!(result.inputs().len(), 2);
 
         let token = result.inputs().get("token").unwrap();
@@ -286,7 +298,7 @@ outputs:
     description: The result value
     value: ${{ steps.run.outputs.result }}
 ";
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert_eq!(result.outputs().len(), 1);
 
         let output = result.outputs().get("result").unwrap();
@@ -303,7 +315,7 @@ runs:
   using: node20
   main: dist/index.js
 ";
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert!(result.runs().is_some());
 
         let runs = result.runs().unwrap();
@@ -325,7 +337,7 @@ runs:
       run: echo "Hello"
       shell: bash
 "#;
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert!(result.runs().is_some());
 
         let runs = result.runs().unwrap();
@@ -349,7 +361,7 @@ runs:
   using: docker
   image: Dockerfile
 ";
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert!(result.runs().is_some());
 
         let runs = result.runs().unwrap();
@@ -366,7 +378,7 @@ runs:
   using: node20
   main: "   "
 "#;
-        let result = parse_action_yml(yaml);
+        let result = parse_action_yml(yaml, "action.yml");
         assert!(result.is_err());
     }
 
@@ -379,21 +391,93 @@ runs:
   using: docker
   image: "   "
 "#;
-        let result = parse_action_yml(yaml);
+        let result = parse_action_yml(yaml, "action.yml");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_action_yml_invalid_yaml() {
         let yaml = "name: [invalid";
-        let result = parse_action_yml(yaml);
+        let result = parse_action_yml(yaml, "action.yml");
         assert!(result.is_err());
     }
 
     #[test]
     fn test_parse_action_yml_preserves_raw() {
         let yaml = "name: Test\ndescription: Test";
-        let result = parse_action_yml(yaml).unwrap();
+        let result = parse_action_yml(yaml, "action.yml").unwrap();
         assert_eq!(result.raw(), yaml);
+    }
+
+    #[test]
+    fn test_raw_input_into_action_input() {
+        let raw = RawInput {
+            description: Some("token".into()),
+            required: true,
+            default: None,
+            deprecation_message: Some("use foo".into()),
+        };
+        let input: ActionInput = raw.into();
+        assert_eq!(input.description(), Some("token"));
+        assert!(input.required());
+        assert!(input.default().is_none());
+        assert_eq!(input.deprecation_message(), Some("use foo"));
+    }
+
+    #[test]
+    fn test_build_runs_validates_composite() {
+        let raw = RawRuns {
+            using: "composite".into(),
+            main: None,
+            pre: None,
+            post: None,
+            image: None,
+            steps: Vec::new(),
+        };
+        assert!(build_runs("action.yml", raw).is_err());
+    }
+
+    #[test]
+    fn test_is_node_runtime_requires_digits_after_node() {
+        // Canonical values that must match.
+        for v in ["node16", "node20", "node24", "node9"] {
+            assert!(is_node_runtime(v), "expected {v} to match is_node_runtime");
+        }
+        // Must NOT match: bare "node", letters-after, hyphenated, etc.
+        for v in [
+            "node",
+            "nodeify",
+            "nodejs",
+            "node-20",
+            "NODE20",
+            "composite",
+            "docker",
+        ] {
+            assert!(
+                !is_node_runtime(v),
+                "expected {v} to NOT match is_node_runtime"
+            );
+        }
+    }
+
+    #[test]
+    fn test_yaml_err_uses_caller_supplied_path() {
+        // Regression: yaml_err previously hardcoded "action.yml", so parsing
+        // an action.yaml file would produce error messages claiming .yml.
+        // Assert against the structured Error variant — comparing formatted
+        // strings is fragile because "action.yaml" contains "action.yml".
+        let yaml = r"
+name: Bad
+description: Bad
+runs:
+  using: docker
+";
+        let err = parse_action_yml(yaml, "action.yaml").unwrap_err();
+        match err {
+            actup_core::Error::YamlParse { path, .. } => {
+                assert_eq!(path, "action.yaml", "error should carry the caller's path");
+            }
+            other => panic!("expected YamlParse error, got: {other:?}"),
+        }
     }
 }

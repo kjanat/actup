@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 
+use super::HostConfig;
 use super::registration::{ProviderConfig, Registration};
 use super::validation::{validate_api_base, validate_hostname, validate_provider_config};
 use super::{ApiMode, Config, FetchSettings, HostKind};
@@ -79,110 +80,142 @@ pub fn effective_host(
     registrations: &[&Registration],
     fetch: &FetchSettings,
 ) -> Result<ProviderConfig, Error> {
-    // Validate hostname syntax
     validate_hostname(hostname, &format!("host \"{hostname}\""))?;
 
     let preset_index = build_preset_index(registrations);
-
-    // Step 1: Start from preset if present
-    let (mut kind, mut api_base, mut token_env) =
-        if let Some((reg, preset)) = preset_index.get(hostname) {
-            // Preset found — kind is implied by registration
-            (
-                Some(reg.kind),
-                Some(preset.api_base.to_string()),
-                Some(preset.token_env.to_string()),
-            )
-        } else {
-            (None, None, None)
-        };
-
-    // Step 2: Merge user [hosts."hostname"] overrides
     let host_config = config.hosts.get(hostname);
-    if let Some(hc) = host_config {
-        if let Some(k) = hc.kind {
-            kind = Some(k);
-        }
-        if let Some(ref ab) = hc.api_base {
-            api_base = Some(ab.clone());
-        }
-        if let Some(ref te) = hc.token_env {
-            token_env = Some(te.clone());
-        }
-    }
+    let preset_reg = preset_index.get(hostname).map(|(reg, _)| *reg);
 
-    // Step 2.5: If user changed kind away from preset, clear preset-derived fields
-    // so inference/defaults run against the correct registration.
-    if let Some((reg, _)) = preset_index.get(hostname)
-        && kind != Some(reg.kind)
-    {
-        // User overrode kind to a different provider -- preset api_base/token_env
-        // are for the wrong provider and must be cleared (unless user also overrode them).
-        if host_config.and_then(|hc| hc.api_base.as_ref()).is_none() {
-            api_base = None;
-        }
-        if host_config.and_then(|hc| hc.token_env.as_ref()).is_none() {
-            token_env = None;
-        }
-    }
+    let mut resolved = Resolved::default();
+    resolved.apply_preset(hostname, &preset_index); // Step 1
+    resolved.apply_host_overrides(host_config); // Step 2
+    resolved.reset_preset_fields_on_kind_override(preset_reg, host_config); // Step 2.5
 
-    // Step 3: kind must be known by now
-    let resolved_kind = kind.ok_or_else(|| Error::InvalidConfig {
-        path: format!("host \"{hostname}\""),
-        reason: format!(
-            "kind required for \"{hostname}\" (not a preset host; specify kind in [hosts.\"{hostname}\"])"
-        ),
-    })?;
+    let kind = resolved.require_kind(hostname)?; // Step 3
+    let registration = resolve_registration(registrations, kind, hostname)?; // Step 4
+    resolved.apply_defaults(hostname, registration); // Step 5
 
-    // Step 4: Lookup registration by kind
-    let registration =
-        find_registration_by_kind(registrations, resolved_kind).ok_or_else(|| {
-            let available: Vec<_> = registrations.iter().map(|r| r.kind.to_string()).collect();
-            Error::InvalidConfig {
-                path: format!("host \"{hostname}\""),
-                reason: format!(
-                    "provider {:?} not compiled in (available: {})",
-                    resolved_kind,
-                    if available.is_empty() {
-                        "none".to_string()
-                    } else {
-                        available.join(", ")
-                    }
-                ),
-            }
-        })?;
-
-    // Step 5: Fill defaults/inference
-    if token_env.is_none()
-        && let Some(default_te) = registration.default_token_env
-    {
-        token_env = Some(default_te.to_string());
-    }
-
-    if api_base.is_none() {
-        api_base = (registration.infer_api_base)(hostname);
-    }
-
-    // Resolve api_mode: per-host override > [fetch] > default
     let api_mode = host_config
         .and_then(|hc| hc.api_mode)
         .unwrap_or(fetch.api_mode);
-
-    // Resolve max_tags: per-host override > [fetch] > default
     let max_tags_per_repo = host_config
         .and_then(|hc| hc.max_tags_per_repo)
         .unwrap_or(fetch.max_tags_per_repo);
 
-    // Steps 6-7: Build, validate, and check capability compatibility
+    // Steps 6-7: build + validate shape + capability check.
     build_and_validate(
         hostname,
-        resolved_kind,
-        api_base,
-        token_env,
+        kind,
+        resolved.api_base,
+        resolved.token_env,
         api_mode,
         max_tags_per_repo,
         registration,
     )
+}
+
+/// In-progress field state for hostname → provider config resolution.
+///
+/// Each step is a method that mutates the accumulator; the shape lets
+/// `effective_host` read as a linear sequence of named phases.
+#[derive(Default)]
+struct Resolved {
+    kind: Option<HostKind>,
+    api_base: Option<String>,
+    token_env: Option<String>,
+}
+
+impl Resolved {
+    /// Step 1 — seed fields from any registered preset for the hostname.
+    fn apply_preset(&mut self, hostname: &str, index: &PresetIndex<'_>) {
+        if let Some((reg, preset)) = index.get(hostname) {
+            self.kind = Some(reg.kind);
+            self.api_base = Some(preset.api_base.to_string());
+            self.token_env = Some(preset.token_env.to_string());
+        }
+    }
+
+    /// Step 2 — overlay user `[hosts."hostname"]` settings. `Some` wins.
+    fn apply_host_overrides(&mut self, host_config: Option<&HostConfig>) {
+        let Some(hc) = host_config else { return };
+        if let Some(k) = hc.kind {
+            self.kind = Some(k);
+        }
+        if let Some(ref ab) = hc.api_base {
+            self.api_base = Some(ab.clone());
+        }
+        if let Some(ref te) = hc.token_env {
+            self.token_env = Some(te.clone());
+        }
+    }
+
+    /// Step 2.5 — if the user overrode `kind` away from the preset,
+    /// clear preset-derived `api_base`/`token_env` (unless the user also
+    /// provided their own) so inference in step 5 runs against the new
+    /// provider instead of inheriting the preset's values.
+    fn reset_preset_fields_on_kind_override(
+        &mut self,
+        preset_reg: Option<&Registration>,
+        host_config: Option<&HostConfig>,
+    ) {
+        let Some(reg) = preset_reg else { return };
+        if self.kind == Some(reg.kind) {
+            return;
+        }
+        if host_config.and_then(|hc| hc.api_base.as_ref()).is_none() {
+            self.api_base = None;
+        }
+        if host_config.and_then(|hc| hc.token_env.as_ref()).is_none() {
+            self.token_env = None;
+        }
+    }
+
+    /// Step 3 — `kind` must be known (preset or user-supplied) by now.
+    fn require_kind(&self, hostname: &str) -> Result<HostKind, Error> {
+        self.kind.ok_or_else(|| Error::InvalidConfig {
+            path: format!("host \"{hostname}\""),
+            reason: format!(
+                "kind required for \"{hostname}\" (not a preset host; specify kind in [hosts.\"{hostname}\"])"
+            ),
+        })
+    }
+
+    /// Step 5 — fill remaining fields from the registration's defaults /
+    /// inference hook. `token_env` only if the registration declares one;
+    /// `api_base` only if the registration can infer it from the hostname.
+    fn apply_defaults(&mut self, hostname: &str, registration: &Registration) {
+        if self.token_env.is_none()
+            && let Some(default_te) = registration.default_token_env
+        {
+            self.token_env = Some(default_te.to_string());
+        }
+        if self.api_base.is_none() {
+            self.api_base = (registration.infer_api_base)(hostname);
+        }
+    }
+}
+
+/// Step 4 — look up the provider implementation for the resolved kind.
+///
+/// Errors with a helpful "available: ..." list if the provider isn't
+/// compiled into this build.
+fn resolve_registration<'a>(
+    registrations: &'a [&'a Registration],
+    kind: HostKind,
+    hostname: &str,
+) -> Result<&'a Registration, Error> {
+    find_registration_by_kind(registrations, kind).ok_or_else(|| {
+        let available: Vec<_> = registrations.iter().map(|r| r.kind.to_string()).collect();
+        let available_str = if available.is_empty() {
+            "none".to_string()
+        } else {
+            available.join(", ")
+        };
+        Error::InvalidConfig {
+            path: format!("host \"{hostname}\""),
+            reason: format!("provider {kind:?} not compiled in (available: {available_str})"),
+        }
+    })
 }
 
 /// Build a [`ProviderConfig`] from resolved fields and validate it (steps 6-7).

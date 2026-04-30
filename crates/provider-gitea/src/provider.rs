@@ -7,7 +7,7 @@ use actup_core::compat::BoxFuture;
 use actup_core::error::Result;
 use actup_core::provider::{self, ActionYml, Provider, Sha40};
 use actup_core::version;
-use actup_providers::{parse_action_yml, process_tags};
+use actup_providers::{filename_label, parse_action_yml, process_tags};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use tracing::debug;
 
@@ -197,7 +197,7 @@ impl Provider for GiteaProvider {
                 {
                     Ok(content) => {
                         if let Some(text) = decode_base64_file_text(&content) {
-                            return parse_action_yml(&text);
+                            return parse_action_yml(&text, filename_label(filename));
                         }
                     }
                     // Only continue searching on NotFound; propagate auth/rate-limit/network errors

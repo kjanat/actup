@@ -6,7 +6,7 @@ use actup_core::compat::BoxFuture;
 use actup_core::error::Result;
 use actup_core::provider::{self, ActionYml, Provider, Sha40};
 use actup_core::version;
-use actup_providers::{parse_action_yml, process_tags};
+use actup_providers::{filename_label, parse_action_yml, process_tags};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use tracing::debug;
 
@@ -249,13 +249,15 @@ impl Provider for GitHubProvider {
                 None => "action.yml".to_string(),
             };
 
-            // Try action.yml first, then action.yaml (both are valid)
-            let content = match self
+            // Try action.yml first, then action.yaml (both are valid).
+            // Track `loaded_path` so the parse-error label reflects what
+            // actually succeeded, not the first path attempted.
+            let (content, loaded_path) = match self
                 .client
                 .get_content(&owner, &repo_name, &action_path, Some(&ref_name))
                 .await
             {
-                Ok(content) => content,
+                Ok(content) => (content, action_path.clone()),
                 Err(actup_core::Error::NotFound { .. }) => {
                     if std::path::Path::new(&action_path)
                         .extension()
@@ -270,9 +272,11 @@ impl Provider for GitHubProvider {
                             repo = %repo_name,
                             "action.yml not found, trying action.yaml"
                         );
-                        self.client
+                        let c = self
+                            .client
                             .get_content(&owner, &repo_name, &yaml_path, Some(&ref_name))
-                            .await?
+                            .await?;
+                        (c, yaml_path)
                     } else {
                         return Err(actup_core::Error::NotFound {
                             owner: owner.clone(),
@@ -309,8 +313,9 @@ impl Provider for GitHubProvider {
                 });
             };
 
-            // Parse the YAML content
-            parse_action_yml(&raw)
+            // Use the path that actually succeeded — parse errors otherwise
+            // lie about which file caused them when the .yaml fallback fired.
+            parse_action_yml(&raw, filename_label(&loaded_path))
         })
     }
 }

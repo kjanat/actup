@@ -10,3 +10,21 @@ mod tags;
 pub use action_yml::{RawActionYml, RawInput, RawOutput, RawRuns, RawStep, parse_action_yml};
 pub use client::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE};
 pub use tags::{TagLike, process_tags};
+
+/// Extract the trailing filename component of a path for diagnostics.
+///
+/// Returns just the final path segment (e.g. `"action.yaml"` from
+/// `"subpath/action.yaml"`). If the path has no valid final component
+/// (pathological inputs), returns the input unchanged so error messages
+/// still reference something the caller asked for.
+///
+/// Used by provider implementations to thread the actual loaded filename
+/// through to [`parse_action_yml`], so error messages distinguish
+/// `action.yml` from `action.yaml`.
+#[must_use]
+pub fn filename_label(path: &str) -> &str {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|os| os.to_str())
+        .unwrap_or(path)
+}

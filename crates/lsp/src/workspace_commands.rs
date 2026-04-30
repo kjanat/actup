@@ -32,6 +32,64 @@ use crate::file_cache::FileCache;
 /// Command identifier registered in server capabilities.
 pub const FIX_ALL_IN_WORKSPACE: &str = "actup-lsp/fixAllInWorkspace";
 
+/// Bounded, cancellable `$/progress` handle from tower-lsp-server.
+///
+/// Aliased because the bare type takes four lines and shows up on every
+/// function that threads progress through the workspace scan.
+type WorkspaceProgress =
+    tower_lsp_server::OngoingProgress<tower_lsp_server::Bounded, tower_lsp_server::Cancellable>;
+
+/// Shared, read-only references threaded through the workspace scan.
+///
+/// Introduced to collapse 10-param function signatures. The lifetime binds
+/// all references to the same call — none of these are stored or cloned
+/// beyond the scan.
+pub struct ScanContext<'a> {
+    pub workspace_root: &'a Path,
+    pub config: &'a Config,
+    pub registry: &'a provider::Registry,
+    pub file_cache: &'a FileCache,
+    pub documents: &'a DashMap<Uri, DocumentState>,
+    pub cancelled: &'a Cancelled,
+    pub supports_document_changes: bool,
+    pub encoding: crate::position::PositionEncoding,
+}
+
+/// Running state accumulated as the scan proceeds.
+///
+/// On cancellation or completion, [`ScanAccumulator::into_result`] builds
+/// the [`FixAllResult`] so the two former early-return sites no longer
+/// duplicate the struct construction.
+#[derive(Default)]
+struct ScanAccumulator {
+    all_edits: Vec<VersionedFileEdits>,
+    failures: Vec<(String, String)>,
+    total_refs: usize,
+    total_actions: usize,
+    files_completed: usize,
+}
+
+impl ScanAccumulator {
+    fn into_result(
+        self,
+        total_files: usize,
+        supports_document_changes: bool,
+        cancelled: bool,
+    ) -> FixAllResult {
+        let files_changed = self.all_edits.len();
+        FixAllResult {
+            edit: build_workspace_edit(self.all_edits, supports_document_changes),
+            total_files,
+            files_scanned: self.files_completed,
+            files_changed,
+            refs_updated: self.total_refs,
+            actions_checked: self.total_actions,
+            failures: self.failures,
+            cancelled,
+        }
+    }
+}
+
 /// Cooperative cancellation flag for workspace operations.
 ///
 /// Shared between the `execute_command` handler and the workspace scan loop.
@@ -305,34 +363,22 @@ async fn process_loaded_file(
 /// A cancel button is shown in the editor. The [`Cancelled`] flag is checked
 /// between files; when set, the operation stops and returns partial results
 /// with `cancelled: true`.
-#[allow(clippy::too_many_arguments)]
-pub async fn fix_all_in_workspace(
-    client: Client,
-    workspace_root: &Path,
-    config: &Config,
-    registry: &provider::Registry,
-    file_cache: &FileCache,
-    documents: &DashMap<Uri, DocumentState>,
-    cancelled: &Cancelled,
-    supports_document_changes: bool,
-    encoding: crate::position::PositionEncoding,
-) -> FixAllResult {
+pub async fn fix_all_in_workspace(client: Client, ctx: &ScanContext<'_>) -> FixAllResult {
     let token = NumberOrString::String(format!("actup-workspace-{}", progress_id()));
     let progress = match client.create_work_done_progress(token.clone()).await {
-        Ok(()) => {
-            let ongoing = client
+        Ok(()) => Some(
+            client
                 .progress(token, "Fix all outdated actions")
                 .with_percentage(0)
                 .with_cancel_button()
                 .with_message("Discovering files...")
                 .begin()
-                .await;
-            Some(ongoing)
-        }
+                .await,
+        ),
         Err(_) => None,
     };
 
-    let discovered = discover_files(workspace_root, &config.extra_paths);
+    let discovered = discover_files(ctx.workspace_root, &ctx.config.extra_paths);
     let file_count = discovered.len();
 
     if file_count == 0 {
@@ -347,19 +393,7 @@ pub async fn fix_all_in_workspace(
             .await;
     }
 
-    let result = scan_files(
-        &discovered,
-        workspace_root,
-        config,
-        registry,
-        file_cache,
-        documents,
-        cancelled,
-        supports_document_changes,
-        progress.as_ref(),
-        encoding,
-    )
-    .await;
+    let result = scan_files(&discovered, ctx, progress.as_ref()).await;
 
     if let Some(p) = progress {
         p.finish_with_message(result.summary()).await;
@@ -379,81 +413,61 @@ struct VersionedFileEdits {
 /// Scan discovered files, compute diagnostics, and collect edits.
 ///
 /// Reports per-file progress and checks cancellation between files.
-#[allow(clippy::too_many_arguments)]
 async fn scan_files(
     discovered: &[DiscoveredFile],
-    workspace_root: &Path,
-    config: &Config,
-    registry: &provider::Registry,
-    file_cache: &FileCache,
-    documents: &DashMap<Uri, DocumentState>,
-    cancelled: &Cancelled,
-    supports_document_changes: bool,
-    progress: Option<
-        &tower_lsp_server::OngoingProgress<
-            tower_lsp_server::Bounded,
-            tower_lsp_server::Cancellable,
-        >,
-    >,
-    encoding: crate::position::PositionEncoding,
+    ctx: &ScanContext<'_>,
+    progress: Option<&WorkspaceProgress>,
 ) -> FixAllResult {
     let file_count = discovered.len();
-    let mut all_edits: Vec<VersionedFileEdits> = Vec::new();
-    let mut failures = Vec::new();
-    let mut total_refs = 0usize;
-    let mut total_actions = 0usize;
-    let mut files_completed = 0usize;
+    let mut acc = ScanAccumulator::default();
     let mut prepared_files = Vec::with_capacity(file_count);
 
+    // Phase 1: load each file's text (from doc store or disk).
     for file in discovered {
-        if cancelled.is_cancelled() {
+        if ctx.cancelled.is_cancelled() {
             tracing::info!(
-                completed = files_completed,
+                completed = acc.files_completed,
                 total = file_count,
                 "workspace fix cancelled during preload"
             );
-            return FixAllResult {
-                edit: WorkspaceEdit::default(),
-                total_files: file_count,
-                files_scanned: files_completed,
-                files_changed: 0,
-                refs_updated: 0,
-                actions_checked: 0,
-                failures,
-                cancelled: true,
-            };
+            return acc.into_result(file_count, ctx.supports_document_changes, true);
         }
-
-        prepared_files.push(prepare_file(file, workspace_root, documents, &mut failures).await);
+        prepared_files
+            .push(prepare_file(file, ctx.workspace_root, ctx.documents, &mut acc.failures).await);
     }
 
-    let versions_map =
-        prefetch_workspace_versions(&prepared_files, config, registry, file_cache, encoding).await;
+    // Phase 2: one batched version fetch covering every unique repo.
+    let versions_map = prefetch_workspace_versions(
+        &prepared_files,
+        ctx.config,
+        ctx.registry,
+        ctx.file_cache,
+        ctx.encoding,
+    )
+    .await;
 
+    // Phase 3: per-file diagnostics + edit collection, with progress reports.
     for (i, prepared) in prepared_files.iter().enumerate() {
-        if cancelled.is_cancelled() {
+        if ctx.cancelled.is_cancelled() {
             tracing::info!(
-                completed = files_completed,
+                completed = acc.files_completed,
                 total = file_count,
                 "workspace fix cancelled by client"
             );
-            let files_changed = all_edits.len();
-            return FixAllResult {
-                edit: build_workspace_edit(all_edits, supports_document_changes),
-                total_files: file_count,
-                files_scanned: files_completed,
-                files_changed,
-                refs_updated: total_refs,
-                actions_checked: total_actions,
-                failures,
-                cancelled: true,
-            };
+            return acc.into_result(file_count, ctx.supports_document_changes, true);
         }
 
         let (file, outcome) = match prepared {
             PreparedFile::Loaded(loaded) => (
                 &loaded.file,
-                process_loaded_file(loaded, config, registry, &versions_map, encoding).await,
+                process_loaded_file(
+                    loaded,
+                    ctx.config,
+                    ctx.registry,
+                    &versions_map,
+                    ctx.encoding,
+                )
+                .await,
             ),
             PreparedFile::Failed(file) => (
                 file,
@@ -464,49 +478,37 @@ async fn scan_files(
             ),
         };
 
-        total_actions += outcome.actions_checked;
+        acc.total_actions += outcome.actions_checked;
         if let Some((uri, version, edits)) = outcome.edits {
-            total_refs += edits.len();
-            all_edits.push(VersionedFileEdits {
+            acc.total_refs += edits.len();
+            acc.all_edits.push(VersionedFileEdits {
                 uri,
                 version,
                 edits,
             });
         }
 
-        files_completed = i + 1;
+        acc.files_completed = i + 1;
         report_file_progress(
             progress,
             file,
-            workspace_root,
-            files_completed,
+            ctx.workspace_root,
+            acc.files_completed,
             file_count,
-            total_actions,
+            acc.total_actions,
         )
         .await;
     }
 
-    let files_changed = all_edits.len();
-    FixAllResult {
-        edit: build_workspace_edit(all_edits, supports_document_changes),
-        total_files: file_count,
-        files_scanned: file_count,
-        files_changed,
-        refs_updated: total_refs,
-        actions_checked: total_actions,
-        failures,
-        cancelled: false,
-    }
+    // All files scanned: overwrite files_scanned with the full count so callers
+    // see total coverage, not just the last increment.
+    acc.files_completed = file_count;
+    acc.into_result(file_count, ctx.supports_document_changes, false)
 }
 
 /// Report per-file progress to the client.
 async fn report_file_progress(
-    progress: Option<
-        &tower_lsp_server::OngoingProgress<
-            tower_lsp_server::Bounded,
-            tower_lsp_server::Cancellable,
-        >,
-    >,
+    progress: Option<&WorkspaceProgress>,
     file: &DiscoveredFile,
     workspace_root: &Path,
     files_completed: usize,
@@ -515,8 +517,11 @@ async fn report_file_progress(
 ) {
     let Some(p) = progress else { return };
 
-    #[allow(clippy::cast_possible_truncation)]
-    let pct = (5 + (files_completed * 90) / file_count) as u32;
+    // Percentage is scaled into [5, 95]. The raw expression is always <= 95,
+    // so `try_from` is infallible — but we route around `as` / `unwrap` so
+    // a future tweak to the scaling can't introduce a silent overflow.
+    let raw_pct = (5 + (files_completed * 90) / file_count).min(95);
+    let pct = u32::try_from(raw_pct).unwrap_or(95);
     let rel = file
         .path()
         .strip_prefix(workspace_root)
@@ -529,7 +534,7 @@ async fn report_file_progress(
     } else {
         format!("Checking {rel}... ({files_completed}/{file_count} files)")
     };
-    p.report_with_message(msg, pct.min(95), None).await;
+    p.report_with_message(msg, pct, None).await;
 }
 
 /// Build a [`WorkspaceEdit`] from accumulated per-file changes.
@@ -944,19 +949,18 @@ mod tests {
         let cancelled = Cancelled::new();
         let discovered = discover_files(temp.path(), &[]);
 
-        let result = scan_files(
-            &discovered,
-            temp.path(),
-            &Config::default(),
-            &registry,
-            &cache,
-            &documents,
-            &cancelled,
-            false,
-            None,
-            crate::position::PositionEncoding::Utf16,
-        )
-        .await;
+        let config = Config::default();
+        let ctx = ScanContext {
+            workspace_root: temp.path(),
+            config: &config,
+            registry: &registry,
+            file_cache: &cache,
+            documents: &documents,
+            cancelled: &cancelled,
+            supports_document_changes: false,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let result = scan_files(&discovered, &ctx, None).await;
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(result.total_files, 2);

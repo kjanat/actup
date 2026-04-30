@@ -114,7 +114,6 @@ struct CollectedAction {
 }
 
 /// Scan workflows and report outdated actions across multiple providers.
-#[allow(clippy::too_many_lines)]
 pub async fn run(
     path: &Path,
     strict: bool,
@@ -133,19 +132,48 @@ pub async fn run(
     let mut findings = Vec::new();
     let mut io_errors = ErrorTally::default();
 
-    // Phase 1: Collect all actions and build unique repo set
-    let mut collected_actions = Vec::new();
+    let collected = collect_actions(&scanner, &discovered, &mut io_errors, &mut findings);
+    let versions_map = fetch_versions_for_actions(&collected, config, registry).await;
+    let unresolved =
+        process_collected_actions(collected, &versions_map, config, registry, &mut findings).await;
+    resolve_fallback_refs(unresolved, registry, &mut findings).await;
 
-    for file in &discovered {
-        let Some(content) = scanner.read_file(file, &mut io_errors) else {
+    // Stable output: file path, then line number. Sorting after all batching
+    // completes (not per-phase) keeps the order deterministic.
+    findings.sort_by(|a, b| a.file().cmp(b.file()).then_with(|| a.line().cmp(&b.line())));
+
+    print_findings(&findings, format);
+    if matches!(format, OutputFormat::Human) {
+        print_summary(&findings);
+    }
+
+    // I/O errors take priority over outdated status (env error = exit 3).
+    let io_exit = io_errors.exit_code();
+    if io_exit != crate::cli::CliExitCode::Success {
+        return io_exit.into();
+    }
+
+    determine_exit_code(&findings, strict)
+}
+
+/// Phase 1 — walk discovered files, emit immediate "no provider" findings,
+/// and collect the remainder for batch fetching.
+fn collect_actions(
+    scanner: &WorkflowScanner<'_>,
+    discovered: &[actup_core::DiscoveredFile],
+    io_errors: &mut ErrorTally,
+    findings: &mut Vec<Finding>,
+) -> Vec<CollectedAction> {
+    let mut collected = Vec::new();
+    for file in discovered {
+        let Some(content) = scanner.read_file(file, io_errors) else {
             continue;
         };
-
         let relative = scanner.relative_path(file);
 
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
-            // No provider for host - handle immediately
-            // This is an environment/configuration error, not a user error in the workflow
+            // No provider configured for the ref's host is an environment
+            // error: emit immediately so it doesn't block batch fetching.
             let Some(provider) = scanner.provider_for(&action_ref) else {
                 findings.push(Finding::new(
                     relative.clone(),
@@ -163,9 +191,8 @@ pub async fn run(
                 continue;
             };
 
-            // Collect for batch fetching
             let repo_id = action_ref.to_repo_id().without_subpath();
-            collected_actions.push(CollectedAction {
+            collected.push(CollectedAction {
                 file: relative.clone(),
                 line: loc.line(),
                 action_ref,
@@ -174,55 +201,78 @@ pub async fn run(
             });
         }
     }
+    collected
+}
 
-    // Phase 2: Batch fetch versions for all unique repos
-    let versions_map = if collected_actions.is_empty() {
-        HashMap::new()
-    } else {
-        // Build unique repo list (deduplicated)
-        let unique_repos: Vec<ActionRepoId> = collected_actions
-            .iter()
-            .map(|c| c.repo_id.clone())
-            .unique()
-            .collect();
+/// Phase 2 — one batched version fetch covering every unique repo referenced
+/// by the collected actions. Returns an empty map if nothing was collected.
+async fn fetch_versions_for_actions(
+    collected: &[CollectedAction],
+    config: &Config,
+    registry: &provider::Registry,
+) -> HashMap<ActionRepoId, Result<version::Set, actup_core::Error>> {
+    if collected.is_empty() {
+        return HashMap::new();
+    }
 
-        debug!(
-            total_actions = collected_actions.len(),
-            unique_repos = unique_repos.len(),
-            "batch fetching versions"
-        );
+    let unique_repos: Vec<ActionRepoId> = collected
+        .iter()
+        .map(|c| c.repo_id.clone())
+        .unique()
+        .collect();
 
-        batch_fetch_versions(&unique_repos, config, registry).await
-    };
+    debug!(
+        total_actions = collected.len(),
+        unique_repos = unique_repos.len(),
+        "batch fetching versions"
+    );
 
-    // Phase 3: Process collected actions using cached versions
-    let mut unresolved_semver_actions = Vec::new();
+    batch_fetch_versions(&unique_repos, config, registry).await
+}
 
-    for action in collected_actions {
+/// Phase 3 — check each action against the batch-fetched versions.
+///
+/// Actions whose semver ref wasn't found in the batch get returned for
+/// Phase 4's fallback `resolve_ref_to_sha` attempt. Everything else is
+/// pushed straight into `findings`.
+async fn process_collected_actions(
+    collected: Vec<CollectedAction>,
+    versions_map: &HashMap<ActionRepoId, Result<version::Set, actup_core::Error>>,
+    config: &Config,
+    registry: &provider::Registry,
+    findings: &mut Vec<Finding>,
+) -> Vec<(CollectedAction, Finding)> {
+    let mut unresolved = Vec::new();
+    for action in collected {
         let versions_result = versions_map.get(&action.repo_id);
         let finding = check_action_with_versions(&action, versions_result, config, registry).await;
 
-        // Track semver refs that weren't found in batch fetch for fallback resolution
         if matches!(finding.status(), FindingStatus::Unresolvable { reason, .. }
                     if reason == NO_VERSIONS_FOUND_REASON)
         {
-            unresolved_semver_actions.push((action, finding));
+            unresolved.push((action, finding));
         } else {
             findings.push(finding);
         }
     }
+    unresolved
+}
 
-    // Phase 4: Fallback resolution for semver refs not found in batch fetch
-    // This handles cases like taiki-e/install-action@v2 where old version tags
-    // are beyond the max_tags limit but still exist
-    for (action, mut finding) in unresolved_semver_actions {
+/// Phase 4 — for semver refs not found in the batch fetch (e.g.
+/// `taiki-e/install-action@v2` whose old tags sit beyond `max_tags`),
+/// try `resolve_ref_to_sha` directly. If it resolves, mark Unknown rather
+/// than Unresolvable — we know the ref exists but can't compare versions.
+async fn resolve_fallback_refs(
+    unresolved: Vec<(CollectedAction, Finding)>,
+    registry: &provider::Registry,
+    findings: &mut Vec<Finding>,
+) {
+    for (action, mut finding) in unresolved {
         let Some(provider) = registry.find_for_repo(&action.repo_id) else {
             findings.push(finding);
             continue;
         };
 
-        // Try to resolve the ref directly - if it exists, mark as Unknown
-        // since we can verify the ref is valid but can't determine if it's outdated
         if provider
             .resolve_ref_to_sha(&action.repo_id, action.action_ref.ref_str())
             .await
@@ -247,26 +297,6 @@ pub async fn run(
         }
         findings.push(finding);
     }
-
-    // Sort by file path then line number for stable, readable output.
-    // Only no-provider cases produce immediate findings (see early-return handling above);
-    // SHA→Pinned determination is performed later in `core_check_action` during Phase 3.
-    // Sorting after all batching is complete ensures deterministic output order.
-    findings.sort_by(|a, b| a.file().cmp(b.file()).then_with(|| a.line().cmp(&b.line())));
-
-    print_findings(&findings, format);
-
-    if matches!(format, OutputFormat::Human) {
-        print_summary(&findings);
-    }
-
-    // I/O errors take priority (env error = exit 3)
-    let io_exit = io_errors.exit_code();
-    if io_exit != crate::cli::CliExitCode::Success {
-        return io_exit.into();
-    }
-
-    determine_exit_code(&findings, strict)
 }
 
 /// Batch fetch versions for all repos using the registry's providers.
