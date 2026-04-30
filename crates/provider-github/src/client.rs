@@ -76,14 +76,21 @@ impl GitHubClient {
             );
         }
 
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .default_headers(headers)
-            .timeout(Duration::from_secs(30))
-            .build()
-            .map_err(|e| Error::Network {
-                operation: "create HTTP client".to_string(),
-                message: e.to_string(),
-            })?;
+            .timeout(Duration::from_secs(30));
+
+        // Bypass system proxy for loopback hosts: when HTTP(S)_PROXY is set in
+        // the environment, reqwest will otherwise route requests to localhost
+        // mock/dev servers through the proxy and fail.
+        if is_loopback_host(api_host) {
+            builder = builder.no_proxy();
+        }
+
+        let client = builder.build().map_err(|e| Error::Network {
+            operation: "create HTTP client".to_string(),
+            message: e.to_string(),
+        })?;
 
         let api_base = if api_host.starts_with("http") {
             api_host.to_string()
@@ -414,5 +421,74 @@ impl GitHubClient {
                 })
             }
         }
+    }
+}
+
+/// Returns `true` when `api_host` references the loopback interface.
+///
+/// Strips an optional `http(s)://` scheme and port, then exact-matches the
+/// host. Covers IPv4 (`127.0.0.0/8`), IPv6 (`::1`), the `localhost` name, and
+/// the reserved `.localhost` TLD (RFC 6761).
+fn is_loopback_host(api_host: &str) -> bool {
+    use std::net::{Ipv4Addr, Ipv6Addr};
+
+    let after_scheme = api_host
+        .strip_prefix("https://")
+        .or_else(|| api_host.strip_prefix("http://"))
+        .unwrap_or(api_host);
+
+    let host_with_port = after_scheme.split('/').next().unwrap_or("");
+
+    // Bracketed IPv6 (`[::1]:8080`) → take what's inside the brackets. Bare
+    // IPv6 literals contain multiple colons, so don't try to strip a port.
+    // Anything else (IPv4 or hostname) may have a single trailing `:<port>`.
+    let host = match host_with_port.strip_prefix('[') {
+        Some(rest) => rest.split(']').next().unwrap_or(""),
+        None if host_with_port.matches(':').count() >= 2 => host_with_port,
+        None => host_with_port
+            .rsplit_once(':')
+            .map_or(host_with_port, |(h, _)| h),
+    };
+
+    if host == "localhost" || host.ends_with(".localhost") {
+        return true;
+    }
+    if let Ok(ip) = host.parse::<Ipv6Addr>() {
+        return ip.is_loopback();
+    }
+    host.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_loopback_host;
+
+    #[test]
+    fn loopback_names_and_addresses() {
+        assert!(is_loopback_host("localhost"));
+        assert!(is_loopback_host("127.0.0.1"));
+        assert!(is_loopback_host("127.0.0.10"));
+        assert!(is_loopback_host("127.255.255.254"));
+        assert!(is_loopback_host("::1"));
+        assert!(is_loopback_host("api.localhost"));
+    }
+
+    #[test]
+    fn loopback_with_scheme_and_port() {
+        assert!(is_loopback_host("http://localhost"));
+        assert!(is_loopback_host("https://localhost:8080"));
+        assert!(is_loopback_host("http://127.0.0.1:3000"));
+        assert!(is_loopback_host("http://[::1]:8080"));
+        assert!(is_loopback_host("https://api.localhost/v3"));
+    }
+
+    #[test]
+    fn non_loopback_substrings_are_rejected() {
+        assert!(!is_loopback_host("not-localhost.example.com"));
+        assert!(!is_loopback_host("mylocalhost.io"));
+        assert!(!is_loopback_host("localhost.evil.com"));
+        assert!(!is_loopback_host("1127.0.0.1.example.com"));
+        assert!(!is_loopback_host("api.github.com"));
+        assert!(!is_loopback_host("ghe.mycorp.internal"));
     }
 }
