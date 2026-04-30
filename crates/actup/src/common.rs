@@ -661,16 +661,19 @@ mod tests {
 
     #[test]
     fn test_workflow_scanner_relative_path_for_file_input() {
+        let temp = tempfile::tempdir().unwrap();
+        let workflows_dir = temp.path().join(".github/workflows");
+        fs::create_dir_all(&workflows_dir).unwrap();
+        let path = workflows_dir.join("release.yml");
+        fs::write(&path, "name: test\n").unwrap();
+        assert!(path.is_file());
+
         let config = Config::default();
         let registry = provider::Registry::new();
-        let path = Path::new(".github/workflows/release.yml");
-        let scanner = WorkflowScanner::new(path, &config, &registry, OutputFormat::Human);
-        let file = DiscoveredFile::new(path.to_path_buf(), FileKind::Workflow);
+        let scanner = WorkflowScanner::new(&path, &config, &registry, OutputFormat::Human);
+        let file = DiscoveredFile::new(path.clone(), FileKind::Workflow);
 
-        assert_eq!(
-            scanner.relative_path(&file),
-            ".github/workflows/release.yml"
-        );
+        assert_eq!(scanner.relative_path(&file), path.display().to_string());
     }
 
     // EditResult tests

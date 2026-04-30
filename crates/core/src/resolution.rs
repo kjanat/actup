@@ -165,12 +165,11 @@ pub async fn check_action_with_provider(
 
     let repo_id = action_ref.to_repo_id().without_subpath();
 
-    if provider
+    match provider
         .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
         .await
-        .is_ok()
     {
-        return CheckResult::new(
+        Ok(_) => CheckResult::new(
             action_ref.clone(),
             status_for_non_semver(
                 &version::Version::Other {
@@ -180,10 +179,16 @@ pub async fn check_action_with_provider(
                 versions,
                 config.allow_prerelease,
             ),
-        );
+        ),
+        Err(e) if e.is_environment_error() => CheckResult::new(
+            action_ref.clone(),
+            CheckStatus::Unresolvable {
+                reason: e.to_string(),
+                is_environment_error: true,
+            },
+        ),
+        Err(_) => result,
     }
-
-    result
 }
 
 /// Check action against already-fetched versions.
@@ -384,14 +389,26 @@ pub async fn check_action_remote(
     //
     // Trade-off: We can't determine if there's a newer version without fetching
     // all tags, so we optimistically assume up-to-date.
-    let no_versions_but_ref_exists = matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
-        && provider
+    if matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
+    {
+        match provider
             .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
             .await
-            .is_ok();
-
-    if no_versions_but_ref_exists {
-        return Ok(CheckResult::new(action_ref.clone(), CheckStatus::UpToDate));
+        {
+            Ok(_) => {
+                return Ok(CheckResult::new(action_ref.clone(), CheckStatus::UpToDate));
+            }
+            Err(e) if e.is_environment_error() => {
+                return Ok(CheckResult::new(
+                    action_ref.clone(),
+                    CheckStatus::Unresolvable {
+                        reason: e.to_string(),
+                        is_environment_error: true,
+                    },
+                ));
+            }
+            Err(_) => {}
+        }
     }
 
     Ok(result)

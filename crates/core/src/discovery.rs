@@ -151,7 +151,7 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
 
 fn has_yaml_ext(path: &Path) -> bool {
     path.extension()
-        .is_some_and(|ext| ext == "yml" || ext == "yaml")
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("yml") || ext.eq_ignore_ascii_case("yaml"))
 }
 
 fn classify_explicit_file(path: &Path) -> FileKind {
@@ -163,7 +163,7 @@ fn classify_explicit_file(path: &Path) -> FileKind {
 
     if let Some(name) = path.file_name() {
         let name = name.to_string_lossy();
-        if name == "action.yml" || name == "action.yaml" {
+        if name.eq_ignore_ascii_case("action.yml") || name.eq_ignore_ascii_case("action.yaml") {
             return FileKind::CompositeAction;
         }
     }
@@ -189,7 +189,7 @@ pub fn is_actions_file(path: &Path) -> bool {
     // Check if action.yml/action.yaml
     if let Some(name) = path.file_name() {
         let name = name.to_string_lossy();
-        if name == "action.yml" || name == "action.yaml" {
+        if name.eq_ignore_ascii_case("action.yml") || name.eq_ignore_ascii_case("action.yaml") {
             return true;
         }
     }

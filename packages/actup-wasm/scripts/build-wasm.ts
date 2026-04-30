@@ -15,16 +15,19 @@ await $`wasm-pack build ${join(repoRoot, "crates/wasm")} --target web --out-dir 
 
 await $`rm -f package.json .gitignore`.cwd(outDir);
 
-const wasm = Bun.file(join(outDir, "actup_wasm_bg.wasm"));
-if (await wasm.exists()) {
-	const raw = wasm.size;
-	const gz = Bun.gzipSync(await wasm.bytes()).length;
-	console.log(`WASM size: ${raw} bytes raw, ${gz} bytes gzipped`);
-	const MAX_GZ = 512_000;
-	if (gz > MAX_GZ) {
-		console.error(`ERROR: gzipped WASM exceeds ${MAX_GZ} bytes (${gz})`);
-		process.exit(1);
-	}
+const wasmPath = join(outDir, "actup_wasm_bg.wasm");
+const wasm = Bun.file(wasmPath);
+if (!(await wasm.exists())) {
+	console.error(`ERROR: expected WASM artifact missing at ${wasmPath} after wasm-pack build`);
+	process.exit(1);
+}
+const raw = wasm.size;
+const gz = Bun.gzipSync(await wasm.bytes()).length;
+console.log(`WASM size: ${raw} bytes raw, ${gz} bytes gzipped`);
+const MAX_GZ = 512_000;
+if (gz > MAX_GZ) {
+	console.error(`ERROR: gzipped WASM exceeds ${MAX_GZ} bytes (${gz})`);
+	process.exit(1);
 }
 
 console.log(`Done. Output: ${outDir}`);

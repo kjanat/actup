@@ -108,39 +108,54 @@ export function deactivate(): void {}
 async function fixAllInWorkspace(
 	provider: ActupProvider,
 ): Promise<void> {
-	const files = await vscode.workspace.findFiles(
-		"**/.github/workflows/*.{yml,yaml}",
-		"**/node_modules/**",
-	);
+	const [workflowFiles, compositeFiles] = await Promise.all([
+		vscode.workspace.findFiles("**/.github/workflows/*.{yml,yaml}", "**/node_modules/**"),
+		vscode.workspace.findFiles("**/.github/actions/**/action.{yml,yaml}", "**/node_modules/**"),
+	]);
+	const files = [...workflowFiles, ...compositeFiles];
 	if (files.length === 0) {
 		vscode.window.showInformationMessage("actup: No workflow files found.");
 		return;
 	}
 
 	let totalEdits = 0;
+	const failedFiles: { uri: vscode.Uri; message: string }[] = [];
 	for (const fileUri of files) {
-		const doc = await vscode.workspace.openTextDocument(fileUri);
-		const text = doc.getText();
-		if (!text.includes("uses:")) continue;
+		try {
+			const doc = await vscode.workspace.openTextDocument(fileUri);
+			const text = doc.getText();
+			if (!text.includes("uses:")) continue;
 
-		const { checkRefs, planUpdates } = await import("actup-wasm");
-		const results = await checkRefs(text, provider);
-		const edits = planUpdates(text, results);
-		if (edits.length === 0) continue;
+			const { checkRefs, planUpdates } = await import("actup-wasm");
+			const results = await checkRefs(text, provider);
+			const edits = planUpdates(text, results);
+			if (edits.length === 0) continue;
 
-		const wsEdit = new vscode.WorkspaceEdit();
-		for (const edit of edits) {
-			const line = edit.line - 1;
-			const range = new vscode.Range(line, edit.refStart, line, edit.refEnd);
-			wsEdit.replace(fileUri, range, edit.newRef);
+			const wsEdit = new vscode.WorkspaceEdit();
+			for (const edit of edits) {
+				const line = edit.line - 1;
+				const range = new vscode.Range(line, edit.refStart, line, edit.refEnd);
+				wsEdit.replace(fileUri, range, edit.newRef);
+			}
+			await vscode.workspace.applyEdit(wsEdit);
+			totalEdits += edits.length;
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			failedFiles.push({ uri: fileUri, message });
+			outputChannel.error(`actup: failed to process ${fileUri.toString()}: ${message}`);
 		}
-		await vscode.workspace.applyEdit(wsEdit);
-		totalEdits += edits.length;
 	}
 
+	const failureSummary = failedFiles.length > 0
+		? ` (${failedFiles.length} file(s) failed; see actup output)`
+		: "";
 	if (totalEdits > 0) {
 		vscode.window.showInformationMessage(
-			`actup: Updated ${totalEdits} action ref(s) across ${files.length} file(s).`,
+			`actup: Updated ${totalEdits} action ref(s) across ${files.length} file(s)${failureSummary}.`,
+		);
+	} else if (failedFiles.length > 0) {
+		vscode.window.showWarningMessage(
+			`actup: No updates applied${failureSummary}.`,
 		);
 	} else {
 		vscode.window.showInformationMessage("actup: All actions are up to date.");

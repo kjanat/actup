@@ -59,7 +59,14 @@ impl GitHubClient {
             ACCEPT,
             HeaderValue::from_static("application/vnd.github+json"),
         );
-        headers.insert(USER_AGENT, HeaderValue::from_static("actup/0.1"));
+        let user_agent = format!("actup/{}", env!("CARGO_PKG_VERSION"));
+        headers.insert(
+            USER_AGENT,
+            HeaderValue::from_str(&user_agent).map_err(|e| Error::Network {
+                operation: "build user-agent header".to_string(),
+                message: e.to_string(),
+            })?,
+        );
         headers.insert(
             "X-GitHub-Api-Version",
             HeaderValue::from_static("2022-11-28"),

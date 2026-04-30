@@ -20,7 +20,7 @@
 		"isolatedModules": true,
 		"verbatimModuleSyntax": true,
 		"allowImportingTsExtensions": true,
-		"emitDeclarationOnly": true,
+		"rewriteRelativeImportExtensions": true,
 		"types": ["node", "bun"],
 		"composite": true
 	},

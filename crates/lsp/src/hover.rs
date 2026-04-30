@@ -333,10 +333,18 @@ pub async fn compute_hover(
     let repo_id = located.action_ref.to_repo_id().without_subpath();
 
     let versions = resolve_hover_versions(&repo_id, document_versions, ctx).await;
-    let status = compute_hover_status(&located.action_ref, &repo_id, versions.as_ref(), ctx).await;
+    let status = compute_hover_status(
+        &located.action_ref,
+        &repo_id,
+        versions.as_ref().map(Option::as_ref),
+        ctx,
+    )
+    .await;
 
     let latest_version = versions
         .as_ref()
+        .ok()
+        .and_then(|opt| opt.as_ref())
         .and_then(|v| v.latest())
         .map(|info| info.version().to_string());
 
@@ -374,21 +382,26 @@ pub async fn compute_hover(
 /// Prefers the document-level cache populated by the most recent diagnostic
 /// pass (avoids re-fetching on every hover). Falls back to the file cache
 /// + provider if the document cache has no entry for this repo.
+///
+/// Returns:
+/// - `Ok(Some(set))` when versions were obtained (cache hit or fresh fetch).
+/// - `Ok(None)` when no provider is registered for the repo's host.
+/// - `Err(e)` when the provider returned an error (network, auth, rate limit).
 async fn resolve_hover_versions(
     repo_id: &actup_core::ActionRepoId,
     document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
     ctx: &HoverContext<'_>,
-) -> Option<version::Set> {
+) -> Result<Option<version::Set>, actup_core::Error> {
     if let Some(v) = document_versions.and_then(|vs| vs.get(repo_id).cloned()) {
-        return Some(v);
+        return Ok(Some(v));
     }
     match crate::file_cache::fetch_versions_cached(repo_id, ctx.registry, ctx.file_cache).await {
-        Some(Ok(v)) => Some(v),
+        Some(Ok(v)) => Ok(Some(v)),
         Some(Err(e)) => {
             tracing::debug!(error = %e, "failed to fetch versions for hover");
-            None
+            Err(e)
         }
-        None => None,
+        None => Ok(None),
     }
 }
 
@@ -397,18 +410,25 @@ async fn resolve_hover_versions(
 async fn compute_hover_status(
     action_ref: &ActionRef,
     repo_id: &actup_core::ActionRepoId,
-    versions: Option<&version::Set>,
+    versions: Result<Option<&version::Set>, &actup_core::Error>,
     ctx: &HoverContext<'_>,
 ) -> CheckStatus {
-    let env_err = || CheckStatus::Unresolvable {
+    let no_provider = || CheckStatus::Unresolvable {
         reason: "no provider available".into(),
         is_environment_error: true,
     };
-    let Some(v) = versions else {
-        return env_err();
+    let v = match versions {
+        Ok(Some(v)) => v,
+        Ok(None) => return no_provider(),
+        Err(e) => {
+            return CheckStatus::Unresolvable {
+                reason: e.to_string(),
+                is_environment_error: true,
+            };
+        }
     };
     let Some(provider) = ctx.registry.find_for_repo(repo_id) else {
-        return env_err();
+        return no_provider();
     };
     check_action_with_provider(action_ref, v, ctx.config, provider)
         .await

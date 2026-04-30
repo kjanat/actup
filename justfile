@@ -251,7 +251,7 @@ ext-check: zed::clippy vscode::lint vscode::typecheck
 
 # Run full CI checks including extensions
 [group('ci')]
-ci-full: ci ext-check
+ci-full: ci ext-check wasm::build
 
 # Branding
 

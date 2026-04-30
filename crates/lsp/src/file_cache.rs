@@ -263,6 +263,7 @@ impl Cache for FileCache {
 mod tests {
     use super::*;
     use crate::test_utils::{DUMMY_SHA, MockProvider, simple_version_set};
+    use actup_core::Provider;
     use actup_core::version;
     use tempfile::TempDir;
 
@@ -464,6 +465,7 @@ mod tests {
     async fn fetch_versions_cached_uses_provider_host_for_cache_key() {
         let (cache, _temp) = make_test_cache(3600);
         let mock_provider = MockProvider::new("ghe.corp.com");
+        let namespace = mock_provider.cache_namespace().to_string();
         let mut registry = provider::Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(mock_provider));
@@ -474,7 +476,7 @@ mod tests {
             Some("restore".to_string()),
         );
         let cached_versions = simple_version_set("v4.0.0", DUMMY_SHA);
-        let cache_key = repo.without_subpath().cache_key("github", "ghe.corp.com");
+        let cache_key = repo.without_subpath().cache_key(&namespace, "ghe.corp.com");
         let entry = cache::Entry::new(cached_versions.clone());
         cache.set(&cache_key, entry).await.unwrap();
 

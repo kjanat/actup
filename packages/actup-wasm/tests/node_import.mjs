@@ -2,6 +2,7 @@
 //
 // Run after `bun run build`:
 //   node packages/actup-wasm/tests/node_import.mjs
+import assert from "node:assert/strict";
 import file from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -93,9 +94,25 @@ const mockProvider = {
 
 const results = await checkRefs(yaml, mockProvider);
 
-if (!Array.isArray(results)) {
-	throw new Error(`Expected array, got ${typeof results}`);
-}
+assert.ok(Array.isArray(results), `Expected array, got ${typeof results}`);
+assert.equal(results.length, 2, "checkRefs result count (skips local ./)");
+
+const validStatuses = new Set(["UpToDate", "Outdated", "Unresolvable", "Unknown", "RateLimited"]);
+const checkoutResult = results.find((r) => r.action_ref?.repo === "checkout");
+assert.ok(checkoutResult, "checkout result present");
+assert.equal(checkoutResult.action_ref.owner, "actions", "checkout owner");
+assert.ok(
+	validStatuses.has(checkoutResult.status),
+	`checkout status valid: got ${JSON.stringify(checkoutResult.status)}`,
+);
+
+const setupNodeResult = results.find((r) => r.action_ref?.repo === "setup-node");
+assert.ok(setupNodeResult, "setup-node result present");
+assert.equal(setupNodeResult.action_ref.owner, "actions", "setup-node owner");
+assert.ok(
+	validStatuses.has(setupNodeResult.status),
+	`setup-node status valid: got ${JSON.stringify(setupNodeResult.status)}`,
+);
 
 console.log("PASS: checkRefs returned", results.length, "results");
 for (const r of results) {
@@ -104,6 +121,13 @@ for (const r of results) {
 
 // Test 4: planUpdates
 const edits = planUpdates(yaml, results);
+assert.ok(Array.isArray(edits), "edits is array");
+for (const e of edits) {
+	assert.equal(typeof e.line, "number", "edit.line is number");
+	assert.equal(typeof e.original, "string", "edit.original is string");
+	assert.equal(typeof e.newRef, "string", "edit.newRef is string");
+	assert.ok(e.line > 0, "edit.line positive");
+}
 console.log("PASS: planUpdates returned", edits.length, "edits");
 for (const e of edits) {
 	console.log("  line", e.line, ":", e.original, "->", e.newRef);

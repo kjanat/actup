@@ -2,40 +2,22 @@
 	"name": "actup-wasm",
 	"version": "0.1.0",
 	"description": "Parse and check GitHub Actions uses: refs — powered by actup-core compiled to WASM",
-	"keywords": [
-		"github-actions",
-		"wasm",
-		"yaml",
-		"linter",
-		"checker",
-		"updater"
-	],
+	"keywords": ["github-actions", "wasm", "yaml", "linter", "checker", "updater"],
 	"homepage": "https://github.com/kjanat/actup-v2#readme",
-	"bugs": {
-		"url": "https://github.com/kjanat/actup-v2/issues"
-	},
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/kjanat/actup-v2",
-		"directory": "packages/actup-wasm"
-	},
+	"bugs": { "url": "https://github.com/kjanat/actup-v2/issues" },
+	"repository": { "type": "git", "url": "https://github.com/kjanat/actup-v2", "directory": "packages/actup-wasm" },
 	"license": "MIT OR Apache-2.0",
 	"sideEffects": false,
 	"type": "module",
 	"exports": {
-		".": "./src/index.ts",
-		"./provider": "./src/provider.ts",
+		".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+		"./provider": { "types": "./dist/provider.d.ts", "default": "./dist/provider.js" },
 		"./wasm": "./wasm/actup_wasm_bg.wasm",
 		"./*": "./*"
 	},
-	"module": "./src/index.ts",
-	"types": "./src/types.ts",
-	"files": [
-		"wasm/",
-		"src/",
-		"LICENSE-MIT",
-		"LICENSE-APACHE"
-	],
+	"module": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"files": ["dist/", "wasm/", "src/", "LICENSE-MIT", "LICENSE-APACHE"],
 	"scripts": {
 		"bd": "bun run build",
 		"build": "bun build:wasm && bun build:ts",
@@ -48,11 +30,6 @@
 		"test": "node --test tests/node_import.mjs tests/provider.mjs",
 		"typecheck": "tsc --noEmit"
 	},
-	"devDependencies": {
-		"@types/node": "catalog:",
-		"typescript": "catalog:"
-	},
-	"engines": {
-		"node": ">=18"
-	}
+	"devDependencies": { "@types/node": "catalog:", "typescript": "catalog:" },
+	"engines": { "node": ">=18" }
 }

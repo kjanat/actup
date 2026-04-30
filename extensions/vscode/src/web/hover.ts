@@ -30,12 +30,21 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		}
 
 		const results = this.resultCache.get(document.uri.toString());
-		const matchingResult = results?.find(
-			r => r.action_ref.owner === ref.owner && r.action_ref.repo === ref.repo,
-		);
+		const matchingResult = results?.find((r) => {
+			const a = r.action_ref;
+			const aHost = a.host ?? "github.com";
+			const refHost = ref.host ?? "github.com";
+			return aHost === refHost
+				&& a.owner === ref.owner
+				&& a.repo === ref.repo
+				&& a.git_ref === ref.gitRef
+				&& (a.subpath ?? null) === (ref.subpath ?? null);
+		});
 
+		// isTrusted=false: action.yml content is remote and untrusted; trusted Markdown
+		// would let it execute commands or render unsafe links.
 		const md = new vscode.MarkdownString();
-		md.isTrusted = true;
+		md.isTrusted = false;
 
 		// Header
 		md.appendMarkdown(`**${ref.owner}/${ref.repo}**\n\n`);
@@ -81,20 +90,40 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 	}
 }
 
-function parseActionRef(value: string): { owner: string; repo: string; gitRef: string; host: string | null } | undefined {
+function parseActionRef(
+	value: string,
+): { owner: string; repo: string; gitRef: string; host: string | null; subpath: string | null } | undefined {
 	const atIdx = value.lastIndexOf("@");
 	if (atIdx === -1) return undefined;
 
 	const path = value.slice(0, atIdx);
 	const gitRef = value.slice(atIdx + 1);
-	const parts = path.split("/");
+	const parts = path.split("/").filter(p => p !== "");
 
 	if (parts.length < 2) return undefined;
 
+	// Host detection: first segment with `.` is treated as a host (e.g. `github.com`).
+	const first = parts[0] ?? "";
+	let host: string | null = null;
+	let owner: string;
+	let repo: string;
+	let subpathParts: string[];
+	if (first.includes(".") && parts.length >= 3) {
+		host = first;
+		owner = parts[1] ?? "";
+		repo = parts[2] ?? "";
+		subpathParts = parts.slice(3);
+	} else {
+		owner = first;
+		repo = parts[1] ?? "";
+		subpathParts = parts.slice(2);
+	}
+
 	return {
-		owner: parts[0] ?? "",
-		repo: parts[1] ?? "",
+		owner,
+		repo,
 		gitRef,
-		host: null,
+		host,
+		subpath: subpathParts.length > 0 ? subpathParts.join("/") : null,
 	};
 }

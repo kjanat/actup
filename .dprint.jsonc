@@ -14,7 +14,7 @@
 	// Exec plugin for external commands
 	"exec": {
 		"cwd": "${configDir}",
-		"associations": ["**/package.json", "**/*.rs", "**/*.toml", "**/*.sh", "**/*.bash"],
+		"associations": ["**/*.rs", "**/*.toml", "**/*.sh", "**/*.bash"],
 		"commands": [
 			{ "exts": ["rs"], "command": "rustfmt", "cacheKeyFiles": ["rustfmt.toml", "rust-toolchain.toml"] }, // Formats Rust files
 			{ "exts": ["toml"], "command": "bunx tombi format --stdin-filename {{file_path}} -" }, // Formats toml files

@@ -55,18 +55,27 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 			actions.push(action);
 		}
 
-		// Fix-all source action when 2+ outdated refs exist in the file
-		if (outdatedDiags.length >= 2) {
+		// Fix-all uses every outdated diagnostic in the document, not just those
+		// in `context.diagnostics` (which is range-scoped to the cursor).
+		const allOutdated: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
+		for (const diag of vscode.languages.getDiagnostics(document.uri)) {
+			if (diag.source !== "actup") continue;
+			const data = dataMap.get(diagnosticKey(diag));
+			if (data === undefined || data.kind !== "outdated") continue;
+			allOutdated.push({ diagnostic: diag, data });
+		}
+
+		if (allOutdated.length >= 2) {
 			const fixAll = new vscode.CodeAction(
-				`Fix all outdated actions (${outdatedDiags.length} refs)`,
+				`Fix all outdated actions (${allOutdated.length} refs)`,
 				SOURCE_FIX_ALL_ACTUP,
 			);
 			const edit = new vscode.WorkspaceEdit();
-			for (const { diagnostic, data } of outdatedDiags) {
+			for (const { diagnostic, data } of allOutdated) {
 				edit.replace(document.uri, diagnostic.range, data.targetRef);
 			}
 			fixAll.edit = edit;
-			fixAll.diagnostics = outdatedDiags.map(d => d.diagnostic);
+			fixAll.diagnostics = allOutdated.map(d => d.diagnostic);
 			actions.push(fixAll);
 		}
 

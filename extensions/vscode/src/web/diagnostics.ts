@@ -40,17 +40,20 @@ export async function computeDiagnostics(
 		return;
 	}
 
-	const locations = parseUsesRefs(text);
+	// Mutable copy so identical refs map to distinct lines (consumed in occurrence order).
+	const remaining = [...parseUsesRefs(text)];
 	const diagnostics: vscode.Diagnostic[] = [];
 	const dataMap = new Map<string, DiagnosticData>();
 
 	for (const result of results) {
-		const loc = locations.find(
-			l => l.value === formatUsesValue(result.action_ref),
-		);
-		if (loc === undefined) {
+		const expected = formatUsesValue(result.action_ref);
+		const idx = remaining.findIndex(l => l.value === expected);
+		if (idx === -1) {
 			continue;
 		}
+		const loc = remaining[idx];
+		if (loc === undefined) continue;
+		remaining.splice(idx, 1);
 
 		const diag = statusToDiagnostic(result.status, loc, text);
 		if (diag === undefined) {

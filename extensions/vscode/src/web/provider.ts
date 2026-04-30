@@ -15,8 +15,8 @@ export async function createVSCodeGitHubProvider(): Promise<ActupProvider> {
 			silent: true,
 		});
 		token = session?.accessToken;
-	} catch {
-		// No auth available — use unauthenticated rate limits
+	} catch (err) {
+		console.error(`actup: GitHub auth lookup failed: ${err instanceof Error ? err.message : String(err)}`);
 	}
 
 	return createGitHubProvider({ token });

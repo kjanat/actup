@@ -75,7 +75,10 @@ impl GitHubProvider {
             return format!("{api_root}/api/graphql");
         }
 
-        format!("{}/graphql", self.client.api_base().trim_end_matches('/'))
+        format!(
+            "{}/api/graphql",
+            self.client.api_base().trim_end_matches('/')
+        )
     }
 }
 
@@ -465,6 +468,18 @@ mod tests {
         assert_eq!(
             provider.graphql_endpoint(),
             "https://ghe.corp.com/api/graphql"
+        );
+    }
+
+    #[test]
+    fn test_graphql_endpoint_ghe_nonstandard() {
+        let provider =
+            GitHubProvider::with_host("https://custom.corp.com/github", "custom.corp.com", None)
+                .unwrap();
+
+        assert_eq!(
+            provider.graphql_endpoint(),
+            "https://custom.corp.com/github/api/graphql"
         );
     }
 }

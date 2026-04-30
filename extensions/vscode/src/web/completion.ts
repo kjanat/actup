@@ -12,15 +12,15 @@ const POPULAR_ACTIONS: readonly {
 	{ owner: "actions", repo: "setup-node", description: "Set up Node.js environment", defaultRef: "v6" },
 	{ owner: "actions", repo: "setup-python", description: "Set up Python environment", defaultRef: "v6" },
 	{ owner: "actions", repo: "cache", description: "Cache dependencies and build outputs", defaultRef: "v5" },
-	{ owner: "actions", repo: "upload-artifact", description: "Upload build artifacts", defaultRef: "v6" },
-	{ owner: "actions", repo: "download-artifact", description: "Download build artifacts", defaultRef: "v7" },
+	{ owner: "actions", repo: "upload-artifact", description: "Upload build artifacts", defaultRef: "v7" },
+	{ owner: "actions", repo: "download-artifact", description: "Download build artifacts", defaultRef: "v8" },
 	{ owner: "actions", repo: "setup-go", description: "Set up Go environment", defaultRef: "v6" },
 	{ owner: "actions", repo: "setup-java", description: "Set up Java JDK environment", defaultRef: "v5" },
-	{ owner: "actions", repo: "github-script", description: "Run JavaScript in workflow with GitHub API", defaultRef: "v8" },
+	{ owner: "actions", repo: "github-script", description: "Run JavaScript in workflow with GitHub API", defaultRef: "v9" },
 	{ owner: "actions", repo: "setup-dotnet", description: "Set up .NET SDK environment", defaultRef: "v5" },
-	{ owner: "docker", repo: "build-push-action", description: "Build and push Docker images", defaultRef: "v6" },
-	{ owner: "docker", repo: "login-action", description: "Log in to Docker registry", defaultRef: "v3" },
-	{ owner: "docker", repo: "setup-buildx-action", description: "Set up Docker Buildx", defaultRef: "v3" },
+	{ owner: "docker", repo: "build-push-action", description: "Build and push Docker images", defaultRef: "v7" },
+	{ owner: "docker", repo: "login-action", description: "Log in to Docker registry", defaultRef: "v4" },
+	{ owner: "docker", repo: "setup-buildx-action", description: "Set up Docker Buildx", defaultRef: "v4" },
 ];
 
 export class ActupCompletionProvider implements vscode.CompletionItemProvider {
@@ -74,15 +74,13 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 		actionPath: string,
 		versionPrefix: string,
 	): Promise<vscode.CompletionList> {
-		const parts = actionPath.split("/");
-		if (parts.length < 2) return new vscode.CompletionList([], false);
+		const parsed = parseActionPath(actionPath);
+		if (parsed === undefined) return new vscode.CompletionList([], false);
 
-		const owner = parts[0] ?? "";
-		const repo = parts[1] ?? "";
 		const items: vscode.CompletionItem[] = [];
 
 		try {
-			const versions = await this.provider.getVersions("github.com", owner, repo);
+			const versions = await this.provider.getVersions(parsed.host, parsed.owner, parsed.repo);
 			const lower = versionPrefix.toLowerCase();
 
 			for (const tag of versions.semverTags) {
@@ -101,4 +99,22 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 
 		return new vscode.CompletionList(items, false);
 	}
+}
+
+/** Parse `[host/]owner/repo[/subpath]`. Skips local refs (`./...`) and quoted forms. */
+function parseActionPath(path: string): { host: string; owner: string; repo: string } | undefined {
+	let trimmed = path.trim();
+	if (trimmed === "" || trimmed.startsWith("./") || trimmed.startsWith("../")) return undefined;
+	if (trimmed.startsWith("\"") || trimmed.startsWith("'")) {
+		trimmed = trimmed.slice(1);
+	}
+	const parts = trimmed.split("/").filter(p => p !== "");
+	if (parts.length < 2) return undefined;
+
+	// Host detection: first segment contains a `.` (e.g. `github.com`, `ghe.corp.internal`).
+	const first = parts[0] ?? "";
+	if (first.includes(".") && parts.length >= 3) {
+		return { host: first, owner: parts[1] ?? "", repo: parts[2] ?? "" };
+	}
+	return { host: "github.com", owner: first, repo: parts[1] ?? "" };
 }

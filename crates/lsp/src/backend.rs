@@ -439,7 +439,6 @@ impl LanguageServer for LspBackend {
             }),
             offset_encoding: None,
             capabilities: server_capabilities(encoding),
-            ..Default::default()
         })
     }
 

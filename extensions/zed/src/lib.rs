@@ -159,17 +159,20 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         });
     }
 
-    // Deduplicate repos to minimize API calls
-    let mut unique_repos: std::collections::HashMap<String, (String, String)> =
-        std::collections::HashMap::new();
+    // Deduplicate repos to minimize API calls. Key by (host, owner, repo) so the
+    // same `owner/repo` on different hosts (e.g. GitHub.com vs GHE) does not collide.
+    let mut unique_repos: std::collections::HashMap<
+        (String, String, String),
+        (String, String, String),
+    > = std::collections::HashMap::new();
     for (_, _, action_ref) in &all_refs {
-        let key = format!("{}/{}", action_ref.owner(), action_ref.repo());
-        unique_repos.entry(key).or_insert_with(|| {
-            (
-                action_ref.owner().to_string(),
-                action_ref.repo().to_string(),
-            )
-        });
+        let host = action_ref.host().unwrap_or("github.com").to_string();
+        let owner = action_ref.owner().to_string();
+        let repo = action_ref.repo().to_string();
+        let api_base = api_base_for_host(&host);
+        unique_repos
+            .entry((host.clone(), owner.clone(), repo.clone()))
+            .or_insert((owner, repo, api_base));
     }
 
     // Resolve GitHub token from shell environment
@@ -179,20 +182,20 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         .find(|(k, _)| k == "GITHUB_TOKEN")
         .map(|(_, v)| v.as_str());
 
-    let api_base = "https://api.github.com";
-
-    // Fetch versions for each unique repo
-    let mut version_cache: std::collections::HashMap<String, actup_core::version::Set> =
-        std::collections::HashMap::new();
+    // Fetch versions for each unique (host, owner, repo)
+    let mut version_cache: std::collections::HashMap<
+        (String, String, String),
+        actup_core::version::Set,
+    > = std::collections::HashMap::new();
     let mut fetch_errors: Vec<(String, String)> = Vec::new();
 
-    for (key, (owner, repo)) in &unique_repos {
+    for (key, (owner, repo, api_base)) in &unique_repos {
         match provider::fetch_version_set(owner, repo, token, api_base, 3) {
             Ok(versions) => {
                 version_cache.insert(key.clone(), versions);
             }
             Err(e) => {
-                fetch_errors.push((key.clone(), e));
+                fetch_errors.push((format!("{}/{}/{}", key.0, key.1, key.2), e));
             }
         }
     }
@@ -200,7 +203,12 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     // Check each ref
     let mut results: Vec<(String, UsesLocation, CheckResult)> = Vec::new();
     for (path, uses_loc, action_ref) in &all_refs {
-        let key = format!("{}/{}", action_ref.owner(), action_ref.repo());
+        let host = action_ref.host().unwrap_or("github.com").to_string();
+        let key = (
+            host,
+            action_ref.owner().to_string(),
+            action_ref.repo().to_string(),
+        );
         if let Some(versions) = version_cache.get(&key) {
             let result = actup_core::check_action(action_ref, versions, &config);
             results.push((path.clone(), uses_loc.clone(), result));
@@ -219,6 +227,21 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     })
 }
 
+/// Map a host to a GitHub-compatible REST API base URL.
+///
+/// `github.com` → `https://api.github.com`. Any other host is assumed to be
+/// GitHub Enterprise Server with the standard `/api/v3` suffix. Hosts that
+/// require a different scheme (GitLab, Gitea) are not yet supported here —
+/// the slash command will report fetch errors for them, and the user should
+/// run `actup` from the CLI for non-GitHub providers.
+fn api_base_for_host(host: &str) -> String {
+    if host == "github.com" {
+        "https://api.github.com".to_string()
+    } else {
+        format!("https://{host}/api/v3")
+    }
+}
+
 /// Try to read actup config from the worktree.
 fn read_config(worktree: &zed::Worktree) -> Config {
     for name in &["actup.toml", ".actup.toml", ".config/actup.toml"] {
@@ -229,13 +252,17 @@ fn read_config(worktree: &zed::Worktree) -> Config {
     Config::default()
 }
 
-/// Minimal config parsing (only fields used in `check_action`).
-///
-/// Full figment-based config loading is a follow-up; the spike uses defaults.
-fn parse_config(_content: &str) -> Config {
-    // For the spike: always use defaults.
-    // Full TOML config parsing requires figment or manual deserialization.
-    Config::default()
+/// Parse an actup TOML config. On parse error, log a stderr warning and fall
+/// back to `Config::default()` so the slash command still produces useful
+/// output instead of crashing.
+fn parse_config(content: &str) -> Config {
+    match toml::from_str::<Config>(content) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("actup: failed to parse config TOML, using defaults: {e}");
+            Config::default()
+        }
+    }
 }
 
 /// Discover workflow and action files from the worktree.

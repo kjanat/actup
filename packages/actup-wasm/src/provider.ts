@@ -489,13 +489,22 @@ function parseActionYmlMinimal(raw: string): ActionYml {
 	};
 }
 
+const MAX_YAML_INPUT = 1_000_000;
+
+function escapeRegex(s: string): string {
+	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Extract a top-level YAML scalar value by key.
  * Handles both quoted and unquoted values. Returns null if not found.
  */
 function extractYamlScalar(yaml: string, key: string): string | null {
-	// Match `key:` at start of line, optional quotes around value
-	const pattern = new RegExp(`^${key}:\\s*(?:['"]([^'"]*?)['"]|(.+?))\\s*$`, "m");
+	if (yaml.length > MAX_YAML_INPUT) return null;
+	const pattern = new RegExp(
+		`^${escapeRegex(key)}:\\s*(?:['"]([^'"\\r\\n]*)['"]|([^\\r\\n]*))\\s*$`,
+		"m",
+	);
 	const match = pattern.exec(yaml);
 	if (match === null) return null;
 	return match[1] ?? match[2] ?? null;

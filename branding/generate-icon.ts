@@ -38,12 +38,22 @@ export const generateIcon = command("generate-icon")
 				throw new CLIError(`--${name} requires a non-negative integer (got ${value})`, { code: "INVALID_FLAG", exitCode: 1 });
 			}
 		}
+		if (flags.size <= 0) {
+			throw new CLIError(`--size must be greater than 0 (got ${flags.size})`, { code: "INVALID_FLAG", exitCode: 1 });
+		}
+		if (flags.padding >= 100) {
+			throw new CLIError(`--padding must be less than 100 (got ${flags.padding})`, { code: "INVALID_FLAG", exitCode: 1 });
+		}
 
 		const { "bg-color": bgColor, "logo-path": logoPath, "output-path": outputPath } = args;
 		const canvasSize = flags.size;
 		const paddingPct = flags.padding;
 		const cornerRadius = flags.radius;
 		const maxLogoSize = Math.floor((canvasSize * (100 - paddingPct)) / 100);
+
+		if (maxLogoSize <= 0) {
+			throw new CLIError(`computed logo size must be greater than 0 (got ${maxLogoSize})`, { code: "INVALID_FLAG", exitCode: 1 });
+		}
 
 		const [magickBin, convertBin, rsvgBin] = await Promise.all([
 			Bun.which("magick"),

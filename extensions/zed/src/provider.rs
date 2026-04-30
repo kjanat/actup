@@ -83,6 +83,12 @@ fn fetch_all_tags(
 }
 
 /// Parse the JSON array of tag objects from the GitHub tags endpoint.
+///
+/// Note: Zed's `HttpResponse` does not expose the HTTP status code (see
+/// `wit/since_v0.6.0/http-client.wit`), so error responses can only be detected
+/// by the JSON shape. GitHub error responses are objects with a `message`
+/// field rather than arrays — we surface that message directly so the user
+/// gets a useful diagnostic instead of "expected JSON array".
 fn parse_tags_json(json: &str) -> Result<Vec<GitTag>, String> {
     // Minimal JSON parsing — avoid pulling in a full JSON crate dep.
     // GitHub returns: [{"name":"v4.2.2","commit":{"sha":"abc..."},...},...]
@@ -90,9 +96,20 @@ fn parse_tags_json(json: &str) -> Result<Vec<GitTag>, String> {
     let value: serde_json::Value =
         serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
 
-    let arr = value
-        .as_array()
-        .ok_or_else(|| "expected JSON array".to_string())?;
+    let arr = value.as_array().ok_or_else(|| {
+        // Likely an error response like {"message": "Not Found", ...} or
+        // {"message": "API rate limit exceeded", ...}. Surface the message.
+        value
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(
+                || {
+                    let excerpt: String = json.chars().take(120).collect();
+                    format!("expected JSON array of tags, got: {excerpt}")
+                },
+                |msg| format!("GitHub API error: {msg}"),
+            )
+    })?;
 
     let mut tags = Vec::with_capacity(arr.len());
     for item in arr {

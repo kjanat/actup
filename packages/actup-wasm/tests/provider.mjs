@@ -27,7 +27,7 @@ let fetchLog = [];
 function mockFetch(routes) {
 	fetchLog = [];
 	globalThis.fetch = async (url, init) => {
-		fetchLog.push({ url, method: init?.method ?? "GET" });
+		fetchLog.push({ url, method: init?.method ?? "GET", headers: init?.headers ?? {} });
 		for (const route of routes) {
 			if (route.match(url)) {
 				return route.respond(url);
@@ -362,9 +362,10 @@ await test("sends Authorization header with token", async () => {
 	const provider = createGitHubProvider({ token: "ghp_test123" });
 	await provider.getDefaultBranch("github.com", "o", "r");
 
-	// Verify the fetch was called (mock doesn't check headers directly,
-	// but we can verify the provider was created without error)
 	assertEqual(fetchLog.length, 1, "one fetch call");
+	const sent = fetchLog[0].headers;
+	const authValue = sent instanceof Headers ? sent.get("Authorization") : sent.Authorization;
+	assertEqual(authValue, "Bearer ghp_test123", "Authorization header present and correct");
 });
 
 // Test: custom apiBase
@@ -455,23 +456,26 @@ await test("warns on low rate limit remaining but succeeds", async () => {
 	const origWarn = console.warn;
 	console.warn = (...args) => warnings.push(args.join(" "));
 
-	mockFetch([
-		{
-			match: () => true,
-			respond: () =>
-				jsonResponse({ default_branch: "main" }, 200, {
-					"x-ratelimit-remaining": "5",
-				}),
-		},
-	]);
+	try {
+		mockFetch([
+			{
+				match: () => true,
+				respond: () =>
+					jsonResponse({ default_branch: "main" }, 200, {
+						"x-ratelimit-remaining": "5",
+					}),
+			},
+		]);
 
-	const provider = createGitHubProvider();
-	const branch = await provider.getDefaultBranch("github.com", "o", "r");
-	console.warn = origWarn;
+		const provider = createGitHubProvider();
+		const branch = await provider.getDefaultBranch("github.com", "o", "r");
 
-	assertEqual(branch, "main", "still succeeds");
-	assert(warnings.length > 0, "warning emitted");
-	assert(warnings[0].includes("rate limit low"), "warning mentions rate limit");
+		assertEqual(branch, "main", "still succeeds");
+		assert(warnings.length > 0, "warning emitted");
+		assert(warnings[0].includes("rate limit low"), "warning mentions rate limit");
+	} finally {
+		console.warn = origWarn;
+	}
 });
 
 // Test: getVersions gracefully handles default branch failure

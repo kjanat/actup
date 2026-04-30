@@ -68,9 +68,7 @@ let initPromise: Promise<void> | undefined;
  */
 export async function initWasm(wasmSource?: URL | Response | BufferSource): Promise<void> {
 	if (wasm !== undefined) return;
-	if (initPromise !== undefined) return initPromise;
-
-	initPromise = doInit(wasmSource);
+	initPromise = initPromise ?? doInit(wasmSource);
 	await initPromise;
 }
 
@@ -171,14 +169,9 @@ function isNodeLike(): boolean {
 
 /** Load .wasm bytes from disk in Node.js-like runtimes. */
 async function loadWasmNode(): Promise<Uint8Array> {
-	// Use dynamic import for node:fs and node:url to avoid bundler issues.
-	// eslint-disable-next-line @typescript-eslint/no-require-imports
 	const { readFileSync } = await import("node:fs");
 	const { fileURLToPath } = await import("node:url");
 
-	// Resolve relative to this file's location: ../wasm/actup_wasm_bg.wasm
-	// import.meta.url points to dist/index.js at runtime
-	const thisDir = fileURLToPath(new URL(".", import.meta.url));
-	const wasmPath = fileURLToPath(new URL("../wasm/actup_wasm_bg.wasm", `file://${thisDir}`));
+	const wasmPath = fileURLToPath(new URL("../wasm/actup_wasm_bg.wasm", import.meta.url));
 	return new Uint8Array(readFileSync(wasmPath));
 }

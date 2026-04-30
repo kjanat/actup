@@ -17,6 +17,7 @@ export default defineConfig([
 		outDir: "dist/web",
 		format: "es",
 		platform: "browser",
+		target: "es2022",
 		sourcemap: false,
 		clean: true,
 		minify: "dce-only",

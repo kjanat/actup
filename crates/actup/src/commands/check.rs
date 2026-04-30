@@ -273,27 +273,49 @@ async fn resolve_fallback_refs(
             continue;
         };
 
-        if provider
+        match provider
             .resolve_ref_to_sha(&action.repo_id, action.action_ref.ref_str())
             .await
-            .is_ok()
         {
-            tracing::debug!(
-                owner = %action.repo_id.owner(),
-                repo = %action.repo_id.repo(),
-                ref_str = %action.action_ref.ref_str(),
-                provider = %action.provider,
-                "fallback: ref exists but version comparison unavailable (likely beyond max_tags)"
-            );
-            finding = Finding::new(
-                action.file,
-                action.line,
-                action.action_ref,
-                FindingStatus::Unknown {
-                    reason: "ref exists but version comparison unavailable".to_string(),
-                },
-                action.provider,
-            );
+            Ok(_) => {
+                tracing::debug!(
+                    owner = %action.repo_id.owner(),
+                    repo = %action.repo_id.repo(),
+                    ref_str = %action.action_ref.ref_str(),
+                    provider = %action.provider,
+                    "fallback: ref exists but version comparison unavailable (likely beyond max_tags)"
+                );
+                finding = Finding::new(
+                    action.file,
+                    action.line,
+                    action.action_ref,
+                    FindingStatus::Unknown {
+                        reason: "ref exists but version comparison unavailable".to_string(),
+                    },
+                    action.provider,
+                );
+            }
+            Err(e) if e.is_environment_error() => {
+                tracing::debug!(
+                    owner = %action.repo_id.owner(),
+                    repo = %action.repo_id.repo(),
+                    ref_str = %action.action_ref.ref_str(),
+                    provider = %action.provider,
+                    error = %e,
+                    "fallback: environment error during ref resolution"
+                );
+                finding = Finding::new(
+                    action.file,
+                    action.line,
+                    action.action_ref,
+                    FindingStatus::Unresolvable {
+                        reason: e.to_string(),
+                        is_environment_error: true,
+                    },
+                    action.provider,
+                );
+            }
+            Err(_) => {}
         }
         findings.push(finding);
     }
