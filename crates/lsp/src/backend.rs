@@ -377,6 +377,7 @@ impl LanguageServer for LspBackend {
                 name: "actup-lsp".to_owned(),
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
+            offset_encoding: None,
             capabilities: ServerCapabilities {
                 position_encoding: Some(encoding.to_lsp()),
                 text_document_sync: Some(TextDocumentSyncCapability::Options(
@@ -1250,7 +1251,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/file.yml").unwrap();
 
         // Simulate what schedule_diagnostics does: insert an abort handle.
-        let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
         in_flight.insert(uri.clone(), handle.abort_handle());
 
         assert!(in_flight.contains_key(&uri));
@@ -1268,7 +1269,7 @@ mod tests {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
 
         // Spawn a long-running task (simulating slow version check).
-        let task1 = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        let task1 = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
         let handle1 = task1.abort_handle();
         in_flight.insert(uri.clone(), handle1);
 
@@ -1276,7 +1277,7 @@ mod tests {
         if let Some((_, prev)) = in_flight.remove(&uri) {
             prev.abort();
         }
-        let task2 = tokio::spawn(async { tokio::time::sleep(Duration::from_secs(60)).await });
+        let task2 = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
         in_flight.insert(uri.clone(), task2.abort_handle());
 
         // First task should be cancelled.

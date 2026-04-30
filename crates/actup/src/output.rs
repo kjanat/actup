@@ -1210,10 +1210,8 @@ mod tests {
                 ..
             } => {
                 let version_str = latest.version().to_string();
-                let should_show_suffix = exact_version
-                    .as_ref()
-                    .filter(|ev| *ev != &version_str)
-                    .is_some();
+                let should_show_suffix =
+                    exact_version.as_ref().is_some_and(|ev| ev != &version_str);
                 assert!(
                     !should_show_suffix,
                     "suffix should be hidden when exact_version equals latest"

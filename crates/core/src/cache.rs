@@ -42,8 +42,7 @@ impl Entry {
     pub fn is_expired(&self, ttl: Duration) -> bool {
         self.stored_at
             .elapsed()
-            .map(|elapsed| elapsed > ttl)
-            .unwrap_or(true)
+            .map_or(true, |elapsed| elapsed > ttl)
     }
 
     /// Get the age of this entry
@@ -201,7 +200,7 @@ mod tests {
         let entry = Entry::new(version::Set::default());
 
         // Should not be expired immediately with 1 hour TTL
-        assert!(!entry.is_expired(Duration::from_secs(3600)));
+        assert!(!entry.is_expired(Duration::from_hours(1)));
 
         // Should be expired with 0 TTL
         assert!(entry.is_expired(Duration::ZERO));

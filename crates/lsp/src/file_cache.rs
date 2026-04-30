@@ -424,7 +424,7 @@ mod tests {
     async fn set_creates_directory_if_missing() {
         let temp = TempDir::new().unwrap();
         let cache_path = temp.path().join("nested").join("dirs");
-        let cache = FileCache::with_path(cache_path.clone(), Duration::from_secs(3600));
+        let cache = FileCache::with_path(cache_path.clone(), Duration::from_hours(1));
 
         let entry = cache::Entry::new(version::Set::default());
         cache.set("test_key", entry).await.unwrap();

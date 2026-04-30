@@ -323,12 +323,12 @@ mod tests {
     fn test_format_duration() {
         assert_eq!(format_duration(Duration::from_secs(30)), "30 seconds");
         assert_eq!(format_duration(Duration::from_secs(1)), "1 second");
-        assert_eq!(format_duration(Duration::from_secs(60)), "1 minute");
-        assert_eq!(format_duration(Duration::from_secs(120)), "2 minutes");
-        assert_eq!(format_duration(Duration::from_secs(3600)), "1 hour");
-        assert_eq!(format_duration(Duration::from_secs(7200)), "2 hours");
-        assert_eq!(format_duration(Duration::from_secs(86_400)), "1 day");
-        assert_eq!(format_duration(Duration::from_secs(172_800)), "2 days");
+        assert_eq!(format_duration(Duration::from_mins(1)), "1 minute");
+        assert_eq!(format_duration(Duration::from_mins(2)), "2 minutes");
+        assert_eq!(format_duration(Duration::from_hours(1)), "1 hour");
+        assert_eq!(format_duration(Duration::from_hours(2)), "2 hours");
+        assert_eq!(format_duration(Duration::from_hours(24)), "1 day");
+        assert_eq!(format_duration(Duration::from_hours(48)), "2 days");
     }
 
     #[test]
