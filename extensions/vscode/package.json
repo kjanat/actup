@@ -67,7 +67,7 @@
           "default": [],
           "markdownDescription": "Extra arguments passed to `actup-lsp`."
         },
-        "actup.trace.server": {
+        "actup-lsp.trace.server": {
           "type": "string",
           "enum": [
             "off",
