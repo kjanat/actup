@@ -64,7 +64,7 @@ Absolute path to the `actup-lsp` binary. If unset, the extension searches `PATH`
 
 Extra arguments passed to `actup-lsp`. Default: `[]`.
 
-### `actup.trace.server`
+### `actup-lsp.trace.server`
 
 Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`. Default: `"off"`. Output goes to the "actup (trace)" output channel.
 

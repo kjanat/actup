@@ -437,6 +437,7 @@ impl LanguageServer for LspBackend {
                 name: "actup-lsp".to_owned(),
                 version: Some(env!("CARGO_PKG_VERSION").to_owned()),
             }),
+            offset_encoding: None,
             capabilities: server_capabilities(encoding),
             ..Default::default()
         })

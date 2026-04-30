@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://www.schemastore.org/codecov.json
+# Coverage configuration. Reference: https://docs.codecov.com/docs/codecovyml-reference
+---
+coverage:
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+# Files excluded from both project and patch coverage.
+# - Binary entrypoints (`fn main`) are exercised by integration tests, not unit tests.
+# - `crates/mcp` is a stub crate (per `CLAUDE.md`); no implementation to cover yet.
+# - `extensions/**` are separate workspaces (Zed WASM, VS Code TS) tested out-of-band.
+ignore:
+  - "**/main.rs"
+  - "crates/mcp/**"
+  - "extensions/**"
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false

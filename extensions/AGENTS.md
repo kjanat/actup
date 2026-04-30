@@ -23,7 +23,8 @@ Two editor extensions that wrap `actup-lsp`. Both are **outside the Cargo worksp
 - **Separate `[workspace]`** with its own `Cargo.toml` + `Cargo.lock` (not a workspace member)
 - Compiles to `cdylib` WASM via `zed::register_extension!(ActupExtension)`
 - Provides `/actions:update` slash command + LSP integration (locates `actup-lsp` in PATH)
-- Includes **vendored `grammars/yaml/`** directory (full tree-sitter-yaml repo) for GitHub Actions YAML highlighting
+- Tree-sitter `yaml` grammar fetched at install time via `extension.toml` (`[grammars.yaml]` `repository` + `rev`); `grammars/` is
+  git-ignored
 - Custom tree-sitter queries in `languages/github_actions/` (highlights, injections, outline)
 - Entry: `src/lib.rs` (single file)
 
