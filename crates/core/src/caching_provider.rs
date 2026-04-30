@@ -71,7 +71,13 @@ impl<P: Provider> CachingProvider<P> {
             branch_flights: Mutex::new(HashMap::new()),
         }
     }
+}
 
+// Diagnostic methods need a real `Sync` bound: they hold `&self` across
+// `RwLock::{read,write}().await`, which makes the future `Send` only if
+// `P: Sync`. The `Provider` trait alone gives `MaybeSync`, which is
+// unconditional on `wasm32` and would trip `clippy::future-not-send`.
+impl<P: Provider + Sync> CachingProvider<P> {
     /// Clear all cached data.
     pub async fn clear_cache(&self) {
         self.version_cache.write().await.clear();
