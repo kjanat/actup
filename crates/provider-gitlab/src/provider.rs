@@ -205,17 +205,16 @@ impl Provider for GitLabProvider {
                         }
                     }
                     // Only continue searching on NotFound; propagate auth/rate-limit/network errors
-                    Err(actup_core::Error::NotFound { .. }) => {
-                        if filename == action_path.as_str() {
-                            debug!(
-                                owner = %owner,
-                                repo = %repo_name,
-                                ref_name = %ref_name,
-                                path = %filename,
-                                "action.yml not found, trying action.yaml"
-                            );
-                        }
+                    Err(actup_core::Error::NotFound { .. }) if filename == action_path.as_str() => {
+                        debug!(
+                            owner = %owner,
+                            repo = %repo_name,
+                            ref_name = %ref_name,
+                            path = %filename,
+                            "action.yml not found, trying action.yaml"
+                        );
                     }
+                    Err(actup_core::Error::NotFound { .. }) => {}
                     Err(e) => return Err(e),
                     _ => {}
                 }

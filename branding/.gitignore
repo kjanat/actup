@@ -1,0 +1,30 @@
+# Ignore all media files by default
+*.png
+*.jpg
+*.jpeg
+*.ico
+*.webp
+*.bmp
+*.gif
+*.psd
+*.ai
+*.sketch
+*.xd
+*.pdf
+*.eps
+
+# Ignore compressed files and backups
+*.zip
+*.rar
+*.7z
+*.tar.gz
+*.bak
+*.tmp
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Exclude specific files
+!*.sh
+!*.svg

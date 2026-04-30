@@ -36,10 +36,14 @@ crates/
   actup/              # actup (binary)   — CLI: check, update, pin, cache commands
   lsp/                # actup-lsp        — LSP server: diagnostics, code actions, hover, completion
   mcp/                # actup-mcp        — MCP server (stub, not yet implemented)
+extensions/
+  vscode/             # VSCode extension — TypeScript, bun-based, wraps actup-lsp
+  zed/                # Zed extension   — Rust WASM cdylib, slash command, tree-sitter grammar (separate workspace)
 schemas/              # JSON Schema for config
 docs/                 # Design notes, contributor docs
 specs/                # Implementation specs / RFCs
 examples/             # Example config files
+branding/             # Logo, banner, icon SVGs + PNG generation
 ```
 
 **Core is host-agnostic**, providers are host-specific. `actup-providers` (plural) is a shared utility layer between core and individual

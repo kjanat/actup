@@ -1,0 +1,27 @@
+#:schema /home/kjanat/projects/zed-editor/crates/extension_api/schemas/extension.schema.json
+
+name           = "actup — Actions Updater"
+id             = "actup"
+schema_version = 1
+version        = "0.1.0"
+description    = "Keep GitHub Actions uses: refs up-to-date — diagnostics, code actions, hover, completion"
+authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
+repository     = "https://github.com/kjanat/actup-v2"
+
+[language_servers.actup-lsp]
+languages = ["YAML", "GitHub Actions"]
+
+[[capabilities]]
+kind    = "process:exec"
+command = "actup-lsp"
+args    = []
+
+[grammars.yaml]
+repository = "https://github.com/zed-industries/tree-sitter-yaml"
+rev        = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+
+# [context_servers.actup-mcp]
+
+[slash_commands."actions:update"]
+description       = "Update GitHub Actions uses: refs to the latest version"
+requires_argument = false

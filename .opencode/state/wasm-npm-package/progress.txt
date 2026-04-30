@@ -1,0 +1,27 @@
+# Progress Log
+
+PRD: wasm-npm-package
+Spec: specs/wasm-npm-package.md
+Started: 2026-02-20
+
+## Codebase Patterns
+- Provider trait in `crates/core/src/provider.rs` — `Pin<Box<dyn Future>>` (manual async-trait)
+- All providers use `reqwest` + `rustls`, retry via `tokio::time::sleep`
+- `CachingProvider` wraps `Provider` with `tokio::sync::RwLock` — only tokio dep in core
+- `actup-providers` (shared) is already WASM-compatible (pure computation)
+- Zed extension is separate workspace (wasip2 cdylib conflicts with root workspace)
+- SystemTime::now() in 3 places: cache.rs:34, version.rs:389, graphql.rs:200
+- serde `rc` feature already enabled — Arc<T> serializes transparently
+- version::Set already derives Serialize/Deserialize
+
+## Architecture Decisions
+- MaybeSend trait alias (not feature flags, not separate trait)
+- Clock trait injection (not platform crates)
+- Eliminate FS from WASM surface (host provides content)
+- Skip WASM LSP — VS Code web calls WASM directly (Biome/Ruff pattern)
+- actup-wasm as workspace member (not separate like Zed)
+- npm: unscoped `actup-wasm` (not @actup/wasm)
+- wasm-opt -O2 stripped, .js.map shipped, no DWARF
+
+---
+<!-- Task logs below - APPEND ONLY -->

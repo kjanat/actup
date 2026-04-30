@@ -446,7 +446,7 @@ mod tests {
 
         let err = Error::RateLimited {
             provider: "github".into(),
-            retry_after: Some(std::time::Duration::from_secs(60)),
+            retry_after: Some(std::time::Duration::from_mins(1)),
         };
         assert!(err.to_string().contains("rate limited by github"));
         assert!(err.to_string().contains("60"));

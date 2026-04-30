@@ -4,6 +4,9 @@
 set unstable := true
 set shell := ["bash", "-cu"]
 
+mod zed 'extensions/zed/justfile'
+mod vscode 'extensions/vscode/justfile'
+
 alias b := build
 alias t := test
 alias r := run
@@ -19,10 +22,24 @@ default:
 
 # Install
 
-# Install binary to ~/.cargo/bin
+# Install all binaries to ~/.cargo/bin
 [group('install')]
-install binary="actup":
-    cargo install --bin={{ binary }} --path crates/{{ binary }}
+install: install-actup install-actup-lsp install-actup-mcp
+
+# Install actup CLI
+[group('install')]
+install-actup:
+    cargo install --bin=actup --path crates/actup
+
+# Install actup-lsp language server
+[group('install')]
+install-actup-lsp:
+    cargo install --bin=actup-lsp --path crates/lsp
+
+# Install actup-mcp server (stub)
+[group('install')]
+install-actup-mcp:
+    -cargo install --bin=actup-mcp --path crates/mcp
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]
@@ -210,3 +227,13 @@ outdated:
 [group('deps')]
 loc:
     @tokei crates/
+
+# Extensions
+
+# Check all editor extensions
+[group('extensions')]
+ext-check: zed::clippy vscode::lint vscode::typecheck
+
+# Run full CI checks including extensions
+[group('ci')]
+ci-full: ci ext-check

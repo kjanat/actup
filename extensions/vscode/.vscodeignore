@@ -1,0 +1,10 @@
+src/**
+node_modules/**
+tsconfig.json
+eslint.config.mjs
+.gitignore
+bun.lock
+*.vsix
+**/*.ts
+**/*.map
+!out/**

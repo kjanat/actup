@@ -227,7 +227,7 @@ mod tests {
     fn classify_rate_limit() {
         let err = CoreError::RateLimited {
             provider: "github".into(),
-            retry_after: Some(std::time::Duration::from_secs(60)),
+            retry_after: Some(std::time::Duration::from_mins(1)),
         };
         assert_eq!(
             ErrorCategory::from_core_error(&err),

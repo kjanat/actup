@@ -1,0 +1,27 @@
+# VSCode extension recipes
+
+set shell := ["bash", "-cu"]
+
+# Run ESLint
+lint:
+    bun run lint
+
+# Run TypeScript type checking
+typecheck:
+    bun run typecheck
+
+# Compile TypeScript
+build: lint typecheck
+    bun run compile
+
+# Package VSIX
+package: build
+    bun run package
+
+# Install dependencies
+install:
+    bun install
+
+# Clean build output
+clean:
+    rm -rf out *.vsix

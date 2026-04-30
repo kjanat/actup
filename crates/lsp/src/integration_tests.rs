@@ -357,7 +357,7 @@ async fn initialize_returns_capabilities() {
     let exec = caps.execute_command_provider.unwrap();
     assert!(
         exec.commands
-            .contains(&"actup.fixAllInWorkspace".to_owned())
+            .contains(&"actup-lsp/fixAllInWorkspace".to_owned())
     );
 
     harness.shutdown().await;
@@ -801,7 +801,7 @@ async fn execute_command_fix_all_returns_response() {
     let resp = harness
         .request(execute_command_request(
             30,
-            "actup.fixAllInWorkspace",
+            "actup-lsp/fixAllInWorkspace",
             vec![],
         ))
         .await;
@@ -919,7 +919,7 @@ jobs:
         },
     ];
     // Apply in reverse to avoid offset shifts.
-    edits.sort_by(|a, b| b.range.start.line.cmp(&a.range.start.line));
+    edits.sort_by_key(|e| std::cmp::Reverse(e.range.start.line));
     let mut result = original.to_owned();
     for edit in &edits {
         result = apply_text_edit(&result, edit);

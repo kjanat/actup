@@ -15,14 +15,16 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 
 ## Commands
 
-| Command  | File                 | Notes                    |
-| -------- | -------------------- | ------------------------ |
-| `check`  | `commands/check.rs`  | Largest file (902 lines) |
-| `update` | `commands/update.rs` | Alias: `fix`             |
-| `pin`    | `commands/pin.rs`    | Force SHA pinning        |
-| `cache`  | `commands/cache.rs`  | `info`, `clear`, `path`  |
-| `config` | `commands/config.rs` | Show resolved config     |
-| `schema` | `commands/schema.rs` | Output JSON schema       |
+| Command       | File                 | Notes                                           |
+| ------------- | -------------------- | ----------------------------------------------- |
+| `check`       | `commands/check.rs`  | Largest file (902 lines)                        |
+| `update`      | `commands/update.rs` | Alias: `fix`                                    |
+| `pin`         | `commands/pin.rs`    | Force SHA pinning                               |
+| `latest`      | `commands/latest.rs` | Quick lookup: positional arg, no subcommand     |
+| `cache`       | `commands/cache.rs`  | `info`, `clear`, `path`                         |
+| `config`      | `commands/config.rs` | Show resolved config                            |
+| `schema`      | `commands/schema.rs` | Output JSON schema                              |
+| `completions` | `main.rs` (inline)   | Shell completion generation, handled before CLI |
 
 ## Where to Look
 

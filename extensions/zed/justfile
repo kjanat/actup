@@ -1,0 +1,24 @@
+# Zed extension recipes
+
+set shell := ["bash", "-cu"]
+
+target := "wasm32-wasip2"
+
+_ensure-target:
+    @rustup target list --installed | grep -q {{ target }} || rustup target add {{ target }}
+
+# Check compilation
+check: _ensure-target
+    cargo check --target {{ target }}
+
+# Run clippy
+clippy: _ensure-target
+    cargo clippy --target {{ target }} -- -D warnings
+
+# Build extension WASM
+build: _ensure-target
+    cargo build --target {{ target }} --release
+
+# Clean build artifacts
+clean:
+    cargo clean

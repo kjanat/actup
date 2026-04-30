@@ -1,0 +1,132 @@
+{
+  "name": "actup-vscode",
+  "displayName": "actup — Actions Updater",
+  "version": "0.1.0",
+  "description": "Keep GitHub Actions uses: refs up-to-date — diagnostics, code actions, hover, completion",
+  "categories": [
+    "Linters"
+  ],
+  "keywords": [
+    "github-actions",
+    "actions",
+    "ci",
+    "yaml",
+    "lsp",
+    "outdated",
+    "pin",
+    "sha"
+  ],
+  "homepage": "https://github.com/kjanat/actup-v2/tree/master/extensions/vscode#readme",
+  "bugs": {
+    "url": "https://github.com/kjanat/actup-v2/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kjanat/actup-v2",
+    "directory": "extensions/vscode"
+  },
+  "license": "SEE LICENSE IN LICENSE",
+  "publisher": "kjanat",
+  "main": "./out/extension.js",
+  "scripts": {
+    "compile": "tsc -p ./",
+    "generate:icon": "bash ../../branding/generate_icon.sh -p 0 'none' ../../branding/icon.svg icon.png",
+    "lint": "eslint .",
+    "package": "vsce package",
+    "typecheck": "tsc --noEmit",
+    "vscode:prepublish": "bun run generate:icon && bun run lint && bun run typecheck && bun run compile",
+    "watch": "tsc -watch -p ./"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "actup.fixAllInWorkspace",
+        "title": "actup: Fix All in Workspace"
+      },
+      {
+        "command": "actup.restartServer",
+        "title": "actup: Restart Language Server"
+      }
+    ],
+    "configuration": {
+      "title": "actup",
+      "properties": {
+        "actup.server.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "markdownDescription": "Absolute path to the `actup-lsp` binary. If unset, searches `PATH`."
+        },
+        "actup.server.extraArgs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Extra arguments passed to `actup-lsp`."
+        },
+        "actup-lsp.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace communication between VS Code and the actup language server."
+        }
+      }
+    }
+  },
+  "activationEvents": [
+    "onLanguage:github-actions-workflow",
+    "workspaceContains:**/action.yml",
+    "workspaceContains:**/action.yaml",
+    "workspaceContains:**/.*/workflows/**/*.yml",
+    "workspaceContains:**/.*/workflows/**/*.yaml"
+  ],
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@stylistic/eslint-plugin": "^5.9.0",
+    "@types/node": ">=24,<25",
+    "@types/vscode": "^1.109.0",
+    "@vscode/vsce": "^3.7.1",
+    "eslint": "^10.0.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.56.0"
+  },
+  "packageManager": "bun@1.3.9",
+  "engines": {
+    "vscode": "^1.109.0"
+  },
+  "icon": "icon.png",
+  "galleryBanner": {
+    "color": "#0d1117",
+    "theme": "dark"
+  },
+  "preview": true,
+  "markdown": "github",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "Read-only diagnostics work; update/fix commands are disabled.",
+      "restrictedConfigurations": [
+        "actup.server.path",
+        "actup.server.extraArgs"
+      ]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Requires filesystem access to read workflow files. WASM support planned."
+    }
+  },
+  "extensionKind": [
+    "workspace"
+  ],
+  "pricing": "Free"
+}

@@ -7,7 +7,7 @@
 	"prettier": { "allowed": false },
 	"wrap_guides": [140],
 	"languages": { "Rust": { "wrap_guides": [100] } },
-	"file_types": {},
+	"file_types": { "GitHub Actions": ["**/.github/workflows/*.yml", "**/.github/workflows/*.yaml"] },
 	"lsp": {
 		"rust-analyzer": {
 			"initialization_options": {
@@ -16,6 +16,10 @@
 				"check": { "workspace": true },
 				"completion": { "snippets": { "custom": {} } }
 			}
+		},
+		"actup-lsp": {
+			// or set "binary": { "path": "target/debug/actup-lsp" }
+			"binary": { "path": "cargo", "arguments": ["run", "--bin=actup-lsp", "--manifest-path=crates/lsp/Cargo.toml"] }
 		}
 	}
 }

@@ -134,11 +134,31 @@ jobs:
           fail_ci_if_error: true
           token: ${{ env.CODECOV_TOKEN }}
 
+  check-extensions:
+    name: Extensions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-wasip2
+          components: clippy
+      - uses: oven-sh/setup-bun@v2
+      - name: Zed — clippy
+        working-directory: extensions/zed
+        run: cargo clippy --target wasm32-wasip2 -- -D warnings
+      - name: VSCode — install
+        working-directory: extensions/vscode
+        run: bun install --frozen-lockfile
+      - name: VSCode — lint + typecheck
+        working-directory: extensions/vscode
+        run: bun run lint && bun run typecheck
+
   # Final status check for branch protection
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, test-platforms, doc, deny, coverage]
+    needs: [fmt, clippy, test, test-platforms, doc, deny, coverage, check-extensions]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
@@ -150,7 +170,8 @@ jobs:
              [[ "${{ needs.test-platforms.result }}" == "failure" ]] || \
              [[ "${{ needs.doc.result }}" != "success" ]] || \
              [[ "${{ needs.deny.result }}" != "success" ]] || \
-             [[ "${{ needs.coverage.result }}" != "success" ]]; then
+             [[ "${{ needs.coverage.result }}" != "success" ]] || \
+             [[ "${{ needs.check-extensions.result }}" == "failure" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi
