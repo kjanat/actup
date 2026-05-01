@@ -521,6 +521,57 @@ await test("perPage option clamped to valid range", async () => {
 	assert(fetchLog[0].url.includes("per_page=10"), "per_page=10 in URL");
 });
 
+// Test: multi-host derivation when apiBase is not configured
+await test("derives apiBase from host when apiBase not configured", async () => {
+	mockFetch([
+		{
+			match: (url) => url.startsWith("https://api.github.com/repos/o/r"),
+			respond: () => jsonResponse({ default_branch: "main" }),
+		},
+		{
+			match: (url) => url.startsWith("https://ghe.example.com/api/v3/repos/o/r"),
+			respond: () => jsonResponse({ default_branch: "develop" }),
+		},
+	]);
+
+	const provider = createGitHubProvider();
+	// Same provider, two different hosts → two different backends.
+	const ghBranch = await provider.getDefaultBranch("github.com", "o", "r");
+	assertEqual(ghBranch, "main", "github.com routes to api.github.com");
+
+	const gheBranch = await provider.getDefaultBranch("ghe.example.com", "o", "r");
+	assertEqual(gheBranch, "develop", "GHE host routes to https://{host}/api/v3");
+});
+
+// Test: configured apiBase wins over per-call host (single-host mode)
+await test("configured apiBase overrides host argument", async () => {
+	mockFetch([
+		{
+			match: (url) => url.startsWith("https://my-ghe.corp/api/v3/repos/o/r"),
+			respond: () => jsonResponse({ default_branch: "main" }),
+		},
+	]);
+
+	const provider = createGitHubProvider({ apiBase: "https://my-ghe.corp/api/v3" });
+	// host says github.com but configured base wins.
+	const branch = await provider.getDefaultBranch("github.com", "o", "r");
+	assertEqual(branch, "main", "configured apiBase used regardless of host");
+});
+
+// Test: empty host falls back to api.github.com
+await test("empty host falls back to api.github.com", async () => {
+	mockFetch([
+		{
+			match: (url) => url.startsWith("https://api.github.com/repos/o/r"),
+			respond: () => jsonResponse({ default_branch: "main" }),
+		},
+	]);
+
+	const provider = createGitHubProvider();
+	const branch = await provider.getDefaultBranch("", "o", "r");
+	assertEqual(branch, "main", "empty host treated as github.com");
+});
+
 // Test: trailing slash in apiBase is handled
 await test("apiBase trailing slash is stripped", async () => {
 	mockFetch([

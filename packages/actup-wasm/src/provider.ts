@@ -18,8 +18,15 @@ export interface GitHubProviderOptions {
 	 */
 	readonly token?: string | undefined;
 	/**
-	 * API base URL. Defaults to `https://api.github.com`.
-	 * For GitHub Enterprise, use `https://{host}/api/v3`.
+	 * API base URL override. When set, this base is used for all requests
+	 * regardless of the per-call `host` argument — useful for single-host
+	 * setups (e.g., a single GitHub Enterprise instance).
+	 *
+	 * When omitted, the base is derived from each call's `host`:
+	 * `github.com` → `https://api.github.com`; any other host →
+	 * `https://{host}/api/v3` (the GHE convention). This enables
+	 * mixed-host workflows that reference both `github.com` and a
+	 * private GHE.
 	 */
 	readonly apiBase?: string | undefined;
 	/**
@@ -64,16 +71,25 @@ export class GitHubProviderError extends Error {
  * ```
  */
 export function createGitHubProvider(options?: GitHubProviderOptions): ActupProvider {
-	const apiBase = normalizeBase(options?.apiBase ?? "https://api.github.com");
+	const configuredApiBase = options?.apiBase !== undefined ? normalizeBase(options.apiBase) : undefined;
 	const perPage = clamp(options?.perPage ?? 100, 1, 100);
 	const headers = buildHeaders(options?.token);
 
+	const resolveApiBase = (host: string): string => {
+		// Explicit user config wins for all hosts (single-host mode).
+		if (configuredApiBase !== undefined) return configuredApiBase;
+		// Empty or `github.com` → public REST endpoint.
+		if (host === "" || host === "github.com") return "https://api.github.com";
+		// Anything else: GHE convention.
+		return `https://${host}/api/v3`;
+	};
+
 	return {
-		getVersions: (_host, owner, repo) => getVersions(apiBase, headers, perPage, owner, repo),
-		resolveRefToSha: (_host, owner, repo, ref) => resolveRefToSha(apiBase, headers, owner, repo, ref),
-		getDefaultBranch: (_host, owner, repo) => getDefaultBranch(apiBase, headers, owner, repo),
-		getReadme: (_host, owner, repo, ref) => getReadme(apiBase, headers, owner, repo, ref ?? undefined),
-		getActionYml: (_host, owner, repo, ref) => getActionYml(apiBase, headers, owner, repo, ref),
+		getVersions: (host, owner, repo) => getVersions(resolveApiBase(host), headers, perPage, owner, repo),
+		resolveRefToSha: (host, owner, repo, ref) => resolveRefToSha(resolveApiBase(host), headers, owner, repo, ref),
+		getDefaultBranch: (host, owner, repo) => getDefaultBranch(resolveApiBase(host), headers, owner, repo),
+		getReadme: (host, owner, repo, ref) => getReadme(resolveApiBase(host), headers, owner, repo, ref ?? undefined),
+		getActionYml: (host, owner, repo, ref) => getActionYml(resolveApiBase(host), headers, owner, repo, ref),
 	};
 }
 
