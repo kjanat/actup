@@ -1,12 +1,12 @@
 #!/usr/bin/env bun
 
 /**
- * generate_icon - rasterize an SVG logo onto a colored canvas with optional rounded corners.
+ * generate-icon - rasterize an SVG logo onto a colored canvas with optional rounded corners.
  *
  * Bun:
- *   bun branding/generate_icon.ts "#0d1117" branding/icon.svg branding/icon-128.png
- *   bun branding/generate_icon.ts -s 256 -p 15 "#0d1117" icon.svg icon-256.png
- *   bun branding/generate_icon.ts -r 20 none icon.svg icon-rounded.png
+ *   bun branding/generate-icon.ts "#0d1117" branding/icon.svg branding/icon-128.png
+ *   bun branding/generate-icon.ts -s 256 -p 15 "#0d1117" icon.svg icon-256.png
+ *   bun branding/generate-icon.ts -r 20 none icon.svg icon-rounded.png
  */
 /** biome-ignore-all assist/source/organizeImports: sorting with dprint */
 
@@ -81,7 +81,15 @@ export const generateIcon = command("generate-icon")
 		if (!(await Bun.file(logoPath).exists())) {
 			throw new CLIError(`file not found: ${logoPath}`, { code: "NOT_FOUND", exitCode: 1 });
 		}
-		await $`mkdir -p ${dirname(outputPath)}`.nothrow().quiet();
+		const outputDir = dirname(outputPath);
+		try {
+			await $`mkdir -p ${outputDir}`.quiet();
+		} catch (err) {
+			throw new CLIError(`failed to create output directory ${outputDir}: ${err instanceof Error ? err.message : String(err)}`, {
+				code: "MKDIR_FAILED",
+				exitCode: 1,
+			});
+		}
 
 		const tmpDir = await mkdtemp(join(tmpdir(), "icon_logo_"));
 		const tmpPng = join(tmpDir, "logo.png");
@@ -193,7 +201,7 @@ function roundrectMaskArgs(canvasSize: number, radius: number): string[] {
 }
 
 export const emitSchema = command("emit-schema")
-	.description("Write JSON schemas for this CLI next to generate_icon.ts and exit")
+	.description("Write JSON schemas for this CLI next to generate-icon.ts and exit")
 	.action(async ({ out }) => {
 		const [full, input] = [generateSchema(app.schema), generateInputSchema(app.schema)];
 		await Promise.all([

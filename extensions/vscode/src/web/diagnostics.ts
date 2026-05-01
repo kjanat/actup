@@ -126,8 +126,7 @@ function statusToDiagnostic(
 		: new vscode.Range(line, loc.column - 1, line, loc.column - 1 + loc.value.length);
 
 	if (typeof status === "object" && "Outdated" in status) {
-		const { target, current_version } = status.Outdated;
-		const current = current_version ?? loc.value.split("@").pop() ?? "?";
+		const { target, current } = status.Outdated;
 		const targetRef = target.version;
 		const shortSha = target.sha?.slice(0, 7) ?? "";
 		const shaInfo = shortSha !== "" ? ` (${shortSha})` : "";

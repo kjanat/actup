@@ -44,7 +44,8 @@ export type CheckStatus =
 /** Details for an outdated ref. */
 export interface OutdatedInfo {
 	readonly target: VersionInfo;
-	readonly current_version: string | null;
+	/** The current ref string from the YAML (e.g., `"v4"`). Always present. */
+	readonly current: string;
 }
 
 /** Version info from the target. */

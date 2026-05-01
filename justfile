@@ -18,10 +18,8 @@ alias i := inst-all
 actup-dir := "crates" / "actup"
 lsp-dir := "crates" / "lsp"
 mcp-dir := "crates" / "mcp"
-
 coverage-lcov := "target" / "lcov.info"
 coverage-html := "target" / "llvm-cov" / "html" / "index.html"
-
 schema_dir := "schemas"
 actup_config := "actup-config.schema.json"
 config-schema := schema_dir / actup_config
@@ -129,7 +127,8 @@ clippy:
     cargo clippy --all-targets --all-features --workspace -- -D clippy::all
 
 # Run all nightly lints
-[group('lint'),env("RUSTFLAGS", "-Zmacro-backtrace")]
+[env("RUSTFLAGS", "-Zmacro-backtrace")]
+[group('lint')]
 clippy-nightly:
     cargo +nightly clippy --all-targets --all-features --workspace -- -D clippy::all
 
