@@ -229,15 +229,22 @@ async function ghFetch(url: string, headers: Record<string, string>): Promise<Re
 		return response;
 	}
 
-	// Rate limit
+	// Rate limit: 429 always, 403 only with evidence of exhaustion
 	const remaining = parseIntHeader(response, "x-ratelimit-remaining");
-	if (response.status === 403 || response.status === 429) {
-		const retryAfter = parseRetryAfter(response);
+	const retryAfter = parseRetryAfter(response);
+	const rateLimitEvidence = remaining === 0 || retryAfter !== undefined;
+
+	if (response.status === 429 || (response.status === 403 && rateLimitEvidence)) {
 		throw new GitHubProviderError(
 			`GitHub API rate limited (${response.status})`,
 			response.status,
 			{ rateLimitRemaining: remaining ?? undefined, retryAfter },
 		);
+	}
+
+	// Forbidden (no rate-limit evidence)
+	if (response.status === 403) {
+		throw new GitHubProviderError(`GitHub API forbidden (403)`, 403);
 	}
 
 	// Auth

@@ -1,4 +1,5 @@
 import type { ActupProvider } from "actup-wasm";
+import { GitHubProviderError } from "actup-wasm";
 import * as vscode from "vscode";
 
 /** Popular actions for name completion, matching the LSP's list. */
@@ -24,7 +25,10 @@ const POPULAR_ACTIONS: readonly {
 ];
 
 export class ActupCompletionProvider implements vscode.CompletionItemProvider {
-	constructor(private readonly provider: ActupProvider) {}
+	constructor(
+		private readonly provider: ActupProvider,
+		private readonly outputChannel: vscode.LogOutputChannel,
+	) {}
 
 	async provideCompletionItems(
 		document: vscode.TextDocument,
@@ -119,8 +123,24 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 				item.detail = tag.sha.slice(0, 7);
 				items.push(item);
 			}
-		} catch {
-			// Provider error — return empty completions
+		} catch (err) {
+			const msg = err instanceof Error ? err.message : String(err);
+			this.outputChannel.warn(`actup completion: ${msg}`);
+			if (err instanceof Error && err.stack !== undefined) {
+				this.outputChannel.debug(err.stack);
+			}
+
+			if (err instanceof GitHubProviderError) {
+				if (err.status === 429 || err.retryAfter !== undefined) {
+					this.outputChannel.warn("actup: rate limited — completions unavailable, retry later");
+				} else if (err.status === 401) {
+					this.outputChannel.warn("actup: auth failure — set GITHUB_TOKEN for version completions");
+				} else if (err.status === 403) {
+					this.outputChannel.warn("actup: forbidden — check token scopes");
+				}
+			} else if (err instanceof TypeError && /fetch|network/i.test(msg)) {
+				this.outputChannel.warn("actup: network error — check connectivity");
+			}
 		}
 
 		return new vscode.CompletionList(items, false);

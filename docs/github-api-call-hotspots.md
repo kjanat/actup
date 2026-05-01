@@ -70,31 +70,38 @@ Impact:
 
 ## Highest-Impact Remedies
 
-1. Wire GitHub bulk callers to `BatchFetcher` and honor `api_mode` plus `max_tags_per_repo`.
+1. Wire GitHub bulk callers to `BatchFetcher` and honor `api_mode` plus `max_tags_per_repo`. Largest single API quota cost — every repo
+   triggers a full REST pagination sequence today even though the batching infrastructure exists.
 2. Wrap runtime providers in `CachingProvider` so `update`, `pin`, `latest`, hover, and fallback checks stop repeating the same fetches
-   within one process.
-3. Fix the LSP cache key bug to use `provider.host()` instead of `default_host`.
-4. Memoize `resolve_ref_to_sha(repo, ref)` in `check` and `pin` paths.
-5. Add bounded concurrency anywhere REST fallback remains, especially CLI `check`.
+   within one process. Most frequent source of redundant calls; affects every command that touches the same repo more than once.
+3. Fix the LSP cache key bug to use `provider.host()` instead of `default_host`. Silently poisons cache for GHE users, causing auth failures
+   or stale data that are hard to diagnose.
+4. Memoize `resolve_ref_to_sha(repo, ref)` in `check` and `pin` paths. Low code complexity to fix; eliminates O(n) duplicate SHA lookups
+   when multiple files reference the same action.
+5. Add bounded concurrency anywhere REST fallback remains, especially CLI `check`. Without limits, large workspaces can burst hundreds of
+   parallel requests, triggering rate limits or socket exhaustion.
 
 ## When To Fix What
 
 Fix immediately:
 
-- LSP cache host bug
-- Unused `api_mode` / batch path in production fetches
-- CLI `update` and `pin` repeated per-action fetches
+- LSP cache host bug — GHE users hit silent auth/data corruption; high user-pain frequency with no workaround.
+- Unused `api_mode` / batch path in production fetches — the code exists but isn't wired in, so every user pays the full REST cost
+  unnecessarily.
+- CLI `update` and `pin` repeated per-action fetches — each action ref triggers its own fetch even within the same run; quadratic API cost
+  in common workflows.
 
 Fix soon if large repos or big workspaces matter:
 
-- Workspace-level LSP repo aggregation
-- SHA resolution memoization
-- REST concurrency limits in CLI `check`
+- Workspace-level LSP repo aggregation — scales poorly as workspace size grows; multiplies diagnostics-time API calls.
+- SHA resolution memoization via `resolve_ref_to_sha` — easy win, low complexity fix, but only noticeable in repos with many refs to the
+  same action.
+- REST concurrency limits in CLI `check` — unbounded parallelism risks rate-limit errors under load; less urgent for small repos.
 
 Lower priority:
 
-- `latest` command optimization
-- Hover metadata fetch tuning
+- `latest` command optimization — single-repo command, called infrequently; low total API cost.
+- Hover metadata fetch tuning — user-initiated, one-at-a-time; rate-limit risk is minimal.
 
 ## Expected Wins
 
@@ -105,6 +112,13 @@ If GitHub batching is wired into CLI `check` and LSP diagnostics, GitHub API vol
 to roughly:
 
 - one GraphQL batch request for many repos, plus occasional fallback calls
+
+**Concrete example:** A workspace with 50 `uses:` refs across 10 distinct repos (~100 tags each). Before: ~120 REST calls (tags pagination +
+default-branch lookup per repo, repeated across files). After: ~1–2 GraphQL batch requests + occasional REST fallback for repos that exceed
+the query budget. Estimated impact: **60–120× reduction** for repeated lookups within a single CLI `check` or LSP diagnostics pass.
+
+Note: GraphQL batching is subject to GitHub's complexity and node budgets (typically 500k nodes per query). Queries spanning many repos with
+large tag sets may hit these limits, forcing partial fallback to REST calls for the remainder.
 
 If `CachingProvider` is also used broadly, repeated same-process lookups for the same repo or ref should collapse to zero extra network
 calls.

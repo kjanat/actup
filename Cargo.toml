@@ -54,6 +54,7 @@ toml                       = "1"                       # config
 tower                      = "0.5"                     # service
 tower-lsp-server           = "0.23"                    # lsp
 tracing                    = "0.1"                     # logging
+tsify-next                 = "0.5"                     # rust→ts type emission for wasm-bindgen
 url                        = "2"                       # urls
 urlencoding                = "2.1"                     # url encoding
 walkdir                    = "2"                       # filesystem

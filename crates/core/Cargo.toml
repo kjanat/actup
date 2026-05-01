@@ -25,7 +25,9 @@ toml       = { workspace = true }
 tokio = { workspace = true }  # Full async runtime on native
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
+tokio        = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
+tsify-next   = { workspace = true }                                              # generate .d.ts entries from these types
+wasm-bindgen = { workspace = true }                                              # required by tsify-next for `typescript_custom_section`
 
 [lints]
 workspace = true

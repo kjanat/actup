@@ -1,78 +1,15 @@
 /**
- * TypeScript type definitions for actup-wasm.
+ * Hand-maintained TypeScript types for actup-wasm.
  *
- * These mirror the Rust types serialized via serde-wasm-bindgen.
- * The wasm-bindgen generated `.d.ts` types everything as `any`;
- * this module provides the actual shapes.
+ * These types describe the **input contracts** that JS code must satisfy:
+ * the {@link ActupProvider} interface that callers implement, and the
+ * shapes the provider returns ({@link VersionSet}, {@link ActionYml}) and
+ * the JSON config callers pass in ({@link ActupConfig}).
+ *
+ * Output types (parsed from Rust→serde→JS) live in the wasm-bindgen
+ * generated `.d.ts` and are emitted by the `tsify-next` derive macros on
+ * the Rust types — see `index.ts` for the re-exports.
  */
-
-/** A `uses:` reference location extracted from YAML content. */
-export interface UsesLocation {
-	/** 1-indexed line number in the YAML file. */
-	readonly line: number;
-	/** 1-indexed column number where the value starts. */
-	readonly column: number;
-	/** The `uses:` value, e.g. `"actions/checkout@v4"`. */
-	readonly value: string;
-	/** The full raw line from the YAML file. */
-	readonly raw_line: string;
-	/** Byte range of the ref portion (after `@`) within the value. */
-	readonly ref_range: { readonly start: number; readonly end: number } | null;
-}
-
-/** Parsed action reference (owner/repo@ref with optional host/subpath). */
-export interface ActionRef {
-	readonly host: string | null;
-	readonly owner: string;
-	readonly repo: string;
-	readonly subpath: string | null;
-	readonly git_ref: string;
-}
-
-/** Result of checking a single `uses:` reference. */
-export interface CheckResult {
-	readonly action_ref: ActionRef;
-	readonly status: CheckStatus;
-}
-
-/** Discriminated union of check outcomes. Serialized as serde externally-tagged enum. */
-export type CheckStatus =
-	| "UpToDate"
-	| { readonly Outdated: OutdatedInfo }
-	| { readonly Unresolvable: UnresolvableInfo };
-
-/** Details for an outdated ref. */
-export interface OutdatedInfo {
-	readonly target: VersionInfo;
-	/** The current ref string from the YAML (e.g., `"v4"`). Always present. */
-	readonly current: string;
-}
-
-/** Version info from the target. */
-export interface VersionInfo {
-	readonly version: string;
-	readonly sha: string | null;
-}
-
-/** Details for an unresolvable ref. */
-export interface UnresolvableInfo {
-	readonly reason: string;
-	readonly is_environment_error: boolean;
-}
-
-/** A text edit to apply to YAML content. */
-export interface UpdateEdit {
-	/** 1-indexed line number. */
-	readonly line: number;
-	/** 0-indexed byte offset of the ref start within the line. */
-	readonly refStart: number;
-	/** 0-indexed byte offset of the ref end within the line. */
-	readonly refEnd: number;
-	/** The full original `uses:` value. */
-	readonly original: string;
-	/** The replacement ref string. */
-	readonly newRef: string;
-}
 
 /** Provider interface — implement to supply version data from any host. */
 export interface ActupProvider {

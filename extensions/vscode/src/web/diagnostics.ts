@@ -1,4 +1,4 @@
-import type { ActupProvider } from "actup-wasm";
+import type { ActionRef, ActupProvider, UsesLocation } from "actup-wasm";
 import { checkRefs, type CheckResult, type CheckStatus, parseUsesRefs } from "actup-wasm";
 import * as vscode from "vscode";
 
@@ -76,22 +76,14 @@ export function clearDiagnosticData(uri: vscode.Uri): void {
 	diagnosticDataByUri.delete(uri.toString());
 }
 
-function formatUsesValue(
-	ref: {
-		readonly owner: string;
-		readonly repo: string;
-		readonly git_ref: string;
-		readonly host: string | null;
-		readonly subpath: string | null;
-	},
-): string {
+function formatUsesValue(ref: ActionRef): string {
 	let value = "";
 	if (ref.host !== null) {
 		value += `${ref.host}/`;
 	}
 	value += `${ref.owner}/${ref.repo}`;
 	if (ref.subpath !== null) value += `/${ref.subpath}`;
-	value += `@${ref.git_ref}`;
+	value += `@${ref.ref_str}`;
 	return value;
 }
 
@@ -107,13 +99,7 @@ interface DiagResult {
 
 function statusToDiagnostic(
 	status: CheckStatus,
-	loc: {
-		readonly line: number;
-		readonly column: number;
-		readonly value: string;
-		readonly raw_line: string;
-		readonly ref_range: { readonly start: number; readonly end: number } | null;
-	},
+	loc: UsesLocation,
 	_text: string,
 ): DiagResult | undefined {
 	// UpToDate — no diagnostic

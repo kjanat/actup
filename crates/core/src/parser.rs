@@ -172,8 +172,19 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
     results
 }
 
+/// Byte range of a substring within a line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
+pub struct RefRange {
+    /// 0-indexed inclusive start byte offset.
+    pub start: usize,
+    /// 0-indexed exclusive end byte offset.
+    pub end: usize,
+}
+
 /// Location of a `uses:` value in a file
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct UsesLocation {
     /// Line number (1-indexed)
     line: usize,
@@ -183,17 +194,25 @@ pub struct UsesLocation {
     value: String,
     /// The full line (for context)
     raw_line: String,
+    /// Byte range of the ref portion (after `@`) within the line. Present
+    /// only if the value contains `@`. Computed at construction.
+    ref_range: Option<RefRange>,
 }
 
 impl UsesLocation {
     /// Create a new `UsesLocation`
     #[must_use]
-    pub const fn new(line: usize, column: usize, value: String, raw_line: String) -> Self {
+    pub fn new(line: usize, column: usize, value: String, raw_line: String) -> Self {
+        let ref_range = value.find('@').map(|at_pos| RefRange {
+            start: column - 1 + at_pos + 1,
+            end: column - 1 + value.len(),
+        });
         Self {
             line,
             column,
             value,
             raw_line,
+            ref_range,
         }
     }
 
@@ -233,10 +252,7 @@ impl UsesLocation {
     /// Get just the ref portion range (after @)
     #[must_use]
     pub fn ref_range(&self) -> Option<std::ops::Range<usize>> {
-        let at_pos = self.value.find('@')?;
-        let start = self.column - 1 + at_pos + 1; // +1 to skip @
-        let end = self.column - 1 + self.value.len();
-        Some(start..end)
+        self.ref_range.map(|r| r.start..r.end)
     }
 }
 

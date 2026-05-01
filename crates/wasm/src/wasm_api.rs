@@ -22,10 +22,7 @@ use crate::bridge::{JsProvider, JsProviderAdapter};
 ///
 /// Returns `JsValue` error if serialization to JS fails (should not happen
 /// for valid input).
-#[wasm_bindgen(
-    js_name = "parseUsesRefs",
-    unchecked_return_type = "import(\"../src/types\").UsesLocation[]"
-)]
+#[wasm_bindgen(js_name = "parseUsesRefs", unchecked_return_type = "UsesLocation[]")]
 pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
     let locations = extract_uses_from_yaml(yaml);
     serde_wasm_bindgen::to_value(&locations).map_err(|e| JsValue::from_str(&e.to_string()))
@@ -46,10 +43,7 @@ pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
 /// # Errors
 ///
 /// Returns `JsValue` error on serde failures or if the provider throws.
-#[wasm_bindgen(
-    js_name = "checkRefs",
-    unchecked_return_type = "import(\"../src/types\").CheckResult[]"
-)]
+#[wasm_bindgen(js_name = "checkRefs", unchecked_return_type = "CheckResult[]")]
 pub async fn check_refs(
     yaml: &str,
     provider: JsProvider,
@@ -102,7 +96,7 @@ pub async fn check_refs(
 }
 
 /// A text edit to apply to the YAML content.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, tsify_next::Tsify)]
 #[serde(rename_all = "camelCase")]
 struct UpdateEdit {
     /// 1-indexed line number
@@ -128,10 +122,7 @@ struct UpdateEdit {
 /// # Errors
 ///
 /// Returns `JsValue` error on serde failures.
-#[wasm_bindgen(
-    js_name = "planUpdates",
-    unchecked_return_type = "import(\"../src/types\").UpdateEdit[]"
-)]
+#[wasm_bindgen(js_name = "planUpdates", unchecked_return_type = "UpdateEdit[]")]
 pub fn plan_updates(yaml: &str, results_json: &str) -> Result<JsValue, JsValue> {
     let results: Vec<CheckResult> = serde_json::from_str(results_json)
         .map_err(|e| JsValue::from_str(&format!("invalid results JSON: {e}")))?;

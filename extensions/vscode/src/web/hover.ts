@@ -37,7 +37,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 			return aHost === refHost
 				&& a.owner === ref.owner
 				&& a.repo === ref.repo
-				&& a.git_ref === ref.gitRef
+				&& a.ref_str === ref.gitRef
 				&& (a.subpath ?? null) === (ref.subpath ?? null);
 		});
 

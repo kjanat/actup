@@ -11,8 +11,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::clock::{Clock, SystemClock};
 
-/// A parsed version from a git ref
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// A parsed version from a git ref.
+///
+/// Wire form: serialized/deserialized as the Display string (e.g. `"v4.2.0"`,
+/// `"abc1234..."`, `"main"`). The structural enum is a Rust-internal detail —
+/// JSON consumers receive a single string. Round-trips through
+/// [`Version::parse`] which never produces [`Version::Branch`] (branches live
+/// separately in [`BranchInfo`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Version {
     /// Semantic version (major, minor, patch)
     /// Minor and patch are optional (v1 vs v1.2 vs v1.2.3)
@@ -187,6 +193,22 @@ impl fmt::Display for Version {
     }
 }
 
+// Wire form is the Display string — see the type's doc-comment for rationale.
+// Round-trips through `Version::parse`, which never yields `Version::Branch`
+// (branches live in `BranchInfo`, not in serialized version sets).
+impl Serialize for Version {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl<'de> Deserialize<'de> for Version {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Ok(Self::parse(&s))
+    }
+}
+
 impl PartialOrd for Version {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -300,8 +322,10 @@ pub struct Set {
 
 /// Information about a specific version
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct Info {
-    /// The parsed version
+    /// The parsed version. Wire form is the Display string (see [`Version`]).
+    #[cfg_attr(target_arch = "wasm32", tsify(type = "string"))]
     version: Version,
 
     /// The commit SHA this version points to

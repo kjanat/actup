@@ -57,7 +57,7 @@ export async function activate(
 		),
 		vscode.languages.registerCompletionItemProvider(
 			ACTION_SELECTOR,
-			new ActupCompletionProvider(ghProvider),
+			new ActupCompletionProvider(ghProvider, outputChannel),
 			"@",
 		),
 		diagnosticCollection,
