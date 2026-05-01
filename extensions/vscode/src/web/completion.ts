@@ -49,12 +49,37 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 			return this.completeVersions(typed.slice(0, atIdx), typed.slice(atIdx + 1));
 		}
 
-		// Before @: suggest action names
-		return this.completeActionNames(typed);
+		// Before @: suggest action names. Pass the full typed range so the
+		// completion can deterministically replace whatever the user has typed
+		// (including any leading quote / host prefix).
+		const replaceRange = new vscode.Range(
+			position.line,
+			valueStart,
+			position.line,
+			position.character,
+		);
+		return this.completeActionNames(typed, replaceRange);
 	}
 
-	private completeActionNames(prefix: string): vscode.CompletionList {
-		const lower = prefix.toLowerCase();
+	private completeActionNames(prefix: string, range: vscode.Range): vscode.CompletionList {
+		// Normalize: strip a leading quote and an optional host prefix
+		// (segment containing a `.` followed by `/`, e.g. "github.com/",
+		// "ghe.corp/") so we can match against the bare `owner/repo`.
+		// Preserve the originals so the inserted text keeps the user's form.
+		let stripped = prefix;
+		let quoteChar = "";
+		if (stripped.startsWith("\"") || stripped.startsWith("'")) {
+			quoteChar = stripped.slice(0, 1);
+			stripped = stripped.slice(1);
+		}
+		let hostPrefix = "";
+		const slashIdx = stripped.indexOf("/");
+		if (slashIdx > 0 && stripped.slice(0, slashIdx).includes(".")) {
+			hostPrefix = stripped.slice(0, slashIdx + 1);
+			stripped = stripped.slice(slashIdx + 1);
+		}
+
+		const lower = stripped.toLowerCase();
 		const items: vscode.CompletionItem[] = [];
 
 		for (const action of POPULAR_ACTIONS) {
@@ -63,7 +88,8 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 
 			const item = new vscode.CompletionItem(label, vscode.CompletionItemKind.Reference);
 			item.detail = action.description;
-			item.insertText = `${label}@${action.defaultRef}`;
+			item.insertText = `${quoteChar}${hostPrefix}${label}@${action.defaultRef}`;
+			item.range = range;
 			items.push(item);
 		}
 

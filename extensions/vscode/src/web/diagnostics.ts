@@ -37,6 +37,7 @@ export async function computeDiagnostics(
 	} catch {
 		// Network/provider error — clear diagnostics rather than show stale data
 		collection.set(uri, []);
+		diagnosticDataByUri.delete(uri.toString());
 		return;
 	}
 
