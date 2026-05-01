@@ -9,10 +9,11 @@
 
 use std::collections::HashMap;
 
-use super::HostConfig;
-use super::registration::{ProviderConfig, Registration};
-use super::validation::{validate_api_base, validate_hostname, validate_provider_config};
-use super::{ApiMode, Config, FetchSettings, HostKind};
+use super::{
+    ApiMode, Config, FetchSettings, HostConfig, HostKind,
+    registration::{ProviderConfig, Registration},
+    validation::{validate_api_base, validate_hostname, validate_provider_config},
+};
 use crate::Error;
 
 /// Index mapping preset hostnames to their (registration, preset) pair.
@@ -349,8 +350,10 @@ mod tests {
     use std::num::NonZeroU8;
 
     use super::*;
-    use crate::config::HostConfig;
-    use crate::config::registration::{Capabilities, Preset, Registration};
+    use crate::config::{
+        HostConfig,
+        registration::{Capabilities, Preset, Registration},
+    };
 
     fn mock_create(_config: ProviderConfig) -> crate::Result<Box<dyn crate::provider::Provider>> {
         Err(crate::Error::ProviderNotFound {

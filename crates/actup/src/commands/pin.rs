@@ -5,8 +5,10 @@ use std::path::Path;
 use actup_core::{ActionRef, Config, provider};
 use owo_colors::OwoColorize;
 
-use crate::cli::OutputFormat;
-use crate::common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner};
+use crate::{
+    cli::OutputFormat,
+    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner},
+};
 
 /// Get the prefix of an action ref (everything before @ref).
 fn action_prefix(action: &ActionRef) -> String {

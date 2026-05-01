@@ -3,10 +3,12 @@
 //! This module provides the common pipeline used by check, update, and pin commands:
 //! discover -> read -> extract uses -> filter -> provider lookup -> (command-specific logic)
 
-use std::collections::HashMap;
-use std::fs;
-use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashMap,
+    fs,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, UsesLocation, discover_files,
@@ -426,10 +428,11 @@ impl EditResult {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
-    use actup_core::provider;
-    use actup_core::{Config, DiscoveredFile, FileKind};
     use std::path::{Path, PathBuf};
+
+    use actup_core::{Config, DiscoveredFile, FileKind, provider};
+
+    use super::*;
 
     // ErrorTally tests
 

@@ -3,11 +3,16 @@
 //! This module defines the caching interface. The actual storage
 //! implementation is left to the caller (file-based, in-memory, etc.).
 
-use crate::clock::{Clock, SystemClock};
-use crate::compat::{BoxFuture, MaybeSend, MaybeSync};
-use crate::{ActionRepoId, version};
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
+
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    ActionRepoId,
+    clock::{Clock, SystemClock},
+    compat::{BoxFuture, MaybeSend, MaybeSync},
+    version,
+};
 
 /// A cached entry with metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]

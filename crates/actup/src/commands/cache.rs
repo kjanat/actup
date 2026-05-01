@@ -1,15 +1,15 @@
 //! Cache command - manage the version cache
 
-use std::path::PathBuf;
-use std::time::Duration;
+use std::{path::PathBuf, time::Duration};
 
-use actup_core::Config;
-use actup_core::cache::Cache;
+use actup_core::{Config, cache::Cache};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CacheAction, OutputFormat};
-use crate::file_cache::{FileCache, default_cache_dir};
+use crate::{
+    cli::{CacheAction, OutputFormat},
+    file_cache::{FileCache, default_cache_dir},
+};
 
 /// Cache info for JSON output
 #[derive(Serialize)]

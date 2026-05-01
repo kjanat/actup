@@ -1,8 +1,9 @@
 //! CLI argument parsing with clap
 
+use std::path::{Path, PathBuf};
+
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
-use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "actup")]

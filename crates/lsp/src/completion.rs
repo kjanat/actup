@@ -9,8 +9,7 @@
 //!
 //! Trigger characters: `@` (for version completion after typing the `@`).
 
-use actup_core::provider;
-use actup_core::version;
+use actup_core::{provider, version};
 use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,
     CompletionResponse, Documentation, MarkupContent, MarkupKind, Position,
@@ -439,8 +438,9 @@ pub async fn compute_completions(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use std::sync::atomic::Ordering;
+
+    use super::*;
 
     const ENC: crate::position::PositionEncoding = crate::position::PositionEncoding::Utf16;
 

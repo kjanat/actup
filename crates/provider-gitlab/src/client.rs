@@ -5,14 +5,18 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
+use std::time::Duration;
+
+use actup_core::{Error, Result};
+use reqwest::{
+    Client, Response, StatusCode,
+    header::{HeaderMap, HeaderValue, USER_AGENT},
+};
+use tracing::{debug, warn};
+
 use crate::types::{
     GitLabBranch, GitLabError, GitLabFile, GitLabProject, GitLabTag, GitLabTreeEntry,
 };
-use actup_core::{Error, Result};
-use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
-use reqwest::{Client, Response, StatusCode};
-use std::time::Duration;
-use tracing::{debug, warn};
 
 /// Maximum items per page allowed by GitLab API
 pub const MAX_PER_PAGE: u8 = 100;

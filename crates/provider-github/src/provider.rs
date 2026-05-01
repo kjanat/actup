@@ -1,14 +1,17 @@
 //! GitHub provider implementation
 
-use crate::client::GitHubClient;
-use actup_core::action_ref::ActionRepoId;
-use actup_core::compat::BoxFuture;
-use actup_core::error::Result;
-use actup_core::provider::{self, ActionYml, Provider, Sha40};
-use actup_core::version;
+use actup_core::{
+    action_ref::ActionRepoId,
+    compat::BoxFuture,
+    error::Result,
+    provider::{self, ActionYml, Provider, Sha40},
+    version,
+};
 use actup_providers::{filename_label, parse_action_yml, process_tags};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use tracing::debug;
+
+use crate::client::GitHubClient;
 
 /// GitHub provider for resolving action versions
 pub struct GitHubProvider {

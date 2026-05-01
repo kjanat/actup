@@ -4,9 +4,9 @@
 //! WASM compatibility. Native code uses [`SystemClock`] (the default);
 //! WASM hosts inject a `JsClock` backed by `Date.now()`.
 
+use std::{fmt, time::SystemTime};
+
 use crate::compat::{MaybeSend, MaybeSync};
-use std::fmt;
-use std::time::SystemTime;
 
 /// Platform-agnostic time source.
 ///
@@ -33,8 +33,9 @@ impl Clock for SystemClock {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn system_clock_returns_recent_time() {

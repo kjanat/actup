@@ -13,21 +13,29 @@
 //! [`Cancelled`] flag), it stops after the current file and returns partial
 //! results.
 
-use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use actup_core::{ActionRepoId, Config, DiscoveredFile, discover_files, provider};
 use dashmap::DashMap;
-use tower_lsp_server::Client;
-use tower_lsp_server::ls_types::{
-    Diagnostic, DocumentChanges, NumberOrString, OneOf, OptionalVersionedTextDocumentIdentifier,
-    TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+use tower_lsp_server::{
+    Client,
+    ls_types::{
+        Diagnostic, DocumentChanges, NumberOrString, OneOf,
+        OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+    },
 };
 
-use crate::backend::DocumentState;
-use crate::diagnostics::{self, DIAGNOSTIC_SOURCE, DiagnosticData};
-use crate::file_cache::FileCache;
+use crate::{
+    backend::DocumentState,
+    diagnostics::{self, DIAGNOSTIC_SOURCE, DiagnosticData},
+    file_cache::FileCache,
+};
 
 /// Command identifier registered in server capabilities.
 pub const FIX_ALL_IN_WORKSPACE: &str = "actup-lsp/fixAllInWorkspace";
@@ -590,12 +598,12 @@ fn progress_id() -> u64 {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
-
     use std::sync::atomic::Ordering;
 
-    use crate::test_utils;
     use dashmap::DashMap;
+
+    use super::*;
+    use crate::test_utils;
 
     fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
         test_utils::make_range(line, col_start, col_end)

@@ -18,8 +18,9 @@ mod test_support {
 }
 
 mod parser_tests {
-    use super::test_support::ok_or_panic;
     use actup_core::{ActionRef, extract_uses_from_yaml, parse_uses};
+
+    use super::test_support::ok_or_panic;
 
     fn parse_uses_or_panic(input: &str) -> Option<ActionRef> {
         ok_or_panic(
@@ -89,10 +90,12 @@ mod parser_tests {
 }
 
 mod discovery_tests {
-    use super::test_support::ok_or_panic;
-    use actup_core::{FileKind, discover_files};
     use std::fs;
+
+    use actup_core::{FileKind, discover_files};
     use tempfile::TempDir;
+
+    use super::test_support::ok_or_panic;
 
     #[test]
     fn test_discover_workflows() {
@@ -170,10 +173,12 @@ mod discovery_tests {
 }
 
 mod config_tests {
-    use super::test_support::{ok_or_panic, some_or_panic};
-    use actup_core::{Config, find_repo_config, iter_config_candidates};
     use std::fs;
+
+    use actup_core::{Config, find_repo_config, iter_config_candidates};
     use tempfile::TempDir;
+
+    use super::test_support::{ok_or_panic, some_or_panic};
 
     #[test]
     fn test_config_discovery_order() {
@@ -280,11 +285,12 @@ ignore = ["internal/*", "deprecated/action"]
 mod new_config_format_tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::test_support::ok_or_panic;
+    use std::{fs, num::NonZeroU8};
+
     use actup_core::{ApiMode, Config, FetchSettings, HostConfig, HostKind};
-    use std::fs;
-    use std::num::NonZeroU8;
     use tempfile::TempDir;
+
+    use super::test_support::ok_or_panic;
 
     #[test]
     fn empty_config_defaults_to_graphql_and_no_hosts() {
@@ -642,10 +648,11 @@ kind = "bitbucket"
 }
 
 mod version_tests {
-    use super::test_support::some_or_panic;
+    use std::{collections::HashMap, sync::Arc};
+
     use actup_core::version;
-    use std::collections::HashMap;
-    use std::sync::Arc;
+
+    use super::test_support::some_or_panic;
 
     fn make_version_info(ver: &str, sha: &str) -> Arc<version::Info> {
         Arc::new(version::Info::new(version::Version::parse(ver), sha))

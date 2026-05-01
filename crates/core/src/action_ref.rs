@@ -6,8 +6,9 @@
 //! - `host/owner/repo@ref` (explicit host for enterprise/self-hosted)
 //! - `./path` (local, not handled for version checks)
 
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
 
 /// A parsed action reference from a `uses:` statement
 ///

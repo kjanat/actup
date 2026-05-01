@@ -3,12 +3,20 @@
 //! Wraps any `Provider` implementation with an in-memory cache to avoid
 //! duplicate network requests within a single command invocation.
 
-use crate::compat::BoxFuture;
-use crate::provider::{self, ActionYml, Provider, Sha40};
-use crate::{ActionRepoId, Result, version};
-use std::collections::{HashMap, hash_map::Entry};
-use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock, Semaphore};
+use std::{
+    collections::{HashMap, hash_map::Entry},
+    hash::Hash,
+    sync::{Arc, Mutex},
+};
+
+use tokio::sync::{RwLock, Semaphore};
+
+use crate::{
+    ActionRepoId, Result,
+    compat::BoxFuture,
+    provider::{self, ActionYml, Provider, Sha40},
+    version,
+};
 
 /// A provider wrapper that caches results to avoid duplicate API calls.
 ///
@@ -34,23 +42,84 @@ pub struct CachingProvider<P> {
     branch_cache: RwLock<HashMap<ActionRepoId, String>>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
-    // zero permits; followers `acquire().await` on it, leader calls
-    // `close()` when the fetch completes. `Semaphore::close` is durable —
-    // callers that `acquire()` AFTER close returns `AcquireError`
-    // immediately rather than deadlocking. This avoids the classic
-    // `Notify::notify_waiters` footgun where the signal is lost if no
-    // waiter is registered at the moment of notification.
+    // zero permits; followers `acquire().await` on it. The leader holds a
+    // `FlightGuard` whose Drop impl removes the entry and closes the
+    // semaphore — this runs on normal completion AND on cancellation, so a
+    // leader future dropped mid-fetch (timeouts, `select!`, LSP request
+    // cancellation) cannot leave the slot stuck.
     //
-    // On peer error, waiters do NOT re-register in the flight map — they
-    // each run their own fetch. This is deliberate: serializing retries
-    // through another singleflight leader would mean a single persistent
-    // failure (e.g. auth) blocks all callers sequentially instead of
-    // letting each surface the error quickly. Worst case on a transient
-    // burst failure is N parallel retries — same as no singleflight at
-    // all, which is the pre-existing bound.
+    // `Semaphore::close` is durable — callers that `acquire()` AFTER close
+    // returns `AcquireError` immediately rather than deadlocking. This
+    // avoids the classic `Notify::notify_waiters` footgun where the signal
+    // is lost if no waiter is registered at the moment of notification.
+    //
+    // On peer error or cancellation, waiters do NOT re-register in the
+    // flight map — they each run their own fetch. This is deliberate:
+    // serializing retries through another singleflight leader would mean a
+    // single persistent failure (e.g. auth) blocks all callers sequentially
+    // instead of letting each surface the error quickly. Worst case on a
+    // transient burst failure is N parallel retries — same as no
+    // singleflight at all, which is the pre-existing bound.
+    //
+    // The flight maps use `std::sync::Mutex` (not tokio's): operations are
+    // O(1) HashMap ops, never cross await points, and `FlightGuard::drop`
+    // needs synchronous locking.
     version_flights: Mutex<HashMap<ActionRepoId, Arc<Semaphore>>>,
     sha_flights: Mutex<HashMap<(ActionRepoId, String), Arc<Semaphore>>>,
     branch_flights: Mutex<HashMap<ActionRepoId, Arc<Semaphore>>>,
+}
+
+/// RAII guard for a singleflight leader's claim.
+///
+/// On drop — including drop due to leader future cancellation — removes
+/// the flight entry from the registry and closes the semaphore so any
+/// waiting followers wake up. Without this, leader cancellation would
+/// leave the entry in the map and followers would block forever on
+/// `acquire().await`.
+struct FlightGuard<'a, K: Eq + Hash + Clone> {
+    key: K,
+    map: &'a Mutex<HashMap<K, Arc<Semaphore>>>,
+    sem: Arc<Semaphore>,
+}
+
+impl<K: Eq + Hash + Clone> Drop for FlightGuard<'_, K> {
+    fn drop(&mut self) {
+        // Recover from poison: a panicking holder would otherwise leak the
+        // entry forever, which is worse than touching potentially
+        // inconsistent state (HashMap remove is independent of other keys).
+        let mut map = match self.map.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        map.remove(&self.key);
+        drop(map);
+        // Wake followers; their `acquire()` returns Err and they fall
+        // through to their own fetch path.
+        self.sem.close();
+    }
+}
+
+/// Try to claim the singleflight slot for `key`.
+///
+/// Returns `Ok(guard)` if the caller is the leader and must hold the guard
+/// for the duration of the work. Returns `Err(sem)` if another caller is
+/// already leading; the caller is a follower and must `sem.acquire().await`.
+fn claim_flight<K: Eq + Hash + Clone>(
+    map: &Mutex<HashMap<K, Arc<Semaphore>>>,
+    key: K,
+) -> std::result::Result<FlightGuard<'_, K>, Arc<Semaphore>> {
+    let mut flights = match map.lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    match flights.entry(key.clone()) {
+        Entry::Occupied(o) => Err(Arc::clone(o.get())),
+        Entry::Vacant(v) => {
+            let sem = Arc::new(Semaphore::new(0));
+            v.insert(Arc::clone(&sem));
+            Ok(FlightGuard { key, map, sem })
+        }
+    }
 }
 
 fn repo_cache_key(repo: &ActionRepoId) -> ActionRepoId {
@@ -151,42 +220,40 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 return Ok(cached.clone());
             }
 
-            // Singleflight: claim the slot or await a peer's fetch.
-            let follower_sem: Option<Arc<Semaphore>> =
-                match self.version_flights.lock().await.entry(repo.clone()) {
-                    Entry::Occupied(o) => Some(Arc::clone(o.get())),
-                    Entry::Vacant(v) => {
-                        v.insert(Arc::new(Semaphore::new(0)));
-                        None
+            match claim_flight(&self.version_flights, repo.clone()) {
+                Err(sem) => {
+                    // Follower path. `acquire()` returns Err once the
+                    // semaphore is closed (durably, so no race if the leader
+                    // closes before we start awaiting).
+                    let _ = sem.acquire().await;
+                    if let Some(cached) = self.version_cache.read().await.get(&repo) {
+                        return Ok(cached.clone());
                     }
-                };
-
-            if let Some(sem) = follower_sem {
-                // Wait for leader. `acquire()` returns Err once the semaphore
-                // is closed — which is durable, so no race if the leader
-                // closes before we start awaiting.
-                let _ = sem.acquire().await;
-                if let Some(cached) = self.version_cache.read().await.get(&repo) {
-                    return Ok(cached.clone());
+                    // Leader errored or was cancelled — do our own fetch
+                    // without rejoining a flight. On success, populate the
+                    // cache so subsequent callers don't re-fetch.
+                    let result = self.inner.get_versions(&repo).await;
+                    if let Ok(ref versions) = result {
+                        self.version_cache
+                            .write()
+                            .await
+                            .insert(repo.clone(), versions.clone());
+                    }
+                    result
                 }
-                // Leader errored — do our own fetch without rejoining a flight.
-                return self.inner.get_versions(&repo).await;
+                Ok(_guard) => {
+                    // Leader path. `_guard` cleans up the flight slot on
+                    // drop — including drop due to cancellation.
+                    let result = self.inner.get_versions(&repo).await;
+                    if let Ok(ref versions) = result {
+                        self.version_cache
+                            .write()
+                            .await
+                            .insert(repo.clone(), versions.clone());
+                    }
+                    result
+                }
             }
-
-            // Leader path.
-            let result = self.inner.get_versions(&repo).await;
-            if let Ok(ref versions) = result {
-                self.version_cache
-                    .write()
-                    .await
-                    .insert(repo.clone(), versions.clone());
-            }
-            let sem = self.version_flights.lock().await.remove(&repo);
-            if let Some(sem) = sem {
-                sem.close();
-            }
-
-            result
         })
     }
 
@@ -205,36 +272,32 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 return Ok(cached.clone());
             }
 
-            let follower_sem: Option<Arc<Semaphore>> =
-                match self.sha_flights.lock().await.entry(cache_key.clone()) {
-                    Entry::Occupied(o) => Some(Arc::clone(o.get())),
-                    Entry::Vacant(v) => {
-                        v.insert(Arc::new(Semaphore::new(0)));
-                        None
+            match claim_flight(&self.sha_flights, cache_key.clone()) {
+                Err(sem) => {
+                    let _ = sem.acquire().await;
+                    if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
+                        return Ok(cached.clone());
                     }
-                };
-
-            if let Some(sem) = follower_sem {
-                let _ = sem.acquire().await;
-                if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                    return Ok(cached.clone());
+                    let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
+                    if let Ok(ref sha) = result {
+                        self.sha_cache
+                            .write()
+                            .await
+                            .insert(cache_key.clone(), sha.clone());
+                    }
+                    result
                 }
-                return self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
+                Ok(_guard) => {
+                    let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
+                    if let Ok(ref sha) = result {
+                        self.sha_cache
+                            .write()
+                            .await
+                            .insert(cache_key.clone(), sha.clone());
+                    }
+                    result
+                }
             }
-
-            let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
-            if let Ok(ref sha) = result {
-                self.sha_cache
-                    .write()
-                    .await
-                    .insert(cache_key.clone(), sha.clone());
-            }
-            let sem = self.sha_flights.lock().await.remove(&cache_key);
-            if let Some(sem) = sem {
-                sem.close();
-            }
-
-            result
         })
     }
 
@@ -246,36 +309,32 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 return Ok(cached.clone());
             }
 
-            let follower_sem: Option<Arc<Semaphore>> =
-                match self.branch_flights.lock().await.entry(repo.clone()) {
-                    Entry::Occupied(o) => Some(Arc::clone(o.get())),
-                    Entry::Vacant(v) => {
-                        v.insert(Arc::new(Semaphore::new(0)));
-                        None
+            match claim_flight(&self.branch_flights, repo.clone()) {
+                Err(sem) => {
+                    let _ = sem.acquire().await;
+                    if let Some(cached) = self.branch_cache.read().await.get(&repo) {
+                        return Ok(cached.clone());
                     }
-                };
-
-            if let Some(sem) = follower_sem {
-                let _ = sem.acquire().await;
-                if let Some(cached) = self.branch_cache.read().await.get(&repo) {
-                    return Ok(cached.clone());
+                    let result = self.inner.get_default_branch(&repo).await;
+                    if let Ok(ref branch) = result {
+                        self.branch_cache
+                            .write()
+                            .await
+                            .insert(repo.clone(), branch.clone());
+                    }
+                    result
                 }
-                return self.inner.get_default_branch(&repo).await;
+                Ok(_guard) => {
+                    let result = self.inner.get_default_branch(&repo).await;
+                    if let Ok(ref branch) = result {
+                        self.branch_cache
+                            .write()
+                            .await
+                            .insert(repo.clone(), branch.clone());
+                    }
+                    result
+                }
             }
-
-            let result = self.inner.get_default_branch(&repo).await;
-            if let Ok(ref branch) = result {
-                self.branch_cache
-                    .write()
-                    .await
-                    .insert(repo.clone(), branch.clone());
-            }
-            let sem = self.branch_flights.lock().await.remove(&repo);
-            if let Some(sem) = sem {
-                sem.close();
-            }
-
-            result
         })
     }
 
@@ -303,10 +362,13 @@ impl<P: Provider> Provider for CachingProvider<P> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use super::*;
     use crate::version;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Mock provider that counts calls
     struct CountingProvider {
@@ -774,5 +836,217 @@ mod tests {
         }
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Regression: when the singleflight leader future is cancelled
+    /// (e.g. via `tokio::time::timeout`, `select!`, or LSP request
+    /// cancellation), the flight slot must be cleaned up so subsequent
+    /// callers don't deadlock waiting on a never-closed semaphore.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_leader_cancellation_does_not_deadlock_subsequent_callers() {
+        /// Provider where the first call hangs forever, the second succeeds.
+        /// This lets us distinguish "deadlocked on leaked flight" (timeout
+        /// fires) from "fresh leader proceeded" (success).
+        struct OnceHangProvider {
+            call_count: Arc<AtomicUsize>,
+        }
+        impl Provider for OnceHangProvider {
+            fn kind(&self) -> provider::Kind {
+                provider::Kind::GitHub
+            }
+            fn host(&self) -> &'static str {
+                "github.com"
+            }
+            fn get_versions(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+                let count = Arc::clone(&self.call_count);
+                Box::pin(async move {
+                    let n = count.fetch_add(1, Ordering::SeqCst);
+                    if n == 0 {
+                        // First call: hang. Yields so cancellation can land.
+                        std::future::pending::<()>().await;
+                        unreachable!()
+                    } else {
+                        Ok(version::Set::default())
+                    }
+                })
+            }
+            fn resolve_ref_to_sha(
+                &self,
+                _: &ActionRepoId,
+                _: &str,
+            ) -> BoxFuture<'_, Result<Sha40>> {
+                Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+            }
+            fn get_default_branch(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+                Box::pin(async { Ok("main".into()) })
+            }
+            fn get_readme(
+                &self,
+                _: &ActionRepoId,
+                _: Option<&str>,
+            ) -> BoxFuture<'_, Result<Option<String>>> {
+                Box::pin(async { Ok(None) })
+            }
+            fn get_action_yml(
+                &self,
+                _: &ActionRepoId,
+                _: &str,
+            ) -> BoxFuture<'_, Result<ActionYml>> {
+                Box::pin(async { Ok(ActionYml::default()) })
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cached = Arc::new(CachingProvider::new(Box::new(OnceHangProvider {
+            call_count: Arc::clone(&calls),
+        }) as Box<dyn Provider>));
+        let repo = make_repo("actions", "checkout");
+
+        // Spawn leader on the hanging call.
+        let leader = tokio::spawn({
+            let c = Arc::clone(&cached);
+            let r = repo.clone();
+            async move { c.get_versions(&r).await }
+        });
+
+        // Give the leader time to claim the flight slot and enter the
+        // hanging inner call.
+        for _ in 0..32 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "leader should have entered the inner call"
+        );
+
+        // Cancel leader.
+        leader.abort();
+        let _ = leader.await;
+
+        // Subsequent caller. With the Drop-guard fix, leader cleanup ran
+        // and this becomes a fresh leader → succeeds. Without the fix,
+        // it becomes a follower of the leaked flight → hangs forever.
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            cached.get_versions(&repo),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "subsequent caller deadlocked — leader cancellation leaked the flight slot"
+        );
+        let inner = result.unwrap();
+        assert!(
+            inner.is_ok(),
+            "subsequent caller should have succeeded as fresh leader: {:?}",
+            inner.err()
+        );
+    }
+
+    /// Regression: when the singleflight leader errors, a follower's
+    /// fallback fetch must populate the cache on success — otherwise every
+    /// subsequent caller re-fetches forever after a transient failure.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn test_follower_fallback_populates_cache_on_success() {
+        use crate::error::Error;
+
+        /// Provider whose first `get_versions` call fails; later calls succeed.
+        /// Yields between increment and result so multiple callers register
+        /// on the singleflight semaphore before the leader resolves.
+        struct FailFirstProvider {
+            call_count: Arc<AtomicUsize>,
+        }
+        impl Provider for FailFirstProvider {
+            fn kind(&self) -> provider::Kind {
+                provider::Kind::GitHub
+            }
+            fn host(&self) -> &'static str {
+                "github.com"
+            }
+            fn get_versions(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+                let count = Arc::clone(&self.call_count);
+                Box::pin(async move {
+                    let n = count.fetch_add(1, Ordering::SeqCst);
+                    for _ in 0..16 {
+                        tokio::task::yield_now().await;
+                    }
+                    if n == 0 {
+                        Err(Error::Internal {
+                            context: "test".to_string(),
+                            message: "simulated leader error".to_string(),
+                        })
+                    } else {
+                        Ok(version::Set::default())
+                    }
+                })
+            }
+            fn resolve_ref_to_sha(
+                &self,
+                _: &ActionRepoId,
+                _: &str,
+            ) -> BoxFuture<'_, Result<Sha40>> {
+                Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+            }
+            fn get_default_branch(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+                Box::pin(async { Ok("main".into()) })
+            }
+            fn get_readme(
+                &self,
+                _: &ActionRepoId,
+                _: Option<&str>,
+            ) -> BoxFuture<'_, Result<Option<String>>> {
+                Box::pin(async { Ok(None) })
+            }
+            fn get_action_yml(
+                &self,
+                _: &ActionRepoId,
+                _: &str,
+            ) -> BoxFuture<'_, Result<ActionYml>> {
+                Box::pin(async { Ok(ActionYml::default()) })
+            }
+        }
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let cached = Arc::new(CachingProvider::new(Box::new(FailFirstProvider {
+            call_count: Arc::clone(&calls),
+        }) as Box<dyn Provider>));
+        let repo = make_repo("actions", "checkout");
+
+        // Burst: leader fails, followers each do their own fetch and succeed.
+        let mut handles = Vec::new();
+        for _ in 0..4 {
+            let c = Arc::clone(&cached);
+            let r = repo.clone();
+            handles.push(tokio::spawn(async move { c.get_versions(&r).await }));
+        }
+        let mut ok_count = 0usize;
+        let mut err_count = 0usize;
+        for h in handles {
+            match h.await.unwrap() {
+                Ok(_) => ok_count += 1,
+                Err(_) => err_count += 1,
+            }
+        }
+        // Exactly one leader errored; the rest succeeded via fallback.
+        assert_eq!(err_count, 1, "exactly one leader should have errored");
+        assert_eq!(ok_count, 3, "remaining followers should have succeeded");
+
+        let calls_after_burst = calls.load(Ordering::SeqCst);
+        assert!(
+            calls_after_burst >= 2,
+            "expected ≥2 inner calls (1 failed leader + ≥1 follower), got {calls_after_burst}"
+        );
+
+        // Crucial assertion: the successful follower(s) populated the cache,
+        // so a subsequent call must NOT trigger another inner fetch.
+        cached.get_versions(&repo).await.unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            calls_after_burst,
+            "follower-fallback success must populate cache; subsequent call re-fetched"
+        );
     }
 }

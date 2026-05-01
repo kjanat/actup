@@ -3,14 +3,11 @@
 //! This module provides the single source of truth for version resolution,
 //! used by CLI, LSP, and MCP interfaces.
 
-use crate::action_ref::ActionRef;
-use crate::config::Config;
-use crate::error::Error;
-use crate::policy;
-use crate::provider;
-use crate::version;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{action_ref::ActionRef, config::Config, error::Error, policy, provider, version};
 
 /// Reason string for unresolvable status when no versions are found.
 ///
@@ -417,10 +414,13 @@ pub async fn check_action_remote(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
-    use crate::policy;
-    use crate::provider::{ActionYml, Kind, Provider, Sha40};
     use std::collections::HashMap;
+
+    use super::*;
+    use crate::{
+        policy,
+        provider::{ActionYml, Kind, Provider, Sha40},
+    };
 
     struct ResolveMockProvider {
         resolve_ref: bool,

@@ -7,8 +7,10 @@ use actup_core::{
 };
 use owo_colors::OwoColorize;
 
-use crate::cli::OutputFormat;
-use crate::common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner};
+use crate::{
+    cli::OutputFormat,
+    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner},
+};
 
 /// Create an edit for updating an action ref.
 fn create_edit(loc: &UsesLocation, action_ref: &ActionRef, new_ref: &str) -> PendingEdit {

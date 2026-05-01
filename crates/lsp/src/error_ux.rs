@@ -5,12 +5,10 @@
 //! via `window/showMessage` vs `window/logMessage`, and prevents the same
 //! error from spamming across repeated diagnostic runs within a session.
 
-use std::collections::HashSet;
-use std::sync::Mutex;
+use std::{collections::HashSet, sync::Mutex};
 
 use actup_core::Error as CoreError;
-use tower_lsp_server::Client;
-use tower_lsp_server::ls_types::MessageType;
+use tower_lsp_server::{Client, ls_types::MessageType};
 
 /// Category of environment error for deduplication and notification routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -402,8 +400,7 @@ mod tests {
 
     #[test]
     fn deduplicator_handles_concurrent_access() {
-        use std::sync::Arc;
-        use std::thread;
+        use std::{sync::Arc, thread};
 
         let dedup = Arc::new(ErrorDeduplicator::new());
         let dedup_clone = Arc::clone(&dedup);

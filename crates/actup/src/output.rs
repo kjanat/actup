@@ -2,8 +2,7 @@
 
 use std::sync::Arc;
 
-use actup_core::ActionRef;
-use actup_core::version;
+use actup_core::{ActionRef, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 

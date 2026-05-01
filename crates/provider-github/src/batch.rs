@@ -4,15 +4,20 @@
 //! - GraphQL: Single batched request for all repos (requires auth)
 //! - Parallel REST: Concurrent REST requests (works without auth)
 
-use crate::GitHubProvider;
-use crate::graphql::GraphQLClient;
-use actup_core::cache::{self, Cache};
-use actup_core::version;
-use actup_core::{ActionRepoId, Config, Provider, effective_host, provider};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
+
+use actup_core::{
+    ActionRepoId, Config, Provider,
+    cache::{self, Cache},
+    effective_host, provider, version,
+};
 use futures::StreamExt;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 use tracing::{debug, warn};
+
+use crate::{GitHubProvider, graphql::GraphQLClient};
 
 /// Maximum concurrent fallback REST requests when registry batching misses.
 const FALLBACK_CONCURRENCY_LIMIT: usize = 50;

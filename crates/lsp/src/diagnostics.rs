@@ -5,18 +5,20 @@
 
 use std::collections::HashMap;
 
-use actup_core::resolution::{CheckResult, CheckStatus};
 use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, check_action_with_provider,
     extract_uses_from_yaml, parse_uses, provider,
+    resolution::{CheckResult, CheckStatus},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
     Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range, Uri,
 };
 
-use crate::error_ux::{self, DiagnosticErrors};
-use crate::file_cache::FileCache;
+use crate::{
+    error_ux::{self, DiagnosticErrors},
+    file_cache::FileCache,
+};
 
 /// Diagnostic source identifier shown in the editor.
 pub const DIAGNOSTIC_SOURCE: &str = "actup";
@@ -379,10 +381,11 @@ pub async fn compute_diagnostics(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
-    use actup_core::version;
     use std::sync::Arc;
 
+    use actup_core::version;
+
+    use super::*;
     use crate::test_utils::{self, DUMMY_SHA, DUMMY_SHA_2};
 
     fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {

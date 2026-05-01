@@ -5,8 +5,10 @@
 //! - Composite actions in .github/actions/
 //! - Custom paths from configuration
 
-use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 /// Default paths to scan for workflows
 pub const DEFAULT_WORKFLOW_PATTERNS: &[&str] =
@@ -206,9 +208,12 @@ pub fn relative_path(root: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
     use super::*;
-    use std::fs;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn make_temp_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
         let unique = format!(

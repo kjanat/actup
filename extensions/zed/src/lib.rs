@@ -3,10 +3,11 @@
 
 mod provider;
 
+use std::fmt::Write as _;
+
 use actup_core::{
     ActionRef, CheckResult, CheckStatus, Config, UsesLocation, extract_uses_from_yaml,
 };
-use std::fmt::Write as _;
 use zed_extension_api::{
     self as zed, SlashCommand, SlashCommandOutput, SlashCommandOutputSection, settings::LspSettings,
 };
@@ -103,8 +104,9 @@ impl zed::Extension for ActupExtension {
 mod extension_entrypoint {
     #![allow(missing_docs)]
 
-    use super::ActupExtension;
     use zed_extension_api as zed;
+
+    use super::ActupExtension;
 
     zed::register_extension!(ActupExtension);
 }

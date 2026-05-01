@@ -4,11 +4,14 @@
 //! The JS side implements a simple async interface (`getVersions`, etc.)
 //! and the adapter handles serde round-trips across the WASM boundary.
 
-use actup_core::compat::BoxFuture;
-use actup_core::provider::{ActionYml, Kind, Sha40};
-use actup_core::{ActionRepoId, Provider, version};
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+use actup_core::{
+    ActionRepoId, Provider,
+    compat::BoxFuture,
+    provider::{ActionYml, Kind, Sha40},
+    version,
+};
 use wasm_bindgen::prelude::*;
 
 /// Host-provided action provider, implemented in JS/TS.

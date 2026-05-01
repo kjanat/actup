@@ -1,9 +1,11 @@
 //! Public WASM-facing API. Compiled only on `wasm32` targets.
 
-use actup_core::config::Config;
-use actup_core::provider::{Kind, Registry};
-use actup_core::resolution::{CheckResult, CheckStatus, check_action_remote};
-use actup_core::{extract_uses_from_yaml, parse_uses};
+use actup_core::{
+    config::Config,
+    extract_uses_from_yaml, parse_uses,
+    provider::{Kind, Registry},
+    resolution::{CheckResult, CheckStatus, check_action_remote},
+};
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 

@@ -3,8 +3,10 @@
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
 use actup_provider_github::GitHubClient;
-use wiremock::matchers::{method, path, query_param};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use wiremock::{
+    Mock, MockServer, ResponseTemplate,
+    matchers::{method, path, query_param},
+};
 
 const TAGS_RESPONSE: &str = include_str!("fixtures/tags_response.json");
 const REPO_RESPONSE: &str = include_str!("fixtures/repo_response.json");

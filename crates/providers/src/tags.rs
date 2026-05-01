@@ -3,9 +3,9 @@
 //! Provides the `TagLike` trait and generic tag processing logic
 //! shared across all provider implementations.
 
+use std::{collections::HashMap, sync::Arc};
+
 use actup_core::version;
-use std::collections::HashMap;
-use std::sync::Arc;
 
 /// Trait for provider-specific tag types
 ///

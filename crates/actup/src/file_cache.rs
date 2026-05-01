@@ -5,11 +5,9 @@
 //! - macOS: `~/Library/Caches/actup/`
 //! - Windows: `%LOCALAPPDATA%\actup\cache\`
 
+use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
+
 use actup_core::cache::{self, Cache};
-use std::future::Future;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::time::Duration;
 use tracing::debug;
 
 /// File-based cache implementation
@@ -228,9 +226,10 @@ impl Cache for FileCache {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use actup_core::version;
     use tempfile::TempDir;
+
+    use super::*;
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();

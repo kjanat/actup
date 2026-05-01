@@ -251,8 +251,7 @@ mod tests {
 
     #[test]
     fn pick_best_global_latest() {
-        use std::collections::HashMap;
-        use std::sync::Arc;
+        use std::{collections::HashMap, sync::Arc};
 
         let info = Arc::new(version::Info::new(version::Version::parse("v6.0.2"), "abc"));
         let set = version::Set::build(
@@ -269,8 +268,7 @@ mod tests {
 
     #[test]
     fn pick_best_with_major_tag() {
-        use std::collections::HashMap;
-        use std::sync::Arc;
+        use std::{collections::HashMap, sync::Arc};
 
         let full = Arc::new(version::Info::new(version::Version::parse("v6.0.2"), "abc"));
         let major = Arc::new(version::Info::new(version::Version::parse("v6"), "abc"));
@@ -295,8 +293,7 @@ mod tests {
 
     #[test]
     fn pick_best_constrained_major() {
-        use std::collections::HashMap;
-        use std::sync::Arc;
+        use std::{collections::HashMap, sync::Arc};
 
         let v4 = Arc::new(version::Info::new(version::Version::parse("v4"), "sha4"));
         let v4_full = Arc::new(version::Info::new(
@@ -329,8 +326,7 @@ mod tests {
 
     #[test]
     fn pick_best_no_match_for_constraint() {
-        use std::collections::HashMap;
-        use std::sync::Arc;
+        use std::{collections::HashMap, sync::Arc};
 
         let v6 = Arc::new(version::Info::new(version::Version::parse("v6.0.0"), "sha"));
         let set = version::Set::build(

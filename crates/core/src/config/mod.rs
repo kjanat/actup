@@ -12,21 +12,25 @@ pub mod registration;
 pub mod resolution;
 pub mod validation;
 
-use crate::Error;
-use crate::policy;
-use figment::Figment;
-use figment::providers::{Env, Format, Json, Serialized, Toml, Yaml};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::io::Read;
-use std::num::NonZeroU8;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::{
+    collections::HashMap,
+    io::Read,
+    num::NonZeroU8,
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 #[allow(clippy::module_name_repetitions)]
 pub use discovery::find_repo_config;
 pub use discovery::{CONFIG_EXTENSIONS, iter_config_candidates, user_config_path};
+use figment::{
+    Figment,
+    providers::{Env, Format, Json, Serialized, Toml, Yaml},
+};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::{Error, policy};
 
 /// # Actup configuration
 /// Configuration options for the GitHub Actions-like updater.

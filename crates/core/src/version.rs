@@ -5,11 +5,11 @@
 //! - Commit SHAs
 //! - Branch names
 
-use crate::clock::{Clock, SystemClock};
+use std::{cmp::Ordering, fmt, sync::Arc};
+
 use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::fmt;
-use std::sync::Arc;
+
+use crate::clock::{Clock, SystemClock};
 
 /// A parsed version from a git ref
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -510,8 +510,9 @@ impl Set {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     // Version::parse tests
 

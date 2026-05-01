@@ -231,7 +231,6 @@ pub fn kind_allowed(only: Option<&[CodeActionKind]>, kind: &CodeActionKind) -> b
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
-
     use crate::test_utils;
 
     /// Document version used across all code-action tests.

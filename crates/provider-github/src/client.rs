@@ -20,10 +20,13 @@ pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
 pub const DEFAULT_MAX_RETRIES: u32 = 3;
 /// Default base delay in milliseconds for exponential backoff
 pub const DEFAULT_RETRY_BASE_DELAY_MS: u64 = 100;
-use actup_core::{Error, Result};
-use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
-use reqwest::{Client, Response, StatusCode};
 use std::time::Duration;
+
+use actup_core::{Error, Result};
+use reqwest::{
+    Client, Response, StatusCode,
+    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
+};
 use tracing::{debug, warn};
 
 /// HTTP client configured for GitHub API

@@ -3,10 +3,15 @@
 //! Providers implement the interface for querying action versions from
 //! different git hosting platforms (GitHub, GitLab, Gitea, etc.).
 
-use crate::compat::{BoxFuture, MaybeSend, MaybeSync};
-use crate::{ActionRepoId, Result, version};
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    ActionRepoId, Result,
+    compat::{BoxFuture, MaybeSend, MaybeSync},
+    version,
+};
 
 /// Identifies the type of provider
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

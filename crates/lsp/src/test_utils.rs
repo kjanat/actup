@@ -7,14 +7,20 @@
 #![allow(dead_code, clippy::unwrap_used)]
 // Test utilities are only used in #[cfg(test)] contexts where unwrap is acceptable.
 
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
 
-use actup_core::compat::BoxFuture;
-use actup_core::provider::{self, ActionYml, Kind, Provider, Sha40};
-use actup_core::version;
-use actup_core::{ActionRepoId, Error as CoreError};
+use actup_core::{
+    ActionRepoId, Error as CoreError,
+    compat::BoxFuture,
+    provider::{self, ActionYml, Kind, Provider, Sha40},
+    version,
+};
 use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, NumberOrString, Position, Range};
 
 use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};

@@ -1,33 +1,34 @@
 //! LSP backend implementing the [`LanguageServer`] trait.
 
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::{Arc, OnceLock};
-use std::time::Duration;
-
-use actup_core::cache::Cache as _;
-use actup_core::{Config, provider};
-use dashmap::DashMap;
-use tokio::sync::RwLock;
-use tokio::task::AbortHandle;
-use tower_lsp_server::jsonrpc::Result;
-use tower_lsp_server::ls_types::{
-    ClientCapabilities, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
-    CodeActionResponse, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
-    DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
-    DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
-    DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-    ExecuteCommandOptions, ExecuteCommandParams, FileChangeType, FileSystemWatcher, GlobPattern,
-    Hover, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InitializedParams, MessageType, OneOf, Registration, ServerCapabilities, ServerInfo,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions, WorkspaceFoldersServerCapabilities,
-    WorkspaceServerCapabilities,
+use std::{
+    collections::HashMap,
+    path::PathBuf,
+    sync::{Arc, OnceLock},
+    time::Duration,
 };
-use tower_lsp_server::{Client, LanguageServer};
 
-use crate::file_cache::FileCache;
-use crate::provider_setup;
+use actup_core::{Config, cache::Cache as _, provider};
+use dashmap::DashMap;
+use tokio::{sync::RwLock, task::AbortHandle};
+use tower_lsp_server::{
+    Client, LanguageServer,
+    jsonrpc::Result,
+    ls_types::{
+        ClientCapabilities, CodeActionOptions, CodeActionParams, CodeActionProviderCapability,
+        CodeActionResponse, CompletionOptions, CompletionParams, CompletionResponse, Diagnostic,
+        DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
+        DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
+        ExecuteCommandOptions, ExecuteCommandParams, FileChangeType, FileSystemWatcher,
+        GlobPattern, Hover, HoverParams, HoverProviderCapability, InitializeParams,
+        InitializeResult, InitializedParams, MessageType, OneOf, Registration, ServerCapabilities,
+        ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+        TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
+        WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
+    },
+};
+
+use crate::{file_cache::FileCache, provider_setup};
 
 /// Debounce delay for diagnostic computation on document changes.
 ///

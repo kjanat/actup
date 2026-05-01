@@ -3,13 +3,13 @@
 //! Shares the same on-disk directory as the CLI (`~/.cache/actup/`) so
 //! cache entries are reusable across both tools.
 
-use std::future::Future;
-use std::path::PathBuf;
-use std::pin::Pin;
-use std::time::Duration;
+use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
-use actup_core::cache::{self, Cache};
-use actup_core::{ActionRepoId, provider, version};
+use actup_core::{
+    ActionRepoId,
+    cache::{self, Cache},
+    provider, version,
+};
 
 /// File-based cache implementation that persists version data to disk.
 ///
@@ -261,11 +261,11 @@ impl Cache for FileCache {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use actup_core::{Provider, version};
+    use tempfile::TempDir;
+
     use super::*;
     use crate::test_utils::{DUMMY_SHA, MockProvider, simple_version_set};
-    use actup_core::Provider;
-    use actup_core::version;
-    use tempfile::TempDir;
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();

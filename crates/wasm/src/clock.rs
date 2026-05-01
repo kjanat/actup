@@ -1,7 +1,8 @@
 //! WASM clock implementation backed by `Date.now()`.
 
-use actup_core::Clock;
 use std::time::{Duration, SystemTime};
+
+use actup_core::Clock;
 
 /// Clock implementation for WASM environments.
 ///

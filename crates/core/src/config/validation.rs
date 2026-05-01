@@ -6,8 +6,7 @@
 //! 2. **`api_base` URL**: scheme required, path allowed, no query/fragment, trailing `/` stripped
 //! 3. **Post-merge** (per effective host): `kind`, `api_base`, `token_env` all required
 
-use crate::Error;
-use crate::config::registration::ProviderConfig;
+use crate::{Error, config::registration::ProviderConfig};
 
 /// Validate a hostname string (used for `hosts` map keys and `default_host`).
 ///
@@ -159,9 +158,10 @@ fn invalid_config(context: &str, reason: &str) -> Error {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use std::num::NonZeroU8;
+
     use super::*;
     use crate::config::{ApiMode, HostKind};
-    use std::num::NonZeroU8;
 
     #[test]
     fn hostname_valid_simple() {

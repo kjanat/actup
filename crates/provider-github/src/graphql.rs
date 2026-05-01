@@ -2,17 +2,20 @@
 //!
 //! Fetches version information for multiple repositories in a single request.
 
-use actup_core::action_ref::ActionRepoId;
-use actup_core::clock::{Clock, SystemClock};
-use actup_core::error::{Error, Result};
-use actup_core::version;
+use std::{collections::HashMap, sync::Arc, time::Duration};
+
+use actup_core::{
+    action_ref::ActionRepoId,
+    clock::{Clock, SystemClock},
+    error::{Error, Result},
+    version,
+};
 use actup_providers::{TagLike, process_tags};
-use reqwest::Client;
-use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::{
+    Client,
+    header::{AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
+};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
 use tracing::{debug, warn};
 
 /// GraphQL API endpoint

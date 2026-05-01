@@ -12,8 +12,7 @@
 //! This follows the established pattern used by `reqwest-middleware`, `iced`,
 //! `opendal`, and many other ecosystem crates.
 
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
 
 /// Marker trait that is `Send` on native targets, unconditional on `wasm32`.
 ///

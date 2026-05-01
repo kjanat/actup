@@ -2,10 +2,13 @@
 //!
 //! Controls how aggressively to update and what format to use for refs.
 
-use schemars::JsonSchema;
-use serde::de::{self, Visitor};
-use serde::{Deserialize, Serialize};
 use std::fmt;
+
+use schemars::JsonSchema;
+use serde::{
+    Deserialize, Serialize,
+    de::{self, Visitor},
+};
 
 /// Update policy determines what version bumps are allowed.
 ///

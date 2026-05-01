@@ -5,8 +5,7 @@
 //! resolution to fill defaults and validate host entries — without depending
 //! on any provider crate directly.
 
-use std::collections::HashMap;
-use std::num::NonZeroU8;
+use std::{collections::HashMap, num::NonZeroU8};
 
 use super::{ApiMode, HostKind};
 use crate::provider::Provider;

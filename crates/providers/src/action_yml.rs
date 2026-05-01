@@ -3,10 +3,13 @@
 //! Provides raw deserialization types and parsing logic for GitHub Actions
 //! action.yml files, shared across all provider implementations.
 
-use actup_core::error::Result;
-use actup_core::provider::{ActionInput, ActionOutput, ActionRuns, ActionStep, ActionYml};
-use serde::Deserialize;
 use std::collections::HashMap;
+
+use actup_core::{
+    error::Result,
+    provider::{ActionInput, ActionOutput, ActionRuns, ActionStep, ActionYml},
+};
+use serde::Deserialize;
 
 /// Raw deserialization type for action.yml
 #[derive(Debug, Deserialize, Default)]

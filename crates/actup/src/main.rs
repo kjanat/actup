@@ -475,8 +475,9 @@ mod tests {
 
     #[test]
     fn build_registry_fetch_settings_propagated() {
-        use actup_core::{ApiMode, FetchSettings};
         use std::num::NonZeroU8;
+
+        use actup_core::{ApiMode, FetchSettings};
 
         let config = Config {
             fetch: FetchSettings {

@@ -3,13 +3,11 @@
 //! Shows action metadata (name, description, author), version status,
 //! repository link, and deprecation warnings on hover over `uses:` lines.
 
-use std::fmt::Write as _;
-use std::sync::Arc;
+use std::{fmt::Write as _, sync::Arc};
 
-use actup_core::resolution::CheckStatus;
-use actup_core::version;
 use actup_core::{
     ActionRef, Config, check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
+    resolution::CheckStatus, version,
 };
 use dashmap::DashMap;
 use tower_lsp_server::ls_types::{
@@ -439,10 +437,11 @@ async fn compute_hover_status(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use super::*;
-    use actup_core::resolution::CheckStatus;
-    use actup_core::version;
     use std::sync::atomic::Ordering;
+
+    use actup_core::{resolution::CheckStatus, version};
+
+    use super::*;
 
     #[test]
     fn find_action_at_cursor_on_uses_line() {

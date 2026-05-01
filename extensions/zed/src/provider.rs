@@ -4,9 +4,9 @@
 //! through [`zed_extension_api::http_client`]. Synchronous — Zed's `fetch()`
 //! blocks in the WASM extension host.
 
+use std::{collections::HashMap, sync::Arc};
+
 use actup_core::version;
-use std::collections::HashMap;
-use std::sync::Arc;
 use zed_extension_api::http_client::{HttpMethod, HttpRequest, RedirectPolicy};
 
 /// Tag entry from the GitHub REST API (`GET /repos/{owner}/{repo}/tags`).

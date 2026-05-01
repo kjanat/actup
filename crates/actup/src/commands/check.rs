@@ -1,21 +1,20 @@
 //! Check command - scan workflows and report outdated actions
 
-use std::collections::HashMap;
-use std::path::Path;
-use std::sync::Arc;
-
-use itertools::Itertools;
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, ActionRepoId, CheckStatus, Config, NO_VERSIONS_FOUND_REASON,
     check_action_with_provider, provider, version,
 };
+use itertools::Itertools;
 use tracing::debug;
 
-use crate::cli::OutputFormat;
-use crate::common::{ErrorTally, WorkflowScanner};
-use crate::file_cache::FileCache;
-use crate::output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary};
+use crate::{
+    cli::OutputFormat,
+    common::{ErrorTally, WorkflowScanner},
+    file_cache::FileCache,
+    output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary},
+};
 
 /// Convert core [`CheckStatus`] to CLI [`FindingStatus`].
 ///
@@ -348,11 +347,14 @@ async fn batch_fetch_versions(
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use actup_core::{
+        provider::{ActionYml, Kind, Provider, Sha40},
+        version,
+    };
+
     use super::*;
-    use actup_core::provider::{ActionYml, Kind, Provider, Sha40};
-    use actup_core::version;
-    use std::collections::HashMap;
-    use std::sync::Arc;
 
     struct TestProvider;
 

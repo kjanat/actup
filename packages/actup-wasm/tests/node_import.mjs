@@ -98,11 +98,16 @@ assert.ok(Array.isArray(results), `Expected array, got ${typeof results}`);
 assert.equal(results.length, 2, "checkRefs result count (skips local ./)");
 
 const validStatuses = new Set(["UpToDate", "Outdated", "Unresolvable", "Unknown", "RateLimited"]);
+// `CheckStatus` serializes unit variants as a string ("UpToDate") and struct
+// variants as a single-key object ({ Outdated: {...} }) under serde's default
+// externally-tagged representation. Normalize both shapes to the variant name.
+const statusName = (s) => (typeof s === "string" ? s : Object.keys(s)[0]);
+
 const checkoutResult = results.find((r) => r.action_ref?.repo === "checkout");
 assert.ok(checkoutResult, "checkout result present");
 assert.equal(checkoutResult.action_ref.owner, "actions", "checkout owner");
 assert.ok(
-	validStatuses.has(checkoutResult.status),
+	validStatuses.has(statusName(checkoutResult.status)),
 	`checkout status valid: got ${JSON.stringify(checkoutResult.status)}`,
 );
 
@@ -110,7 +115,7 @@ const setupNodeResult = results.find((r) => r.action_ref?.repo === "setup-node")
 assert.ok(setupNodeResult, "setup-node result present");
 assert.equal(setupNodeResult.action_ref.owner, "actions", "setup-node owner");
 assert.ok(
-	validStatuses.has(setupNodeResult.status),
+	validStatuses.has(statusName(setupNodeResult.status)),
 	`setup-node status valid: got ${JSON.stringify(setupNodeResult.status)}`,
 );
 

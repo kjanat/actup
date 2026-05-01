@@ -13,30 +13,30 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use futures::{SinkExt as _, StreamExt as _};
 use serde_json::json;
 use tokio::sync::Mutex;
 use tower::Service as _;
-use tower_lsp_server::jsonrpc::{Id, Request, Response};
-use tower_lsp_server::ls_types::{
-    ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionOrCommand, CodeActionParams,
-    CompletionContext, CompletionParams, CompletionTriggerKind, DidChangeTextDocumentParams,
-    DidChangeWatchedFilesClientCapabilities, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentChanges, ExecuteCommandParams, HoverParams, InitializeParams, InitializeResult,
-    InitializedParams, OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range,
-    TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
-    TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
-    WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
-    WorkspaceFolder,
+use tower_lsp_server::{
+    ClientSocket, LspService,
+    jsonrpc::{Id, Request, Response},
+    ls_types::{
+        ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionOrCommand,
+        CodeActionParams, CompletionContext, CompletionParams, CompletionTriggerKind,
+        DidChangeTextDocumentParams, DidChangeWatchedFilesClientCapabilities,
+        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentChanges,
+        ExecuteCommandParams, HoverParams, InitializeParams, InitializeResult, InitializedParams,
+        OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range,
+        TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
+        TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
+        WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
+        WorkspaceFolder,
+    },
 };
-use tower_lsp_server::{ClientSocket, LspService};
 
-use crate::backend::LspBackend;
-use crate::diagnostics::DIAGNOSTIC_SOURCE;
-use crate::test_utils;
+use crate::{backend::LspBackend, diagnostics::DIAGNOSTIC_SOURCE, test_utils};
 
 fn initialize_request(id: i64, workspace_root: Option<&str>) -> Request {
     #[allow(deprecated)]
