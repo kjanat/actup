@@ -84,6 +84,7 @@ impl fmt::Display for Sha40 {
 
 /// Parsed action.yml content
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct ActionYml {
     /// Raw YAML content
     raw: String,
@@ -201,6 +202,7 @@ impl ActionYml {
 
 /// An input parameter for an action
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct ActionInput {
     /// Description of the input
     description: Option<String>,
@@ -279,6 +281,7 @@ impl ActionInput {
 
 /// An output value from an action
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct ActionOutput {
     /// Description of the output
     description: Option<String>,
@@ -325,6 +328,7 @@ impl ActionOutput {
 
 /// How the action executes
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct ActionRuns {
     /// Runtime: "composite", "node24", "node22", "node20", "node16", "docker"
     using: String,
@@ -428,6 +432,7 @@ impl ActionRuns {
 
 /// A step in a composite action
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
 pub struct ActionStep {
     /// Step name
     name: Option<String>,
