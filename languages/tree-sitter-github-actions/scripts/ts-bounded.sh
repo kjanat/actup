@@ -19,11 +19,11 @@
 set -euo pipefail
 
 # Knobs — fractions are integer percent of MemTotal; floors are absolute MB.
-HEADROOM_FRAC_PCT="${HEADROOM_FRAC_PCT:-25}"   # reserve 25% of total for the rest of the system
-HEADROOM_MIN_MB="${HEADROOM_MIN_MB:-4096}"     # but never less than 4 GiB
-CEILING_FRAC_PCT="${CEILING_FRAC_PCT:-50}"     # never cap above 50% of total
-MIN_CAP_MB="${MIN_CAP_MB:-2048}"               # below 2 GiB tree-sitter generate just SIGKILLs anyway
-DEFAULT_CMD="${DEFAULT_CMD:-tree-sitter test}" # what bare-invocation runs
+HEADROOM_FRAC_PCT="${HEADROOM_FRAC_PCT:-25}" # reserve 25% of total for the rest of the system
+HEADROOM_MIN_MB="${HEADROOM_MIN_MB:-4096}"   # but never less than 4 GiB
+CEILING_FRAC_PCT="${CEILING_FRAC_PCT:-50}"   # never cap above 50% of total
+MIN_CAP_MB="${MIN_CAP_MB:-2048}"             # below 2 GiB tree-sitter generate just SIGKILLs anyway
+DEFAULT_CMD="${DEFAULT_CMD:-tree-sitter}"    # what bare-invocation runs
 
 # ANSI foreground colors. Bars are drawn with U+2588 FULL BLOCK glyphs so the
 # result reads as a progress bar rather than a wall of saturated background.
@@ -97,13 +97,15 @@ render_bars() {
 	printf '  cap %s, free after %s\n' \
 		"$(fmt_mb "$planned_mb")" "$(fmt_mb "$((avail_mb - planned_mb))")"
 
+	SEGMENTS=$bar_width
 	printf '  legend:     '
-	bar_segment "$C_USED" 3
+	bar_segment "$C_USED" $((SEGMENTS / 5))
 	printf ' in use  '
-	bar_segment "$C_PLANNED" 3
-	printf ' planned cap  '
-	bar_segment "$C_TRACK" 3
-	printf ' free\n'
+	bar_segment "$C_TRACK" $((SEGMENTS / 4))
+	printf ' free  '
+	bar_segment "$C_PLANNED" $((SEGMENTS / 4))
+	printf ' %s  ' 'reserved'
+	printf '\n'
 }
 
 # Resolve thresholds against /proc/meminfo. Sets globals: total_mb, avail_mb,
@@ -230,5 +232,9 @@ printf 'ts-bounded: MemTotal=%s MemAvailable=%s headroom=%s ceiling=%s cap=%s cm
 
 # Render the same bars to stderr at runtime so you see exactly what's about to happen.
 render_bars >&2
+
+# Visual delimiter so wrapper output is unambiguously separated from the wrapped
+# command's stdout/stderr. Width matches the bar width above for alignment.
+printf '%s──────── ↓ %s ↓ ────────%s\n' "$C_DIM" "$*" "$C_RESET" >&2
 
 exec prlimit --as="$cap_bytes" --rss="$cap_bytes" -- "$@"
