@@ -24,6 +24,23 @@ HEADROOM_MIN_MB="${HEADROOM_MIN_MB:-4096}"   # but never less than 4 GiB
 CEILING_FRAC_PCT="${CEILING_FRAC_PCT:-50}"   # never cap above 50% of total
 MIN_CAP_MB="${MIN_CAP_MB:-2048}"             # below 2 GiB tree-sitter generate just SIGKILLs anyway
 
+# Format a megabyte count for display: "X.Y GB" when |mb| > 1024, else "N MB".
+# Uses integer math because bash has no floats. Multiplies by 10 BEFORE the
+# divide so the 1-decimal precision survives integer truncation. Strips sign
+# before formatting so negatives render cleanly (`-37.5 GB`, not `-37.-5 GB`).
+fmt_mb() {
+	local mb="$1" abs sign='' gb_int gb_tenth
+	abs="${mb#-}"
+	if [ "$mb" != "$abs" ]; then sign='-'; fi
+	if [ "$abs" -gt 1024 ]; then
+		gb_int=$((abs / 1024))
+		gb_tenth=$(((abs * 10 / 1024) % 10))
+		printf '%s%d.%d GB' "$sign" "$gb_int" "$gb_tenth"
+	else
+		printf '%s%d MB' "$sign" "$abs"
+	fi
+}
+
 # Resolve thresholds against /proc/meminfo. Sets globals: total_mb, avail_mb,
 # headroom_mb, ceiling_mb, cap_mb, refuse_reason. cap_mb is clamped to ceiling
 # but NOT yet to MIN_CAP_MB — caller decides whether to refuse based on that.
@@ -56,7 +73,7 @@ resolve() {
 
 	refuse_reason=""
 	if [ "$cap_mb" -lt "$MIN_CAP_MB" ]; then
-		refuse_reason="cap=${cap_mb}MB < MIN_CAP_MB=${MIN_CAP_MB}MB"
+		refuse_reason="cap=$(fmt_mb "$cap_mb") < MIN_CAP_MB=$(fmt_mb "$MIN_CAP_MB")"
 	fi
 }
 
@@ -74,11 +91,11 @@ env knobs (all optional):
   MIN_CAP_MB         refuse if the computed cap would be below this many MB (default 2048)
 
 resolved on this system right now:
-  MemTotal:      ${total_mb} MB
-  MemAvailable:  ${avail_mb} MB
-  headroom:      ${headroom_mb} MB ($([ "$headroom_mb" -gt "$((total_mb * HEADROOM_FRAC_PCT / 100))" ] && echo "MIN floor" || echo "${HEADROOM_FRAC_PCT}% of total"))
-  ceiling:       ${ceiling_mb} MB (${CEILING_FRAC_PCT}% of total)
-  cap:           ${cap_mb} MB$([ -n "$refuse_reason" ] && echo " ✗ would refuse: $refuse_reason" || echo " ✓")
+  MemTotal:      $(fmt_mb "$total_mb")
+  MemAvailable:  $(fmt_mb "$avail_mb")
+  headroom:      $(fmt_mb "$headroom_mb") ($([ "$headroom_mb" -gt "$((total_mb * HEADROOM_FRAC_PCT / 100))" ] && echo "MIN floor" || echo "${HEADROOM_FRAC_PCT}% of total"))
+  ceiling:       $(fmt_mb "$ceiling_mb") (${CEILING_FRAC_PCT}% of total)
+  cap:           $(fmt_mb "$cap_mb")$([ -n "$refuse_reason" ] && echo " ✗ would refuse: $refuse_reason" || echo " ✓")
 
 examples:
   $(basename "$0") tree-sitter test
@@ -101,15 +118,15 @@ esac
 resolve
 
 if [ -n "$refuse_reason" ]; then
-	printf 'ts-bounded: refusing — MemTotal=%dMB MemAvailable=%dMB headroom=%dMB → %s.\n' \
-		"$total_mb" "$avail_mb" "$headroom_mb" "$refuse_reason" >&2
+	printf 'ts-bounded: refusing — MemTotal=%s MemAvailable=%s headroom=%s → %s.\n' \
+		"$(fmt_mb "$total_mb")" "$(fmt_mb "$avail_mb")" "$(fmt_mb "$headroom_mb")" "$refuse_reason" >&2
 	echo 'ts-bounded: free memory or override MIN_CAP_MB / HEADROOM_FRAC_PCT and retry.' >&2
 	exit 1
 fi
 
 cap_bytes=$((cap_mb * 1024 * 1024))
 
-printf 'ts-bounded: MemTotal=%dMB MemAvailable=%dMB headroom=%dMB ceiling=%dMB cap=%dMB cmd=%s\n' \
-	"$total_mb" "$avail_mb" "$headroom_mb" "$ceiling_mb" "$cap_mb" "$*" >&2
+printf 'ts-bounded: MemTotal=%s MemAvailable=%s headroom=%s ceiling=%s cap=%s cmd=%s\n' \
+	"$(fmt_mb "$total_mb")" "$(fmt_mb "$avail_mb")" "$(fmt_mb "$headroom_mb")" "$(fmt_mb "$ceiling_mb")" "$(fmt_mb "$cap_mb")" "$*" >&2
 
 exec prlimit --as="$cap_bytes" --rss="$cap_bytes" -- "$@"
