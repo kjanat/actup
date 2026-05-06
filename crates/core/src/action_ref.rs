@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 /// This is provider-neutral - it captures the structure without
 /// assuming any particular git hosting platform.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub struct ActionRef {
     /// Optional explicit host (e.g., "github.com", "ghe.mycorp.internal")
     /// If None, uses the default provider's host

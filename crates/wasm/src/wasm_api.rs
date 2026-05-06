@@ -2,14 +2,47 @@
 
 use actup_core::{
     config::Config,
-    extract_uses_from_yaml, parse_uses,
+    extract_uses_from_yaml, parse_uses, policy,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, check_action_remote},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use crate::bridge::{JsProvider, JsProviderAdapter};
+
+/// Subset of [`Config`] passable from JS callers.
+///
+/// JS code constructs an object matching this shape; `serde_wasm_bindgen`
+/// deserializes it directly. Wider config knobs ([`Cache`], [`HostConfig`],
+/// per-action overrides) aren't part of the WASM surface — those are
+/// repo-config concerns, not runtime arguments.
+///
+/// [`Cache`]: actup_core::config::Cache
+/// [`HostConfig`]: actup_core::config::HostConfig
+#[derive(Debug, Default, Deserialize, tsify_next::Tsify)]
+#[tsify(from_wasm_abi)]
+pub struct ActupConfig {
+    /// Default host for bare `owner/repo` refs (e.g. `"github.com"`).
+    #[serde(default)]
+    pub default_host: Option<String>,
+    /// Global update policy.
+    #[serde(default)]
+    pub update_policy: Option<policy::Update>,
+}
+
+impl From<ActupConfig> for Config {
+    fn from(value: ActupConfig) -> Self {
+        let mut config = Self::default();
+        if let Some(host) = value.default_host {
+            config.default_host = Some(host);
+        }
+        if let Some(policy) = value.update_policy {
+            config.update_policy = policy;
+        }
+        config
+    }
+}
 
 /// Parse `uses:` references from workflow YAML content.
 ///
@@ -37,8 +70,7 @@ pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
 ///
 /// * `yaml` — workflow YAML content
 /// * `provider` — JS object implementing `ActupProvider` interface
-/// * `config_json` — optional JSON config (subset of actup config).
-///   If omitted, defaults are used.
+/// * `config` — optional [`ActupConfig`]. If omitted, defaults are used.
 ///
 /// # Errors
 ///
@@ -47,13 +79,9 @@ pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
 pub async fn check_refs(
     yaml: &str,
     provider: JsProvider,
-    config_json: Option<String>,
+    config: Option<ActupConfig>,
 ) -> Result<JsValue, JsValue> {
-    let config: Config = match config_json {
-        Some(ref json) => serde_json::from_str(json)
-            .map_err(|e| JsValue::from_str(&format!("invalid config JSON: {e}")))?,
-        None => Config::default(),
-    };
+    let config: Config = config.map(Config::from).unwrap_or_default();
 
     let host = config
         .default_host

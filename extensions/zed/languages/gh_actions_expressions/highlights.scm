@@ -39,7 +39,7 @@
 (function_call
   function: (identifier) @function.builtin
   (#any-of? @function.builtin
-    "contains" "startsWith" "endsWith" "format" "join" "toJSON" "fromJSON" "hashFiles" "success"
+    "case" "contains" "startsWith" "endsWith" "format" "join" "toJSON" "fromJSON" "hashFiles" "success"
     "always" "cancelled" "failure"))
 
 (function_call

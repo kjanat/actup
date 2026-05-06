@@ -29,6 +29,7 @@ use serde::{
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub enum Update {
     /// Only patch updates within same major.minor (1.2.3 -> 1.2.4).
     ///

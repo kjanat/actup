@@ -15,7 +15,7 @@ ignored = ["wasm-bindgen-futures"]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-actup-core           = { workspace = true }
+actup-core           = { workspace = true, features = ["tsify"] }
 js-sys               = { workspace = true }
 serde                = { workspace = true }
 serde_json           = { workspace = true }

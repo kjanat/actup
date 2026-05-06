@@ -9,27 +9,46 @@ authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
 repository     = "https://github.com/kjanat/actup-v2"
 
 [language_servers.actup-lsp]
-languages = ["GitHub Actions", "YAML"]
+languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
 
 [language_servers.actup-lsp.language_ids]
-"GitHub Actions" = "yaml"
-"YAML"           = "yaml"
+"GitHub Actions"             = "yaml"
+"GitHub Actions Expressions" = "yaml"
+"YAML"                       = "yaml"
+
+[language_servers.actions-languageserver]
+languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
+
+[language_servers.actions-languageserver.language_ids]
+"GitHub Actions"             = "yaml"
+"GitHub Actions Expressions" = "yaml"
+"YAML"                       = "yaml"
 
 [language_servers.yaml-language-server]
-languages = ["GitHub Actions"]
+languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
 
 [language_servers.yaml-language-server.language_ids]
-"GitHub Actions" = "yaml"
+"GitHub Actions"             = "yaml"
+"GitHub Actions Expressions" = "yaml"
+"YAML"                       = "yaml"
 
 [[capabilities]]
 kind    = "process:exec"
-command = "actup-lsp"
-args    = []
+command = "*"
+args    = ["**"]
 
 [[capabilities]]
 kind    = "process:exec"
-command = "yaml-language-server"
+command = "actions-languageserver"
 args    = ["--stdio"]
+
+[[capabilities]]
+kind    = "npm:install"
+package = "yaml-language-server"
+
+[[capabilities]]
+kind    = "npm:install"
+package = "@actions/languageserver"
 
 [grammars.yaml]
 repository = "https://github.com/zed-industries/tree-sitter-yaml"
@@ -41,6 +60,6 @@ rev        = "823a5876dcf3a1f5aa8cf9df2ac69eea6e8d7068"                        #
 
 # [context_servers.actup-mcp]
 
-[slash_commands."actions:update"]
-description       = "Update GitHub Actions uses: refs to the latest version"
-requires_argument = false
+# [slash_commands."actions:update"]
+# description       = "Update GitHub Actions uses: refs to the latest version"
+# requires_argument = false

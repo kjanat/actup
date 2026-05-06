@@ -76,20 +76,21 @@ extern "C" {
 ///
 /// Matches the shape the JS provider should return from `getVersions()`.
 /// Deserialized via `serde_wasm_bindgen` from the JS object.
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, tsify_next::Tsify)]
 #[serde(rename_all = "camelCase")]
-struct JsVersionSet {
+#[tsify(from_wasm_abi)]
+pub struct VersionSet {
     /// Semver tags: `[{ version: "v4.2.0", sha: "abc..." }, ...]`
     #[serde(default)]
-    semver_tags: Vec<JsVersionInfo>,
+    semver_tags: Vec<VersionTag>,
     /// Default branch info (optional)
     #[serde(default)]
-    default_branch: Option<JsBranchInfo>,
+    default_branch: Option<BranchInfo>,
 }
 
 /// A single version tag as returned from JS.
-#[derive(serde::Deserialize)]
-struct JsVersionInfo {
+#[derive(serde::Deserialize, tsify_next::Tsify)]
+pub struct VersionTag {
     /// Tag string (e.g. "v4.2.0", "v1")
     version: String,
     /// Full 40-char commit SHA
@@ -97,8 +98,8 @@ struct JsVersionInfo {
 }
 
 /// Branch info as returned from JS.
-#[derive(serde::Deserialize)]
-struct JsBranchInfo {
+#[derive(serde::Deserialize, tsify_next::Tsify)]
+pub struct BranchInfo {
     /// Branch name (e.g. "main")
     name: String,
     /// HEAD commit SHA
@@ -146,8 +147,8 @@ fn js_err(val: JsValue) -> actup_core::Error {
     }
 }
 
-/// Convert [`JsVersionSet`] into [`version::Set`].
-fn build_version_set(js: JsVersionSet, clock: &dyn actup_core::Clock) -> version::Set {
+/// Convert [`VersionSet`] into [`version::Set`].
+fn build_version_set(js: VersionSet, clock: &dyn actup_core::Clock) -> version::Set {
     let mut infos: Vec<Arc<version::Info>> = Vec::with_capacity(js.semver_tags.len());
     let mut latest_per_major: HashMap<u32, Arc<version::Info>> = HashMap::new();
     let mut major_tags: HashMap<u32, Arc<version::Info>> = HashMap::new();
@@ -216,7 +217,7 @@ impl Provider for JsProviderAdapter {
                 .get_versions_js(&host, &owner, &repo_name)
                 .await
                 .map_err(js_err)?;
-            let js_set: JsVersionSet = serde_wasm_bindgen::from_value(js_val).map_err(|e| {
+            let js_set: VersionSet = serde_wasm_bindgen::from_value(js_val).map_err(|e| {
                 actup_core::Error::Internal {
                     context: "deserialize VersionSet from JS".into(),
                     message: e.to_string(),

@@ -8,8 +8,8 @@
  * @module
  */
 
-import type { ActionYml } from "../wasm/actup_wasm.js";
-import type { ActupProvider, VersionSet } from "./types.ts";
+import type { ActionYml, VersionSet } from "../wasm/actup_wasm.js";
+import type { ActupProvider } from "./types.ts";
 
 /** Options for {@link createGitHubProvider}. */
 export interface GitHubProviderOptions {
@@ -362,8 +362,9 @@ async function getVersions(
 		url = parseNextLink(response);
 	}
 
-	// Fetch default branch info
-	let defaultBranch: { readonly name: string; readonly sha: string } | undefined;
+	// Fetch default branch info. Rust deserializes `null` as `None`, so use
+	// null (not undefined) when the call fails — matches the generated type.
+	let defaultBranch: { readonly name: string; readonly sha: string } | null = null;
 	try {
 		const repoInfo = await readJson(await ghFetch(`${apiBase}/repos/${owner}/${repo}`, headers));
 		if (!isGhRepo(repoInfo)) throw invalidShape("/repos/{owner}/{repo}");

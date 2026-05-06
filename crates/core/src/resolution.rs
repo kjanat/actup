@@ -17,8 +17,8 @@ pub const NO_VERSIONS_FOUND_REASON: &str = "no versions found";
 
 /// Result of checking a single action reference
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
-#[cfg_attr(target_arch = "wasm32", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", tsify(into_wasm_abi, from_wasm_abi))]
 pub struct CheckResult {
     /// The action reference that was checked
     action_ref: ActionRef,
@@ -48,7 +48,7 @@ impl CheckResult {
 
 /// Status of an action version check
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub enum CheckStatus {
     /// Action is at the latest allowed version
     UpToDate,

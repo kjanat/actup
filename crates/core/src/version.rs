@@ -322,10 +322,10 @@ pub struct Set {
 
 /// Information about a specific version
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub struct Info {
     /// The parsed version. Wire form is the Display string (see [`Version`]).
-    #[cfg_attr(target_arch = "wasm32", tsify(type = "string"))]
+    #[cfg_attr(feature = "tsify", tsify(type = "string"))]
     version: Version,
 
     /// The commit SHA this version points to

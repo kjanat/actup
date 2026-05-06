@@ -10,23 +10,22 @@
 		"TypeScript": { "language_servers": ["vtsls", "tsgo", "biome", "!eslint"] },
 		"Rust": { "wrap_guides": [100] },
 		"GitHub Actions": {
-			// "yaml-language-server",
-			"language_servers": ["actup-lsp", "..."]
+			"language_servers": ["actup-lsp", "actions-language-server", "..."] // "yaml-language-server",
 		}
 	},
-	"file_types": { "GitHub Actions": ["**/.github/workflows/*.yml", "**/.github/workflows/*.yaml"] },
+	"file_types": {
+		// "GitHub Actions"
+		"YAML": [".github/workflows/*.yml", ".github/workflows/*.yaml", ".github/actions/*.yml", ".github/actions/*.yaml"]
+	},
 	"lsp": {
 		"rust-analyzer": {
 			"initialization_options": {
 				"diagnostics": { "experimental": { "enable": true } },
-				"cargo": { "allFeatures": true, "allTargets": true },
-				"check": { "workspace": true },
-				"completion": { "snippets": { "custom": {} } }
+				// "cargo": { "allFeatures": true, "allTargets": true },
+				"check": { "workspace": true }
+				// "completion": { "snippets": { "custom": {} } }
 			}
 		},
-		"actup-lsp": {
-			// or set "binary": { "path": "target/debug/actup-lsp" }
-			"binary": { "path": "cargo", "arguments": ["run", "--bin=actup-lsp", "--manifest-path=crates/lsp/Cargo.toml"] }
-		}
+		"actup-lsp": { "binary": { "path": "cargo", "arguments": ["actup-lsp"] } }
 	}
 }

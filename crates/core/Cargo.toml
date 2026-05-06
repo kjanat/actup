@@ -9,12 +9,14 @@ license.workspace    = true
 publish.workspace    = true
 
 [dependencies]
-dirs          = { workspace = true }  # Config discovery
-figment       = { workspace = true }  # Configuration parsing
-glob          = { workspace = true }  # File discovery (glob patterns)
-json_comments = { workspace = true }  # JSONC parsing
-schemars      = { workspace = true }  # Schema generation
-serde         = { workspace = true }  # Serialization
+dirs          = { workspace = true }                   # Config discovery
+figment       = { workspace = true }                   # Configuration parsing
+glob          = { workspace = true }                   # File discovery (glob patterns)
+json_comments = { workspace = true }                   # JSONC parsing
+schemars      = { workspace = true }                   # Schema generation
+serde         = { workspace = true }                   # Serialization
+tsify-next    = { workspace = true, optional = true }  # gated by `tsify` feature
+wasm-bindgen  = { workspace = true, optional = true }  # required by tsify-next for `typescript_custom_section`
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -25,9 +27,14 @@ toml       = { workspace = true }
 tokio = { workspace = true }  # Full async runtime on native
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-tokio        = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
-tsify-next   = { workspace = true }                                              # generate .d.ts entries from these types
-wasm-bindgen = { workspace = true }                                              # required by tsify-next for `typescript_custom_section`
+tokio = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
+
+[features]
+# Opt-in TypeScript binding generation via tsify-next. Enabled by `actup-wasm`
+# for the npm package build (wasm32-unknown-unknown). NOT enabled by the Zed
+# extension (wasm32-wasip2) — wasm-bindgen's placeholder imports do not
+# resolve under `wasm-component-ld`.
+tsify = ["dep:tsify-next", "dep:wasm-bindgen"]
 
 [lints]
 workspace = true

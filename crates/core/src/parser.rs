@@ -174,7 +174,7 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
 
 /// Byte range of a substring within a line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub struct RefRange {
     /// 0-indexed inclusive start byte offset.
     pub start: usize,
@@ -184,7 +184,7 @@ pub struct RefRange {
 
 /// Location of a `uses:` value in a file
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[cfg_attr(target_arch = "wasm32", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub struct UsesLocation {
     /// Line number (1-indexed)
     line: usize,

@@ -1,7 +1,6 @@
 name: autofix.ci
-on:
-  pull_request:
-  push: { branches: [master] }
+run-name: ${{ format('autofix {0}', github.ref_name) }}
+on: { pull_request:, push: { branches: [master] } }
 permissions: { contents: read }
 jobs:
   autofix:
@@ -11,7 +10,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt,clippy" }
       - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      - uses: extractions/setup-just@v4
       - uses: tombi-toml/setup-tombi@v1
       - uses: kjanat/install-dprint@v1
       - uses: kjanat/install-shfmt@v1

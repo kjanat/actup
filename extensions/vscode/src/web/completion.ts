@@ -113,7 +113,7 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 			const versions = await this.provider.getVersions(parsed.host, parsed.owner, parsed.repo);
 			const lower = versionPrefix.toLowerCase();
 
-			for (const tag of versions.semverTags) {
+			for (const tag of versions.semverTags ?? []) {
 				if (lower !== "" && !tag.version.toLowerCase().startsWith(lower)) continue;
 
 				const item = new vscode.CompletionItem(

@@ -1,4 +1,4 @@
-#:schema https://github.com/kjanat/zed-editor/raw/refs/heads/feature/extension-toml-schema/crates/extension_api/schemas/language-config.schema.json
+#:schema https://github.com/kjanat/zed-editor/raw/feature/extension-toml-schema/crates/extension_api/schemas/language-config.schema.json
 
 name                                  = "GitHub Actions"
 grammar                               = "yaml"
@@ -7,12 +7,13 @@ autoclose_before                      = ",]}"
 brackets                              = [
   { start = "{", end = "}", close = true, newline = true },
   { start = "[", end = "]", close = true, newline = true },
-  { start = "\"", end = "\"", close = true, newline = false, not_in = ["string"] },
-  { start = "'", end = "'", close = true, newline = false, not_in = ["string"] },
+  { start = "\"", end = "\"", close = true, surround = true, newline = false },
+  { start = "'", end = "'", close = true, surround = true, newline = false },
 ]
 auto_indent_on_paste                  = false
 auto_indent_using_last_non_empty_line = false
 increase_indent_pattern               = ":\\s*[|>]?\\s*$"
-prettier_parser_name                  = "yaml"
 tab_size                              = 2
 hard_tabs                             = false
+linked_edit_characters                = ["-", ":", "{", "}", "[", "]", "\"", "'"]
+scope_opt_in_language_servers         = ["actup-lsp", "actions-languageserver", "yaml-language-server"]

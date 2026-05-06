@@ -494,7 +494,7 @@ await test("getVersions returns tags even if default branch fetch fails", async 
 	const provider = createGitHubProvider();
 	const result = await provider.getVersions("github.com", "o", "r");
 	assertEqual(result.semverTags.length, 1, "got tags despite branch failure");
-	assertEqual(result.defaultBranch, undefined, "no defaultBranch on failure");
+	assertEqual(result.defaultBranch, null, "no defaultBranch on failure");
 });
 
 // Test: perPage option is respected

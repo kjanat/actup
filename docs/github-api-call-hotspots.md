@@ -28,45 +28,148 @@ Examples:
 - 40 tags: 3 calls
 - 350 tags: 6 calls
 
+## GitHub Rate Limits
+
+Baseline budgets (per hour, per IP or token):
+
+| Mode            | Limit           |
+| --------------- | --------------- |
+| Unauthenticated | 60 requests/h   |
+| Authenticated   | 5000 requests/h |
+
+Using an auth token multiplies the budget ~83×. For heavy flows (CLI `check` across a large workspace, LSP diagnostics on open), always use
+authenticated requests — an unauthenticated budget is exhausted by ~20 repos with moderate tag counts.
+
+Check remaining budget via the `x-ratelimit-remaining` response header (returned on every GitHub API response) or query `GET /rate_limit`
+directly. The `GitHubProvider::get_versions()` primitive costs `ceil(tags/100) + 2` calls per repo, so 10 repos with 100 tags each consumes
+~40 of the 5000 budget on a cold cache.
+
 ## Hotspots
 
-| Hotspot                                      | Where                                                                                                                                  | When it fires                                              | Why it gets expensive                                                                                                         | Current cost                                              | Remedy                                                                                     |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Core version fetch primitive                 | `crates/provider-github/src/provider.rs:56-82`                                                                                         | Any caller asks for versions                               | Fetches all tag pages, then repo info, then default branch                                                                    | `ceil(tags/100)+2` per repo                               | Keep as low-level primitive, but stop calling it repeatedly from bulk flows                |
-| CLI `check` bulk fetch                       | `crates/actup/src/commands/check.rs:177-195`, `348-394`                                                                                | `actup check` on cold or stale cache                       | Dedupes repos, but still calls `provider.get_versions()` for each uncached repo and uses `join_all` with no concurrency bound | Unique repos x primitive cost, all in one burst           | Route GitHub repos through `BatchFetcher`; add bounded fallback concurrency                |
-| CLI `check` fallback SHA resolution          | `crates/actup/src/commands/check.rs:214-247`, `crates/core/src/resolution.rs:148-178`, `crates/provider-github/src/provider.rs:85-134` | When batch version data cannot prove a semver ref is valid | Extra `resolve_ref_to_sha()` call per affected action                                                                         | +1 to +2 calls per affected action                        | Cache `resolve_ref_to_sha(repo, ref)` results within the run                               |
-| CLI `update` per-action refetch              | `crates/actup/src/commands/update.rs:69-90`                                                                                            | `actup update` / `actup fix`                               | Calls `provider.get_versions()` once per `uses:` entry, with no repo dedupe                                                   | Repeats full tag scan for same repo                       | Batch by unique repo first, or wrap provider in `CachingProvider`                          |
-| CLI `pin` per-action refetch plus SHA lookup | `crates/actup/src/commands/pin.rs:31-68`, `99-111`                                                                                     | `actup pin`                                                | Fetches versions per action, then may also resolve ref directly                                                               | Primitive cost, sometimes +1 to +2 more                   | Reuse unique repo version map and memoize SHA resolution                                   |
-| CLI `latest` one-off lookup                  | `crates/actup/src/commands/latest.rs:131-141`                                                                                          | `actup owner/repo`                                         | Still pays full `get_versions()` cost                                                                                         | Primitive cost once per invocation                        | Lower priority; improved automatically if shared fetch path is fixed                       |
-| LSP diagnostics repo fetch                   | `crates/lsp/src/diagnostics.rs:114-172`, `293-326`                                                                                     | On open, save, and after debounced edits                   | Dedupes repos per document, but fetches uncached repos sequentially via `provider.get_versions()`                             | Unique repos in document x primitive cost                 | Use GitHub batch fetcher and keep semaphore-bounded fallback                               |
-| LSP workspace fix-all                        | `crates/lsp/src/workspace_commands.rs:223-225`, `329-405`                                                                              | `fixAllInWorkspace` command                                | Runs `compute_diagnostics()` per file, so cold-cache workspace scans pay repo-by-repo                                         | Sum of unique repos across scanned files x primitive cost | Add workspace-level repo aggregation before per-file diagnostics                           |
-| LSP cache host mismatch                      | `crates/lsp/src/file_cache.rs:110-124`, `crates/lsp/src/diagnostics.rs:129-143`                                                        | Any non-default host lookup in LSP                         | Cache key uses `default_host` instead of `provider.host()`, causing cache misses or collisions                                | Turns expected cache hits into refetches                  | Use `provider.host()` in LSP cache keys                                                    |
-| Hover metadata fetch                         | `crates/lsp/src/hover.rs:135-188`, `312-359`, `crates/provider-github/src/provider.rs:191-242`                                         | First hover on a unique action ref                         | Hover fetches versions, then `action.yml`; `action.yaml` fallback can add one more request                                    | Primitive version cost + 1 to 2 content calls             | Lower priority; keep cache, maybe skip metadata fetch until hover panel is actually needed |
+### Core version fetch primitive
+
+|                   |                                                                             |
+| ----------------- | --------------------------------------------------------------------------- |
+| **Where**         | `crates/provider-github/src/provider.rs:56-82`                              |
+| **When**          | Any caller asks for versions                                                |
+| **Why expensive** | Fetches all tag pages, then repo info, then default branch                  |
+| **Cost**          | `ceil(tags/100)+2` per repo                                                 |
+| **Remedy**        | Keep as low-level primitive, but stop calling it repeatedly from bulk flows |
+
+### CLI `check` bulk fetch
+
+|                   |                                                                                                             |
+| ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| **Where**         | `crates/actup/src/commands/check.rs:177-195`, `348-394`                                                     |
+| **When**          | `actup check` on cold or stale cache                                                                        |
+| **Why expensive** | Dedupes repos, but calls `provider.get_versions()` per uncached repo with `join_all` (no concurrency bound) |
+| **Cost**          | Unique repos × primitive cost, all in one burst                                                             |
+| **Remedy**        | Route GitHub repos through `BatchFetcher`; add bounded fallback concurrency                                 |
+
+### CLI `check` fallback SHA resolution
+
+|                   |                                                                            |
+| ----------------- | -------------------------------------------------------------------------- |
+| **Where**         | `check.rs:214-247`, `core/src/resolution.rs:148-178`, `provider.rs:85-134` |
+| **When**          | Batch version data cannot prove a semver ref is valid                      |
+| **Why expensive** | Extra `resolve_ref_to_sha()` call per affected action                      |
+| **Cost**          | +1 to +2 calls per affected action                                         |
+| **Remedy**        | Cache `resolve_ref_to_sha(repo, ref)` results within the run               |
+
+### CLI `update` per-action refetch
+
+|                   |                                                                        |
+| ----------------- | ---------------------------------------------------------------------- |
+| **Where**         | `crates/actup/src/commands/update.rs:69-90`                            |
+| **When**          | `actup update` / `actup fix`                                           |
+| **Why expensive** | Calls `provider.get_versions()` once per `uses:` entry, no repo dedupe |
+| **Cost**          | Repeats full tag scan for same repo                                    |
+| **Remedy**        | Batch by unique repo first, or wrap provider in `CachingProvider`      |
+
+### CLI `pin` per-action refetch + SHA lookup
+
+|                   |                                                                 |
+| ----------------- | --------------------------------------------------------------- |
+| **Where**         | `crates/actup/src/commands/pin.rs:31-68`, `99-111`              |
+| **When**          | `actup pin`                                                     |
+| **Why expensive** | Fetches versions per action, then may also resolve ref directly |
+| **Cost**          | Primitive cost, sometimes +1 to +2 more                         |
+| **Remedy**        | Reuse unique repo version map and memoize SHA resolution        |
+
+### CLI `latest` one-off lookup
+
+|                   |                                                                      |
+| ----------------- | -------------------------------------------------------------------- |
+| **Where**         | `crates/actup/src/commands/latest.rs:131-141`                        |
+| **When**          | `actup owner/repo`                                                   |
+| **Why expensive** | Still pays full `get_versions()` cost                                |
+| **Cost**          | Primitive cost once per invocation                                   |
+| **Remedy**        | Lower priority; improved automatically if shared fetch path is fixed |
+
+### LSP diagnostics repo fetch
+
+|                   |                                                                     |
+| ----------------- | ------------------------------------------------------------------- |
+| **Where**         | `crates/lsp/src/diagnostics.rs:114-172`, `293-326`                  |
+| **When**          | On open, save, and after debounced edits                            |
+| **Why expensive** | Dedupes repos per document, but fetches uncached repos sequentially |
+| **Cost**          | Unique repos in document × primitive cost                           |
+| **Remedy**        | Use GitHub batch fetcher and keep semaphore-bounded fallback        |
+
+### LSP workspace fix-all
+
+|                   |                                                                                    |
+| ----------------- | ---------------------------------------------------------------------------------- |
+| **Where**         | `crates/lsp/src/workspace_commands.rs:223-225`, `329-405`                          |
+| **When**          | `fixAllInWorkspace` command                                                        |
+| **Why expensive** | Runs `compute_diagnostics()` per file; cold-cache workspace scans pay repo-by-repo |
+| **Cost**          | Sum of unique repos across scanned files × primitive cost                          |
+| **Remedy**        | Add workspace-level repo aggregation before per-file diagnostics                   |
+
+### LSP cache host mismatch
+
+|                   |                                                                                       |
+| ----------------- | ------------------------------------------------------------------------------------- |
+| **Where**         | `crates/lsp/src/file_cache.rs:110-124`, `diagnostics.rs:129-143`                      |
+| **When**          | Any non-default host lookup in LSP                                                    |
+| **Why expensive** | Cache key uses `default_host` instead of `provider.host()`, causing misses/collisions |
+| **Cost**          | Turns expected cache hits into refetches                                              |
+| **Remedy**        | Use `provider.host()` in LSP cache keys                                               |
+
+### Hover metadata fetch
+
+|                   |                                                                                   |
+| ----------------- | --------------------------------------------------------------------------------- |
+| **Where**         | `crates/lsp/src/hover.rs:135-188`, `312-359`, `provider.rs:191-242`               |
+| **When**          | First hover on a unique action ref                                                |
+| **Why expensive** | Fetches versions, then `action.yml`; `.yaml` fallback can add one more request    |
+| **Cost**          | Primitive version cost + 1–2 content calls                                        |
+| **Remedy**        | Lower priority; keep cache, skip metadata fetch until hover panel actually needed |
 
 ## Dead Or Unwired Capacity
 
-The repo already contains GitHub batching and in-process memoization, but main CLI and LSP paths do not use them.
+The repo contains GitHub batching infrastructure that production paths do not yet use, alongside in-process memoization that IS wired in.
 
-Relevant code:
+### Wired in (active)
 
-- `crates/provider-github/src/batch.rs:17-212`
-- `crates/provider-github/src/graphql.rs:89-125`
-- `crates/core/src/caching_provider.rs:51-237`
+- **`CachingProvider` with `Semaphore`-based singleflight** (`crates/core/src/caching_provider.rs:51-237`): Both CLI (`main.rs:191`) and LSP
+  (`provider_setup.rs:55`) wrap providers in `CachingProvider`. The singleflight deduplicates concurrent requests for the same resource —
+  e.g., many files needing `actions/checkout` versions simultaneously collapse into a single upstream fetch. Followers wait on the
+  `Semaphore` and read the leader's cached result.
 
-Two notable gaps:
+### Unwired (dead code in production)
 
-- `BatchFetcher` exists, but production call sites do not use it.
-- Provider creation ignores resolved fetch knobs like `api_mode` and `max_tags_per_repo` even though config defaults to GraphQL.
+- **`BatchFetcher`** (`crates/provider-github/src/batch.rs:17-212`): Exists with full GraphQL batching support, but no CLI or LSP call site
+  uses it. Only exercised in unit tests.
+- **GraphQL query path** (`crates/provider-github/src/graphql.rs:89-125`): Reachable only through `BatchFetcher`, which is itself unwired.
+- **`api_mode` and `max_tags_per_repo` config knobs**: Provider creation (`crates/provider-github/src/lib.rs:79-82`) ignores these resolved
+  values even though config defaults to GraphQL (`crates/core/src/config/mod.rs:216-283`).
 
-Relevant code:
+### Impact
 
-- `crates/provider-github/src/lib.rs:79-82`
-- `crates/core/src/config/mod.rs:216-283`
-
-Impact:
-
-- The repo advertises GraphQL batching as a normal path.
-- Real CLI and LSP traffic still mostly uses per-repo REST.
+- The repo advertises GraphQL batching as a normal path, but real CLI and LSP traffic uses per-repo REST exclusively.
+- `CachingProvider` singleflight prevents redundant concurrent fetches within a process, but cannot help with the initial cold-cache burst —
+  that requires `BatchFetcher`.
 
 ## Highest-Impact Remedies
 

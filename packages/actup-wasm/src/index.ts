@@ -16,8 +16,8 @@
 
 /// <reference types="node" />
 
-import type { CheckResult, UpdateEdit, UsesLocation } from "../wasm/actup_wasm.js";
-import type { ActupConfig, ActupProvider } from "./types.ts";
+import type { ActupConfig, CheckResult, UpdateEdit, UsesLocation } from "../wasm/actup_wasm.js";
+import type { ActupProvider } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
 
@@ -30,14 +30,20 @@ export type {
 	ActionRuns,
 	ActionStep,
 	ActionYml,
+	ActupConfig,
+	BranchInfo,
 	CheckResult,
 	CheckStatus,
 	Info as VersionInfo,
+	Update as UpdatePolicy,
 	UpdateEdit,
 	UsesLocation,
+	VersionSet,
+	VersionTag,
 } from "../wasm/actup_wasm.js";
-// Hand-maintained: provider contract + provider-returned shapes + JSON input.
-export type { ActupConfig, ActupProvider, VersionSet } from "./types.ts";
+// Hand-maintained: only the behavioral provider interface. Everything else
+// is now driven by Rust.
+export type { ActupProvider } from "./types.ts";
 
 /**
  * Low-level wasm-bindgen bindings.
@@ -138,8 +144,7 @@ export async function checkRefs(
 	config?: ActupConfig,
 ): Promise<CheckResult[]> {
 	const w = requireInit();
-	const configJson = config !== undefined ? JSON.stringify(config) : undefined;
-	return await w.checkRefs(yaml, provider, configJson);
+	return await w.checkRefs(yaml, provider, config);
 }
 
 /**
