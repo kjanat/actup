@@ -1,0 +1,33 @@
+[package]
+name         = "tree-sitter-github-actions"
+description  = "Github Actions grammar for tree-sitter"
+version      = "0.1.0"
+authors      = ["Kaj Kowalski <info@kajkowalski.nl>"]
+license      = "MIT"
+readme       = "README.md"
+keywords     = ["github-actions", "incremental", "parsing", "tree-sitter"]
+categories   = ["parser-implementations", "parsing", "text-editors"]
+repository   = "https://github.com/kjanat/actup-v2"
+edition      = "2024"
+autoexamples = false
+build        = "bindings/rust/build.rs"
+include      = [
+  "/LICENSE",
+  "bindings/rust/*",
+  "grammar.js",
+  "queries/*",
+  "src/*",
+  "tree-sitter.json",
+]
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language = "0.1"
+
+[dev-dependencies]
+tree-sitter = "0.26.8"
+
+[build-dependencies]
+cc = "1.2"

@@ -22,8 +22,9 @@
 	"include": ["branding/**/*.ts"],
 	"exclude": ["node_modules", "target", "dist", "out", "extensions", "packages", "crates"],
 	"references": [
-		{ "path": "extensions/vscode/tsconfig.json" },
+		{ "path": "extensions/vscode" },
 		{ "path": "extensions/vscode/tsconfig.web.json" },
-		{ "path": "packages/actup-wasm/tsconfig.json" }
+		{ "path": "packages/actup-wasm" },
+		{ "path": "languages/tree-sitter-github-actions" }
 	]
 }

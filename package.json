@@ -3,7 +3,7 @@
 	"version": "0.0.0+dev",
 	"private": true,
 	"workspaces": {
-		"packages": ["extensions/*", "packages/*"],
+		"packages": ["extensions/*", "languages/*", "packages/*"],
 		"catalog": {
 			"@eslint/js": "^10.0.1",
 			"@stylistic/eslint-plugin": "^5.10.0",
@@ -18,5 +18,6 @@
 	},
 	"scripts": { "bd": "bun --filter '*' bd", "build:ts": "bun --filter '*' build:ts", "build:wasm": "bun --filter 'actup-wasm' build:wasm" },
 	"devDependencies": { "@kjanat/dreamcli": "latest", "@types/bun": "latest", "sort-package-json": "latest", "tombi": "latest" },
-	"packageManager": "bun@1.3.13"
+	"packageManager": "bun@1.3.13",
+	"patchedDependencies": { "tree-sitter@0.25.0": "patches/tree-sitter@0.25.0.patch" }
 }

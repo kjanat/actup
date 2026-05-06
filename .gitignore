@@ -263,3 +263,5 @@ extension.wasm
 grammars/
 package-lock.json
 bun.lock
+.*cache/
+.build/

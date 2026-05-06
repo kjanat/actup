@@ -1,0 +1,7 @@
+{
+	"$schema": "https://biomejs.dev/schemas/latest/schema.json",
+	"vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
+	"files": { "includes": ["./grammar.js", "./bindings/node/*.{js,ts}", "./scripts/*.mjs"], "ignoreUnknown": true },
+	"formatter": { "enabled": false },
+	"linter": { "enabled": true, "rules": { "recommended": true } }
+}

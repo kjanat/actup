@@ -1,0 +1,36 @@
+{
+	"compilerOptions": {
+		// Environment setup & latest features
+		"lib": ["ESNext"],
+		"target": "ESNext",
+		"module": "Preserve",
+		"moduleDetection": "force",
+		"allowJs": true,
+		"checkJs": true,
+		// Bundler mode
+		"moduleResolution": "bundler",
+		"allowImportingTsExtensions": true,
+		"verbatimModuleSyntax": true,
+		"rootDir": ".",
+		"outDir": "./dist",
+		"declaration": true,
+		"declarationMap": false,
+		"emitDeclarationOnly": true,
+		"noEmit": false,
+		"composite": true,
+		"tsBuildInfoFile": "node_modules/.cache/tsbuildinfo",
+		// Best practices
+		"strict": true,
+		"skipLibCheck": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUncheckedIndexedAccess": true,
+		"noImplicitOverride": true,
+		// Some stricter flags (disabled by default)
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noPropertyAccessFromIndexSignature": false,
+		"types": ["bun", "tree-sitter-cli/dsl"]
+	},
+	"include": ["./grammar.*", "./grammar/**/*", "./bindings/node/*", "./src/*.json", "*.json", "./plugins/*.ts", "./test/**/*.ts"],
+	"exclude": ["**/node_modules", "dist"]
+}
