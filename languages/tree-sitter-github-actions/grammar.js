@@ -15,6 +15,10 @@
  * @typedef {{ rules: Record<string, RuleJson>, [k: string]: unknown }} GrammarJson
  */
 
+// /**
+//  * @param {GrammarJson} grammarJson
+//  * @return {Grammar}
+//  */
 const base = grammar({
 	name: "github_actions",
 

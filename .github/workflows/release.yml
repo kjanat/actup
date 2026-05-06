@@ -174,7 +174,6 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       - name: Publish
-        if: ${{ secrets.NPM_TOKEN != '' }}
         working-directory: packages/actup-wasm
         run: npm publish --provenance --access public
         env:

@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
-// @ts-nocheck
-
 import { writeFileSync } from "fs";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { argv } from "process";
 
-const schema = process.argv[2] ?? "core";
+const schema = argv[2] ?? "core";
 
 readFile(join(import.meta.dirname, schema, "src", "parser.c"), "utf8").then(input => {
 	const cases = extractCases(input);
@@ -58,6 +57,14 @@ readFile(join(import.meta.dirname, schema, "src", "parser.c"), "utf8").then(inpu
 	);
 });
 
+/**
+ * @typedef {{ content: string, acceptToken: string | null, hasAcceptTokenOnly: boolean }} CaseInfo
+ */
+
+/**
+ * @param {string} input
+ * @returns {Array<[string, CaseInfo]>}
+ */
 function extractCases(input) {
 	const MAIN_SIGNATURE = "static bool ts_lex(TSLexer *lexer, TSStateId state) {";
 	const SWITCH_CASE = "switch (state) {\n";
@@ -69,28 +76,48 @@ function extractCases(input) {
 		const key = text.slice(0, index).trim().replace(/^case /, "");
 		const content = dedent(text.slice(index + 2)).trim();
 		const matchAcceptToken = content.match(/^ACCEPT_TOKEN\(\w+\);/);
-		const acceptToken = matchAcceptToken && matchAcceptToken[0];
-		const hasAcceptTokenOnly = acceptToken && acceptToken.length === content.length;
+		const acceptToken = matchAcceptToken ? matchAcceptToken[0] : null;
+		const hasAcceptTokenOnly = acceptToken !== null && acceptToken.length === content.length;
 		return [key, { content, acceptToken, hasAcceptTokenOnly }];
 	});
 }
 
+/**
+ * @param {string} name
+ * @returns {string}
+ */
 function convertName(name) {
 	return name.replace("sym_", "").toUpperCase();
 }
 
+/**
+ * @param {string | string[]} contents
+ * @returns {string}
+ */
 function block(contents) {
 	return `{\n${indent(contents)}\n}`;
 }
 
+/**
+ * @param {string | string[]} contents
+ * @returns {string[]}
+ */
 function lines(contents) {
-	return [].concat(contents).join("\n").split("\n");
+	return (Array.isArray(contents) ? contents : [contents]).join("\n").split("\n");
 }
 
+/**
+ * @param {string | string[]} contents
+ * @returns {string}
+ */
 function indent(contents) {
 	return lines(contents).map(x => " ".repeat(2) + x).join("\n");
 }
 
+/**
+ * @param {string | string[]} contents
+ * @returns {string}
+ */
 function dedent(contents) {
 	return lines(contents).map(x => x.replace(/^  /mg, "")).join("\n");
 }

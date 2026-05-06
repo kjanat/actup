@@ -36,9 +36,9 @@ wiremock = { workspace = true }  # HTTP mocking
 
 [features]
 default = ["github"]
-gitea   = []          # Placeholder until provider registration is wired.
-github  = []          # Placeholder for API symmetry; `actup-provider-github` is non-optional.
-gitlab  = []          # Placeholder until provider registration is wired.
+gitea   = []  # Placeholder until provider registration is wired.
+github  = []  # Placeholder for API symmetry; `actup-provider-github` is non-optional.
+gitlab  = []  # Placeholder until provider registration is wired.
 
 [lints]
 workspace = true

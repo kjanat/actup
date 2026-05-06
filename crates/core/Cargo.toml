@@ -9,12 +9,12 @@ license.workspace    = true
 publish.workspace    = true
 
 [dependencies]
-dirs          = { workspace = true }                   # Config discovery
-figment       = { workspace = true }                   # Configuration parsing
-glob          = { workspace = true }                   # File discovery (glob patterns)
-json_comments = { workspace = true }                   # JSONC parsing
-schemars      = { workspace = true }                   # Schema generation
-serde         = { workspace = true }                   # Serialization
+dirs          = { workspace = true }  # Config discovery
+figment       = { workspace = true }  # Configuration parsing
+glob          = { workspace = true }  # File discovery (glob patterns)
+json_comments = { workspace = true }  # JSONC parsing
+schemars      = { workspace = true }  # Schema generation
+serde         = { workspace = true }  # Serialization
 tsify-next    = { workspace = true, optional = true }  # gated by `tsify` feature
 wasm-bindgen  = { workspace = true, optional = true }  # required by tsify-next for `typescript_custom_section`
 

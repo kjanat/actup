@@ -6,7 +6,7 @@
 	// Language specific
 	"typescript": {},
 	"json": { "object.preferSingleLine": true, "array.preferSingleLine": true },
-	"markdown": { "textWrap": "always", "emphasisKind": "asterisks" },
+	"markdown": { "textWrap": "always", "emphasisKind": "asterisks", "lineWidth": 80 },
 	"malva": {},
 	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!*.svg"] },
 	"yaml": { "indentBlockSequenceInMap": true, "flowMap.preferSingleLine": true },

@@ -17,15 +17,5 @@
 		// "GitHub Actions"
 		"YAML": [".github/workflows/*.yml", ".github/workflows/*.yaml", ".github/actions/*.yml", ".github/actions/*.yaml"]
 	},
-	"lsp": {
-		"rust-analyzer": {
-			"initialization_options": {
-				"diagnostics": { "experimental": { "enable": true } },
-				// "cargo": { "allFeatures": true, "allTargets": true },
-				"check": { "workspace": true }
-				// "completion": { "snippets": { "custom": {} } }
-			}
-		},
-		"actup-lsp": { "binary": { "path": "cargo", "arguments": ["actup-lsp"] } }
-	}
+	"lsp": { "actup-lsp": { "binary": { "path": "cargo", "arguments": ["actup-lsp"] } } }
 }

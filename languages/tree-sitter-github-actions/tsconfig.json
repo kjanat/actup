@@ -31,6 +31,15 @@
 		"noPropertyAccessFromIndexSignature": false,
 		"types": ["bun"]
 	},
-	"include": ["./grammar.*", "./grammar/**/*", "./bindings/node/*", "./src/*.json", "*.json", "./plugins/*.ts", "./test/**/*.ts"],
+	"include": [
+		"./grammar.*",
+		"./grammar/**/*",
+		"./schema/*.js",
+		"./bindings/node/*",
+		"./src/*.json",
+		"*.json",
+		"./plugins/*.ts",
+		"./test/**/*.ts"
+	],
 	"exclude": ["**/node_modules", "dist"]
 }
