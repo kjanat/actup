@@ -84,11 +84,11 @@ usage: $(basename "$0") <command> [args...]
 
 Run <command> with an adaptive RLIMIT_AS cap derived from /proc/meminfo.
 
-env knobs (all optional):
-  HEADROOM_FRAC_PCT  reserve this % of MemTotal for the rest of the system (default 25)
-  HEADROOM_MIN_MB    floor for headroom in MB (default 4096)
-  CEILING_FRAC_PCT   never cap above this % of MemTotal (default 50)
-  MIN_CAP_MB         refuse if the computed cap would be below this many MB (default 2048)
+env knobs (current effective value shown — set via env var to override):
+  HEADROOM_FRAC_PCT  = ${HEADROOM_FRAC_PCT}%        — reserve this % of MemTotal for the rest of the system
+  HEADROOM_MIN_MB    = $(fmt_mb "$HEADROOM_MIN_MB")  — floor for headroom (input in MB)
+  CEILING_FRAC_PCT   = ${CEILING_FRAC_PCT}%        — never cap above this % of MemTotal
+  MIN_CAP_MB         = $(fmt_mb "$MIN_CAP_MB")  — refuse if the computed cap would be below this (input in MB)
 
 resolved on this system right now:
   MemTotal:      $(fmt_mb "$total_mb")
