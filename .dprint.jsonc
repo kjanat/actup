@@ -8,9 +8,9 @@
 	"json": { "object.preferSingleLine": true, "array.preferSingleLine": true },
 	"markdown": { "textWrap": "always", "emphasisKind": "asterisks", "lineWidth": 80 },
 	"malva": {},
-	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!*.svg"] },
+	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!**/*.svg"] },
 	"yaml": { "indentBlockSequenceInMap": true, "flowMap.preferSingleLine": true },
-	"svg": { "associations": ["*.svg"] },
+	"svg": { "associations": ["**/*.svg"], "textContent": "collapse", "lineWidth": 100 },
 	// Exec plugin for external commands
 	"exec": {
 		"commands": [

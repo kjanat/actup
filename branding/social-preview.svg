@@ -13,15 +13,22 @@
 	<g transform="translate(640 220)">
 		<circle r="120" fill="url(#b)" />
 		<path d="m0-70 45 45-13 13-22-22v84h-20v-84l-22 22-13-13z" fill="#fff" />
-		<path d="M60 0c0 33.137-26.863 60-60 60S-60 33.137-60 0" stroke="#fff" stroke-width="8" opacity=".6" stroke-linecap="round" />
+		<path d="M60 0c0 33.137-26.863 60-60 60S-60 33.137-60 0"
+		      stroke="#fff" stroke-width="8" opacity=".6" stroke-linecap="round" />
 	</g>
 	<text y="80"
 	      transform="translate(640 320)"
 	      fill="#fff"
-	      font-family="Inter, sans-serif, Arial" font-size="120" font-weight="bold" text-anchor="middle">
+	      font-family="Inter, sans-serif, Arial"
+	      font-size="120"
+	      font-weight="bold"
+	      text-anchor="middle">
 		actup
 	</text>
-	<text y="150" transform="translate(640 320)" fill="#8b949e" font-family="Inter, sans-serif, Arial" font-size="36" text-anchor="middle">
+	<text y="150"
+	      transform="translate(640 320)"
+	      fill="#8b949e"
+	      font-family="Inter, sans-serif, Arial" font-size="36" text-anchor="middle">
 		Update GitHub Actions with Confidence
 	</text>
 </svg>

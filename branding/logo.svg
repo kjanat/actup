@@ -7,8 +7,11 @@
 	</defs>
 	<circle cx="200" cy="200" r="160" fill="url(#a)" />
 	<path d="m200 110 60 60-18 18-29-29v111h-26V159l-29 29-18-18z" fill="#fff" />
-	<path d="M280 200c0 44.183-35.817 80-80 80s-80-35.817-80-80" stroke="#fff" stroke-width="12" opacity=".6" stroke-linecap="round" />
-	<text x="400" y="250" fill="#24292f" font-family="Inter, sans-serif, Arial" font-size="180" font-weight="bold">
+	<path d="M280 200c0 44.183-35.817 80-80 80s-80-35.817-80-80"
+	      stroke="#fff" stroke-width="12" opacity=".6" stroke-linecap="round" />
+	<text x="400" y="250"
+	      fill="#24292f"
+	      font-family="Inter, sans-serif, Arial" font-size="180" font-weight="bold">
 		actup
 	</text>
 	<text x="400" y="310" fill="#57606a" font-family="Inter, sans-serif, Arial" font-size="40">

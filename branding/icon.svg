@@ -5,10 +5,8 @@
 			<stop offset="100%" stop-color="#2188ff" />
 		</linearGradient>
 	</defs>
-	<circle cx="256" cy="256" r="240"
-	        fill="url(#a)" />
-	<path d="m256 120 94 94-28 28-46-46v164h-40V196l-46 46-28-28z"
-	      fill="#fff" />
+	<circle cx="256" cy="256" r="240" fill="url(#a)" />
+	<path d="m256 120 94 94-28 28-46-46v164h-40V196l-46 46-28-28z" fill="#fff" />
 	<path d="M380 256c0 68.483-55.517 124-124 124s-124-55.517-124-124"
 	      stroke="#fff" stroke-width="20" opacity=".6" stroke-linecap="round" />
 </svg>
