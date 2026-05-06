@@ -178,6 +178,80 @@ run: |
                     (identifier)))))))))))
 
 ============================================================================
+Pure expression in plain (unquoted) scalar
+============================================================================
+name: ${{ github.event.title }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier))
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Mixed text + expression in plain scalar
+============================================================================
+name: prefix-${{ github.run_id }}-suffix
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier))))
+              (string_scalar))))))))
+
+============================================================================
+Plain scalar with `$` not followed by `${{` (must not break)
+============================================================================
+literal: abcdef!@#$%^&*()_+
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar))))))))
+
+============================================================================
 Block scalar with multiple expressions across lines
 ============================================================================
 run: |

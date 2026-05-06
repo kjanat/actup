@@ -191,6 +191,32 @@ const base = grammar({
 		// Trailing _expr_ws after the last argument vs. continuation of arguments list.
 		[$.arguments],
 		[$._format_arguments],
+
+		// Plain-scalar with embedded `delimited_expression` introduces ambiguity at
+		// every block-context entry point and between sgl/mtl variants. GLR resolves
+		// at runtime once `}}` (or content) commits one branch.
+		[$._r_blk_key_itm],
+		[$._br_blk_key_itm],
+		[$._b_blk_key_itm],
+		[$._r_blk_val_itm],
+		[$._br_blk_val_itm],
+		[$._b_blk_val_itm],
+		[$._r_blk_seq_itm],
+		[$._br_blk_seq_itm],
+		[$._b_blk_seq_itm],
+		[$._blk_imp_itm_tal],
+		[$._r_pln_blk_val, $._br_pln_blk_val, $._r_sgl_pln_blk, $._br_sgl_pln_blk],
+		[$._r_pln_flw_val, $._br_pln_flw_val, $._r_sgl_pln_flw, $._br_sgl_pln_flw],
+		[$._r_sgl_pln_blk, $._br_sgl_pln_blk, $._r_mtl_pln_blk, $._br_mtl_pln_blk],
+		[$._r_sgl_pln_flw, $._br_sgl_pln_flw, $._r_mtl_pln_flw, $._br_mtl_pln_flw],
+		[$._r_prp_val, $._r_blk_map_br_val, $._r_pln_blk_val],
+		[$._br_prp_val, $._br_blk_map_val, $._br_pln_blk_val],
+		[$._r_sgl_pln_blk, $._br_sgl_pln_blk],
+		[$._r_sgl_pln_flw, $._br_sgl_pln_flw],
+		[$._r_sgl_pln_blk, $._r_mtl_pln_blk],
+		[$._br_sgl_pln_blk, $._br_mtl_pln_blk],
+		[$._r_sgl_pln_flw, $._r_mtl_pln_flw],
+		[$._br_sgl_pln_flw, $._br_mtl_pln_flw],
 	],
 
 	inline: $ => [
@@ -635,23 +661,57 @@ const base = grammar({
 		_r_pln_flw: $ => choice($._r_sgl_pln_flw, $._r_mtl_pln_flw),
 		_br_pln_flw: $ => choice($._br_sgl_pln_flw, $._br_mtl_pln_flw),
 
-		// plain scalar schema
+		// plain scalar schema. The string variant in each context allows interleaved
+		// `delimited_expression` so that `name: ${{ github.event.title }}` and
+		// `prefix-${{ x }}-suffix` parse with native expression nodes. The non-string
+		// variants (null/bool/int/float) cannot host expressions — the schema
+		// classifier rejects them as soon as `${{` appears in the content.
 
 		_r_sgl_pln_blk: $ =>
-			choice($._r_sgl_pln_nul_blk, $._r_sgl_pln_bol_blk, $._r_sgl_pln_int_blk, $._r_sgl_pln_flt_blk, $._r_sgl_pln_str_blk),
+			choice(
+				$._r_sgl_pln_nul_blk,
+				$._r_sgl_pln_bol_blk,
+				$._r_sgl_pln_int_blk,
+				$._r_sgl_pln_flt_blk,
+				prec.right(repeat1(choice($._r_sgl_pln_str_blk, $.delimited_expression))),
+			),
 		_br_sgl_pln_blk: $ =>
-			choice($._br_sgl_pln_nul_blk, $._br_sgl_pln_bol_blk, $._br_sgl_pln_int_blk, $._br_sgl_pln_flt_blk, $._br_sgl_pln_str_blk),
+			choice(
+				$._br_sgl_pln_nul_blk,
+				$._br_sgl_pln_bol_blk,
+				$._br_sgl_pln_int_blk,
+				$._br_sgl_pln_flt_blk,
+				prec.right(repeat1(choice($._br_sgl_pln_str_blk, $.delimited_expression))),
+			),
 		_b_sgl_pln_blk: $ =>
-			choice($._b_sgl_pln_nul_blk, $._b_sgl_pln_bol_blk, $._b_sgl_pln_int_blk, $._b_sgl_pln_flt_blk, $._b_sgl_pln_str_blk),
+			choice(
+				$._b_sgl_pln_nul_blk,
+				$._b_sgl_pln_bol_blk,
+				$._b_sgl_pln_int_blk,
+				$._b_sgl_pln_flt_blk,
+				prec.right(repeat1(choice($._b_sgl_pln_str_blk, $.delimited_expression))),
+			),
 		_r_sgl_pln_flw: $ =>
-			choice($._r_sgl_pln_nul_flw, $._r_sgl_pln_bol_flw, $._r_sgl_pln_int_flw, $._r_sgl_pln_flt_flw, $._r_sgl_pln_str_flw),
+			choice(
+				$._r_sgl_pln_nul_flw,
+				$._r_sgl_pln_bol_flw,
+				$._r_sgl_pln_int_flw,
+				$._r_sgl_pln_flt_flw,
+				prec.right(repeat1(choice($._r_sgl_pln_str_flw, $.delimited_expression))),
+			),
 		_br_sgl_pln_flw: $ =>
-			choice($._br_sgl_pln_nul_flw, $._br_sgl_pln_bol_flw, $._br_sgl_pln_int_flw, $._br_sgl_pln_flt_flw, $._br_sgl_pln_str_flw),
+			choice(
+				$._br_sgl_pln_nul_flw,
+				$._br_sgl_pln_bol_flw,
+				$._br_sgl_pln_int_flw,
+				$._br_sgl_pln_flt_flw,
+				prec.right(repeat1(choice($._br_sgl_pln_str_flw, $.delimited_expression))),
+			),
 
-		_r_mtl_pln_blk: $ => $._r_mtl_pln_str_blk,
-		_br_mtl_pln_blk: $ => $._br_mtl_pln_str_blk,
-		_r_mtl_pln_flw: $ => $._r_mtl_pln_str_flw,
-		_br_mtl_pln_flw: $ => $._br_mtl_pln_str_flw,
+		_r_mtl_pln_blk: $ => prec.right(repeat1(choice($._r_mtl_pln_str_blk, $.delimited_expression))),
+		_br_mtl_pln_blk: $ => prec.right(repeat1(choice($._br_mtl_pln_str_blk, $.delimited_expression))),
+		_r_mtl_pln_flw: $ => prec.right(repeat1(choice($._r_mtl_pln_str_flw, $.delimited_expression))),
+		_br_mtl_pln_flw: $ => prec.right(repeat1(choice($._br_mtl_pln_str_flw, $.delimited_expression))),
 
 		// alias
 

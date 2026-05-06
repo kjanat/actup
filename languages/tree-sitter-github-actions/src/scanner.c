@@ -643,6 +643,30 @@ static bool scn_drs_doc_end(Scanner *scanner, TSLexer *lexer) {
     return false;
 }
 
+// Returns true if the next three chars at the current lookahead are `${{`,
+// without committing anything to the current token. Advances the lexer cursor
+// when true (so tree-sitter sees `${{` consumed for the next scan call) and
+// preserves the caller's last `mrk_end()` position. When returning false,
+// re-marks the end at the current cursor so previously-advanced chars stay
+// part of the current token.
+static bool peek_expr_open_inline(Scanner *scanner, TSLexer *lexer) {
+    if (lexer->lookahead != '$') return false;
+    // Caller already mrk_end'd at the position before `$`. If this turns out
+    // not to be `${{`, we'll re-mrk_end below to fold consumed chars back in.
+    adv(scanner, lexer);
+    if (lexer->lookahead != '{') {
+        mrk_end(scanner, lexer);
+        return false;
+    }
+    adv(scanner, lexer);
+    if (lexer->lookahead != '{') {
+        mrk_end(scanner, lexer);
+        return false;
+    }
+    // It's `${{`. Leave mrk_end at the pre-`$` snapshot the caller made.
+    return true;
+}
+
 // Scan a `${{` expression-open token. Speculatively advances; tree-sitter
 // rolls back our advances if we return false (no token committed).
 static bool scn_expr_bgn(Scanner *scanner, TSLexer *lexer) {
@@ -800,6 +824,22 @@ static char scn_pln_cnt(Scanner *scanner, TSLexer *lexer, bool (*is_plain_safe)(
     bool is_lka_saf = is_plain_safe(lexer->lookahead);
     if (is_lka_saf || is_lka_wsp) {
         for (;;) {
+            // Peek for `${{` at the current position so we can break the content
+            // token cleanly before the expression. peek_expr_open_inline only
+            // returns true when all three chars match — `$X` and `${X` keep the
+            // `$` (and any peeked chars) folded back into content via mrk_end.
+            if (lexer->lookahead == '$') {
+                if (peek_expr_open_inline(scanner, lexer)) {
+                    return SCN_SUCC;
+                }
+                // Peek advanced past `$` (and possibly `${`) without finding `${{`.
+                // Refresh the cached lookahead-state vars so the existing branches
+                // operate on what's now under the cursor.
+                is_cur_wsp = is_wsp(scanner->cur_chr);
+                is_cur_saf = is_plain_safe(scanner->cur_chr);
+                is_lka_wsp = is_wsp(lexer->lookahead);
+                is_lka_saf = is_plain_safe(lexer->lookahead);
+            }
             if (is_lka_saf && lexer->lookahead != '#' && lexer->lookahead != ':') {
                 adv(scanner, lexer);
                 mrk_end(scanner, lexer);

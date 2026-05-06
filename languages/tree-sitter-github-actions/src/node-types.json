@@ -621,11 +621,15 @@
     "named": true,
     "fields": {},
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": true,
       "types": [
         {
           "type": "boolean_scalar",
+          "named": true
+        },
+        {
+          "type": "delimited_expression",
           "named": true
         },
         {
