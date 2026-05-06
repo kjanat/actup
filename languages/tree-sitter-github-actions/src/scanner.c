@@ -696,11 +696,20 @@ static bool scn_dqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     } else {
         adv(scanner, lexer);
     }
-    // Stop the loop at any `$` so the next scan() can attempt EXPR_BGN. If EXPR_BGN
-    // fails (e.g. `$VAR` not `${{`), tree-sitter rolls back, and this scanner runs
-    // again with `$` as first char — which IS consumed (above), so `$VAR` becomes
-    // one content token after the rollback.
-    while (is_nb_double_char(lexer->lookahead) && lexer->lookahead != '$') {
+    // peek_expr_open_inline only breaks the loop when `${{` is actually next —
+    // `$X` and `${X` get folded back into content via mrk_end inside the helper.
+    // Avoids the token-fragmentation that the simpler stop-at-`$` approach paid
+    // for shell-style `$VAR` content.
+    while (is_nb_double_char(lexer->lookahead)) {
+        if (lexer->lookahead == '$') {
+            if (peek_expr_open_inline(scanner, lexer)) {
+                // mrk_end already at pre-$ snapshot; emit content up to that.
+                RET_SYM(result_symbol);
+            }
+            // Peek false-return advanced past `$` (or `${`); loop re-evaluates
+            // the new lookahead without an extra adv.
+            continue;
+        }
         adv(scanner, lexer);
     }
     mrk_end(scanner, lexer);
@@ -717,7 +726,14 @@ static bool scn_sqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     } else {
         adv(scanner, lexer);
     }
-    while (is_nb_single_char(lexer->lookahead) && lexer->lookahead != '$') {
+    // Same peek-2 pattern as scn_dqt_str_cnt — see comments there.
+    while (is_nb_single_char(lexer->lookahead)) {
+        if (lexer->lookahead == '$') {
+            if (peek_expr_open_inline(scanner, lexer)) {
+                RET_SYM(result_symbol);
+            }
+            continue;
+        }
         adv(scanner, lexer);
     }
     mrk_end(scanner, lexer);
@@ -797,8 +813,16 @@ static bool scn_blk_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     }
     mrk_end(scanner, lexer);
     for (;;) {
-        // Stop at `$` so EXPR_BGN can attempt `${{`. Same logic as scn_dqt_str_cnt.
-        if (is_ns_char(lexer->lookahead) && lexer->lookahead != '$') {
+        // peek-2 for `${{` — same pattern as the quoted-content scanners.
+        if (lexer->lookahead == '$') {
+            if (peek_expr_open_inline(scanner, lexer)) {
+                RET_SYM(result_symbol);
+            }
+            // Peek false-return: cursor is past `$` (or `${`), loop continues.
+            mrk_end(scanner, lexer);
+            continue;
+        }
+        if (is_ns_char(lexer->lookahead)) {
             adv(scanner, lexer);
             while (is_ns_char(lexer->lookahead) && lexer->lookahead != '$') {
                 adv(scanner, lexer);
