@@ -62,6 +62,8 @@ typedef enum {
     COMMENT,
 
     ERR_REC,
+
+    EXPR_BGN,
 } TokenType;
 
 // clang-format on
@@ -641,6 +643,25 @@ static bool scn_drs_doc_end(Scanner *scanner, TSLexer *lexer) {
     return false;
 }
 
+// Scan a `${{` expression-open token. Speculatively advances; tree-sitter
+// rolls back our advances if we return false (no token committed).
+static bool scn_expr_bgn(Scanner *scanner, TSLexer *lexer) {
+    if (lexer->lookahead != '$') {
+        return false;
+    }
+    adv(scanner, lexer);
+    if (lexer->lookahead != '{') {
+        return false;
+    }
+    adv(scanner, lexer);
+    if (lexer->lookahead != '{') {
+        return false;
+    }
+    adv(scanner, lexer);
+    mrk_end(scanner, lexer);
+    RET_SYM(EXPR_BGN);
+}
+
 static bool scn_dqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_symbol) {
     if (!is_nb_double_char(lexer->lookahead)) {
         return false;
@@ -651,7 +672,11 @@ static bool scn_dqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     } else {
         adv(scanner, lexer);
     }
-    while (is_nb_double_char(lexer->lookahead)) {
+    // Stop the loop at any `$` so the next scan() can attempt EXPR_BGN. If EXPR_BGN
+    // fails (e.g. `$VAR` not `${{`), tree-sitter rolls back, and this scanner runs
+    // again with `$` as first char — which IS consumed (above), so `$VAR` becomes
+    // one content token after the rollback.
+    while (is_nb_double_char(lexer->lookahead) && lexer->lookahead != '$') {
         adv(scanner, lexer);
     }
     mrk_end(scanner, lexer);
@@ -668,7 +693,7 @@ static bool scn_sqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     } else {
         adv(scanner, lexer);
     }
-    while (is_nb_single_char(lexer->lookahead)) {
+    while (is_nb_single_char(lexer->lookahead) && lexer->lookahead != '$') {
         adv(scanner, lexer);
     }
     mrk_end(scanner, lexer);
@@ -904,6 +929,13 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
     if (valid_symbols[R_DIR_RSV_PRM] && is_r) {
         return scn_dir_rsv_prm(scanner, lexer, R_DIR_RSV_PRM);
     }
+    // GitHub Actions expression-open `${{` must be matched BEFORE scalar content
+    // scanners, otherwise the `$` would be swallowed into the surrounding scalar.
+    // scn_expr_bgn speculatively advances; tree-sitter rolls back if we fail.
+    if (valid_symbols[EXPR_BGN] && lexer->lookahead == '$' && scn_expr_bgn(scanner, lexer)) {
+        return true;
+    }
+
     if (valid_symbols[BR_BLK_STR_CTN] && is_br && scn_blk_str_cnt(scanner, lexer, BR_BLK_STR_CTN)) {
         return true;
     }
@@ -1372,7 +1404,13 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         return false;
     }
 
-    return !valid_symbols[ERR_REC];
+    // Originally `return !valid_symbols[ERR_REC]` (upstream ikatyang grammar). That
+    // returns true with no committed symbol when ERR_REC isn't valid — relying on
+    // tree-sitter not to call internal lexing afterwards. Breaks our case where the
+    // expression body uses internal-lexed tokens (identifiers, literals, _expr_ws):
+    // the parser needs internal lexing to fire when external scanner has nothing
+    // to contribute. Returning false here lets internal lexing take over.
+    return false;
 }
 
 void *tree_sitter_github_actions_external_scanner_create() {

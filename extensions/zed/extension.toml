@@ -40,7 +40,3 @@ package = "@actions/languageserver"
 repository = "file:///home/kjanat/projects/actup-v2"
 rev        = "tree-sitter-github-actions"
 path       = "languages/tree-sitter-github-actions"
-
-# [grammars.gh_actions_expressions]
-# repository = "https://github.com/hdoc1509/tree-sitter-gh-actions-expressions"
-# rev        = "823a5876dcf3a1f5aa8cf9df2ac69eea6e8d7068"  # v0.5.1

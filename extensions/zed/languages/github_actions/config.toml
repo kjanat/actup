@@ -16,4 +16,4 @@ increase_indent_pattern               = ":\\s*[|>]?\\s*$"
 tab_size                              = 2
 hard_tabs                             = false
 linked_edit_characters                = ["-", ":", "{", "}", "[", "]", "\"", "'"]
-scope_opt_in_language_servers         = ["actup-lsp", "actions-languageserver", "yaml-language-server"]
+scope_opt_in_language_servers         = ["actup-lsp", "actions-languageserver"]

@@ -144,6 +144,8 @@ const base = grammar({
 		$.comment,
 
 		$._err_rec,
+
+		$._expr_bgn, // `${{` (GitHub Actions expression open) — emitted by scanner before scalar content
 	],
 
 	extras: $ => [$.comment],
@@ -175,6 +177,20 @@ const base = grammar({
 		 */
 		[$._r_prp],
 		[$._br_prp],
+
+		// Allow GLR disambiguation when a `${{` (delimited_expression) appears inside multiline
+		// quoted scalars: after a content chunk, continuing the same chunk-sequence vs. starting
+		// a new one for the expression are both valid until one branch fails.
+		[$._br_mtl_dqt_ctn],
+		[$._br_mtl_sqt_ctn],
+
+		// Single-line vs multi-line scalar disambiguation when an expression is the first content.
+		[$._r_dqt_str, $._r_sgl_dqt_str, $._br_mtl_dqt_ctn],
+		[$._r_sqt_str, $._r_sgl_sqt_str, $._br_mtl_sqt_ctn],
+
+		// Trailing _expr_ws after the last argument vs. continuation of arguments list.
+		[$.arguments],
+		[$._format_arguments],
 	],
 
 	inline: $ => [
@@ -561,11 +577,15 @@ const base = grammar({
 		_br_sgl_dqt_str: $ => seq($._br_dqt_str_bgn, optional($._r_sgl_dqt_ctn), $._r_dqt_str_end),
 		_b_sgl_dqt_str: $ => seq($._b_dqt_str_bgn, optional($._r_sgl_dqt_ctn), $._r_dqt_str_end),
 
-		_r_sgl_dqt_ctn: $ => repeat1(choice($._r_dqt_str_ctn, $._r_dqt_esc_seq)),
+		_r_sgl_dqt_ctn: $ => repeat1(choice($._r_dqt_str_ctn, $._r_dqt_esc_seq, $.delimited_expression)),
 		_br_mtl_dqt_ctn: $ =>
 			choice(
 				$._br_dqt_esc_nwl,
-				seq(choice($._br_dqt_str_ctn, $._br_dqt_esc_seq), repeat(choice($._r_dqt_str_ctn, $._r_dqt_esc_seq)), optional($._r_dqt_esc_nwl)),
+				seq(
+					choice($._br_dqt_str_ctn, $._br_dqt_esc_seq, $.delimited_expression),
+					repeat(choice($._r_dqt_str_ctn, $._r_dqt_esc_seq, $.delimited_expression)),
+					optional($._r_dqt_esc_nwl),
+				),
 			),
 
 		// single quote scalar
@@ -586,8 +606,12 @@ const base = grammar({
 		_br_sgl_sqt_str: $ => seq($._br_sqt_str_bgn, optional($._r_sgl_sqt_ctn), $._r_sqt_str_end),
 		_b_sgl_sqt_str: $ => seq($._b_sqt_str_bgn, optional($._r_sgl_sqt_ctn), $._r_sqt_str_end),
 
-		_r_sgl_sqt_ctn: $ => repeat1(choice($._r_sqt_str_ctn, $._r_sqt_esc_sqt)),
-		_br_mtl_sqt_ctn: $ => seq(choice($._br_sqt_str_ctn, $._br_sqt_esc_sqt), repeat(choice($._r_sqt_str_ctn, $._r_sqt_esc_sqt))),
+		_r_sgl_sqt_ctn: $ => repeat1(choice($._r_sqt_str_ctn, $._r_sqt_esc_sqt, $.delimited_expression)),
+		_br_mtl_sqt_ctn: $ =>
+			seq(
+				choice($._br_sqt_str_ctn, $._br_sqt_esc_sqt, $.delimited_expression),
+				repeat(choice($._r_sqt_str_ctn, $._r_sqt_esc_sqt, $.delimited_expression)),
+			),
 
 		// plain scalar in block
 
@@ -644,6 +668,157 @@ const base = grammar({
 		_r_acr: $ => seq($._r_acr_bgn, $._r_acr_ctn),
 		_br_acr: $ => seq($._br_acr_bgn, $._r_acr_ctn),
 		_b_acr: $ => seq($._b_acr_bgn, $._r_acr_ctn),
+
+		// GitHub Actions expression — vendored from hdoc1509/tree-sitter-gh-actions-expressions v0.5.1 (MIT, Héctor Ochoa).
+		// Wrapper rules (source/_pair/_if_pair/_run_pair/_ignored_bash) are intentionally omitted; the YAML grammar
+		// hosts the entry points by splicing `delimited_expression` (and bare `expression` for `if:` values) into
+		// scalar content. Rule bodies are otherwise preserved verbatim so upstream syntax updates can be cherry-picked.
+
+		// Optional horizontal whitespace inside expression bodies. Defined as a private
+		// rule (not via `extras`) so it's only valid where expression rules expect it,
+		// keeping YAML's structural whitespace handling untouched elsewhere.
+		_expr_ws: _ => token(/[ \t]+/),
+
+		_evaluation: $ => choice($._literal, $.context, $.function_call, $.logical_group),
+
+		expression: $ =>
+			seq(
+				$._evaluation,
+				repeat(
+					seq(
+						optional($._expr_ws),
+						$.operator,
+						optional($._expr_ws),
+						optional($.not),
+						optional($._expr_ws),
+						$._evaluation,
+					),
+				),
+			),
+		delimited_expression: $ =>
+			seq(
+				alias($._expr_bgn, $.expression_marker),
+				optional($._expr_ws),
+				optional($.not),
+				optional($._expr_ws),
+				$._evaluation,
+				repeat(
+					seq(
+						optional($._expr_ws),
+						$.operator,
+						optional($._expr_ws),
+						optional($.not),
+						optional($._expr_ws),
+						$._evaluation,
+					),
+				),
+				optional($._expr_ws),
+				"}}",
+			),
+
+		_literal: $ => choice($.boolean, $.null, $.number, $.string),
+
+		boolean: () => choice("true", "false"),
+
+		null: () => "null",
+
+		_dot: () => ".",
+
+		number: $ => choice($._int, $._float, $._hex, $._exp),
+		_int: () => /\d+/,
+		_float: $ => seq(optional("-"), $._int, $._dot, $._int),
+		_hex: () => seq("0x", /[0-9a-f]+/),
+		_exp: $ => seq($._float, "e", optional("-"), $._int),
+
+		string: $ => seq("'", repeat(choice($.string_content, $.scape_sequence)), "'"),
+		string_content: _ => token(prec(-1, /([^'\\\r\n]|\\(.|\r?\n))+/)),
+		scape_sequence: () => token.immediate("''"),
+		format_string: $ =>
+			seq(
+				"'",
+				repeat(
+					choice(
+						$.format_variable,
+						alias($._format_scape, $.scape_sequence),
+						alias($._format_content, $.string_content),
+					),
+				),
+				"'",
+			),
+		_format_scape: () => token.immediate(choice("''", "{{", "}}")),
+		_format_content: () => token(prec(-1, /([^'{}\\\r\n]|\\(.|\r?\n))+/)),
+		format_variable: $ => seq("{", $.format_index, "}"),
+		format_index: $ => $._int,
+
+		asterisk: () => "*",
+		identifier: () => /[_a-zA-Z][-_a-zA-Z0-9]+/,
+		property_deref: $ => $._dot,
+
+		context: $ => seq($.identifier, repeat($.property)),
+		property: $ => choice(seq($.property_deref, choice($.identifier, $.asterisk)), $.index),
+		index: $ => seq("[", optional($._expr_ws), choice($.number, $.string), optional($._expr_ws), "]"),
+
+		function_call: $ => choice($._format_function, $._function),
+		_function: $ =>
+			seq(
+				field("function", $.identifier),
+				"(",
+				optional($._expr_ws),
+				field("arguments", optional($.arguments)),
+				optional($._expr_ws),
+				")",
+			),
+		arguments: $ =>
+			seq(
+				$._evaluation,
+				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._evaluation)),
+			),
+		_format_function: $ =>
+			seq(
+				field("function", alias("format", $.identifier)),
+				"(",
+				optional($._expr_ws),
+				field("arguments", optional(alias($._format_arguments, $.arguments))),
+				optional($._expr_ws),
+				")",
+			),
+		_format_arguments: $ =>
+			seq(
+				$.format_string,
+				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._evaluation)),
+			),
+
+		not: () => "!",
+		operator: $ => choice($.lt, $.le, $.gt, $.ge, $.eq, $.ne, $.and, $.or),
+		lt: () => "<",
+		le: () => "<=",
+		gt: () => ">",
+		ge: () => ">=",
+		eq: () => "==",
+		ne: () => "!=",
+		and: () => "&&",
+		or: () => "||",
+
+		logical_group: $ =>
+			seq(
+				"(",
+				optional($._expr_ws),
+				optional($.not),
+				optional($._expr_ws),
+				$._evaluation,
+				repeat(
+					seq(
+						optional($._expr_ws),
+						$.operator,
+						optional($._expr_ws),
+						optional($.not),
+						optional($._expr_ws),
+						$._evaluation,
+					),
+				),
+				optional($._expr_ws),
+				")",
+			),
 	},
 });
 const aliasedSchema = global_alias(
@@ -848,6 +1023,10 @@ function recursive_alias(rule, alias_map, checklist) {
 		}
 		case "BLANK":
 		case "ALIAS":
+		case "STRING":
+		case "PATTERN":
+		case "TOKEN":
+		case "IMMEDIATE_TOKEN":
 			return rule;
 		default:
 			throw new Error(`Unexpected rule type ${JSON.stringify(rule.type)}`);

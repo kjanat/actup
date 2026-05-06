@@ -1,8 +1,0 @@
-#:schema https://github.com/kjanat/zed-editor/raw/feature/extension-toml-schema/crates/extension_api/schemas/language-config.schema.json
-
-name                          = "GitHub Actions Expressions"
-grammar                       = "gh_actions_expressions"
-hidden                        = true
-tab_size                      = 2
-hard_tabs                     = false
-scope_opt_in_language_servers = ["eslint", "bash-language-server", "shellcheck"]

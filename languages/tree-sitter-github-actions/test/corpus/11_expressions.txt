@@ -1,0 +1,152 @@
+============================================================================
+Pure expression in double-quoted scalar
+============================================================================
+key: "${{ github.event.number }}"
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (double_quote_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier))
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Mixed literal + expression + literal in double-quoted scalar
+============================================================================
+title: "prefix-${{ steps.bump.outputs.version }}-suffix"
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (double_quote_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier))
+                  (property
+                    (property_deref)
+                    (identifier))
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Pure expression in single-quoted scalar
+============================================================================
+token: '${{ secrets.GH_TOKEN }}'
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (single_quote_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Function call expression
+============================================================================
+result: "${{ contains(github.event.head_commit.message, 'wip') }}"
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (double_quote_scalar
+              (delimited_expression
+                (expression_marker)
+                (function_call
+                  function: (identifier)
+                  arguments: (arguments
+                    (context
+                      (identifier)
+                      (property
+                        (property_deref)
+                        (identifier))
+                      (property
+                        (property_deref)
+                        (identifier))
+                      (property
+                        (property_deref)
+                        (identifier)))
+                    (string
+                      (string_content))))))))))))
+
+============================================================================
+Boolean operator expression
+============================================================================
+condition: "${{ success() && github.event_name == 'push' }}"
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (double_quote_scalar
+              (delimited_expression
+                (expression_marker)
+                (function_call
+                  function: (identifier))
+                (operator
+                  (and))
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier)))
+                (operator
+                  (eq))
+                (string
+                  (string_content))))))))))
