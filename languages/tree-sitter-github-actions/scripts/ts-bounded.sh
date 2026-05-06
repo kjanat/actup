@@ -24,11 +24,35 @@ HEADROOM_MIN_MB="${HEADROOM_MIN_MB:-4096}"   # but never less than 4 GiB
 CEILING_FRAC_PCT="${CEILING_FRAC_PCT:-50}"   # never cap above 50% of total
 MIN_CAP_MB="${MIN_CAP_MB:-2048}"             # below 2 GiB tree-sitter generate just SIGKILLs anyway
 
-if [ "$#" -lt 1 ]; then
-	echo "usage: $(basename "$0") <command> [args...]" >&2
-	echo "       env knobs: HEADROOM_FRAC_PCT HEADROOM_MIN_MB CEILING_FRAC_PCT MIN_CAP_MB" >&2
-	exit 64
-fi
+usage() {
+	cat <<EOF
+usage: $(basename "$0") <command> [args...]
+
+Run <command> with an adaptive RLIMIT_AS cap derived from /proc/meminfo.
+
+env knobs (all optional):
+  HEADROOM_FRAC_PCT  reserve this % of MemTotal for the rest of the system (default 25)
+  HEADROOM_MIN_MB    floor for headroom in MB (default 4096)
+  CEILING_FRAC_PCT   never cap above this % of MemTotal (default 50)
+  MIN_CAP_MB         refuse if the computed cap would be below this many MB (default 2048)
+
+examples:
+  $(basename "$0") tree-sitter test
+  $(basename "$0") tree-sitter generate
+  HEADROOM_FRAC_PCT=40 $(basename "$0") tree-sitter test    # extra-conservative
+EOF
+}
+
+case "${1:-}" in
+	-h | --help)
+		usage
+		exit 0
+		;;
+	'')
+		usage >&2
+		exit 64
+		;;
+esac
 
 read -r total_kb avail_kb < <(awk '
 	/^MemTotal:/     { t=$2 }
