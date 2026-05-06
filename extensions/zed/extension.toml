@@ -12,25 +12,25 @@ repository     = "https://github.com/kjanat/actup-v2"
 languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
 
 [language_servers.actup-lsp.language_ids]
-"GitHub Actions"             = "yaml"
-"GitHub Actions Expressions" = "yaml"
-"YAML"                       = "yaml"
+"GitHub Actions"             = "github_actions"
+"GitHub Actions Expressions" = "github_actions"
+"YAML"                       = "github_actions"
 
 [language_servers.actions-languageserver]
 languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
 
 [language_servers.actions-languageserver.language_ids]
-"GitHub Actions"             = "yaml"
-"GitHub Actions Expressions" = "yaml"
-"YAML"                       = "yaml"
+"GitHub Actions"             = "github_actions"
+"GitHub Actions Expressions" = "github_actions"
+"YAML"                       = "github_actions"
 
 [language_servers.yaml-language-server]
 languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
 
 [language_servers.yaml-language-server.language_ids]
-"GitHub Actions"             = "yaml"
-"GitHub Actions Expressions" = "yaml"
-"YAML"                       = "yaml"
+"GitHub Actions"             = "github_actions"
+"GitHub Actions Expressions" = "github_actions"
+"YAML"                       = "github_actions"
 
 [[capabilities]]
 kind    = "process:exec"
@@ -50,9 +50,10 @@ package = "yaml-language-server"
 kind    = "npm:install"
 package = "@actions/languageserver"
 
-[grammars.yaml]
-repository = "https://github.com/zed-industries/tree-sitter-yaml"
-rev        = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a"
+[grammars.github_actions]
+repository = "file:///home/kjanat/projects/actup-v2"
+rev        = "tree-sitter-github-actions"
+path       = "languages/tree-sitter-github-actions"
 
 [grammars.gh_actions_expressions]
 repository = "https://github.com/hdoc1509/tree-sitter-gh-actions-expressions"

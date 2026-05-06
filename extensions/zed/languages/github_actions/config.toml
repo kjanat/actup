@@ -1,7 +1,7 @@
 #:schema https://github.com/kjanat/zed-editor/raw/feature/extension-toml-schema/crates/extension_api/schemas/language-config.schema.json
 
 name                                  = "GitHub Actions"
-grammar                               = "yaml"
+grammar                               = "github_actions"
 line_comments                         = ["# "]
 autoclose_before                      = ",]}"
 brackets                              = [

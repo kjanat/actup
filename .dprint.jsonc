@@ -8,15 +8,19 @@
 	"json": { "object.preferSingleLine": true, "array.preferSingleLine": true },
 	"markdown": { "textWrap": "always", "emphasisKind": "asterisks" },
 	"malva": {},
-	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!**/*.svg"] },
+	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!*.svg"] },
 	"yaml": { "indentBlockSequenceInMap": true, "flowMap.preferSingleLine": true },
-	"svg": {},
+	"svg": { "associations": ["*.svg"] },
 	// Exec plugin for external commands
 	"exec": {
 		"commands": [
 			{ "exts": ["rs"], "command": "rustfmt" }, // Formats Rust files
 			{ "exts": ["toml"], "command": "bunx tombi format --stdin-filename {{file_path}} -" }, // Formats toml files
-			{ "exts": ["sh", "bash"], "command": "shfmt -i 0 -ln bash -bn -ci --filename {{file_path}}" }, // Formats shell files
+			{ // Formats shell files
+				"exts": ["sh", "bash"],
+				"fileNames": ["actup", "actup-lsp", "actup-mcp"],
+				"command": "shfmt -i 0 -ln bash -bn -ci --filename {{file_path}}",
+			},
 			// { "fileNames": ["justfile"], "command": "just --dump" },
 		],
 	},
