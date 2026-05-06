@@ -25,16 +25,18 @@ CEILING_FRAC_PCT="${CEILING_FRAC_PCT:-50}"     # never cap above 50% of total
 MIN_CAP_MB="${MIN_CAP_MB:-2048}"               # below 2 GiB tree-sitter generate just SIGKILLs anyway
 DEFAULT_CMD="${DEFAULT_CMD:-tree-sitter test}" # what bare-invocation runs
 
-# ANSI background colors (rendered as solid colored blocks via spaces).
-# Suppressed when stdout isn't a TTY so piping doesn't dump escape codes.
+# ANSI foreground colors. Bars are drawn with U+2588 FULL BLOCK glyphs so the
+# result reads as a progress bar rather than a wall of saturated background.
+# Suppressed when stdout/stderr isn't a TTY so piping doesn't dump escape codes.
 if [ -t 1 ] && [ -t 2 ]; then
-	C_USED=$'\033[41m'    # red bg = currently in use
-	C_PLANNED=$'\033[43m' # yellow bg = the cap we're about to allocate
-	C_FREE=$'\033[42m'    # green bg = free / remaining
+	C_USED=$'\033[31m'    # red fg = currently in use
+	C_PLANNED=$'\033[33m' # yellow fg = the cap we're about to allocate
+	C_FREE=$'\033[32m'    # green fg = free / remaining
+	C_TRACK=$'\033[2;37m' # dim grey = empty bar track
 	C_RESET=$'\033[0m'
 	C_DIM=$'\033[2m'
 else
-	C_USED='' C_PLANNED='' C_FREE='' C_RESET='' C_DIM=''
+	C_USED='' C_PLANNED='' C_FREE='' C_TRACK='' C_RESET='' C_DIM=''
 fi
 
 # Format a megabyte count for display: "X.Y GB" when |mb| > 1024, else "N MB".
@@ -51,12 +53,12 @@ fmt_mb() {
 	fi
 }
 
-# Print N spaces with the given ANSI background color, then reset.
+# Print N FULL BLOCK glyphs (U+2588) in the given ANSI foreground color.
 bar_segment() {
-	local color="$1" n="$2"
+	local color="$1" n="$2" i
 	[ "$n" -le 0 ] && return 0
 	printf '%s' "$color"
-	printf "%${n}s" ''
+	for ((i = 0; i < n; i++)); do printf '█'; done
 	printf '%s' "$C_RESET"
 }
 
@@ -83,24 +85,24 @@ render_bars() {
 	[ "$proj_planned_n" -lt 0 ] && proj_planned_n=0
 	[ "$proj_free_n" -lt 0 ] && proj_free_n=0
 
-	printf '  current:    ['
+	printf '  current:    '
 	bar_segment "$C_USED" "$cur_used_n"
-	bar_segment "$C_FREE" "$cur_free_n"
-	printf ']  used %s / free %s\n' "$(fmt_mb "$used_mb")" "$(fmt_mb "$avail_mb")"
+	bar_segment "$C_TRACK" "$cur_free_n"
+	printf '  used %s / free %s\n' "$(fmt_mb "$used_mb")" "$(fmt_mb "$avail_mb")"
 
-	printf '  after run:  ['
+	printf '  after run:  '
 	bar_segment "$C_USED" "$proj_used_n"
 	bar_segment "$C_PLANNED" "$proj_planned_n"
-	bar_segment "$C_FREE" "$proj_free_n"
-	printf ']  cap %s, free after %s\n' \
+	bar_segment "$C_TRACK" "$proj_free_n"
+	printf '  cap %s, free after %s\n' \
 		"$(fmt_mb "$planned_mb")" "$(fmt_mb "$((avail_mb - planned_mb))")"
 
 	printf '  legend:     '
-	bar_segment "$C_USED" 2
+	bar_segment "$C_USED" 3
 	printf ' in use  '
-	bar_segment "$C_PLANNED" 2
+	bar_segment "$C_PLANNED" 3
 	printf ' planned cap  '
-	bar_segment "$C_FREE" 2
+	bar_segment "$C_TRACK" 3
 	printf ' free\n'
 }
 
