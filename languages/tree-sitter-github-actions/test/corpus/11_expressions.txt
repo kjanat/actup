@@ -284,3 +284,59 @@ run: |
                   (property
                     (property_deref)
                     (identifier)))))))))))
+
+============================================================================
+Boolean-looking prefix before expression must emit string_scalar
+============================================================================
+flag: true${{ inputs.suffix }}
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Integer-looking prefix before expression must emit string_scalar
+============================================================================
+ver: 1${{ steps.bump.outputs.minor }}
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier))
+                  (property
+                    (property_deref)
+                    (identifier))
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))

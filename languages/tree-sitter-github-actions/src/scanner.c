@@ -852,10 +852,20 @@ static char scn_pln_cnt(Scanner *scanner, TSLexer *lexer, bool (*is_plain_safe)(
             // token cleanly before the expression. peek_expr_open_inline only
             // returns true when all three chars match — `$X` and `${X` keep the
             // `$` (and any peeked chars) folded back into content via mrk_end.
+            //
+            // Both paths freeze the schema to RS_STR. The grammar's plain_scalar
+            // rule only accepts `string_scalar` fragments around delimited_expression,
+            // so a prefix like `true` or `1` would otherwise emit the wrong scalar
+            // type (boolean_scalar / integer_scalar) and fail to splice with the
+            // following expression node.
             if (lexer->lookahead == '$') {
                 if (peek_expr_open_inline(scanner, lexer)) {
+                    scanner->sch_stt = SCH_STT_FRZ;
+                    scanner->rlt_sch = RS_STR;
                     return SCN_SUCC;
                 }
+                scanner->sch_stt = SCH_STT_FRZ;
+                scanner->rlt_sch = RS_STR;
                 // Peek advanced past `$` (and possibly `${`) without finding `${{`.
                 // Refresh the cached lookahead-state vars so the existing branches
                 // operate on what's now under the cursor.
