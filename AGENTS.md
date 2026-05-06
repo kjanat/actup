@@ -637,6 +637,13 @@ First run with cold cache: ~1s (network). Subsequent runs: ~30ms (cache hits).
 
 ---
 
+NO NOT RUN TREE-SITTER DIRECTLY. MY PC WILL PROBABLY CRASH. RUN
+`languages/tree-sitter-github-actions/scripts/ts-bounded.sh` INSTEAD. Simply
+substitute `tree-sitter [...]`, and/or `bunx tree-sitter [...]` with
+`ts-bounded.sh [...]` in your workflow.
+
+THIS WILL KEEP MY PC RUNNING...
+
 ## Reference and design
 
 @DESIGN.md

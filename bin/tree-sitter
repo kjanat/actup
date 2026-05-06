@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Funnel every `tree-sitter` invocation through ts-bounded.sh (memory-capped
+# via prlimit). Lives at <repo>/bin/tree-sitter and is on PATH via .envrc.
+# Resolves the real tree-sitter via `type -ap`, explicitly skipping itself, so
+# ts-bounded.sh receives an absolute path and never recurses back here.
+set -euo pipefail
+
+SOURCE_PATH="$0"
+while [[ -L "${SOURCE_PATH}" ]]; do
+	# shellcheck disable=SC1007
+	SOURCE_DIR="$(CDPATH= cd -- "$(dirname -- "${SOURCE_PATH}")" && pwd)"
+	LINK_TARGET="$(readlink "${SOURCE_PATH}")"
+	case "${LINK_TARGET}" in
+		/*) SOURCE_PATH="${LINK_TARGET}" ;;
+		*) SOURCE_PATH="${SOURCE_DIR}/${LINK_TARGET}" ;;
+	esac
+done
+# shellcheck disable=SC1007
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${SOURCE_PATH}")" && pwd)"
+MANIFEST="${SCRIPT_DIR}/../Cargo.toml"
+[[ -f "${MANIFEST}" ]] || {
+	printf 'error: %s not found\n' "${MANIFEST}" >&2
+	exit 1
+}
+
+SELF="${SCRIPT_DIR}/tree-sitter"
+REAL_TS=""
+while IFS= read -r candidate; do
+	[[ "${candidate}" == "${SELF}" || "${candidate}" == "${SOURCE_PATH}" ]] && continue
+	REAL_TS="${candidate}"
+	break
+done < <(type -ap tree-sitter 2>/dev/null || true)
+
+if [[ -z "${REAL_TS}" ]]; then
+	printf 'error: no system tree-sitter on PATH besides this shim\n' >&2
+	exit 127
+fi
+
+exec bash "${SCRIPT_DIR}/../languages/tree-sitter-github-actions/scripts/ts-bounded.sh" "${REAL_TS}" "$@"
