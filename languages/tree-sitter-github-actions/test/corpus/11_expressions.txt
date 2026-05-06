@@ -150,3 +150,63 @@ condition: "${{ success() && github.event_name == 'push' }}"
                   (eq))
                 (string
                   (string_content))))))))))
+
+============================================================================
+Block scalar with embedded expression (run: | body)
+============================================================================
+run: |
+  echo "${{ runner.temp }}"
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Block scalar with multiple expressions across lines
+============================================================================
+run: |
+  curl -H "Authorization: token ${{ secrets.GH_TOKEN }}"
+  echo "temp ${{ runner.temp }}"
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier))))
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))

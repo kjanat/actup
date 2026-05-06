@@ -773,9 +773,10 @@ static bool scn_blk_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     }
     mrk_end(scanner, lexer);
     for (;;) {
-        if (is_ns_char(lexer->lookahead)) {
+        // Stop at `$` so EXPR_BGN can attempt `${{`. Same logic as scn_dqt_str_cnt.
+        if (is_ns_char(lexer->lookahead) && lexer->lookahead != '$') {
             adv(scanner, lexer);
-            while (is_ns_char(lexer->lookahead)) {
+            while (is_ns_char(lexer->lookahead) && lexer->lookahead != '$') {
                 adv(scanner, lexer);
             }
             mrk_end(scanner, lexer);
@@ -936,7 +937,12 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         return true;
     }
 
-    if (valid_symbols[BR_BLK_STR_CTN] && is_br && scn_blk_str_cnt(scanner, lexer, BR_BLK_STR_CTN)) {
+    // Allow same-row block-scalar content emission when we're already inside a block
+    // scalar (cur_ind_typ == IND_STR). This is what lets a `run: |` line continue
+    // after a `${{ ... }}` expression: there's no newline between `}}` and the next
+    // content chunk, so without this `is_br` would fail and content would be missed.
+    if (valid_symbols[BR_BLK_STR_CTN] && (is_br || (is_r && cur_ind_typ == IND_STR)) &&
+        scn_blk_str_cnt(scanner, lexer, BR_BLK_STR_CTN)) {
         return true;
     }
 

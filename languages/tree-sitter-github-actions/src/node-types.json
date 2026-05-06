@@ -155,7 +155,17 @@
   {
     "type": "block_scalar",
     "named": true,
-    "fields": {}
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "delimited_expression",
+          "named": true
+        }
+      ]
+    }
   },
   {
     "type": "block_sequence",

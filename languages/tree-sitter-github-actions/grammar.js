@@ -397,8 +397,8 @@ const base = grammar({
 		_r_blk_str_val: $ => choice($._r_blk_str, seq($._r_prp, choice($._r_blk_str, $._br_blk_str))),
 		_br_blk_str_val: $ => choice($._br_blk_str, seq($._br_prp, choice($._r_blk_str, $._br_blk_str))),
 
-		_r_blk_str: $ => seq(choice($._r_blk_lit_bgn, $._r_blk_fld_bgn), repeat($._br_blk_str_ctn), $._bl),
-		_br_blk_str: $ => seq(choice($._br_blk_lit_bgn, $._br_blk_fld_bgn), repeat($._br_blk_str_ctn), $._bl),
+		_r_blk_str: $ => seq(choice($._r_blk_lit_bgn, $._r_blk_fld_bgn), repeat(choice($._br_blk_str_ctn, $.delimited_expression)), $._bl),
+		_br_blk_str: $ => seq(choice($._br_blk_lit_bgn, $._br_blk_fld_bgn), repeat(choice($._br_blk_str_ctn, $.delimited_expression)), $._bl),
 
 		// flow value in block
 
@@ -1008,7 +1008,9 @@ function recursive_alias(rule, alias_map, checklist) {
 		case "REPEAT1":
 		case "FIELD":
 		case "PREC":
+		case "PREC_LEFT":
 		case "PREC_RIGHT":
+		case "PREC_DYNAMIC":
 			return { ...rule, content: rule.content && recursive_alias(rule.content, alias_map, checklist) };
 		case "SYMBOL": {
 			const name = rule.name;

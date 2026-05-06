@@ -2298,8 +2298,17 @@
         {
           "type": "REPEAT",
           "content": {
-            "type": "SYMBOL",
-            "name": "_br_blk_str_ctn"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_br_blk_str_ctn"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "delimited_expression"
+              }
+            ]
           }
         },
         {
@@ -2337,8 +2346,17 @@
         {
           "type": "REPEAT",
           "content": {
-            "type": "SYMBOL",
-            "name": "_br_blk_str_ctn"
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "_br_blk_str_ctn"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "delimited_expression"
+              }
+            ]
           }
         },
         {
