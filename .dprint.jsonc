@@ -30,6 +30,10 @@
 		"**/schemas/*.json",
 		"**/.idea",
 		"**/grammars",
+		"**/test/highlight/**",
+		"**/examples/**",
+		"**/grammar.json",
+		"**/node-types.json",
 	],
 	// Plugins
 	"plugins": [

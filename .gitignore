@@ -265,3 +265,4 @@ package-lock.json
 bun.lock
 .*cache/
 .build/
+__cmake_systeminformation/

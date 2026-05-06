@@ -1,0 +1,6 @@
+{
+	"name": "tree-sitter-github-actions-core",
+	"private": true,
+	"type": "module",
+	"scripts": { "build": "tree-sitter generate #--no-bindings", "postbuild": "node ../update-schema.js core" }
+}
