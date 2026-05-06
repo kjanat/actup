@@ -1,6 +1,7 @@
 # Provider Architecture
 
-Actup's provider architecture demonstrates clean separation of concerns and platform-agnostic design.
+Actup's provider architecture demonstrates clean separation of concerns and
+platform-agnostic design.
 
 ## Design Principles
 
@@ -134,7 +135,7 @@ token_env = "GITEA_TOKEN"
 
 # Forgejo is a soft fork of Gitea with identical API
 [hosts."forgejo.example.com"]
-kind      = "gitea"                        # Uses "gitea" kind
+kind      = "gitea"  # Uses "gitea" kind
 api_base  = "https://forgejo.example.com"
 token_env = "FORGEJO_TOKEN"
 ```
@@ -150,7 +151,8 @@ token_env = "FORGEJO_TOKEN"
 
 ## Multi-Provider Workflows
 
-Actup automatically routes action references to the appropriate provider based on the host:
+Actup automatically routes action references to the appropriate provider based
+on the host:
 
 ```yaml
 # .github/workflows/multi-platform.yml
@@ -211,7 +213,8 @@ Scanned 6 actions: 4 up to date, 0 ignored, 2 outdated
 
 ## Adding a New Provider
 
-See [Implementing Providers Guide](./implementing-providers.md) for step-by-step instructions.
+See [Implementing Providers Guide](./implementing-providers.md) for step-by-step
+instructions.
 
 **Time estimate**: ~2-3 hours for a basic provider, including:
 
@@ -243,7 +246,8 @@ cargo build --features "github gitlab"
 
 When implementing or reviewing a provider:
 
-- [ ] All Error variants use correct field names (owner/repo/host, not resource/provider)
+- [ ] All Error variants use correct field names (owner/repo/host, not
+      resource/provider)
 - [ ] `parse_action_yml` is module-level function (not method)
 - [ ] Async trait methods extract data from params before `async move`
 - [ ] SHAs validated with `Sha40::new()` and errors handled
@@ -251,7 +255,8 @@ When implementing or reviewing a provider:
 - [ ] Auth errors provide helpful messages
 - [ ] Pagination implemented correctly (all tags fetched)
 - [ ] Base64 decoding handles newlines/whitespace
-- [ ] `REGISTRATION` static exported with presets, `infer_api_base`, and capabilities
+- [ ] `REGISTRATION` static exported with presets, `infer_api_base`, and
+      capabilities
 - [ ] `REGISTRATION` wired into `available_registrations()` behind feature gate
 - [ ] Tests cover happy path and error cases
 - [ ] Documentation includes usage examples
@@ -281,7 +286,8 @@ When implementing or reviewing a provider:
 
 ## Migration from Old Config Format
 
-The provider configuration was refactored from `[providers]` with `[[providers.instances]]` to the current `[fetch]` + `[hosts."hostname"]`
+The provider configuration was refactored from `[providers]` with
+`[[providers.instances]]` to the current `[fetch]` + `[hosts."hostname"]`
 structure.
 
 | Old                             | New                                  |
@@ -295,14 +301,19 @@ structure.
 
 Key differences:
 
-- **Zero-config for preset hosts**: github.com works out of the box without any config entry (provider preset supplies all defaults)
-- **Hostname as key**: No more `host = "..."` field inside instances; the hostname is the TOML table key
-- **Flat structure**: `[hosts."ghe.corp.com"]` instead of deeply nested `[[providers.instances]]`
-- **Per-host fetch overrides**: `api_mode` and `max_tags_per_repo` can be set per-host in `[hosts]`, overriding `[fetch]` globals
+- **Zero-config for preset hosts**: github.com works out of the box without any
+  config entry (provider preset supplies all defaults)
+- **Hostname as key**: No more `host = "..."` field inside instances; the
+  hostname is the TOML table key
+- **Flat structure**: `[hosts."ghe.corp.com"]` instead of deeply nested
+  `[[providers.instances]]`
+- **Per-host fetch overrides**: `api_mode` and `max_tags_per_repo` can be set
+  per-host in `[hosts]`, overriding `[fetch]` globals
 
 ## Next Steps
 
-See the [Implementing Providers Guide](./implementing-providers.md) to create a new provider!
+See the [Implementing Providers Guide](./implementing-providers.md) to create a
+new provider!
 
 Candidates for future providers:
 

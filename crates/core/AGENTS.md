@@ -28,8 +28,9 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 | `validation.rs`   | 607   | Hostname, api_base, config validation            |
 | `discovery.rs`    | ~100  | Config file path search                          |
 
-`config/resolution.rs` is the largest file in the workspace. It handles the full provider config resolution algorithm: merging presets,
-inferring api_base, resolving token_env, validating host configs.
+`config/resolution.rs` is the largest file in the workspace. It handles the full
+provider config resolution algorithm: merging presets, inferring api_base,
+resolving token_env, validating host configs.
 
 ## Where to Look
 
@@ -48,7 +49,8 @@ inferring api_base, resolving token_env, validating host configs.
 ## Anti-Patterns (This Crate)
 
 - **No provider-specific code**: No GitHub REST paths, GitLab API quirks, etc.
-- **No hardcoded hosts**: `github.com` only appears in default config, never in logic
+- **No hardcoded hosts**: `github.com` only appears in default config, never in
+  logic
 - **No HTTP client usage**: Providers fetch; core orchestrates
 - **No file I/O for cache**: Define interfaces only; CLI implements storage
 

@@ -1,8 +1,10 @@
 # actup-wasm
 
-Parse and check GitHub Actions `uses:` refs — powered by [actup-core](https://github.com/kjanat/actup-v2) compiled to WebAssembly.
+Parse and check GitHub Actions `uses:` refs — powered by
+[actup-core](https://github.com/kjanat/actup-v2) compiled to WebAssembly.
 
-Works in **Node.js 18+**, **Bun**, **Deno**, and **browsers**. No native dependencies.
+Works in **Node.js 18+**, **Bun**, **Deno**, and **browsers**. No native
+dependencies.
 
 ## Installation
 
@@ -57,7 +59,9 @@ const results = await checkRefs(yaml, provider);
 for (const r of results) {
 	if (typeof r.status === "object" && "Outdated" in r.status) {
 		const { target } = r.status.Outdated;
-		console.log(`${r.action_ref.owner}/${r.action_ref.repo}: ${r.action_ref.git_ref} → ${target.version}`);
+		console.log(
+			`${r.action_ref.owner}/${r.action_ref.repo}: ${r.action_ref.git_ref} → ${target.version}`,
+		);
 	}
 }
 
@@ -69,11 +73,13 @@ const edits = planUpdates(yaml, results);
 
 ### `initWasm(wasmSource?)`
 
-Initialize the WASM module. Must be called before any other function. Safe to call multiple times — subsequent calls are no-ops.
+Initialize the WASM module. Must be called before any other function. Safe to
+call multiple times — subsequent calls are no-ops.
 
 - **Node.js / Bun / Deno**: auto-loads `.wasm` from disk via `fs.readFileSync`
 - **Browser**: auto-fetches `.wasm` via `import.meta.url`
-- **Custom**: pass a `URL`, `Response`, or `ArrayBuffer` to override auto-detection
+- **Custom**: pass a `URL`, `Response`, or `ArrayBuffer` to override
+  auto-detection
 
 ```ts
 await initWasm(); // auto-detect
@@ -83,24 +89,29 @@ await initWasm(wasmBytes); // explicit ArrayBuffer
 
 ### `parseUsesRefs(yaml)`
 
-Parse `uses:` references from workflow YAML. Pure, synchronous. No network access.
+Parse `uses:` references from workflow YAML. Pure, synchronous. No network
+access.
 
-Returns `UsesLocation[]` — each entry has `line`, `column`, `value`, `raw_line`, and `ref_range` (byte offsets of the `@ref` portion).
+Returns `UsesLocation[]` — each entry has `line`, `column`, `value`, `raw_line`,
+and `ref_range` (byte offsets of the `@ref` portion).
 
 ### `checkRefs(yaml, provider, config?)`
 
 Check `uses:` references against a provider. Async.
 
-Parses the YAML, resolves each non-local ref through the provider, and returns `CheckResult[]` with status: `"UpToDate"`,
-`{ Outdated: ... }`, or `{ Unresolvable: ... }`.
+Parses the YAML, resolves each non-local ref through the provider, and returns
+`CheckResult[]` with status: `"UpToDate"`, `{ Outdated: ... }`, or
+`{ Unresolvable: ... }`.
 
-Optional `config` accepts `{ default_host?, update_policy? }` where `update_policy` is `"patch"` | `"minor"` | `"major"` | `"latest"`.
+Optional `config` accepts `{ default_host?, update_policy? }` where
+`update_policy` is `"patch"` | `"minor"` | `"major"` | `"latest"`.
 
 ### `planUpdates(yaml, results)`
 
 Compute minimal text edits from check results. Pure, synchronous.
 
-Returns `UpdateEdit[]` — each entry has `line`, `refStart`, `refEnd`, `original`, and `newRef`. Only generates edits for outdated refs.
+Returns `UpdateEdit[]` — each entry has `line`, `refStart`, `refEnd`,
+`original`, and `newRef`. Only generates edits for outdated refs.
 
 ### `createGitHubProvider(options?)`
 

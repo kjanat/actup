@@ -1,6 +1,7 @@
 # actup for Zed
 
-Zed extension that integrates the `actup-lsp` language server for GitHub Actions workflow files.
+Zed extension that integrates the `actup-lsp` language server for GitHub Actions
+workflow files.
 
 Provides diagnostics, code actions, hover info, and completion for `uses:` refs.
 
@@ -30,13 +31,15 @@ Once published, search "actup" in Zed's extension panel and install.
 2. Run **zed: install dev extension**
 3. Select the `extensions/zed/` directory
 
-Zed will compile the WASM extension and load it. Repeat this step after editing extension source to pick up changes.
+Zed will compile the WASM extension and load it. Repeat this step after editing
+extension source to pick up changes.
 
 ## Configuration
 
 ### Binary path override
 
-If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings (`~/.config/zed/settings.json`):
+If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings
+(`~/.config/zed/settings.json`):
 
 <!--dprint-ignore-start-->
 
@@ -56,8 +59,9 @@ If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings (`~/.c
 
 ### File type detection
 
-Zed does not auto-detect GitHub Actions files by path. Add this to your settings so workflow files use the "GitHub Actions" language (which
-this extension defines):
+Zed does not auto-detect GitHub Actions files by path. Add this to your settings
+so workflow files use the "GitHub Actions" language (which this extension
+defines):
 
 <!--dprint-ignore-start-->
 
@@ -74,7 +78,8 @@ this extension defines):
 
 <!--dprint-ignore-end-->
 
-Files detected as plain YAML also work -- the extension attaches the LSP to both "GitHub Actions" and "YAML" languages.
+Files detected as plain YAML also work -- the extension attaches the LSP to both
+"GitHub Actions" and "YAML" languages.
 
 ## Features
 
@@ -112,5 +117,6 @@ rustup target add wasm32-wasip2
 
 ### How it works
 
-The extension is a thin WASM shim. It does not bundle `actup-lsp` -- it locates the binary on the host system (via `PATH` or user settings)
-and tells Zed to spawn it over stdio. All LSP logic lives in `crates/lsp/`.
+The extension is a thin WASM shim. It does not bundle `actup-lsp` -- it locates
+the binary on the host system (via `PATH` or user settings) and tells Zed to
+spawn it over stdio. All LSP logic lives in `crates/lsp/`.

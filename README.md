@@ -1,6 +1,7 @@
 # actup
 
-GitHub Actions version manager. CLI + LSP + MCP for checking and updating `uses:` refs across workflows and composite actions.
+GitHub Actions version manager. CLI + LSP + MCP for checking and updating
+`uses:` refs across workflows and composite actions.
 
 **Status:** Pre-alpha. Interfaces may change.
 
@@ -70,7 +71,7 @@ default_host = "github.com"
 
 [fetch]
 api_mode          = "graphql"  # "graphql" or "rest"
-max_tags_per_repo = 10         # Tags to fetch per repo (1-255)
+max_tags_per_repo = 10  # Tags to fetch per repo (1-255)
 
 # Enterprise GitHub
 [hosts."ghe.example.com"]

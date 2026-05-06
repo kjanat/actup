@@ -4,6 +4,6 @@
 actup         = ["run", "--bin=actup", "--quiet", "--"]
 actup-lsp     = ["run", "--bin=actup-lsp", "--quiet", "--"]
 i             = "install"
-install-actup = "i --path crates/actup"
-install-lsp   = "i --path crates/lsp"
-install-mcp   = "i --path crates/mcp"
+install-actup = "i --path crates/actup --bin actup"
+install-lsp   = "i --path crates/lsp --bin actup-lsp"
+install-mcp   = "i --path crates/mcp --bin actup-mcp"

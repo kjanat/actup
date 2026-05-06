@@ -1,6 +1,7 @@
 # actup for VS Code
 
-VS Code extension that integrates the `actup-lsp` language server for GitHub Actions workflow files.
+VS Code extension that integrates the `actup-lsp` language server for GitHub
+Actions workflow files.
 
 Provides diagnostics, code actions, hover info, and completion for `uses:` refs.
 
@@ -40,7 +41,8 @@ EXTENSION_DIR="$(git rev-parse --show-toplevel)/extensions/vscode"
 code --extensionDevelopmentPath="${EXTENSION_DIR}"
 ```
 
-Or press `F5` inside VS Code (with this folder open) to launch an Extension Development Host.
+Or press `F5` inside VS Code (with this folder open) to launch an Extension
+Development Host.
 
 ## Configuration
 
@@ -48,7 +50,8 @@ All settings live under the `actup` namespace.
 
 ### `actup.server.path`
 
-Absolute path to the `actup-lsp` binary. If unset, the extension searches `PATH`.
+Absolute path to the `actup-lsp` binary. If unset, the extension searches
+`PATH`.
 
 <!--dprint-ignore-start-->
 
@@ -66,7 +69,8 @@ Extra arguments passed to `actup-lsp`. Default: `[]`.
 
 ### `actup-lsp.trace.server`
 
-Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`. Default: `"off"`. Output goes to the "actup (trace)" output channel.
+Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`. Default:
+`"off"`. Output goes to the "actup (trace)" output channel.
 
 ## Commands
 
@@ -86,7 +90,8 @@ Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`. Default:
 
 ## Activation
 
-The extension activates when a YAML file is opened. The LSP client only sends documents matching these patterns to the server:
+The extension activates when a YAML file is opened. The LSP client only sends
+documents matching these patterns to the server:
 
 - `**/.github/**` (workflows, composite actions)
 - `**/action.yml`, `**/action.yaml` (action repo roots)
@@ -115,8 +120,10 @@ bun run watch     # recompile on save
 
 ### Debug
 
-Open this folder in VS Code and press `F5`. This launches an Extension Development Host with the extension loaded. When running in debug
-mode, `RUST_LOG=actup_lsp=debug` is set so the server produces verbose logs (visible in the "actup" output channel).
+Open this folder in VS Code and press `F5`. This launches an Extension
+Development Host with the extension loaded. When running in debug mode,
+`RUST_LOG=actup_lsp=debug` is set so the server produces verbose logs (visible
+in the "actup" output channel).
 
 ### Package
 
@@ -126,5 +133,7 @@ bun run package   # produces actup-vscode-0.1.0.vsix
 
 ### How it works
 
-The extension is a standard VS Code LSP client. It spawns `actup-lsp` as a child process over stdio. All LSP logic lives in `crates/lsp/` --
-the extension is just the glue. Settings changes to `actup.server.*` auto-restart the language server.
+The extension is a standard VS Code LSP client. It spawns `actup-lsp` as a child
+process over stdio. All LSP logic lives in `crates/lsp/` -- the extension is
+just the glue. Settings changes to `actup.server.*` auto-restart the language
+server.

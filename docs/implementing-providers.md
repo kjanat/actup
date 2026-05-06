@@ -1,11 +1,14 @@
 # Implementing Providers for Actup
 
-This guide walks through creating a new provider for actup, using GitLab and Gitea as reference examples.
+This guide walks through creating a new provider for actup, using GitLab and
+Gitea as reference examples.
 
 ## Overview
 
-Providers implement the `Provider` trait from `actup-core`, enabling actup to work with different Git hosting platforms (GitHub, GitLab,
-Gitea, Forgejo, etc.). The provider architecture is designed to keep `actup-core` completely platform-agnostic.
+Providers implement the `Provider` trait from `actup-core`, enabling actup to
+work with different Git hosting platforms (GitHub, GitLab, Gitea, Forgejo,
+etc.). The provider architecture is designed to keep `actup-core` completely
+platform-agnostic.
 
 ## Quick Start
 
@@ -444,8 +447,9 @@ fn parse_action_yml(raw: &str) -> Result<ActionYml> {
 
 ### 6. Export REGISTRATION
 
-Each provider crate must export a static `REGISTRATION` that supplies presets, inference logic, and a factory function. This enables
-zero-config for preset hosts and automatic `api_base` inference for self-hosted instances.
+Each provider crate must export a static `REGISTRATION` that supplies presets,
+inference logic, and a factory function. This enables zero-config for preset
+hosts and automatic `api_base` inference for self-hosted instances.
 
 ```rust
 use actup_core::{Capabilities, HostKind, Preset, ProviderConfig, Registration};
@@ -479,7 +483,8 @@ fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn actup_c
 }
 ```
 
-Then add the provider to `available_registrations()` in the CLI crate behind a feature gate.
+Then add the provider to `available_registrations()` in the CLI crate behind a
+feature gate.
 
 ## Common Patterns
 
@@ -700,7 +705,8 @@ fn get_action_yml(&self, repo: &ActionRepoId, ref_name: &str) -> ... {
 
 **Solutions**:
 
-- For JSON parsing API responses: Use `Error::Network { operation: "parse response", ... }`
+- For JSON parsing API responses: Use
+  `Error::Network { operation: "parse response", ... }`
 - For YAML parsing action files: Use `Error::YamlParse { path, reason }`
 - For unexpected data format: Use `Error::Internal { context, message }`
 

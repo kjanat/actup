@@ -1,6 +1,8 @@
 # `tree-sitter-github-actions-core`
 
-Tree-sitter sub-grammar implementing [YAML 1.2 §10.3 Core Schema](https://yaml.org/spec/1.2.2/#103-core-schema) plain-scalar resolution.
+Tree-sitter sub-grammar implementing
+[YAML 1.2 §10.3 Core Schema](https://yaml.org/spec/1.2.2/#103-core-schema)
+plain-scalar resolution.
 
 | Type    | Matches                                                                  |
 | ------- | ------------------------------------------------------------------------ |
@@ -16,8 +18,10 @@ Tree-sitter sub-grammar implementing [YAML 1.2 §10.3 Core Schema](https://yaml.
 bun run build
 ```
 
-Runs `tree-sitter generate` to refresh `src/parser.c`, then `postbuild` (`../update-schema.js core`) walks that lexer's state machine and
-emits `../../src/schema.core.c`, which is `#include`d by the main grammar's external scanner.
+Runs `tree-sitter generate` to refresh `src/parser.c`, then `postbuild`
+(`../update-schema.js core`) walks that lexer's state machine and emits
+`../../src/schema.core.c`, which is `#include`d by the main grammar's external
+scanner.
 
 ## Layout
 
@@ -28,4 +32,5 @@ core/
 └── src/         # generated; do not edit
 ```
 
-Edit `grammar.js`, run `bun run build`, commit both `grammar.js` and the regenerated `src/`.
+Edit `grammar.js`, run `bun run build`, commit both `grammar.js` and the
+regenerated `src/`.

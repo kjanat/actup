@@ -7,7 +7,8 @@ source: https://rust-lang.github.io/api-guidelines/checklist.html
 
 > ## Excerpt
 >
-> This is a set of recommendations on how to design and present APIs for the Rust programming language.
+> This is a set of recommendations on how to design and present APIs for the
+> Rust programming language.
 
 ---
 
@@ -15,20 +16,26 @@ source: https://rust-lang.github.io/api-guidelines/checklist.html
   - Casing conforms to RFC 430 ([C-CASE])
   - Ad-hoc conversions follow `as_`, `to_`, `into_` conventions ([C-CONV])
   - Getter names follow Rust convention ([C-GETTER])
-  - Methods on collections that produce iterators follow `iter`, `iter_mut`, `into_iter` ([C-ITER])
+  - Methods on collections that produce iterators follow `iter`, `iter_mut`,
+    `into_iter` ([C-ITER])
   - Iterator type names match the methods that produce them ([C-ITER-TY])
   - Feature names are free of placeholder words ([C-FEATURE])
   - Names use a consistent word order ([C-WORD-ORDER])
-- **Interoperability** *(crate interacts nicely with other library functionality)*
+- **Interoperability** *(crate interacts nicely with other library
+  functionality)*
   - Types eagerly implement common traits ([C-COMMON-TRAITS])
-    - `Copy`, `Clone`, `Eq`, `PartialEq`, `Ord`, `PartialOrd`, `Hash`, `Debug`, `Display`, `Default`
-  - Conversions use the standard traits `From`, `AsRef`, `AsMut` ([C-CONV-TRAITS])
+    - `Copy`, `Clone`, `Eq`, `PartialEq`, `Ord`, `PartialOrd`, `Hash`, `Debug`,
+      `Display`, `Default`
+  - Conversions use the standard traits `From`, `AsRef`, `AsMut`
+    ([C-CONV-TRAITS])
   - Collections implement `FromIterator` and `Extend` ([C-COLLECT])
   - Data structures implement Serde's `Serialize`, `Deserialize` ([C-SERDE])
   - Types are `Send` and `Sync` where possible ([C-SEND-SYNC])
   - Error types are meaningful and well-behaved ([C-GOOD-ERR])
-  - Binary number types provide `Hex`, `Octal`, `Binary` formatting ([C-NUM-FMT])
-  - Generic reader/writer functions take `R: Read` and `W: Write` by value ([C-RW-VALUE])
+  - Binary number types provide `Hex`, `Octal`, `Binary` formatting
+    ([C-NUM-FMT])
+  - Generic reader/writer functions take `R: Read` and `W: Write` by value
+    ([C-RW-VALUE])
 - **Macros** *(crate presents well-behaved macros)*
   - Input syntax is evocative of the output ([C-EVOCATIVE])
   - Macros compose well with attributes ([C-MACRO-ATTR])
@@ -42,7 +49,8 @@ source: https://rust-lang.github.io/api-guidelines/checklist.html
   - Function docs include error, panic, and safety considerations ([C-FAILURE])
   - Prose contains hyperlinks to relevant things ([C-LINK])
   - Cargo.toml includes all common metadata ([C-METADATA])
-    - authors, description, license, homepage, documentation, repository, keywords, categories
+    - authors, description, license, homepage, documentation, repository,
+      keywords, categories
   - Release notes document all significant changes ([C-RELNOTES])
   - Rustdoc does not show unhelpful implementation details ([C-HIDDEN])
 - **Predictability** *(crate enables legible code that acts how it looks)*
@@ -54,13 +62,16 @@ source: https://rust-lang.github.io/api-guidelines/checklist.html
   - Only smart pointers implement `Deref` and `DerefMut` ([C-DEREF])
   - Constructors are static, inherent methods ([C-CTOR])
 - **Flexibility** *(crate supports diverse real-world use cases)*
-  - Functions expose intermediate results to avoid duplicate work ([C-INTERMEDIATE])
+  - Functions expose intermediate results to avoid duplicate work
+    ([C-INTERMEDIATE])
   - Caller decides where to copy and place data ([C-CALLER-CONTROL])
-  - Functions minimize assumptions about parameters by using generics ([C-GENERIC])
+  - Functions minimize assumptions about parameters by using generics
+    ([C-GENERIC])
   - Traits are object-safe if they may be useful as a trait object ([C-OBJECT])
 - **Type safety** *(crate leverages the type system effectively)*
   - Newtypes provide static distinctions ([C-NEWTYPE])
-  - Arguments convey meaning through types, not `bool` or `Option` ([C-CUSTOM-TYPE])
+  - Arguments convey meaning through types, not `bool` or `Option`
+    ([C-CUSTOM-TYPE])
   - Types for a set of flags are `bitflags`, not enums ([C-BITFLAG])
   - Builders enable construction of complex values ([C-BUILDER])
 - **Dependability** *(crate is unlikely to do the wrong thing)*

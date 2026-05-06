@@ -1,6 +1,7 @@
 # Editor Extensions
 
-Two editor extensions that wrap `actup-lsp`. Both are **outside the Cargo workspace** — they have independent build systems.
+Two editor extensions that wrap `actup-lsp`. Both are **outside the Cargo
+workspace** — they have independent build systems.
 
 ## Structure
 
@@ -12,7 +13,8 @@ Two editor extensions that wrap `actup-lsp`. Both are **outside the Cargo worksp
 ## VSCode Extension (`vscode/`)
 
 - Wraps `actup-lsp` via `vscode-languageclient` (LSP client)
-- Activates on YAML files matching `.github/workflows/**` and `action.{yml,yaml}`
+- Activates on YAML files matching `.github/workflows/**` and
+  `action.{yml,yaml}`
 - Finds `actup-lsp` binary in PATH or configured `actup.serverPath` setting
 - Build: `bun run compile` (TypeScript → `out/extension.js`)
 - Package: `vsce package` → `.vsix`
@@ -20,12 +22,15 @@ Two editor extensions that wrap `actup-lsp`. Both are **outside the Cargo worksp
 
 ## Zed Extension (`zed/`)
 
-- **Separate `[workspace]`** with its own `Cargo.toml` + `Cargo.lock` (not a workspace member)
+- **Separate `[workspace]`** with its own `Cargo.toml` + `Cargo.lock` (not a
+  workspace member)
 - Compiles to `cdylib` WASM via `zed::register_extension!(ActupExtension)`
-- Provides `/actions:update` slash command + LSP integration (locates `actup-lsp` in PATH)
-- Tree-sitter `yaml` grammar fetched at install time via `extension.toml` (`[grammars.yaml]` `repository` + `rev`); `grammars/` is
-  git-ignored
-- Custom tree-sitter queries in `languages/github_actions/` (highlights, injections, outline)
+- Provides `/actions:update` slash command + LSP integration (locates
+  `actup-lsp` in PATH)
+- Tree-sitter `yaml` grammar fetched at install time via `extension.toml`
+  (`[grammars.yaml]` `repository` + `rev`); `grammars/` is git-ignored
+- Custom tree-sitter queries in `languages/github_actions/` (highlights,
+  injections, outline)
 - Entry: `src/lib.rs` (single file)
 
 ## Where to Look
@@ -41,9 +46,12 @@ Two editor extensions that wrap `actup-lsp`. Both are **outside the Cargo worksp
 
 ## Anti-Patterns
 
-- **Never add these to the root Cargo workspace** — VSCode is TypeScript; Zed compiles to WASM with a separate target
-- **Don't modify vendored `grammars/yaml/`** directly — it's a tree-sitter-yaml upstream copy
-- **LSP binary must be pre-installed** — extensions locate `actup-lsp` at runtime, don't embed it
+- **Never add these to the root Cargo workspace** — VSCode is TypeScript; Zed
+  compiles to WASM with a separate target
+- **Don't modify vendored `grammars/yaml/`** directly — it's a tree-sitter-yaml
+  upstream copy
+- **LSP binary must be pre-installed** — extensions locate `actup-lsp` at
+  runtime, don't embed it
 
 ## Commands
 
@@ -65,11 +73,14 @@ Zed recipes auto-install `wasm32-wasip2` target if missing.
 
 ## CI
 
-`check-extensions` job in `ci.yml` runs on every push/PR. Soft-gated in `ci-success` (failure blocks, skip tolerated).
+`check-extensions` job in `ci.yml` runs on every push/PR. Soft-gated in
+`ci-success` (failure blocks, skip tolerated).
 
 ## Conventions
 
 - Both extensions version-track with the main project (`0.1.0`)
 - VSCode uses `bun` (not npm/yarn) for package management
-- Zed extension has a commented-out `[context_servers.actup-mcp]` section for future MCP support
-- Zed has its own `[lints]` in Cargo.toml (minimal set, not full workspace config)
+- Zed extension has a commented-out `[context_servers.actup-mcp]` section for
+  future MCP support
+- Zed has its own `[lints]` in Cargo.toml (minimal set, not full workspace
+  config)

@@ -9,58 +9,39 @@ authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
 repository     = "https://github.com/kjanat/actup-v2"
 
 [language_servers.actup-lsp]
-languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
+languages = ["GitHub Actions"]  # , "GitHub Actions Expressions"
 
 [language_servers.actup-lsp.language_ids]
-"GitHub Actions"             = "github_actions"
-"GitHub Actions Expressions" = "github_actions"
-"YAML"                       = "github_actions"
+"GitHub Actions" = "github_actions"
+# "GitHub Actions Expressions" = "github_actions"
 
 [language_servers.actions-languageserver]
-languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
+languages = ["GitHub Actions"]  # , "GitHub Actions Expressions"
 
 [language_servers.actions-languageserver.language_ids]
-"GitHub Actions"             = "github_actions"
-"GitHub Actions Expressions" = "github_actions"
-"YAML"                       = "github_actions"
+"GitHub Actions" = "github_actions"
+# "GitHub Actions Expressions" = "github_actions"
+# "YAML"                       = "github_actions"
 
-[language_servers.yaml-language-server]
-languages = ["GitHub Actions", "GitHub Actions Expressions", "YAML"]
-
-[language_servers.yaml-language-server.language_ids]
-"GitHub Actions"             = "github_actions"
-"GitHub Actions Expressions" = "github_actions"
-"YAML"                       = "github_actions"
-
-[[capabilities]]
+[[capabilities]]  # TODO: when not dev, and pre-pr to zed-extensions repo, rm this block.
 kind    = "process:exec"
 command = "*"
 args    = ["**"]
 
 [[capabilities]]
-kind    = "process:exec"
-command = "actions-languageserver"
-args    = ["--stdio"]
-
-[[capabilities]]
-kind    = "npm:install"
-package = "yaml-language-server"
-
-[[capabilities]]
 kind    = "npm:install"
 package = "@actions/languageserver"
+
+# Reserved for future use; not currently published as an npm package
+# [[capabilities]]
+# kind    = "npm:install"
+# package = "actup-lsp"
 
 [grammars.github_actions]
 repository = "file:///home/kjanat/projects/actup-v2"
 rev        = "tree-sitter-github-actions"
 path       = "languages/tree-sitter-github-actions"
 
-[grammars.gh_actions_expressions]
-repository = "https://github.com/hdoc1509/tree-sitter-gh-actions-expressions"
-rev        = "823a5876dcf3a1f5aa8cf9df2ac69eea6e8d7068"  # v0.5.1
-
-# [context_servers.actup-mcp]
-
-# [slash_commands."actions:update"]
-# description       = "Update GitHub Actions uses: refs to the latest version"
-# requires_argument = false
+# [grammars.gh_actions_expressions]
+# repository = "https://github.com/hdoc1509/tree-sitter-gh-actions-expressions"
+# rev        = "823a5876dcf3a1f5aa8cf9df2ac69eea6e8d7068"  # v0.5.1

@@ -7,12 +7,14 @@
 
 ## Summary
 
-Refactor provider configuration from `[providers]` with `Vec<ProviderInstance>` to:
+Refactor provider configuration from `[providers]` with `Vec<ProviderInstance>`
+to:
 
 - `[fetch]` for global fetch settings
 - `[hosts."hostname"]` for per-host config (keyed map)
 - Explicit `default_host` (no ordering footguns)
-- **Provider-neutral core:** presets and inference live in provider crates via a registration API
+- **Provider-neutral core:** presets and inference live in provider crates via a
+  registration API
 
 ## Motivation
 
@@ -22,7 +24,8 @@ Original design had issues:
 2. **Unclear precedence** — `default_instance` vs `default_host`
 3. **Misplaced globals** — `api_mode`/`max_tags` at `[providers]` level
 4. **Deep nesting** — `[providers.instances.name]`
-5. **Provider-neutrality violation** — core should not hardcode GitHub/GitLab/Gitea assumptions
+5. **Provider-neutrality violation** — core should not hardcode
+   GitHub/GitLab/Gitea assumptions
 
 ## Config Structure
 
@@ -42,15 +45,15 @@ default_host     = "github.com"
 # Fetch settings
 [fetch]
 api_mode          = "graphql"  # "graphql" | "rest"
-max_tags_per_repo = 10         # 1-255
+max_tags_per_repo = 10  # 1-255
 
 # Host overrides/additions
 [hosts."ghe.corp.com"]
 kind              = "github"
 api_base          = "https://ghe.corp.com/api/v3"
 token_env         = "GHE_TOKEN"
-api_mode          = "rest"                         # override global
-max_tags_per_repo = 50                             # override global
+api_mode          = "rest"  # override global
+max_tags_per_repo = 50  # override global
 ```
 
 ### TOML Example (minimal — zero config)
@@ -157,13 +160,16 @@ pub enum HostKind {
 
 ### Design Decisions
 
-- **Defaults strategy:** Single mechanism — `impl Default` on structs + `#[serde(default)]` on containers. No field-level default fns.
-- **Typo protection:** `#[serde(deny_unknown_fields)]` on config structs. Pre-alpha tradeoff: older binaries reject newer keys.
+- **Defaults strategy:** Single mechanism — `impl Default` on structs +
+  `#[serde(default)]` on containers. No field-level default fns.
+- **Typo protection:** `#[serde(deny_unknown_fields)]` on config structs.
+  Pre-alpha tradeoff: older binaries reject newer keys.
 
 ## Provider Registration Architecture (NEW)
 
-Core must remain provider-neutral. Provider-specific knowledge (presets, default token envs, api_base inference, capabilities) is supplied
-by provider crates via a static registration.
+Core must remain provider-neutral. Provider-specific knowledge (presets, default
+token envs, api_base inference, capabilities) is supplied by provider crates via
+a static registration.
 
 ### Core types
 
@@ -203,7 +209,8 @@ pub struct Registration {
 
 ### Provider crate exports
 
-Each provider crate exports a single `REGISTRATION: Registration`. Example (GitHub):
+Each provider crate exports a single `REGISTRATION: Registration`. Example
+(GitHub):
 
 ```rust
 pub const REGISTRATION: Registration = Registration {
@@ -231,7 +238,8 @@ pub const REGISTRATION: Registration = Registration {
 
 ### Registry assembly (feature-gated, compile-time)
 
-The CLI (or `crates/providers`) assembles the set of available registrations using Cargo features:
+The CLI (or `crates/providers`) assembles the set of available registrations
+using Cargo features:
 
 ```rust
 pub fn available_registrations() -> Vec<&'static Registration> {
@@ -246,7 +254,8 @@ pub fn available_registrations() -> Vec<&'static Registration> {
 }
 ```
 
-**Rule:** preset hostnames must be unique across all registrations. If duplicates are detected, startup fails with a clear error.
+**Rule:** preset hostnames must be unique across all registrations. If
+duplicates are detected, startup fails with a clear error.
 
 ## Validation Rules
 
@@ -270,7 +279,8 @@ pub fn available_registrations() -> Vec<&'static Registration> {
 **`default_host` validation:**
 
 - Passes hostname rules above
-- Must resolve via `effective_host(default_host)` (preset or defined in `[hosts]`)
+- Must resolve via `effective_host(default_host)` (preset or defined in
+  `[hosts]`)
 
 ### Post-merge validation (per effective host)
 
@@ -282,8 +292,9 @@ After preset merge + host overrides + provider defaults/inference:
 
 ## Merge Semantics
 
-For each field in `HostConfig`, if user value is `Some`, it replaces preset/default; otherwise preset/default/inferred value remains. Empty
-strings are treated as `Some("")`, not as "inherit."
+For each field in `HostConfig`, if user value is `Some`, it replaces
+preset/default; otherwise preset/default/inferred value remains. Empty strings
+are treated as `Some("")`, not as "inherit."
 
 ## Precedence Chain
 
@@ -328,7 +339,8 @@ effective_host(hostname) =
 
 ## Token Handling
 
-`token_env` field must be present after merge (from host override, preset, or provider default).
+`token_env` field must be present after merge (from host override, preset, or
+provider default).
 
 Runtime (env var resolution):
 
@@ -337,7 +349,8 @@ Runtime (env var resolution):
 | Preset / provider default      | WARN once + allow unauthenticated |
 | User-specified (`hosts` entry) | ERROR                             |
 
-Warning format: `WARN: {host}: env var {token_env} not set, using unauthenticated mode`
+Warning format:
+`WARN: {host}: env var {token_env} not set, using unauthenticated mode`
 
 ## Defaults (Empty Config)
 
@@ -366,7 +379,8 @@ Config {
 | `[[providers.instances]]`       | `[hosts."hostname"]`        |
 | `instance.host`                 | KEY of `[hosts]` table      |
 
-**Note:** Duplicate hosts in old format → invalid in new format. Error on migration.
+**Note:** Duplicate hosts in old format → invalid in new format. Error on
+migration.
 
 ## Deliverables
 

@@ -2,16 +2,19 @@
 
 ## Problem Definition
 
-**What are we solving?** Developers managing GitHub Actions workflows have no real-time feedback on outdated `uses:` refs. They must
-manually run CLI tools or wait for CI failures. Outdated actions pose security risks (CVEs in old versions) and maintenance burden (manual
-version tracking).
+**What are we solving?** Developers managing GitHub Actions workflows have no
+real-time feedback on outdated `uses:` refs. They must manually run CLI tools or
+wait for CI failures. Outdated actions pose security risks (CVEs in old
+versions) and maintenance burden (manual version tracking).
 
-**For whom?** Developers editing `.github/workflows/*.yml` and `.github/actions/*/action.yml` files in LSP-capable editors (VS Code, Neovim,
+**For whom?** Developers editing `.github/workflows/*.yml` and
+`.github/actions/*/action.yml` files in LSP-capable editors (VS Code, Neovim,
 Helix, Zed).
 
 **Cost of not solving?**
 
-- Security: 30% of GitHub Actions security advisories stem from outdated action versions
+- Security: 30% of GitHub Actions security advisories stem from outdated action
+  versions
 - DX: Context switching to CLI interrupts flow
 - Consistency: Different team members may use different versions
 
@@ -28,10 +31,13 @@ Helix, Zed).
 
 ## Design Decisions
 
-1. **Activation**: Editor extension configures file patterns; LSP exits quietly if file lacks `uses:`
-2. **Network Strategy**: Background prefetch with 300ms debounce; don't block editor
+1. **Activation**: Editor extension configures file patterns; LSP exits quietly
+   if file lacks `uses:`
+2. **Network Strategy**: Background prefetch with 300ms debounce; don't block
+   editor
 3. **Cache**: Shared file cache with CLI (`~/.cache/actup/`)
-4. **Error UX**: Both status bar message AND per-ref diagnostics for network/auth errors
+4. **Error UX**: Both status bar message AND per-ref diagnostics for
+   network/auth errors
 5. **Scope**: Full capabilities (diagnostics + single + bulk code actions)
 
 ## Architecture
@@ -95,7 +101,8 @@ Helix, Zed).
 
 **Phase:** 2 | **Effort:** M | **Depends on:** D2
 
-- On `did_open`/`did_save`: extract `uses:`, resolve versions, publish diagnostics
+- On `did_open`/`did_save`: extract `uses:`, resolve versions, publish
+  diagnostics
 - Background task pool: spawn async fetch, debounce 300ms
 - Severity mapping:
   - `Outdated` -> Warning
@@ -114,7 +121,8 @@ Helix, Zed).
 
 **Phase:** 2 | **Effort:** M | **Depends on:** D3
 
-- `textDocument/codeAction` handler returns `CodeAction[]` for diagnostics in range
+- `textDocument/codeAction` handler returns `CodeAction[]` for diagnostics in
+  range
 - For `Outdated`: "Update to vX.Y.Z" (or SHA if pin policy)
 - For `Unresolvable` with suggestion: "Change to vX.Y.Z"
 - Use `WorkspaceEdit` with `changes` (check client capabilities)

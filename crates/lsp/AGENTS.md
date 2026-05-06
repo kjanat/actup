@@ -1,9 +1,10 @@
 # actup-lsp
 
-Language Server Protocol implementation. Provides diagnostics, code actions, hover info, and completion for `uses:` refs in GitHub Actions
-workflow files.
+Language Server Protocol implementation. Provides diagnostics, code actions,
+hover info, and completion for `uses:` refs in GitHub Actions workflow files.
 
-Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses `tower-lsp-server` for JSON-RPC transport over stdin/stdout.
+Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
+`tower-lsp-server` for JSON-RPC transport over stdin/stdout.
 
 ## Module Map
 
@@ -53,29 +54,36 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses `tower-lsp-s
 - Tracing goes to **stderr** (stdout is LSP protocol channel)
 - `DashMap` for concurrent document state
 - `tokio::RwLock` for shared provider/config access
-- Workspace root extracted from `workspace_folders` (or deprecated `root_uri`/`root_path` fallback)
+- Workspace root extracted from `workspace_folders` (or deprecated
+  `root_uri`/`root_path` fallback)
 
 ## Anti-Patterns (This Crate)
 
 - **Never write to stdout** except via LSP protocol (use `tracing` → stderr)
 - **Never block the main loop**: All provider calls are async
-- **Edits must be minimal**: Replace only `@ref` portion, preserve YAML formatting
+- **Edits must be minimal**: Replace only `@ref` portion, preserve YAML
+  formatting
 
 ## Conventions
 
 - `#[allow(clippy::cast_possible_truncation)]` for LSP u32 position conversions
-- `#[allow(deprecated)]` for backward-compat with `root_uri`/`root_path` LSP fields
-- Diagnostics: Warning (outdated), Error (unresolvable), Info (network/rate-limited)
+- `#[allow(deprecated)]` for backward-compat with `root_uri`/`root_path` LSP
+  fields
+- Diagnostics: Warning (outdated), Error (unresolvable), Info
+  (network/rate-limited)
 
 ## Tests
 
-- Integration tests in `src/integration_tests.rs` (972 lines, 20 tests) — `#[cfg(test)]` inside binary crate
+- Integration tests in `src/integration_tests.rs` (972 lines, 20 tests) —
+  `#[cfg(test)]` inside binary crate
 - Mock provider in `src/test_utils.rs` — `MockProvider` with builder pattern
 - Custom `TestHarness` wrapping `LspService` with background socket drain
-- Tests full LSP protocol flow: initialize, didOpen, diagnostics, codeAction, hover, completion, executeCommand
+- Tests full LSP protocol flow: initialize, didOpen, diagnostics, codeAction,
+  hover, completion, executeCommand
 - No `tests/` directory (tests are in-source `#[cfg(test)]` modules)
 
 ## Complexity Hotspots
 
-`backend.rs` (1546 lines) and `diagnostics.rs` (1109 lines) are the most complex. `workspace_commands.rs` (839 lines) and `code_actions.rs`
-(778 lines) have `too_many_lines` and `too_many_arguments` lint suppressions.
+`backend.rs` (1546 lines) and `diagnostics.rs` (1109 lines) are the most
+complex. `workspace_commands.rs` (839 lines) and `code_actions.rs` (778 lines)
+have `too_many_lines` and `too_many_arguments` lint suppressions.

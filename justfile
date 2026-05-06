@@ -15,9 +15,6 @@ alias c := clippy
 alias l := lint
 alias i := inst-all
 
-actup-dir := "crates" / "actup"
-lsp-dir := "crates" / "lsp"
-mcp-dir := "crates" / "mcp"
 coverage-lcov := "target" / "lcov.info"
 coverage-html := "target" / "llvm-cov" / "html" / "index.html"
 schema_dir := "schemas"
@@ -37,17 +34,17 @@ inst-all: install-actup install-actup-lsp install-actup-mcp
 # Install actup CLI
 [group('install')]
 install-actup:
-    cargo install --bin=actup --path {{ actup-dir }}
+    cargo install-actup
 
 # Install actup-lsp language server
 [group('install')]
 install-actup-lsp:
-    cargo install --bin=actup-lsp --path {{ lsp-dir }}
+    cargo install-lsp
 
 # Install actup-mcp server (stub)
 [group('install')]
 install-actup-mcp:
-    -cargo install --bin=actup-mcp --path {{ mcp-dir }}
+    -cargo install-mcp
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]

@@ -2,16 +2,21 @@
 
 ## Problem Definition
 
-**What are we solving?** Non-SHA `uses:` refs (tags, branches) are mutable — the commit they point to can change at any time. "Pin to SHA"
-converts them to immutable 40-char commit SHAs for supply-chain safety. The LSP has no code action for this. The CLI has `actup pin` but
-`actup update` ignores `ref_style = "sha"`.
+**What are we solving?** Non-SHA `uses:` refs (tags, branches) are mutable — the
+commit they point to can change at any time. "Pin to SHA" converts them to
+immutable 40-char commit SHAs for supply-chain safety. The LSP has no code
+action for this. The CLI has `actup pin` but `actup update` ignores
+`ref_style = "sha"`.
 
-**For whom?** Security-conscious teams, SOC2/FedRAMP compliance workflows, anyone who wants reproducible CI.
+**For whom?** Security-conscious teams, SOC2/FedRAMP compliance workflows,
+anyone who wants reproducible CI.
 
 **Cost of not solving?**
 
-- Users must manually run `actup pin` CLI then re-open files — breaks editor flow
-- `ref_style = "sha"` config is parsed but never honored by `update` — a silent lie
+- Users must manually run `actup pin` CLI then re-open files — breaks editor
+  flow
+- `ref_style = "sha"` config is parsed but never honored by `update` — a silent
+  lie
 - No "pin current ref" option in the editor; only "update to latest tag"
 
 ## Constraints
@@ -28,7 +33,8 @@ converts them to immutable 40-char commit SHAs for supply-chain safety. The LSP 
 
 ### D1: `resolved_sha` on `CheckResult`, not `CheckStatus`
 
-Add a single `Option<String>` field to `CheckResult` rather than modifying every `CheckStatus` variant.
+Add a single `Option<String>` field to `CheckResult` rather than modifying every
+`CheckStatus` variant.
 
 ```rust
 pub struct CheckResult {
@@ -38,8 +44,9 @@ pub struct CheckResult {
 }
 ```
 
-**Why:** `UpToDate` is a unit variant. Making it carry data breaks every `match` site. A field on the wrapper is additive — existing
-`status()` matches are untouched. `resolved_sha` applies uniformly regardless of status.
+**Why:** `UpToDate` is a unit variant. Making it carry data breaks every `match`
+site. A field on the wrapper is additive — existing `status()` matches are
+untouched. `resolved_sha` applies uniformly regardless of status.
 
 **Population strategy:**
 
@@ -48,21 +55,27 @@ pub struct CheckResult {
 | `check_action` (sync)         | Look up `action_ref.ref_str()` in `version::Set` (semver_tags, major_tags, default_branch) | Tags + default branch                     |
 | `check_action_remote` (async) | Use `resolve_ref_to_sha()` return value (currently discarded)                              | Everything including non-default branches |
 
-**Rejected alternative:** Adding `current_sha` to `CheckStatus::Outdated` — would only cover Outdated, not UpToDate/branch refs.
+**Rejected alternative:** Adding `current_sha` to `CheckStatus::Outdated` —
+would only cover Outdated, not UpToDate/branch refs.
 
 ### D2: Cursor-based code actions (not diagnostic-only)
 
-Current code actions are generated exclusively from `DiagnosticData` attached to diagnostics. UpToDate refs produce no diagnostic, so they'd
-never get a code action.
+Current code actions are generated exclusively from `DiagnosticData` attached to
+diagnostics. UpToDate refs produce no diagnostic, so they'd never get a code
+action.
 
-**New approach:** Store `CheckResult`s in `DocumentState` alongside diagnostics. The code action handler checks two sources:
+**New approach:** Store `CheckResult`s in `DocumentState` alongside diagnostics.
+The code action handler checks two sources:
 
-1. **Diagnostic-based** (existing): "Update to vX.Y.Z" for Outdated refs — unchanged
+1. **Diagnostic-based** (existing): "Update to vX.Y.Z" for Outdated refs —
+   unchanged
 2. **Cursor-based** (new): "Pin to SHA" for any non-SHA ref the cursor overlaps
 
-This cleanly separates concerns: diagnostics report problems, cursor actions offer transformations.
+This cleanly separates concerns: diagnostics report problems, cursor actions
+offer transformations.
 
-**Rejected alternative:** Adding hint-level diagnostics for UpToDate refs — adds visual noise to every up-to-date action line.
+**Rejected alternative:** Adding hint-level diagnostics for UpToDate refs — adds
+visual noise to every up-to-date action line.
 
 ### D3: Two code actions for Outdated, one for UpToDate
 
@@ -74,7 +87,8 @@ This cleanly separates concerns: diagnostics report problems, cursor actions off
 | Branch/other | Pin to SHA      | `Pin to SHA`               | `resolved_sha`                      |
 | Already SHA  | —               | (no action)                | —                                   |
 
-All actions use `CodeActionKind::REFACTOR` (not quickfix) since pinning isn't fixing a problem.
+All actions use `CodeActionKind::REFACTOR` (not quickfix) since pinning isn't
+fixing a problem.
 
 ### D4: Comment strategy — config-driven, surface-dependent
 
@@ -90,8 +104,9 @@ comment = true  # default: true
 | LSP code action                         | `@{sha} # {ref}`                     | `@{sha}`          |
 | MCP                                     | Follows config                       | Follows config    |
 
-**Ghost text / inlay hints**: Out of scope for this spec. Complementary future feature — show tag for SHA refs via `textDocument/inlayHint`.
-Would replace the need for comments in editors while keeping files clean.
+**Ghost text / inlay hints**: Out of scope for this spec. Complementary future
+feature — show tag for SHA refs via `textDocument/inlayHint`. Would replace the
+need for comments in editors while keeping files clean.
 
 ### D5: `DiagnosticData` extension
 
@@ -107,7 +122,8 @@ pub enum DiagnosticData {
 }
 ```
 
-`target_sha` is `Option` for backward compatibility — older diagnostics without it simply don't offer the "Update & pin" action.
+`target_sha` is `Option` for backward compatibility — older diagnostics without
+it simply don't offer the "Update & pin" action.
 
 ## Data Flow
 
@@ -162,8 +178,8 @@ fn resolve_current_sha(ref_str: &str, versions: &version::Set) -> Option<String>
 }
 ```
 
-Returns `None` for non-default branches, unusual tag formats, etc. The async path (`check_action_remote`) fills in the gap via
-`resolve_ref_to_sha()`.
+Returns `None` for non-default branches, unusual tag formats, etc. The async
+path (`check_action_remote`) fills in the gap via `resolve_ref_to_sha()`.
 
 ## LSP Document State Extension
 
@@ -181,8 +197,8 @@ pub struct ActionCheckEntry {
 }
 ```
 
-Stored in `DocumentState` as `Vec<ActionCheckEntry>`, populated during `compute_diagnostics` for ALL `uses:` refs (not just
-diagnostic-producing ones).
+Stored in `DocumentState` as `Vec<ActionCheckEntry>`, populated during
+`compute_diagnostics` for ALL `uses:` refs (not just diagnostic-producing ones).
 
 ## Code Action Generation
 
@@ -215,7 +231,8 @@ fn pin_actions_for_cursor(
 }
 ```
 
-For the "Update & pin" action on Outdated diagnostics, extend `code_actions_for_diagnostics`:
+For the "Update & pin" action on Outdated diagnostics, extend
+`code_actions_for_diagnostics`:
 
 ```rust
 // After existing "Update to {target_ref}" action:
@@ -233,21 +250,26 @@ if let Some(sha) = &data.target_sha {
 
 ## Comment Handling in Edits
 
-When `config.pin.comment` is true and the code action produces a SHA edit, append `# {original_ref}` to the line.
+When `config.pin.comment` is true and the code action produces a SHA edit,
+append `# {original_ref}` to the line.
 
-This requires the `TextEdit` to extend beyond just the ref range. Two approaches:
+This requires the `TextEdit` to extend beyond just the ref range. Two
+approaches:
 
 1. **Single edit**: Replace from ref start to end-of-line with `{sha} # {ref}`
 2. **Additional edit**: Insert `# {ref}` at end of line as a separate `TextEdit`
 
-Option 2 is safer (doesn't interfere with trailing comments already present). The code action handler should check for existing trailing
-comments and skip insertion if one exists.
+Option 2 is safer (doesn't interfere with trailing comments already present).
+The code action handler should check for existing trailing comments and skip
+insertion if one exists.
 
-For the LSP, the `ActionCheckEntry` already stores `ref_str` (the original ref), so the comment content is available.
+For the LSP, the `ActionCheckEntry` already stores `ref_str` (the original ref),
+so the comment content is available.
 
 ## CLI: Honor `ref_style` in `update`
 
-Currently `update` always emits tag-style refs (`target.version().to_string()`). When `ref_style = "sha"` (global or per-action override):
+Currently `update` always emits tag-style refs (`target.version().to_string()`).
+When `ref_style = "sha"` (global or per-action override):
 
 ```rust
 let new_ref = match config.ref_style_for(owner, repo) {
@@ -279,10 +301,13 @@ This reuses the existing `resolve_sha` logic from the `pin` command.
 
 ## Non-Goals
 
-- **MCP implementation**: MCP is a stub. Define tool interface in this spec but don't implement.
-- **Inlay hints for SHA refs**: Complementary feature (show tag as ghost text). Separate spec.
+- **MCP implementation**: MCP is a stub. Define tool interface in this spec but
+  don't implement.
+- **Inlay hints for SHA refs**: Complementary feature (show tag as ghost text).
+  Separate spec.
 - **"Unpin to tag" code action**: Inverse operation. Separate feature.
-- **Closest-tag suggestion for Unresolvable**: Existing TODO, orthogonal to this work.
+- **Closest-tag suggestion for Unresolvable**: Existing TODO, orthogonal to this
+  work.
 - **Short SHA support**: Always use full 40-char SHA. No short SHA output.
 
 ## Risks

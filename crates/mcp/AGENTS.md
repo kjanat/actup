@@ -1,6 +1,7 @@
 # actup-mcp
 
-Model Context Protocol server for AI agents. **Currently a stub** — `main.rs` is a placeholder `println!("Hello, world!")`.
+Model Context Protocol server for AI agents. **Currently a stub** — `main.rs` is
+a placeholder `println!("Hello, world!")`.
 
 ## Status
 
@@ -36,7 +37,8 @@ Expose actup's check/update capabilities as MCP tools so AI coding agents can:
 
 ## Anti-Patterns (This Crate)
 
-See root `AGENTS.md` § "actup-mcp" for full tool principles (read purity, diff+reversal, idempotency).
+See root `AGENTS.md` § "actup-mcp" for full tool principles (read purity,
+diff+reversal, idempotency).
 
 - **Not a bypass** — must enforce same config/policy/provider rules as CLI/LSP
 - **No direct file writes** — return edit plans; let the caller apply them

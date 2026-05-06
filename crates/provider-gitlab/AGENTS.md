@@ -4,8 +4,9 @@ GitLab and self-hosted GitLab provider. Implements `actup-core::Provider`.
 
 ## Status
 
-Functional provider implementation but **not yet wired into CLI/LSP** — no `REGISTRATION` static exported. The CLI has commented-out
-feature-gated support ready for when registration is added.
+Functional provider implementation but **not yet wired into CLI/LSP** — no
+`REGISTRATION` static exported. The CLI has commented-out feature-gated support
+ready for when registration is added.
 
 ## Module Map
 

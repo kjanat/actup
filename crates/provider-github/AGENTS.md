@@ -2,7 +2,8 @@
 
 GitHub and GitHub Enterprise provider. Implements `actup-core::Provider`.
 
-Only provider that exports a `REGISTRATION` static for the provider registry system.
+Only provider that exports a `REGISTRATION` static for the provider registry
+system.
 
 ## Module Map
 
@@ -37,7 +38,8 @@ Only provider that exports a `REGISTRATION` static for the provider registry sys
 - **Never use generic error fields**: Use provider-specific error types
 - **Always validate SHAs**: Use `Sha40::new()` from `actup-core`
 - **Never log tokens**: Auth header set but never printed
-- **Rate limit detection**: Check header VALUES not just presence (`x-ratelimit-remaining == "0"`)
+- **Rate limit detection**: Check header VALUES not just presence
+  (`x-ratelimit-remaining == "0"`)
 
 ## Conventions
 

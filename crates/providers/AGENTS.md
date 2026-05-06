@@ -1,7 +1,7 @@
 # actup-providers
 
-Shared utility layer between `actup-core` and individual provider crates (github, gitlab, gitea). Not a "registry of all providers" despite
-the name.
+Shared utility layer between `actup-core` and individual provider crates
+(github, gitlab, gitea). Not a "registry of all providers" despite the name.
 
 ## Module Map
 
@@ -23,8 +23,10 @@ the name.
 
 - All provider crates depend on this crate
 - `TagLike` trait: providers implement to normalize their tag API responses
-- `process_tags` converts provider-specific tag lists into `actup-core::Version` sets
-- `parse_action_yml` has `cognitive_complexity` + `too_many_lines` suppressed — refactoring candidate
+- `process_tags` converts provider-specific tag lists into `actup-core::Version`
+  sets
+- `parse_action_yml` has `cognitive_complexity` + `too_many_lines` suppressed —
+  refactoring candidate
 
 ## Anti-Patterns
 

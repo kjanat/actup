@@ -7,10 +7,13 @@
 
 ## Summary
 
-Compile `actup-core` (parsing, policy, version resolution) to WebAssembly. Publish a thin TypeScript wrapper as `actup-wasm` on npm. Enable:
+Compile `actup-core` (parsing, policy, version resolution) to WebAssembly.
+Publish a thin TypeScript wrapper as `actup-wasm` on npm. Enable:
 
-- VS Code web extension (vscode.dev) — `wasm32-unknown-unknown` with JS `fetch()` bridge
-- Zed extension — `wasm32-wasip2` with WASI HTTP (future: embed logic instead of shelling out)
+- VS Code web extension (vscode.dev) — `wasm32-unknown-unknown` with JS
+  `fetch()` bridge
+- Zed extension — `wasm32-wasip2` with WASI HTTP (future: embed logic instead of
+  shelling out)
 - Standalone Node.js/Bun/Deno usage — `actup-wasm` as a library
 - MCP server in JS/TS — wrapping the WASM module
 
@@ -18,25 +21,31 @@ The CLI remains native-only. The existing native LSP binary is unaffected.
 
 ## Motivation
 
-Today, both the VS Code and Zed extensions are thin shims that locate and spawn `actup-lsp` as a native binary. This means:
+Today, both the VS Code and Zed extensions are thin shims that locate and spawn
+`actup-lsp` as a native binary. This means:
 
 1. **No vscode.dev support** — web extensions can't spawn native processes
 2. **Users must pre-install `actup-lsp`** — friction, version mismatch risk
-3. **No JS/TS ecosystem integration** — can't use actup from Node scripts, CI tools, or MCP servers without a Rust toolchain
-4. **Zed extension is hollow** — compiles to WASM but delegates everything to a native binary
+3. **No JS/TS ecosystem integration** — can't use actup from Node scripts, CI
+   tools, or MCP servers without a Rust toolchain
+4. **Zed extension is hollow** — compiles to WASM but delegates everything to a
+   native binary
 
-WASM eliminates the native binary requirement for the core check/update pipeline.
+WASM eliminates the native binary requirement for the core check/update
+pipeline.
 
 ## Architecture
 
 ### Key insight: the Provider trait already abstracts 80%
 
-The existing `Provider` trait in `actup-core` abstracts all HTTP, retry, rate limiting, and API specifics behind boxed futures. The WASM
-strategy is:
+The existing `Provider` trait in `actup-core` abstracts all HTTP, retry, rate
+limiting, and API specifics behind boxed futures. The WASM strategy is:
 
-1. **Eliminate** filesystem/config/discovery from the WASM surface (host provides content)
+1. **Eliminate** filesystem/config/discovery from the WASM surface (host
+   provides content)
 2. **Inject** a `Clock` trait for the 3 `SystemTime::now()` call sites
-3. **Bridge** JS `Provider` implementations to the Rust `Provider` trait via `wasm-bindgen`
+3. **Bridge** JS `Provider` implementations to the Rust `Provider` trait via
+   `wasm-bindgen`
 
 No platform crates. No feature-flag soup. One new `actup-wasm` crate.
 
@@ -44,9 +53,11 @@ No platform crates. No feature-flag soup. One new `actup-wasm` crate.
 
 Native CLI pipeline: **discover files → read → parse → resolve → diff → write**
 
-WASM pipeline: **host provides YAML content → parse → resolve → return edits** (host applies)
+WASM pipeline: **host provides YAML content → parse → resolve → return edits**
+(host applies)
 
-The npm package never touches the filesystem. The host (VS Code, Node.js, Zed) handles I/O.
+The npm package never touches the filesystem. The host (VS Code, Node.js, Zed)
+handles I/O.
 
 ### Crate layout
 
@@ -88,9 +99,11 @@ packages/
 
 - CLI in WASM (terminal-coupled: clap, indicatif, console)
 - Abstracting filesystem for WASM (eliminated from WASM surface, not abstracted)
-- `actup-platform-*` crates (not enough platform-specific code to warrant separate crates)
+- `actup-platform-*` crates (not enough platform-specific code to warrant
+  separate crates)
 - Feature-flag-based WASM/native split in existing crates (too few call sites)
-- Replacing the native `actup-lsp` binary (WASM LSP is an additional mode, not a replacement)
+- Replacing the native `actup-lsp` binary (WASM LSP is an additional mode, not a
+  replacement)
 
 ## Data Model
 
@@ -192,7 +205,12 @@ export interface UsesLocation {
 
 export interface CheckResult {
 	uses: string;
-	status: "up-to-date" | "outdated" | "unresolvable" | "unknown" | "rate-limited";
+	status:
+		| "up-to-date"
+		| "outdated"
+		| "unresolvable"
+		| "unknown"
+		| "rate-limited";
 	current: string;
 	latest?: string;
 	latestSha?: string;
@@ -230,10 +248,25 @@ export function planUpdates(
 ```typescript
 export interface ActupProvider {
 	getVersions(host: string, owner: string, repo: string): Promise<VersionSet>;
-	resolveRefToSha(host: string, owner: string, repo: string, ref: string): Promise<string>;
+	resolveRefToSha(
+		host: string,
+		owner: string,
+		repo: string,
+		ref: string,
+	): Promise<string>;
 	getDefaultBranch(host: string, owner: string, repo: string): Promise<string>;
-	getReadme(host: string, owner: string, repo: string, ref?: string): Promise<string | null>;
-	getActionYml(host: string, owner: string, repo: string, ref: string): Promise<ActionYml>;
+	getReadme(
+		host: string,
+		owner: string,
+		repo: string,
+		ref?: string,
+	): Promise<string | null>;
+	getActionYml(
+		host: string,
+		owner: string,
+		repo: string,
+		ref: string,
+	): Promise<ActionYml>;
 }
 ```
 
@@ -247,7 +280,8 @@ export function createGitHubProvider(options?: {
 }): ActupProvider;
 ```
 
-Uses the platform's native `fetch()` — works in browsers, Node 18+, Bun, Deno, Cloudflare Workers.
+Uses the platform's native `fetch()` — works in browsers, Node 18+, Bun, Deno,
+Cloudflare Workers.
 
 ## WASM Target Strategy
 
@@ -257,12 +291,13 @@ Uses the platform's native `fetch()` — works in browsers, Node 18+, Bun, Deno,
 | Zed extension      | `wasm32-wasip2`          | WASI HTTP       | WASI reactor           |
 | Node.js standalone | `wasm32-unknown-unknown` | JS fetch bridge | Node WASM loader       |
 
-The `actup-wasm` crate targets `wasm32-unknown-unknown` (broadest compat). Zed integration (D9) may need a separate build target or a thin
-wasip2 adapter.
+The `actup-wasm` crate targets `wasm32-unknown-unknown` (broadest compat). Zed
+integration (D9) may need a separate build target or a thin wasip2 adapter.
 
 ## RwLock Strategy
 
-`CachingProvider` uses `tokio::sync::RwLock`. For WASM (`wasm32` is single-threaded):
+`CachingProvider` uses `tokio::sync::RwLock`. For WASM (`wasm32` is
+single-threaded):
 
 ```rust
 #[cfg(target_arch = "wasm32")]
@@ -294,18 +329,21 @@ impl<T> MaybeSend for T {}
 
 Then `pub trait Provider: MaybeSend + MaybeSync`, futures return `+ MaybeSend`.
 
-**Why:** Established pattern (futures, tower). Mechanical find-replace — every native impl already satisfies `Send + Sync`. Dropping `Send`
-would break `tokio::spawn` in the LSP. A separate WASM trait creates a maintenance fork.
+**Why:** Established pattern (futures, tower). Mechanical find-replace — every
+native impl already satisfies `Send + Sync`. Dropping `Send` would break
+`tokio::spawn` in the LSP. A separate WASM trait creates a maintenance fork.
 
 ## Acceptance Criteria
 
-- [ ] `parseUsesRefs("uses: actions/checkout@v4")` returns correct `UsesLocation` from WASM
+- [ ] `parseUsesRefs("uses: actions/checkout@v4")` returns correct
+      `UsesLocation` from WASM
 - [ ] `checkRefs()` with a mock JS provider returns correct `CheckResult`
 - [ ] `planUpdates()` returns minimal text edits matching native CLI output
 - [ ] npm package installs and runs in Node.js 18+ without native dependencies
 - [ ] npm package works in VS Code web extension host (vscode.dev)
 - [ ] WASM bundle size < 500KB gzipped (stretch: < 300KB)
-- [ ] No `std::fs`, `tokio::fs`, `dirs`, `glob`, or `figment` in the WASM dependency tree
+- [ ] No `std::fs`, `tokio::fs`, `dirs`, `glob`, or `figment` in the WASM
+      dependency tree
 - [ ] Existing native CLI, LSP, and tests unaffected (no regressions)
 
 ## Test Strategy
@@ -340,14 +378,22 @@ would break `tokio::spawn` in the LSP. A separate WASM trait creates a maintenan
 
 ## Resolved Questions
 
-- [x] **`Send` bound** → `MaybeSend` trait alias. Mechanical find-replace, no breakage.
-- [x] **`version::Set` serialization** → Already derives `Serialize`/`Deserialize`. `Arc` handled by serde `rc` feature (already enabled).
-      Only gap: `#[serde(skip)]` on `fetched_at: SystemTime`.
-- [x] **npm scope** → `actup-wasm` (unscoped). No `@actup` org exists; one package doesn't justify it.
-- [x] **Workspace membership** → Workspace member. Unlike Zed (wasip2 + cdylib conflicts), `wasm32-unknown-unknown` via `wasm-pack` works
-      fine in the workspace. Separate = duplicated lockfile.
-- [x] **WASM LSP transport** → Skip WASM LSP for D8 (web extension). The current desktop extension uses `LanguageClient` + `actup-lsp`
-      subprocess, which is correct for native. D8's web extension will call WASM functions directly via `registerDiagnosticsProvider` /
-      `registerCodeActionsProvider` — LSP protocol is overhead when the engine runs in-process. This is what Biome/Ruff/OXC do.
-- [x] **Source maps** → `wasm-opt -O2` without `-g` on `.wasm`. Ship `.js.map` for TS wrapper (tiny, useful). No DWARF-in-WASM (enormous,
-      spotty devtools support).
+- [x] **`Send` bound** → `MaybeSend` trait alias. Mechanical find-replace, no
+      breakage.
+- [x] **`version::Set` serialization** → Already derives
+      `Serialize`/`Deserialize`. `Arc` handled by serde `rc` feature (already
+      enabled). Only gap: `#[serde(skip)]` on `fetched_at: SystemTime`.
+- [x] **npm scope** → `actup-wasm` (unscoped). No `@actup` org exists; one
+      package doesn't justify it.
+- [x] **Workspace membership** → Workspace member. Unlike Zed (wasip2 + cdylib
+      conflicts), `wasm32-unknown-unknown` via `wasm-pack` works fine in the
+      workspace. Separate = duplicated lockfile.
+- [x] **WASM LSP transport** → Skip WASM LSP for D8 (web extension). The current
+      desktop extension uses `LanguageClient` + `actup-lsp` subprocess, which is
+      correct for native. D8's web extension will call WASM functions directly
+      via `registerDiagnosticsProvider` / `registerCodeActionsProvider` — LSP
+      protocol is overhead when the engine runs in-process. This is what
+      Biome/Ruff/OXC do.
+- [x] **Source maps** → `wasm-opt -O2` without `-g` on `.wasm`. Ship `.js.map`
+      for TS wrapper (tiny, useful). No DWARF-in-WASM (enormous, spotty devtools
+      support).

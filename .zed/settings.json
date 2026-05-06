@@ -15,7 +15,7 @@
 	},
 	"file_types": {
 		// "GitHub Actions"
-		"YAML": [".github/workflows/*.yml", ".github/workflows/*.yaml", ".github/actions/*.yml", ".github/actions/*.yaml"]
+		"GitHub Actions": [".github/workflows/*.yml", ".github/workflows/*.yaml", ".github/actions/*.yml", ".github/actions/*.yaml"]
 	},
 	"lsp": { "actup-lsp": { "binary": { "path": "cargo", "arguments": ["actup-lsp"] } } }
 }

@@ -1,10 +1,14 @@
 # actup (CLI + LSP + MCP)
 
-WE ARE STILL NOT EVEN IN ALPHA. WE ARE FREE TO CHANGE SIGNATURES, PUBLIC INTERFACES, ETC.
+WE ARE STILL NOT EVEN IN ALPHA. WE ARE FREE TO CHANGE SIGNATURES, PUBLIC
+INTERFACES, ETC.
 
-This repo contains **actup** (CLI), **actup-lsp** (Language Server), and **actup-mcp** (Model Context Protocol server) for checking/updating
-GitHub-compatible Actions `uses:` refs across workflows + composite actions. You are an AI agent working in this codebase. Your job is to
-make correct, reviewable changes that preserve user intent and don’t brick CI. Be paranoid and precise.
+This repo contains **actup** (CLI), **actup-lsp** (Language Server), and
+**actup-mcp** (Model Context Protocol server) for checking/updating
+GitHub-compatible Actions `uses:` refs across workflows + composite actions. You
+are an AI agent working in this codebase. Your job is to make correct,
+reviewable changes that preserve user intent and don’t brick CI. Be paranoid and
+precise.
 
 Before every commit, run `just fmt`, or `dprint fmt`.
 
@@ -12,19 +16,24 @@ Before every commit, run `just fmt`, or `dprint fmt`.
 
 ## Prime directive
 
-1. **Never silently change semantics.** Updating `uses:` refs changes what code runs in CI. Always follow config policy and leave a paper
-   trail (diffs, logs, comments).
-2. **Prefer deterministic outputs.** Same inputs → same results, regardless of machine/locale/time (except when intentionally fetching
-   remote state).
-3. **Network is flaky.** Handle offline / rate limit / auth missing gracefully, with actionable diagnostics.
-4. **Security matters.** Tag refs are mutable. Pin-to-SHA is the safest default. Never “unpin” unless explicitly configured.
-5. **Provider-neutral core.** Do not hardcode GitHub assumptions into `actup-core`. All host/API specifics go behind provider interfaces.
+1. **Never silently change semantics.** Updating `uses:` refs changes what code
+   runs in CI. Always follow config policy and leave a paper trail (diffs, logs,
+   comments).
+2. **Prefer deterministic outputs.** Same inputs → same results, regardless of
+   machine/locale/time (except when intentionally fetching remote state).
+3. **Network is flaky.** Handle offline / rate limit / auth missing gracefully,
+   with actionable diagnostics.
+4. **Security matters.** Tag refs are mutable. Pin-to-SHA is the safest default.
+   Never “unpin” unless explicitly configured.
+5. **Provider-neutral core.** Do not hardcode GitHub assumptions into
+   `actup-core`. All host/API specifics go behind provider interfaces.
 
 ---
 
 ## Repo layout
 
-Cargo workspace (Rust 2024). Directory names strip the `actup-` prefix; crate names retain it.
+Cargo workspace (Rust 2024). Directory names strip the `actup-` prefix; crate
+names retain it.
 
 ```tree
 crates/
@@ -49,8 +58,8 @@ examples/             # Example config files
 branding/             # Logo, banner, icon SVGs + PNG generation
 ```
 
-**Core is host-agnostic**, providers are host-specific. `actup-providers` (plural) is a shared utility layer between core and individual
-providers.
+**Core is host-agnostic**, providers are host-specific. `actup-providers`
+(plural) is a shared utility layer between core and individual providers.
 
 ---
 
@@ -102,7 +111,8 @@ ActionRef {
 - **Outdated** refs with suggested replacements (respecting policy)
 - **Unresolvable** refs with error diagnostics
 - **Unknown** status when network fails (do not mark as user error)
-- Always include provider/host in structured outputs (CLI JSON, LSP metadata, MCP tool results).
+- Always include provider/host in structured outputs (CLI JSON, LSP metadata,
+  MCP tool results).
 
 ---
 
@@ -112,7 +122,8 @@ ActionRef {
 
 - `actup-core` must not know about:
 
-  - GitHub REST paths (`/repos/.../tags`), GraphQL schemas, headers, pagination quirks
+  - GitHub REST paths (`/repos/.../tags`), GraphQL schemas, headers, pagination
+    quirks
   - specific hostnames (github.com) beyond defaults in config resolution
   - “README.md location” conventions beyond “provider can fetch readme”
 - `actup-core` *does* know about:
@@ -145,17 +156,20 @@ trait ActionProvider {
 }
 ```
 
-`ActionRepoId` includes host + owner/group + repo/project + optional subpath identity.
+`ActionRepoId` includes host + owner/group + repo/project + optional subpath
+identity.
 
 ### Provider selection (“injection”)
 
 A `provider::Registry` lives in `actup-core` and resolves providers by host:
 
-- If `ActionRef.host` is absent → use configured `default_provider` / `default_host`.
+- If `ActionRef.host` is absent → use configured `default_provider` /
+  `default_host`.
 - Else look up by host match:
 
   - exact host match (e.g., `ghe.mycorp.internal`)
-  - fallback by provider kind mapping (e.g. `github` for any configured GHE hosts)
+  - fallback by provider kind mapping (e.g. `github` for any configured GHE
+    hosts)
 
 Providers are constructed with:
 
@@ -187,7 +201,8 @@ Never let GitHub + GitHub Enterprise collide in cache.
 
 ### Discovery order (highest priority first)
 
-1. Explicit `--config <path>` (CLI) / LSP setting `actup.configPath` / MCP arg `configPath`
+1. Explicit `--config <path>` (CLI) / LSP setting `actup.configPath` / MCP arg
+   `configPath`
 2. Repo configs, found by walking up from file/workspace root:
 
    - `actup.toml`
@@ -201,11 +216,13 @@ Never let GitHub + GitHub Enterprise collide in cache.
 
 ### Precedence
 
-CLI flags override repo config override user config override defaults. LSP + MCP must match CLI resolution rules.
+CLI flags override repo config override user config override defaults. LSP + MCP
+must match CLI resolution rules.
 
 ### Provider config structure
 
-Config uses `default_host` (top-level), `[fetch]` for global fetch settings, and `[hosts."hostname"]` for per-host overrides:
+Config uses `default_host` (top-level), `[fetch]` for global fetch settings, and
+`[hosts."hostname"]` for per-host overrides:
 
 ```toml
 # Default host for bare `owner/repo` refs (preset hosts like github.com work with zero config)
@@ -213,7 +230,7 @@ default_host = "github.com"
 
 [fetch]
 api_mode          = "graphql"  # "graphql" | "rest"
-max_tags_per_repo = 10         # 1-255
+max_tags_per_repo = 10  # 1-255
 
 [hosts."ghe.mycorp.internal"]
 kind      = "github"
@@ -226,12 +243,14 @@ api_base  = "https://gitlab.com/api/v4"
 token_env = "GITLAB_TOKEN"
 ```
 
-Provider-specific knowledge (presets, api_base inference, capabilities) is supplied by provider crates via `Registration` statics. See
+Provider-specific knowledge (presets, api_base inference, capabilities) is
+supplied by provider crates via `Registration` statics. See
 `specs/config-refactor.md` for the full resolution algorithm.
 
 Also:
 
-- update policy + per-action overrides must match on **(host?, owner/repo, subpath?)**
+- update policy + per-action overrides must match on **(host?, owner/repo,
+  subpath?)**
 - cache TTL + cache location strategy
 - branch handling per provider if needed
 
@@ -259,13 +278,16 @@ If you add keys, update `schemas/`, docs, and tests.
 If no newer semver tags exist but branch head is newer:
 
 - Default: **do not jump to branch** unless config allows it.
-- Provide secondary suggestions (“default branch has newer commits”) in metadata.
+- Provide secondary suggestions (“default branch has newer commits”) in
+  metadata.
 - LSP/MCP may offer optional code action/tool result only if config permits.
 
 ### Multiple tags → same commit
 
-- If “latest” tag and current resolve to same SHA: treat as **up-to-date** (no-op).
-- Don’t churn between equivalent tags unless user explicitly requests normalization.
+- If “latest” tag and current resolve to same SHA: treat as **up-to-date**
+  (no-op).
+- Don’t churn between equivalent tags unless user explicitly requests
+  normalization.
 
 ### Pinning
 
@@ -287,7 +309,8 @@ Default: OS cache dir:
 - macOS: `~/Library/Caches/actup/`
 - Windows: `%LOCALAPPDATA%\\actup\\cache\\`
 
-Repo-local cache is optional but **not default** and never writes into `.git/` unless explicitly configured.
+Repo-local cache is optional but **not default** and never writes into `.git/`
+unless explicitly configured.
 
 ### What to cache
 
@@ -344,7 +367,8 @@ Code actions:
 - Update to latest allowed
 - Update all in file/workspace
 - Pin to SHA
-- For unresolvable: suggest closest matching tag if confident All edits must be minimal and versioned (don’t stomp user edits).
+- For unresolvable: suggest closest matching tag if confident All edits must be
+  minimal and versioned (don’t stomp user edits).
 
 ---
 
@@ -368,13 +392,15 @@ Exit codes:
 
 ## actup-mcp (tools for AI agents)
 
-`actup-mcp` exposes a narrow, safe surface area so agents can inspect and update. Tools must be provider-aware and policy-aware, and
-mutators must return diffs + reversible plans.
+`actup-mcp` exposes a narrow, safe surface area so agents can inspect and
+update. Tools must be provider-aware and policy-aware, and mutators must return
+diffs + reversible plans.
 
 ### MCP tool principles
 
 - Read tools are pure.
-- Mutators must return: what changed, file/ranges, unified diff, and a reversal plan.
+- Mutators must return: what changed, file/ranges, unified diff, and a reversal
+  plan.
 - Respect the same config and provider selection rules as CLI/LSP.
 - Idempotent operations: calling twice yields no extra changes.
 
@@ -387,7 +413,8 @@ mutators must return diffs + reversible plans.
 - `updateFile({ path, edits[], validateYaml })`
 - `updateAllUsesToVersion({ workspaceRoot, match{host?, owner, repo, path?}, targetRef, includeCompositeActions, includeWorkflows, dryRun })`
 
-All responses must include resolved provider+host and status (`upToDate|outdated|unknown|unresolvable|rateLimited`).
+All responses must include resolved provider+host and status
+(`upToDate|outdated|unknown|unresolvable|rateLimited`).
 
 ---
 
@@ -406,7 +433,8 @@ Required tests:
   - rate limit + offline behavior
 - config precedence + provider instance selection tests
 - LSP diagnostics + code actions (minimal harness)
-- MCP contract tests: validation, diff correctness, idempotency, refuses path traversal
+- MCP contract tests: validation, diff correctness, idempotency, refuses path
+  traversal
 
 Never rely on live network in tests.
 
@@ -422,13 +450,15 @@ Never rely on live network in tests.
   - `InvalidRef` / `NotFound` (user)
   - `Network` / `RateLimit` / `Auth` (environment)
 
-- No decorative comment separators (e.g., `// ========` or `// ------`). Use doc comments or blank lines instead.
+- No decorative comment separators (e.g., `// ========` or `// ------`). Use doc
+  comments or blank lines instead.
 
 ---
 
 ## Commit message format
 
-Use [Conventional Commits](https://www.conventionalcommits.org/) with these guidelines:
+Use [Conventional Commits](https://www.conventionalcommits.org/) with these
+guidelines:
 
 ### Structure
 
@@ -458,11 +488,14 @@ Add `!` after type/scope for breaking changes: `feat(policy)!: change default`
    - Good: `fix(check): handle None from \`GitHubProvider::new\``
    - Bad: `fix(check): handle None from GitHubProvider::new`
 
-2. **Describe WHY, not just WHAT** — the diff shows what changed; the message explains the reasoning:
-   - Good: `fix(discovery): use consistent deduplication to prevent future pattern overlap bugs`
+2. **Describe WHY, not just WHAT** — the diff shows what changed; the message
+   explains the reasoning:
+   - Good:
+     `fix(discovery): use consistent deduplication to prevent future pattern overlap bugs`
    - Bad: `fix(discovery): check insert() return value`
 
-3. **Never title commits "addresses PR feedback"** — describe the actual changes and their purpose:
+3. **Never title commits "addresses PR feedback"** — describe the actual changes
+   and their purpose:
    - Good: `fix(check): log provider errors to aid debugging auth failures`
    - Bad: `fix: address PR review comments`
 
@@ -501,7 +534,8 @@ pattern. Clearer intent, same performance.
 - Treat repo files as untrusted input; prevent path traversal.
 - Pin-to-SHA: resolve SHAs from provider APIs, not user strings.
 - Do not store tokens in cache.
-- MCP mutators must refuse writes outside workspace root unless explicitly allowed.
+- MCP mutators must refuse writes outside workspace root unless explicitly
+  allowed.
 
 ---
 
@@ -592,10 +626,12 @@ just self-check     # Run actup on this repo
 
 The CLI uses batch fetching for optimal performance:
 
-1. **In-memory deduplication** (`CachingProvider`): Same repo only fetched once per run
+1. **In-memory deduplication** (`CachingProvider`): Same repo only fetched once
+   per run
 2. **GraphQL batching**: Single query for all repos (requires `GITHUB_TOKEN`)
 3. **Parallel REST fallback**: Concurrent requests when no token available
-4. **File-based cache**: Results cached in `~/.cache/actup/` with configurable TTL
+4. **File-based cache**: Results cached in `~/.cache/actup/` with configurable
+   TTL
 
 First run with cold cache: ~1s (network). Subsequent runs: ~30ms (cache hits).
 
