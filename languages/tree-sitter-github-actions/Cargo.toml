@@ -6,12 +6,12 @@ edition.workspace    = true
 description          = "Github Actions grammar for tree-sitter"
 readme               = "README.md"
 repository.workspace = true
-license.workspace    = true
+license              = "MIT"
 keywords             = ["github-actions", "incremental", "parsing", "tree-sitter"]
 categories           = ["parser-implementations", "parsing", "text-editors"]
 build                = "bindings/rust/build.rs"
 include              = [
-  "../../LICENSE-*",
+  "../../LICENSE-MIT",
   "bindings/rust/*",
   "grammar.js",
   "queries/*",

@@ -2,6 +2,7 @@
 	"name": "actup",
 	"version": "0.0.0+dev",
 	"private": true,
+	"type": "module",
 	"workspaces": {
 		"packages": ["extensions/*", "languages/*", "languages/*/schema/*", "packages/*"],
 		"catalog": {
@@ -24,6 +25,7 @@
 		"build:wasm": "bun run --filter 'actup-wasm' build:wasm"
 	},
 	"devDependencies": { "@kjanat/dreamcli": "latest", "@types/bun": "latest", "sort-package-json": "latest", "tombi": "latest" },
+	"peerDependencies": { "jsonc-parser": "^3.3.1" },
 	"packageManager": "bun@1.3.13",
 	"patchedDependencies": { "tree-sitter@0.25.0": "patches/tree-sitter@0.25.0.patch" }
 }
