@@ -10,7 +10,7 @@
 		"TypeScript": { "language_servers": ["vtsls", "tsgo", "biome", "!eslint"] },
 		"Rust": { "wrap_guides": [100] },
 		"GitHub Actions": {
-			"language_servers": ["actup-lsp", "actions-language-server", "..."] // "yaml-language-server",
+			"language_servers": ["actions-language-server", "actup-lsp", "..."] // "yaml-language-server",
 		}
 	},
 	"file_types": {

@@ -9,19 +9,18 @@ authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
 repository     = "https://github.com/kjanat/actup-v2"
 
 [language_servers.actup-lsp]
-languages = ["GitHub Actions"]  # , "GitHub Actions Expressions"
+languages = ["GitHub Actions", "YAML"]
 
 [language_servers.actup-lsp.language_ids]
 "GitHub Actions" = "github_actions"
-# "GitHub Actions Expressions" = "github_actions"
+"YAML"           = "github_actions"
 
 [language_servers.actions-languageserver]
-languages = ["GitHub Actions"]  # , "GitHub Actions Expressions"
+languages = ["GitHub Actions", "YAML"]
 
 [language_servers.actions-languageserver.language_ids]
 "GitHub Actions" = "github_actions"
-# "GitHub Actions Expressions" = "github_actions"
-# "YAML"                       = "github_actions"
+"YAML"           = "github_actions"
 
 [[capabilities]]  # TODO: when not dev, and pre-pr to zed-extensions repo, rm this block.
 kind    = "process:exec"
