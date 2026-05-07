@@ -141,16 +141,29 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip2
+          # wasm32-unknown-unknown is needed because the VS Code extension's
+          # `actup-wasm` workspace dep resolves to fresh-built artifacts —
+          # without rebuilding, typecheck would run against missing/stale
+          # `.d.ts` and silently miss tsify-generated type drift.
+          targets: wasm32-wasip2, wasm32-unknown-unknown
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
+      - name: Install wasm-pack
+        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
       - name: Zed — clippy
         working-directory: extensions/zed
         run: cargo clippy --target wasm32-wasip2 -- -D warnings
+      - name: actup-wasm — install
+        working-directory: packages/actup-wasm
+        run: bun install --frozen-lockfile
+      - name: actup-wasm — build (regenerates tsify-derived `.d.ts` from current Rust)
+        working-directory: packages/actup-wasm
+        run: bun run build
       - name: VSCode — install
         working-directory: extensions/vscode
         run: bun install --frozen-lockfile
-      - name: VSCode — lint + typecheck
+      - name: VSCode — lint + typecheck (against fresh wasm types)
         working-directory: extensions/vscode
         run: bun run lint && bun run typecheck
 

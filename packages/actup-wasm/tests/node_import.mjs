@@ -145,4 +145,48 @@ if (empty.length !== 0) {
 }
 console.log("PASS: empty YAML returns empty array");
 
+// Test 6: end-to-end Outdated case — the wire shape consumers actually display.
+//
+// Existing tests use major-only refs (`@v4`) which resolve as UpToDate because
+// the target major matches. To force Outdated we pin the YAML to a specific
+// older patch and let the provider expose a newer one in the same major.
+//
+// This guards against the class of bug where `target.version` was a structural
+// enum object instead of a display string — every diagnostic UI would render
+// `[object Object]` if that regressed.
+const outdatedYaml = `\
+name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4.0.0
+`;
+
+const outdatedResults = await checkRefs(outdatedYaml, mockProvider);
+assert.equal(outdatedResults.length, 1, "exactly one ref in outdated YAML");
+
+const result = outdatedResults[0];
+assert.equal(statusName(result.status), "Outdated", `expected Outdated, got ${statusName(result.status)}`);
+
+// Wire shape consumers depend on: target.version is a string (Display form),
+// target.sha is a 40-char hex string, current is the original YAML ref text.
+assert.equal(typeof result.status.Outdated.current, "string", "Outdated.current is a string");
+assert.equal(result.status.Outdated.current, "v4.0.0", "current echoes the YAML ref");
+
+const target = result.status.Outdated.target;
+assert.equal(typeof target.version, "string", "target.version is a string (not the Version enum object)");
+assert.equal(target.version, "v4.2.0", "target.version is the latest tag's display form");
+assert.equal(typeof target.sha, "string", "target.sha is a string");
+assert.equal(target.sha.length, 40, "target.sha is 40 chars");
+
+// planUpdates should emit one edit pointing at v4.2.0.
+const outdatedEdits = planUpdates(outdatedYaml, outdatedResults);
+assert.equal(outdatedEdits.length, 1, "one edit emitted");
+assert.equal(outdatedEdits[0].newRef, "v4.2.0", "edit replaces with target version");
+assert.equal(outdatedEdits[0].original, "actions/checkout@v4.0.0", "edit preserves the original uses string");
+
+console.log("PASS: Outdated wire shape — current 'v4.0.0' -> target.version 'v4.2.0'");
+
 console.log("\nAll npm package integration tests PASSED");

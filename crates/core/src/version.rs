@@ -18,6 +18,22 @@ use crate::clock::{Clock, SystemClock};
 /// JSON consumers receive a single string. Round-trips through
 /// [`Version::parse`] which never produces [`Version::Branch`] (branches live
 /// separately in [`BranchInfo`]).
+///
+/// # Round-trip lossy for `Branch`
+///
+/// `Branch` is intentionally not preserved across (de)serialization. A
+/// directly-constructed `Branch` round-trips to `Other` because `parse`
+/// can't distinguish a branch name from any other non-semver string
+/// without context:
+///
+/// ```text
+/// Version::Branch { name: "main" }   serializes to → "main"
+/// "main"                             deserializes to → Version::Other { tag: "main" }
+/// ```
+///
+/// This is fine in practice because branch info on the wire travels via
+/// [`BranchInfo`] (a separate field of [`Set`]), not via a `Version`. The
+/// regression test in this module's `tests` enforces the invariant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Version {
     /// Semantic version (major, minor, patch)
@@ -1067,5 +1083,35 @@ mod tests {
         let json = serde_json::to_string(&branch).unwrap();
         let deserialized: BranchInfo = serde_json::from_str(&json).unwrap();
         assert_eq!(branch, deserialized);
+    }
+
+    /// Regression: `Version::Branch` cannot round-trip — wire form is the
+    /// Display string, and `Version::parse` cannot distinguish a branch
+    /// name from any non-semver `Other` tag without context. A
+    /// directly-constructed `Branch` deserializes back as `Other` with the
+    /// same name. Branch info on the wire travels via [`BranchInfo`]
+    /// (a separate field of [`Set`]) — this test guards the assumption
+    /// stated in the [`Version`] doc-comment.
+    #[test]
+    fn test_version_branch_roundtrips_as_other() {
+        let branch = Version::Branch {
+            name: "main".to_string(),
+        };
+
+        // Wire form is the Display string — no structural marker for `Branch`.
+        let json = serde_json::to_string(&branch).unwrap();
+        assert_eq!(json, "\"main\"");
+
+        // Round-trip lands in `Other`, not `Branch`.
+        let deserialized: Version = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized,
+            Version::Other {
+                tag: "main".to_string(),
+            }
+        );
+        assert!(!deserialized.is_branch(), "must NOT round-trip as Branch");
+        // Display-equivalence is still preserved (both render as "main").
+        assert_eq!(branch.to_string(), deserialized.to_string());
     }
 }

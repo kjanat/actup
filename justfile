@@ -245,9 +245,13 @@ loc:
 [group('extensions')]
 ext-check: zed::clippy vscode::lint vscode::typecheck
 
-# Run full CI checks including extensions
+# Verify the Rust→tsify→TS→consumer chain end-to-end (wasm build, wasm tests, then VS Code typecheck against fresh `.d.ts`)
+[group('extensions')]
+verify-wasm: wasm::build wasm::test vscode::typecheck
+
+# Run full CI checks: ci, then wasm/TS shape verification, then extensions
 [group('ci')]
-ci-full: ci ext-check wasm::build
+ci-full: ci wasm::build wasm::test ext-check
 
 # Branding
 
