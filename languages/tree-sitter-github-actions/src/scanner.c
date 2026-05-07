@@ -700,14 +700,20 @@ static bool scn_dqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     // `$X` and `${X` get folded back into content via mrk_end inside the helper.
     // Avoids the token-fragmentation that the simpler stop-at-`$` approach paid
     // for shell-style `$VAR` content.
+    //
+    // mrk_end is called immediately before every `$` peek so the committed end
+    // is at the pre-$ position. peek_expr_open_inline's success path returns
+    // without re-marking, so without this commit the emitted content token
+    // would be zero-length and tree-sitter would re-invoke scan at the same
+    // position forever (parser stack overflow → SIGSEGV).
     while (is_nb_double_char(lexer->lookahead)) {
         if (lexer->lookahead == '$') {
+            mrk_end(scanner, lexer);
             if (peek_expr_open_inline(scanner, lexer)) {
-                // mrk_end already at pre-$ snapshot; emit content up to that.
                 RET_SYM(result_symbol);
             }
-            // Peek false-return advanced past `$` (or `${`); loop re-evaluates
-            // the new lookahead without an extra adv.
+            // Peek false-return advanced past `$` (or `${`) and re-marked
+            // end internally; loop re-evaluates the new lookahead.
             continue;
         }
         adv(scanner, lexer);
@@ -729,6 +735,7 @@ static bool scn_sqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     // Same peek-2 pattern as scn_dqt_str_cnt — see comments there.
     while (is_nb_single_char(lexer->lookahead)) {
         if (lexer->lookahead == '$') {
+            mrk_end(scanner, lexer);
             if (peek_expr_open_inline(scanner, lexer)) {
                 RET_SYM(result_symbol);
             }
@@ -814,12 +821,17 @@ static bool scn_blk_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
     mrk_end(scanner, lexer);
     for (;;) {
         // peek-2 for `${{` — same pattern as the quoted-content scanners.
+        // Re-mark end before the peek so peek_expr_open_inline's success path
+        // returns with a current pre-$ snapshot. Skipping this lets the
+        // committed end go stale across is_wsp / inner-loop iterations and
+        // emits zero-length content tokens, which infinite-loop the parser.
         if (lexer->lookahead == '$') {
+            mrk_end(scanner, lexer);
             if (peek_expr_open_inline(scanner, lexer)) {
                 RET_SYM(result_symbol);
             }
-            // Peek false-return: cursor is past `$` (or `${`), loop continues.
-            mrk_end(scanner, lexer);
+            // Peek false-return: cursor is past `$` (or `${`); peek already
+            // re-marked end internally, so loop just continues.
             continue;
         }
         if (is_ns_char(lexer->lookahead)) {
