@@ -255,8 +255,8 @@ static inline void flush(Scanner *scanner) {
 }
 
 static inline void pop_ind(Scanner *scanner) {
-    array_pop(&scanner->ind_len_stk);
-    array_pop(&scanner->ind_typ_stk);
+    (void)array_pop(&scanner->ind_len_stk);
+    (void)array_pop(&scanner->ind_typ_stk);
 }
 
 static inline void push_ind(Scanner *scanner, int16_t typ, int16_t len) {
@@ -458,6 +458,7 @@ static bool scn_dir_tag_pfx(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
         switch (scn_ns_uri_char(scanner, lexer)) {
             case SCN_STOP:
                 mrk_end(scanner, lexer);
+                RET_SYM(result_symbol);
             case SCN_FAIL:
                 RET_SYM(result_symbol);
             default:
@@ -500,6 +501,7 @@ static bool scn_tag(Scanner *scanner, TSLexer *lexer, TSSymbol result_symbol) {
                         mrk_end(scanner, lexer);
                         RET_SYM(result_symbol);
                     }
+                    return false;
                 case SCN_FAIL:
                     return false;
                 default:
@@ -514,6 +516,7 @@ static bool scn_tag(Scanner *scanner, TSLexer *lexer, TSSymbol result_symbol) {
             switch (scn_ns_tag_char(scanner, lexer)) {
                 case SCN_STOP:
                     mrk_end(scanner, lexer);
+                    RET_SYM(result_symbol);
                 case SCN_FAIL:
                     RET_SYM(result_symbol);
                 default:
@@ -854,7 +857,6 @@ static bool scn_blk_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
 }
 
 static char scn_pln_cnt(Scanner *scanner, TSLexer *lexer, bool (*is_plain_safe)(int32_t)) {
-    bool is_cur_wsp = is_wsp(scanner->cur_chr);
     bool is_cur_saf = is_plain_safe(scanner->cur_chr);
     bool is_lka_wsp = is_wsp(lexer->lookahead);
     bool is_lka_saf = is_plain_safe(lexer->lookahead);
@@ -881,7 +883,6 @@ static char scn_pln_cnt(Scanner *scanner, TSLexer *lexer, bool (*is_plain_safe)(
                 // Peek advanced past `$` (and possibly `${`) without finding `${{`.
                 // Refresh the cached lookahead-state vars so the existing branches
                 // operate on what's now under the cursor.
-                is_cur_wsp = is_wsp(scanner->cur_chr);
                 is_cur_saf = is_plain_safe(scanner->cur_chr);
                 is_lka_wsp = is_wsp(lexer->lookahead);
                 is_lka_saf = is_plain_safe(lexer->lookahead);
@@ -903,7 +904,6 @@ static char scn_pln_cnt(Scanner *scanner, TSLexer *lexer, bool (*is_plain_safe)(
                 break;
             }
 
-            is_cur_wsp = is_lka_wsp;
             is_cur_saf = is_lka_saf;
             is_lka_wsp = is_wsp(lexer->lookahead);
             is_lka_saf = is_plain_safe(lexer->lookahead);
