@@ -244,6 +244,14 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 Ok(_guard) => {
                     // Leader path. `_guard` cleans up the flight slot on
                     // drop — including drop due to cancellation.
+                    //
+                    // Double-check the cache: a prior leader may have populated
+                    // it (and dropped its flight) between our miss above and
+                    // this claim, which is what would otherwise make us re-fetch
+                    // an already-cached key.
+                    if let Some(cached) = self.version_cache.read().await.get(&repo) {
+                        return Ok(cached.clone());
+                    }
                     let result = self.inner.get_versions(&repo).await;
                     if let Ok(ref versions) = result {
                         self.version_cache
@@ -288,6 +296,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     result
                 }
                 Ok(_guard) => {
+                    // Double-check: a prior leader may have cached this between
+                    // our miss above and claiming the flight (see get_versions).
+                    if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
+                        return Ok(cached.clone());
+                    }
                     let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
                     if let Ok(ref sha) = result {
                         self.sha_cache
@@ -325,6 +338,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     result
                 }
                 Ok(_guard) => {
+                    // Double-check: a prior leader may have cached this between
+                    // our miss above and claiming the flight (see get_versions).
+                    if let Some(cached) = self.branch_cache.read().await.get(&repo) {
+                        return Ok(cached.clone());
+                    }
                     let result = self.inner.get_default_branch(&repo).await;
                     if let Ok(ref branch) = result {
                         self.branch_cache
