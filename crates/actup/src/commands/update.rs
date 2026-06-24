@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider, version,
 };
 use owo_colors::OwoColorize;
 
@@ -24,6 +24,54 @@ fn create_edit(loc: &UsesLocation, action_ref: &ActionRef, new_ref: &str) -> Pen
         },
         |range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()),
     )
+}
+
+/// Build the edit for an outdated action, preserving its reference style.
+///
+/// Tag refs update to the new tag. SHA pins re-pin to the target's commit SHA
+/// (never unpin to a tag) and keep a `# vX.Y.Z` version comment accurate.
+fn build_edit(loc: &UsesLocation, action_ref: &ActionRef, target: &version::Info) -> PendingEdit {
+    if !action_ref.is_sha() {
+        return create_edit(loc, action_ref, &target.version().to_string());
+    }
+
+    let new_sha = target.sha();
+    let version_comment = format!(" # {}", target.version());
+
+    let Some(range) = loc.ref_range() else {
+        return PendingEdit::replace_ref(
+            loc.line(),
+            action_ref.ref_str().to_string(),
+            new_sha.to_string(),
+        );
+    };
+
+    let raw = loc.raw_line();
+    let tail = raw.get(range.end..).unwrap_or("").trim_start();
+    if is_version_comment(tail) {
+        // Overwrite the SHA and the stale version comment together so the paper
+        // trail stays accurate.
+        PendingEdit::replace_range(
+            loc.line(),
+            range.start..raw.len(),
+            format!("{new_sha}{version_comment}"),
+        )
+    } else {
+        // Update the SHA; `with_comment` adds the version note only when the line
+        // has no comment, so a foreign comment is left untouched.
+        PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
+            .with_comment(version_comment)
+    }
+}
+
+/// Whether a trailing line fragment is a version comment like `# v1.2.3` or `# 1.2`.
+fn is_version_comment(tail: &str) -> bool {
+    let Some(body) = tail.strip_prefix('#') else {
+        return false;
+    };
+    let body = body.trim();
+    let body = body.strip_prefix('v').unwrap_or(body);
+    body.starts_with(|c: char| c.is_ascii_digit())
 }
 
 /// Write accumulated file edits, recording errors.
@@ -69,11 +117,6 @@ pub async fn run(
         let mut file_edits = FileEdits::new(file.path().to_path_buf(), content.clone());
 
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
-            // Skip SHAs - can't determine "latest" for a pinned ref
-            if action_ref.is_sha() {
-                continue;
-            }
-
             let Some(provider) = scanner.provider_for(&action_ref) else {
                 continue;
             };
@@ -94,9 +137,7 @@ pub async fn run(
                 continue; // Not outdated, skip
             };
 
-            let new_ref = target.version().to_string();
-
-            let edit = create_edit(&loc, &action_ref, &new_ref);
+            let edit = build_edit(&loc, &action_ref, target);
 
             if !file_edits.add(edit) {
                 eprintln!(
@@ -115,7 +156,7 @@ pub async fn run(
                     relative,
                     loc.line(),
                     action_ref.ref_str().red(),
-                    new_ref.green()
+                    target.version().to_string().green()
                 );
             }
             total_updates += 1;
@@ -163,6 +204,84 @@ mod tests {
 
         // Should use replace_range when ref_range is available
         assert_eq!(edit.line, 10);
+    }
+
+    fn sha40(byte: char) -> String {
+        byte.to_string().repeat(40)
+    }
+
+    fn sha_loc(line_body: &str) -> UsesLocation {
+        // column of the value start in `      - uses: <value>`
+        let value = line_body
+            .split("uses: ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap();
+        let column = line_body.find(value).unwrap() + 1;
+        UsesLocation::new(1, column, value.to_string(), line_body.to_string())
+    }
+
+    #[test]
+    fn test_build_edit_tag_writes_tag() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = sha_loc(line);
+        let action_ref = make_action_ref("actions", "checkout", "v4");
+        let target = actup_core::version::Info::new(
+            actup_core::version::Version::parse("v5.0.0"),
+            sha40('a'),
+        );
+        let result = build_edit(&loc, &action_ref, &target).apply(line).unwrap();
+        assert_eq!(result, "      - uses: actions/checkout@v5.0.0");
+    }
+
+    #[test]
+    fn test_build_edit_sha_repins_to_sha_with_comment() {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = format!("      - uses: actions/checkout@{old}");
+        let loc = sha_loc(&line);
+        let action_ref = make_action_ref("actions", "checkout", &old);
+        let target =
+            actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
+        let result = build_edit(&loc, &action_ref, &target).apply(&line).unwrap();
+        assert_eq!(
+            result,
+            format!("      - uses: actions/checkout@{new} # v7.0.1")
+        );
+    }
+
+    #[test]
+    fn test_build_edit_sha_refreshes_stale_version_comment() {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = format!("      - uses: actions/checkout@{old} # v7.0.0");
+        let loc = sha_loc(&line);
+        let action_ref = make_action_ref("actions", "checkout", &old);
+        let target =
+            actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
+        let result = build_edit(&loc, &action_ref, &target).apply(&line).unwrap();
+        assert_eq!(
+            result,
+            format!("      - uses: actions/checkout@{new} # v7.0.1")
+        );
+    }
+
+    #[test]
+    fn test_build_edit_sha_preserves_foreign_comment() {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = format!("      - uses: actions/checkout@{old} # managed by bot");
+        let loc = sha_loc(&line);
+        let action_ref = make_action_ref("actions", "checkout", &old);
+        let target =
+            actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
+        let result = build_edit(&loc, &action_ref, &target).apply(&line).unwrap();
+        assert_eq!(
+            result,
+            format!("      - uses: actions/checkout@{new} # managed by bot")
+        );
     }
 
     #[test]

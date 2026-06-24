@@ -207,18 +207,7 @@ pub fn check_action(
 
     // Already pinned to SHA?
     if action_ref.is_sha() {
-        let tag = versions
-            .semver_tags()
-            .iter()
-            .find(|v| v.sha() == action_ref.ref_str())
-            .map(|v| v.version().to_string());
-        return CheckResult::new(
-            action_ref.clone(),
-            CheckStatus::Pinned {
-                sha: action_ref.ref_str().to_string(),
-                tag,
-            },
-        );
+        return check_pinned_sha(action_ref, versions, config);
     }
 
     let current = version::Version::parse(action_ref.ref_str());
@@ -279,6 +268,55 @@ pub fn check_action(
             )
         },
     )
+}
+
+/// Determine status for a SHA-pinned ref.
+///
+/// If the SHA matches a known tag's commit, the pinned version is compared
+/// against the latest allowed version: a newer version yields `Outdated` whose
+/// `target` carries the newer commit SHA (so updates re-pin rather than unpin to
+/// a tag); otherwise it stays `Pinned`. A SHA that matches no known tag can't be
+/// compared, so it also stays `Pinned`.
+fn check_pinned_sha(
+    action_ref: &ActionRef,
+    versions: &version::Set,
+    config: &Config,
+) -> CheckResult {
+    let sha = action_ref.ref_str().to_string();
+
+    let Some(pinned) = versions
+        .semver_tags()
+        .iter()
+        .find(|v| v.sha() == action_ref.ref_str())
+        .cloned()
+    else {
+        return CheckResult::new(action_ref.clone(), CheckStatus::Pinned { sha, tag: None });
+    };
+
+    let policy = config.policy_for(action_ref.owner(), action_ref.repo());
+    let target = find_best_target(
+        versions,
+        pinned.version(),
+        policy.allows_major(),
+        config.allow_prerelease,
+    );
+
+    match target {
+        Some(t) if !is_version_current(pinned.version(), Some(&t)) => CheckResult::new(
+            action_ref.clone(),
+            CheckStatus::Outdated {
+                current: pinned.version().to_string(),
+                target: t,
+            },
+        ),
+        _ => CheckResult::new(
+            action_ref.clone(),
+            CheckStatus::Pinned {
+                sha,
+                tag: Some(pinned.version().to_string()),
+            },
+        ),
+    }
 }
 
 /// Handle non-semver refs based on branch policy.
@@ -668,6 +706,52 @@ mod tests {
         assert!(matches!(
             result.status(),
             CheckStatus::Pinned { tag: Some(_), .. }
+        ));
+    }
+
+    #[test]
+    fn test_check_action_pinned_sha_outdated() {
+        // SHA pinned to v7.0.0, but v7.0.1 exists -> outdated, with the newer SHA
+        // available as the target so the updater can re-pin (not unpin to a tag).
+        let pinned_sha = "1111111111111111111111111111111111111111";
+        let newer_sha = "2222222222222222222222222222222222222222";
+        let action = make_action_ref("actions", "checkout", pinned_sha);
+        let v7_0_0 = make_version_info("v7.0.0", pinned_sha);
+        let v7_0_1 = make_version_info("v7.0.1", newer_sha);
+        let mut latest_per_major = HashMap::new();
+        latest_per_major.insert(7, v7_0_1.clone());
+        let versions = make_version_set(
+            vec![v7_0_0, v7_0_1.clone()],
+            Some(v7_0_1),
+            latest_per_major,
+            HashMap::new(),
+        );
+        let config = Config::default();
+
+        let result = check_action(&action, &versions, &config);
+        match result.status() {
+            CheckStatus::Outdated { current, target } => {
+                assert_eq!(current, "v7.0.0");
+                assert_eq!(target.version().to_string(), "v7.0.1");
+                assert_eq!(target.sha(), newer_sha);
+            }
+            other => panic!("expected Outdated, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_check_action_pinned_sha_unknown_stays_pinned() {
+        // A SHA that matches no known tag can't be compared -> stays Pinned.
+        let unknown_sha = "9999999999999999999999999999999999999999";
+        let action = make_action_ref("actions", "checkout", unknown_sha);
+        let v7 = make_version_info("v7.0.1", "2222222222222222222222222222222222222222");
+        let versions = make_version_set(vec![v7.clone()], Some(v7), HashMap::new(), HashMap::new());
+        let config = Config::default();
+
+        let result = check_action(&action, &versions, &config);
+        assert!(matches!(
+            result.status(),
+            CheckStatus::Pinned { tag: None, .. }
         ));
     }
 
