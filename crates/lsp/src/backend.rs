@@ -919,12 +919,21 @@ impl LspBackend {
 /// to the current ref, or a SHA pin of an already-pinned ref) are dropped.
 async fn compute_pin_targets(
     action: &crate::diagnostics::LocatedAction,
-    versions: Option<&actup_core::version::Set>,
+    cached_versions: Option<&actup_core::version::Set>,
     provider: &dyn actup_core::Provider,
 ) -> crate::code_actions::PinTargets {
     let action_ref = &action.action_ref;
     let ref_str = action_ref.ref_str();
     let repo_id = action_ref.to_repo_id().without_subpath();
+
+    // Resolving the SHA and the major both need version data; fetch it if the
+    // diagnostics pass hasn't cached it yet so the actions appear consistently.
+    let fetched = if cached_versions.is_none() {
+        provider.get_versions(&repo_id).await.ok()
+    } else {
+        None
+    };
+    let versions = cached_versions.or(fetched.as_ref());
 
     let sha = if action_ref.is_sha() {
         None
@@ -945,6 +954,29 @@ async fn compute_pin_targets(
         }
     };
 
+    let major = major_target(action_ref, versions);
+
+    let branch = provider
+        .get_default_branch(&repo_id)
+        .await
+        .ok()
+        .filter(|b| b.as_str() != ref_str);
+
+    crate::code_actions::PinTargets { sha, major, branch }
+}
+
+/// The "Pin to major" target for `action_ref`, or `None` when it's a no-op or
+/// no major can be determined.
+///
+/// Prefers the major of the current ref (parsed for tags, looked up by SHA for
+/// pins). Falls back to the repo's latest major so the action is offered
+/// consistently even for branch refs or SHAs pinned off a branch — where the
+/// current ref carries no version of its own.
+fn major_target(
+    action_ref: &actup_core::ActionRef,
+    versions: Option<&actup_core::version::Set>,
+) -> Option<String> {
+    let ref_str = action_ref.ref_str();
     let current_major = if action_ref.is_sha() {
         versions.and_then(|v| {
             v.semver_tags()
@@ -955,17 +987,10 @@ async fn compute_pin_targets(
     } else {
         actup_core::version::Version::parse(ref_str).major()
     };
-    let major = current_major
+    current_major
+        .or_else(|| versions.and_then(|v| v.latest().and_then(|l| l.version().major())))
         .map(|m| format!("v{m}"))
-        .filter(|m| m.as_str() != ref_str);
-
-    let branch = provider
-        .get_default_branch(&repo_id)
-        .await
-        .ok()
-        .filter(|b| b.as_str() != ref_str);
-
-    crate::code_actions::PinTargets { sha, major, branch }
+        .filter(|m| m.as_str() != ref_str)
 }
 
 /// Post-command helpers (separate impl block to keep `LanguageServer` methods focused).
@@ -1307,6 +1332,52 @@ mod tests {
     #[test]
     fn debounce_delay_is_300ms() {
         assert_eq!(DEBOUNCE_DELAY, Duration::from_millis(300));
+    }
+
+    fn aref(ref_str: &str) -> actup_core::ActionRef {
+        actup_core::ActionRef::simple("actions", "checkout", ref_str)
+    }
+
+    #[test]
+    fn major_target_from_full_semver_tag() {
+        let v = crate::test_utils::simple_version_set("v7.2.3", "a".repeat(40).as_str());
+        assert_eq!(
+            major_target(&aref("v7.2.3"), Some(&v)).as_deref(),
+            Some("v7")
+        );
+    }
+
+    #[test]
+    fn major_target_skips_noop_for_major_ref() {
+        let v = crate::test_utils::simple_version_set("v7.2.3", "a".repeat(40).as_str());
+        // Already on `v7` — offering "pin to major v7" would be a no-op.
+        assert_eq!(major_target(&aref("v7"), Some(&v)), None);
+    }
+
+    #[test]
+    fn major_target_falls_back_to_latest_for_branch_pinned_sha() {
+        // SHA pinned off `main` doesn't match any tag, but the repo's latest
+        // major (v8) must still be offered — this is the inconsistency fix.
+        let v = crate::test_utils::simple_version_set("v8.0.1", "b".repeat(40).as_str());
+        let unrelated_sha = "c".repeat(40);
+        assert_eq!(
+            major_target(&aref(&unrelated_sha), Some(&v)).as_deref(),
+            Some("v8")
+        );
+    }
+
+    #[test]
+    fn major_target_falls_back_to_latest_for_branch_ref() {
+        let v = crate::test_utils::simple_version_set("v8.0.1", "b".repeat(40).as_str());
+        assert_eq!(major_target(&aref("main"), Some(&v)).as_deref(), Some("v8"));
+    }
+
+    #[test]
+    fn major_target_uses_matched_tag_major_for_sha() {
+        // SHA that maps to v2.2.0 stays on its own major (v2), not the latest.
+        let sha = "d".repeat(40);
+        let v = crate::test_utils::simple_version_set("v2.2.0", &sha);
+        assert_eq!(major_target(&aref(&sha), Some(&v)).as_deref(), Some("v2"));
     }
 
     #[test]
