@@ -11,17 +11,18 @@
 	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!**/*.svg"] },
 	"yaml": { "indentBlockSequenceInMap": true, "flowMap.preferSingleLine": true },
 	"svg": { "associations": ["**/*.svg"], "textContent": "collapse", "lineWidth": 100 },
+	"shfmt": { "useTabs": true, "binaryNextLine": true, "switchCaseIndent": true },
 	// Exec plugin for external commands
 	"exec": {
+		"cwd": "${configDir}",
 		"commands": [
-			{ "exts": ["rs"], "command": "rustfmt" }, // Formats Rust files
-			{ "exts": ["toml"], "command": "bunx tombi format --stdin-filename {{file_path}} -" }, // Formats toml files
-			{ // Formats shell files
-				"exts": ["sh", "bash"],
-				"fileNames": ["actup", "actup-lsp", "actup-mcp"],
-				"command": "shfmt -i 0 -ln bash -bn -ci --filename {{file_path}}",
-			},
-			// { "fileNames": ["justfile"], "command": "just --dump" },
+			{ "exts": ["rs"], "command": "rustfmt", "cacheKeyFiles": ["rustfmt.toml", "rust-toolchain.toml"] },
+			{
+				"exts": ["toml"],
+				"command": "tombi format --stdin-filename {{file_path}} -",
+				"cacheKeyFiles": ["tombi.toml"],
+				"setupCommand": "npm i -g tombi"
+			}
 		],
 	},
 	// File inclusions/exclusions
@@ -41,15 +42,16 @@
 	],
 	// Plugins
 	"plugins": [
-		"https://plugins.dprint.dev/typescript-0.96.0.wasm",
-		"https://plugins.dprint.dev/json-0.21.3.wasm",
-		"https://plugins.dprint.dev/markdown-0.21.1.wasm",
-		"https://plugins.dprint.dev/dockerfile-0.3.3.wasm",
-		"https://plugins.dprint.dev/g-plane/malva-v0.15.3.wasm",
-		"https://plugins.dprint.dev/g-plane/markup_fmt-v0.27.0.wasm",
+		"https://plugins.dprint.dev/typescript-0.96.1.wasm",
+		"https://plugins.dprint.dev/json-0.22.0.wasm",
+		"https://plugins.dprint.dev/markdown-0.22.1.wasm",
+		"https://plugins.dprint.dev/dockerfile-0.4.1.wasm",
+		"https://plugins.dprint.dev/g-plane/malva-v0.16.0.wasm",
+		"https://plugins.dprint.dev/g-plane/markup_fmt-v0.27.3.wasm",
 		"https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
-		"https://plugins.dprint.dev/exec-0.6.2.json@df98f54ffd3092b8a841aedd6d098a2651f16d0a796a40535774f1a8b4b9d463",
-		"https://plugins.dprint.dev/kjanat/svg-v0.4.0.wasm",
+		"https://plugins.dprint.dev/exec-0.7.2.json@6c30bd00dfb176774ece412d0fbf149478269ecc92c55ab2d6f4116938ed993e",
+		"https://plugins.dprint.dev/kjanat/svg-v0.4.1.wasm",
 		"https://plugins.dprint.dev/kjanat/sortpackagejson-0.2.1.wasm",
+		"https://plugins.dprint.dev/kjanat/shfmt-1.0.0.wasm",
 	],
 }
