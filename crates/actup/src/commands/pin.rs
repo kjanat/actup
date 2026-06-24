@@ -2,12 +2,14 @@
 
 use std::path::Path;
 
-use actup_core::{ActionRef, Config, provider};
+use actup_core::{
+    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider,
+};
 use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
-    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner},
+    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, repin_sha_edit},
 };
 
 /// Get the prefix of an action ref (everything before @ref).
@@ -70,6 +72,45 @@ async fn resolve_sha(
     }
 }
 
+/// Build the pin edit for one action, returning the edit plus a display string,
+/// or `None` to skip (already pinned and current, or resolution failed).
+///
+/// SHA-pinned refs are re-pinned only when outdated (never unpinned); tag and
+/// branch refs are pinned to their current commit SHA.
+async fn pin_action_edit(
+    provider: &dyn actup_core::Provider,
+    action_ref: &ActionRef,
+    loc: &UsesLocation,
+    config: &Config,
+    errors: &mut ErrorTally,
+) -> Option<(PendingEdit, String)> {
+    if action_ref.is_sha() {
+        let repo_id = action_ref.to_repo_id().without_subpath();
+        let versions = match provider.get_versions(&repo_id).await {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
+                errors.record(&e);
+                return None;
+            }
+        };
+        let result = check_action_with_provider(action_ref, &versions, config, provider).await;
+        let CheckStatus::Outdated { target, .. } = result.status() else {
+            return None; // already pinned and current
+        };
+        let short = &target.sha()[..7.min(target.sha().len())];
+        let display = format!("{} ({short})", target.version());
+        Some((repin_sha_edit(loc, action_ref, target), display))
+    } else {
+        let sha = resolve_sha(provider, action_ref, errors).await?;
+        let new_uses = format!("{}@{sha}", action_prefix(action_ref));
+        let comment = format!(" # {}", action_ref.ref_str());
+        let edit = PendingEdit::replace_range(loc.line(), loc.value_range(), new_uses.clone())
+            .with_comment(comment.clone());
+        Some((edit, format!("{new_uses}{comment}")))
+    }
+}
+
 /// Pin all workflow actions to their current commit SHA for reproducibility.
 pub async fn run(
     path: &Path,
@@ -99,28 +140,15 @@ pub async fn run(
         let mut file_edits = FileEdits::new(file.path().to_path_buf(), content.clone());
 
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
-            // Skip already pinned (SHA)
-            if action_ref.is_sha() {
-                continue;
-            }
-
             let Some(provider) = scanner.provider_for(&action_ref) else {
                 continue;
             };
 
-            let Some(sha) = resolve_sha(provider, &action_ref, &mut errors).await else {
+            let Some((edit, new_display)) =
+                pin_action_edit(provider, &action_ref, &loc, config, &mut errors).await
+            else {
                 continue;
             };
-
-            // Build the new uses value
-            let prefix = action_prefix(&action_ref);
-            let new_uses = format!("{prefix}@{sha}");
-            let comment = format!(" # {}", action_ref.ref_str());
-
-            // Create edit using value range for targeted replacement
-            let range = loc.value_range();
-            let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
-                .with_comment(comment.clone());
 
             if !file_edits.add(edit) {
                 // Collision: two edits on same line
@@ -141,7 +169,7 @@ pub async fn run(
                     relative,
                     loc.line(),
                     action_ref.to_string().yellow(),
-                    format!("{new_uses}{comment}").cyan()
+                    new_display.cyan()
                 );
             }
             total_pins += 1;

@@ -249,17 +249,28 @@ fn status_to_diagnostic(
         CheckStatus::UpToDate | CheckStatus::Ignored => None,
 
         CheckStatus::Outdated { current, target } => {
-            let target_ref = target.version().to_string();
-            let data = DiagnosticData::Outdated {
-                target_ref: target_ref.clone(),
+            // SHA-pinned refs must re-pin to the new commit SHA (never unpin to a
+            // tag); tag refs update to the tag. The diagnostic range covers the
+            // ref portion, so the replacement string is what gets written.
+            let is_sha_pin = parse_uses(uses_value)
+                .ok()
+                .flatten()
+                .is_some_and(|r| r.is_sha());
+            let target_ref = if is_sha_pin {
+                target.sha().to_string()
+            } else {
+                target.version().to_string()
             };
+            let data = DiagnosticData::Outdated { target_ref };
             Some(Diagnostic {
                 range,
                 severity: Some(DiagnosticSeverity::WARNING),
                 code: Some(NumberOrString::String("outdated".into())),
                 source: Some(DIAGNOSTIC_SOURCE.into()),
+                // Message reads in versions regardless of the edit's ref style.
                 message: format!(
-                    "{uses_value}: {current} -> {target_ref} ({})",
+                    "{uses_value}: {current} -> {} ({})",
+                    target.version(),
                     target.sha().get(..7).unwrap_or_else(|| target.sha()),
                 ),
                 data: serde_json::to_value(data).ok(),
@@ -446,6 +457,51 @@ mod tests {
             DiagnosticData::Outdated { target_ref } => assert_eq!(target_ref, "v4.0.0"),
             DiagnosticData::Unresolvable { .. } => panic!("expected Outdated variant"),
         }
+    }
+
+    #[test]
+    fn outdated_sha_pin_repins_to_sha_not_tag() {
+        // A SHA pin that's behind must re-pin to the newer SHA, never unpin to a tag.
+        let new_sha = "2222222222222222222222222222222222222222";
+        let target = Arc::new(version::Info::new(
+            version::Version::parse("v7.0.1"),
+            new_sha,
+        ));
+        let status = CheckStatus::Outdated {
+            current: "v7.0.0".into(),
+            target,
+        };
+        let old_sha = "1".repeat(40);
+        let uses_value = format!("actions/checkout@{old_sha}");
+        let diag = status_to_diagnostic(&status, make_range(0, 31, 71), &uses_value).unwrap();
+
+        let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
+        let DiagnosticData::Outdated { target_ref } = data else {
+            panic!("expected Outdated data");
+        };
+        assert_eq!(target_ref, new_sha, "SHA pin must re-pin to the new SHA");
+        // The human message still reads in versions, not raw SHAs.
+        assert!(diag.message.contains("v7.0.1"), "got: {}", diag.message);
+    }
+
+    #[test]
+    fn outdated_tag_still_updates_to_tag() {
+        // Regression: a tag ref keeps updating to the tag, not the SHA.
+        let target = Arc::new(version::Info::new(
+            version::Version::parse("v4.2.0"),
+            DUMMY_SHA,
+        ));
+        let status = CheckStatus::Outdated {
+            current: "v3".into(),
+            target,
+        };
+        let diag =
+            status_to_diagnostic(&status, make_range(0, 0, 5), "actions/checkout@v3").unwrap();
+        let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
+        let DiagnosticData::Outdated { target_ref } = data else {
+            panic!("expected Outdated data");
+        };
+        assert_eq!(target_ref, "v4.2.0");
     }
 
     #[test]

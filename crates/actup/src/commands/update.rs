@@ -31,47 +31,11 @@ fn create_edit(loc: &UsesLocation, action_ref: &ActionRef, new_ref: &str) -> Pen
 /// Tag refs update to the new tag. SHA pins re-pin to the target's commit SHA
 /// (never unpin to a tag) and keep a `# vX.Y.Z` version comment accurate.
 fn build_edit(loc: &UsesLocation, action_ref: &ActionRef, target: &version::Info) -> PendingEdit {
-    if !action_ref.is_sha() {
-        return create_edit(loc, action_ref, &target.version().to_string());
-    }
-
-    let new_sha = target.sha();
-    let version_comment = format!(" # {}", target.version());
-
-    let Some(range) = loc.ref_range() else {
-        return PendingEdit::replace_ref(
-            loc.line(),
-            action_ref.ref_str().to_string(),
-            new_sha.to_string(),
-        );
-    };
-
-    let raw = loc.raw_line();
-    let tail = raw.get(range.end..).unwrap_or("").trim_start();
-    if is_version_comment(tail) {
-        // Overwrite the SHA and the stale version comment together so the paper
-        // trail stays accurate.
-        PendingEdit::replace_range(
-            loc.line(),
-            range.start..raw.len(),
-            format!("{new_sha}{version_comment}"),
-        )
+    if action_ref.is_sha() {
+        crate::common::repin_sha_edit(loc, action_ref, target)
     } else {
-        // Update the SHA; `with_comment` adds the version note only when the line
-        // has no comment, so a foreign comment is left untouched.
-        PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
-            .with_comment(version_comment)
+        create_edit(loc, action_ref, &target.version().to_string())
     }
-}
-
-/// Whether a trailing line fragment is a version comment like `# v1.2.3` or `# 1.2`.
-fn is_version_comment(tail: &str) -> bool {
-    let Some(body) = tail.strip_prefix('#') else {
-        return false;
-    };
-    let body = body.trim();
-    let body = body.strip_prefix('v').unwrap_or(body);
-    body.starts_with(|c: char| c.is_ascii_digit())
 }
 
 /// Write accumulated file edits, recording errors.
@@ -249,38 +213,6 @@ mod tests {
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
-        );
-    }
-
-    #[test]
-    fn test_build_edit_sha_refreshes_stale_version_comment() {
-        let old = sha40('a');
-        let new = sha40('b');
-        let line = format!("      - uses: actions/checkout@{old} # v7.0.0");
-        let loc = sha_loc(&line);
-        let action_ref = make_action_ref("actions", "checkout", &old);
-        let target =
-            actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
-        let result = build_edit(&loc, &action_ref, &target).apply(&line).unwrap();
-        assert_eq!(
-            result,
-            format!("      - uses: actions/checkout@{new} # v7.0.1")
-        );
-    }
-
-    #[test]
-    fn test_build_edit_sha_preserves_foreign_comment() {
-        let old = sha40('a');
-        let new = sha40('b');
-        let line = format!("      - uses: actions/checkout@{old} # managed by bot");
-        let loc = sha_loc(&line);
-        let action_ref = make_action_ref("actions", "checkout", &old);
-        let target =
-            actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
-        let result = build_edit(&loc, &action_ref, &target).apply(&line).unwrap();
-        assert_eq!(
-            result,
-            format!("      - uses: actions/checkout@{new} # managed by bot")
         );
     }
 

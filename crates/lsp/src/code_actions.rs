@@ -58,6 +58,16 @@ fn make_edit(
     }
 }
 
+/// Shorten a ref for a code-action title: a full 40-char commit SHA is
+/// displayed as its 7-char prefix; tags and other refs are shown verbatim.
+fn display_ref(target_ref: &str) -> String {
+    if target_ref.len() == 40 && target_ref.bytes().all(|b| b.is_ascii_hexdigit()) {
+        target_ref[..7].to_string()
+    } else {
+        target_ref.to_string()
+    }
+}
+
 /// Build code actions from a slice of diagnostics.
 ///
 /// For each `Outdated` diagnostic, produces a quickfix "Update to vX.Y.Z"
@@ -104,7 +114,7 @@ pub fn code_actions_for_diagnostics(
                 };
 
                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title: format!("Update to {target_ref}"),
+                    title: format!("Update to {}", display_ref(&target_ref)),
                     kind: Some(CodeActionKind::QUICKFIX),
                     diagnostics: Some(vec![diag.clone()]),
                     edit: Some(make_edit(
@@ -325,6 +335,28 @@ mod tests {
         assert_eq!(linked.len(), 1);
         assert_eq!(linked[0].range, diag.range);
         assert_eq!(linked[0].message, diag.message);
+    }
+
+    #[test]
+    fn sha_target_shortens_title_keeps_full_sha_edit() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let new_sha = "2".repeat(40);
+        let old_sha = "1".repeat(40);
+        let diag = make_outdated_diagnostic(
+            make_range(7, 31, 71),
+            &format!("actions/checkout@{old_sha}"),
+            &new_sha,
+        );
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        // Title shows a short SHA, not 40 characters.
+        assert_eq!(action.title, format!("Update to {}", &new_sha[..7]));
+        // The edit still writes the full SHA.
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, new_sha);
     }
 
     #[test]

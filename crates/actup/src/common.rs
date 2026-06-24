@@ -12,7 +12,7 @@ use std::{
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, UsesLocation, discover_files,
-    extract_uses_from_yaml, parse_uses, provider,
+    extract_uses_from_yaml, parse_uses, provider, version,
 };
 use owo_colors::OwoColorize;
 
@@ -181,6 +181,54 @@ impl PendingEdit {
 
         Some(result)
     }
+}
+
+/// Build an edit that re-pins a SHA-pinned ref to the `target` commit SHA.
+///
+/// Re-pins to the SHA (never unpins to a tag) and keeps a `# vX.Y.Z` version
+/// comment accurate: a stale version comment is refreshed, a missing one is
+/// added, and a foreign comment is left untouched. Shared by `update` and `pin`.
+pub fn repin_sha_edit(
+    loc: &UsesLocation,
+    action_ref: &ActionRef,
+    target: &version::Info,
+) -> PendingEdit {
+    let new_sha = target.sha();
+    let version_comment = format!(" # {}", target.version());
+
+    let Some(range) = loc.ref_range() else {
+        return PendingEdit::replace_ref(
+            loc.line(),
+            action_ref.ref_str().to_string(),
+            new_sha.to_string(),
+        );
+    };
+
+    let raw = loc.raw_line();
+    let tail = raw.get(range.end..).unwrap_or("").trim_start();
+    if is_version_comment(tail) {
+        // Overwrite the SHA and the stale version comment together.
+        PendingEdit::replace_range(
+            loc.line(),
+            range.start..raw.len(),
+            format!("{new_sha}{version_comment}"),
+        )
+    } else {
+        // `with_comment` adds the version note only when the line has none, so a
+        // foreign comment is preserved.
+        PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
+            .with_comment(version_comment)
+    }
+}
+
+/// Whether a trailing line fragment is a version comment like `# v1.2.3` or `# 1.2`.
+fn is_version_comment(tail: &str) -> bool {
+    let Some(body) = tail.strip_prefix('#') else {
+        return false;
+    };
+    let body = body.trim();
+    let body = body.strip_prefix('v').unwrap_or(body);
+    body.starts_with(|c: char| c.is_ascii_digit())
 }
 
 // FileEdits - accumulated edits for a single file
@@ -561,6 +609,75 @@ mod tests {
         let result = edit.apply(line).unwrap();
         // Comment not added because line already has one
         assert_eq!(result, "  - uses: actions/checkout@v2 # existing comment");
+    }
+
+    // repin_sha_edit tests
+
+    fn sha40(byte: char) -> String {
+        byte.to_string().repeat(40)
+    }
+
+    fn sha_loc(line_body: &str) -> UsesLocation {
+        let value = line_body
+            .split("uses: ")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap();
+        let column = line_body.find(value).unwrap() + 1;
+        UsesLocation::new(1, column, value.to_string(), line_body.to_string())
+    }
+
+    #[test]
+    fn test_repin_sha_adds_version_comment() {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = format!("      - uses: actions/checkout@{old}");
+        let loc = sha_loc(&line);
+        let action_ref = ActionRef::simple("actions", "checkout", &old);
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let result = repin_sha_edit(&loc, &action_ref, &target)
+            .apply(&line)
+            .unwrap();
+        assert_eq!(
+            result,
+            format!("      - uses: actions/checkout@{new} # v7.0.1")
+        );
+    }
+
+    #[test]
+    fn test_repin_sha_refreshes_stale_comment() {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = format!("      - uses: actions/checkout@{old} # v7.0.0");
+        let loc = sha_loc(&line);
+        let action_ref = ActionRef::simple("actions", "checkout", &old);
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let result = repin_sha_edit(&loc, &action_ref, &target)
+            .apply(&line)
+            .unwrap();
+        assert_eq!(
+            result,
+            format!("      - uses: actions/checkout@{new} # v7.0.1")
+        );
+    }
+
+    #[test]
+    fn test_repin_sha_preserves_foreign_comment() {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = format!("      - uses: actions/checkout@{old} # managed by bot");
+        let loc = sha_loc(&line);
+        let action_ref = ActionRef::simple("actions", "checkout", &old);
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let result = repin_sha_edit(&loc, &action_ref, &target)
+            .apply(&line)
+            .unwrap();
+        assert_eq!(
+            result,
+            format!("      - uses: actions/checkout@{new} # managed by bot")
+        );
     }
 
     // FileEdits tests
