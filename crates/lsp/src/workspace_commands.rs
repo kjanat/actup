@@ -200,11 +200,18 @@ fn edits_from_diagnostics(diags: &[Diagnostic]) -> Vec<TextEdit> {
         else {
             continue;
         };
-        if let DiagnosticData::Outdated { target_ref } = data {
-            edits.push(TextEdit {
-                range: diag.range,
-                new_text: target_ref,
-            });
+        if let DiagnosticData::Outdated {
+            target_ref,
+            repin_comment,
+            replace_end_col,
+        } = data
+        {
+            edits.push(crate::code_actions::outdated_text_edit(
+                diag.range,
+                &target_ref,
+                repin_comment.as_deref(),
+                replace_end_col,
+            ));
         }
     }
     edits

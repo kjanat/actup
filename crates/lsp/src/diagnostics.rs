@@ -34,8 +34,18 @@ pub enum DiagnosticData {
     /// The ref is outdated — target ref string is the replacement.
     #[serde(rename = "outdated")]
     Outdated {
-        /// The ref string to replace with (e.g. "v2.0.0").
+        /// The ref string to replace with (e.g. "v2.0.0" or a commit SHA).
         target_ref: String,
+        /// When re-pinning a SHA, the version comment to append after the SHA
+        /// (e.g. " # v8.2.0"). `None` for tag updates and SHA pins whose line
+        /// carries a non-version comment that must be preserved.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repin_comment: Option<String>,
+        /// When set, extend the replacement to this 0-indexed column (in the
+        /// negotiated encoding) so a stale version comment is overwritten rather
+        /// than left behind. `None` replaces only the ref range.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace_end_col: Option<u32>,
     },
     /// The ref is unresolvable — includes a suggested ref if available.
     // TODO: implement closest-tag suggestion for typos (e.g. "v4.0" → "v4.0.0")
@@ -45,6 +55,75 @@ pub enum DiagnosticData {
         /// Optional suggested replacement (e.g. closest matching tag).
         suggested_ref: Option<String>,
     },
+}
+
+/// What follows a `uses:` ref on its line, used to keep a SHA pin's version
+/// comment accurate when re-pinning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrailingComment {
+    /// Nothing meaningful after the ref.
+    None,
+    /// A version comment like `# v8.1.0` that should be refreshed.
+    Version,
+    /// A non-version comment that must be preserved.
+    Foreign,
+}
+
+/// Whether a trailing fragment is a version comment like `# v1.2.3` or `# 1.2`.
+fn is_version_comment(tail: &str) -> bool {
+    let Some(body) = tail.strip_prefix('#') else {
+        return false;
+    };
+    let body = body.trim();
+    let body = body.strip_prefix('v').unwrap_or(body);
+    body.starts_with(|c: char| c.is_ascii_digit())
+}
+
+/// Classify whatever follows the ref (byte offset `ref_end`) on `raw_line`.
+fn classify_trailing(raw_line: &str, ref_end: usize) -> TrailingComment {
+    let tail = raw_line.get(ref_end..).unwrap_or("").trim_start();
+    if tail.is_empty() {
+        TrailingComment::None
+    } else if is_version_comment(tail) {
+        TrailingComment::Version
+    } else {
+        TrailingComment::Foreign
+    }
+}
+
+/// The replacement an outdated diagnostic should apply.
+struct OutdatedEdit {
+    target_ref: String,
+    repin_comment: Option<String>,
+    replace_end_col: Option<u32>,
+}
+
+/// Build the edit for re-pinning a SHA to `target`, keeping the version comment
+/// accurate: refresh a stale one, append a missing one, preserve a foreign one.
+fn sha_repin_edit(
+    target: &actup_core::version::Info,
+    trailing: TrailingComment,
+    line_end_col: u32,
+) -> OutdatedEdit {
+    let target_ref = target.sha().to_string();
+    let comment = format!(" # {}", target.version());
+    match trailing {
+        TrailingComment::Version => OutdatedEdit {
+            target_ref,
+            repin_comment: Some(comment),
+            replace_end_col: Some(line_end_col),
+        },
+        TrailingComment::None => OutdatedEdit {
+            target_ref,
+            repin_comment: Some(comment),
+            replace_end_col: None,
+        },
+        TrailingComment::Foreign => OutdatedEdit {
+            target_ref,
+            repin_comment: None,
+            replace_end_col: None,
+        },
+    }
 }
 
 /// Parsed action reference with its source location in the document.
@@ -59,6 +138,11 @@ struct LocatedAction {
     col_end: u32,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
+    /// What follows the ref on its line (only meaningful for SHA pins).
+    trailing: TrailingComment,
+    /// 0-indexed end-of-line column (negotiated encoding), used to overwrite a
+    /// stale version comment when re-pinning.
+    line_end_col: u32,
 }
 
 /// Extract and parse all `uses:` references from document text.
@@ -85,6 +169,13 @@ fn extract_located_actions(
                 let r = loc.ref_range().unwrap_or_else(|| loc.value_range());
                 let col_start = crate::position::byte_to_col(raw_line, r.start, encoding);
                 let col_end = crate::position::byte_to_col(raw_line, r.end, encoding);
+                let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
+                // Only SHA pins carry a `# vX.Y.Z` comment we maintain on re-pin.
+                let trailing = if action_ref.is_sha() {
+                    classify_trailing(raw_line, r.end)
+                } else {
+                    TrailingComment::None
+                };
 
                 #[allow(clippy::cast_possible_truncation)]
                 let line = (loc.line() - 1) as u32; // 1-indexed -> 0-indexed
@@ -94,6 +185,8 @@ fn extract_located_actions(
                     col_start,
                     col_end,
                     uses_value: loc.value().to_string(),
+                    trailing,
+                    line_end_col,
                 });
             }
             Ok(None) => {
@@ -203,7 +296,16 @@ async fn compute_diagnostics_for_actions(
             ),
         };
 
-        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value) {
+        // For an outdated SHA pin, build the comment-aware re-pin edit here where
+        // the line's trailing comment is known.
+        let edit = match result.status() {
+            CheckStatus::Outdated { target, .. } if action.action_ref.is_sha() => {
+                Some(sha_repin_edit(target, action.trailing, action.line_end_col))
+            }
+            _ => None,
+        };
+
+        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value, edit) {
             diagnostics.push(diag);
         }
     }
@@ -244,24 +346,40 @@ fn status_to_diagnostic(
     status: &CheckStatus,
     range: Range,
     uses_value: &str,
+    edit: Option<OutdatedEdit>,
 ) -> Option<Diagnostic> {
     match status {
         CheckStatus::UpToDate | CheckStatus::Ignored => None,
 
         CheckStatus::Outdated { current, target } => {
-            // SHA-pinned refs must re-pin to the new commit SHA (never unpin to a
-            // tag); tag refs update to the tag. The diagnostic range covers the
-            // ref portion, so the replacement string is what gets written.
-            let is_sha_pin = parse_uses(uses_value)
-                .ok()
-                .flatten()
-                .is_some_and(|r| r.is_sha());
-            let target_ref = if is_sha_pin {
-                target.sha().to_string()
-            } else {
-                target.version().to_string()
+            // SHA-pinned refs re-pin to the new commit SHA (never unpin to a
+            // tag); tag refs update to the tag. `edit` (built by the caller,
+            // which knows the line's trailing comment) carries any version-comment
+            // refresh; fall back to a bare ref replacement for direct callers.
+            let OutdatedEdit {
+                target_ref,
+                repin_comment,
+                replace_end_col,
+            } = edit.unwrap_or_else(|| {
+                let is_sha_pin = parse_uses(uses_value)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|r| r.is_sha());
+                OutdatedEdit {
+                    target_ref: if is_sha_pin {
+                        target.sha().to_string()
+                    } else {
+                        target.version().to_string()
+                    },
+                    repin_comment: None,
+                    replace_end_col: None,
+                }
+            });
+            let data = DiagnosticData::Outdated {
+                target_ref,
+                repin_comment,
+                replace_end_col,
             };
-            let data = DiagnosticData::Outdated { target_ref };
             Some(Diagnostic {
                 range,
                 severity: Some(DiagnosticSeverity::WARNING),
@@ -403,6 +521,17 @@ mod tests {
         test_utils::make_range(line, col_start, col_end)
     }
 
+    /// Test shim: most tests don't exercise the comment-aware re-pin edit, so
+    /// this shadows the real `status_to_diagnostic` with a `None` edit. Tests
+    /// that need an edit call `super::status_to_diagnostic` with four args.
+    fn status_to_diagnostic(
+        status: &CheckStatus,
+        range: Range,
+        uses_value: &str,
+    ) -> Option<Diagnostic> {
+        super::status_to_diagnostic(status, range, uses_value, None)
+    }
+
     // --- CheckStatus -> Diagnostic severity mapping ---
 
     #[test]
@@ -454,7 +583,7 @@ mod tests {
         let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v3").unwrap();
         let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
         match data {
-            DiagnosticData::Outdated { target_ref } => assert_eq!(target_ref, "v4.0.0"),
+            DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v4.0.0"),
             DiagnosticData::Unresolvable { .. } => panic!("expected Outdated variant"),
         }
     }
@@ -476,12 +605,42 @@ mod tests {
         let diag = status_to_diagnostic(&status, make_range(0, 31, 71), &uses_value).unwrap();
 
         let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
-        let DiagnosticData::Outdated { target_ref } = data else {
+        let DiagnosticData::Outdated { target_ref, .. } = data else {
             panic!("expected Outdated data");
         };
         assert_eq!(target_ref, new_sha, "SHA pin must re-pin to the new SHA");
         // The human message still reads in versions, not raw SHAs.
         assert!(diag.message.contains("v7.0.1"), "got: {}", diag.message);
+    }
+
+    #[test]
+    fn sha_repin_refreshes_stale_version_comment() {
+        // Stale `# v8.1.0` next to an outdated SHA must be overwritten, not kept.
+        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
+        let target = version::Info::new(version::Version::parse("v8.2.0"), new_sha);
+        let edit = sha_repin_edit(&target, TrailingComment::Version, 70);
+        assert_eq!(edit.target_ref, new_sha);
+        assert_eq!(edit.repin_comment.as_deref(), Some(" # v8.2.0"));
+        assert_eq!(edit.replace_end_col, Some(70));
+    }
+
+    #[test]
+    fn sha_repin_appends_comment_when_absent() {
+        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
+        let target = version::Info::new(version::Version::parse("v8.2.0"), new_sha);
+        let edit = sha_repin_edit(&target, TrailingComment::None, 70);
+        assert_eq!(edit.repin_comment.as_deref(), Some(" # v8.2.0"));
+        assert_eq!(edit.replace_end_col, None);
+    }
+
+    #[test]
+    fn sha_repin_preserves_foreign_comment() {
+        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
+        let target = version::Info::new(version::Version::parse("v8.2.0"), new_sha);
+        let edit = sha_repin_edit(&target, TrailingComment::Foreign, 70);
+        assert_eq!(edit.target_ref, new_sha);
+        assert_eq!(edit.repin_comment, None);
+        assert_eq!(edit.replace_end_col, None);
     }
 
     #[test]
@@ -498,7 +657,7 @@ mod tests {
         let diag =
             status_to_diagnostic(&status, make_range(0, 0, 5), "actions/checkout@v3").unwrap();
         let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
-        let DiagnosticData::Outdated { target_ref } = data else {
+        let DiagnosticData::Outdated { target_ref, .. } = data else {
             panic!("expected Outdated data");
         };
         assert_eq!(target_ref, "v4.2.0");
@@ -761,6 +920,8 @@ jobs:
     fn diagnostic_data_tagged_correctly() {
         let outdated = DiagnosticData::Outdated {
             target_ref: "v1".into(),
+            repin_comment: None,
+            replace_end_col: None,
         };
         let json = serde_json::to_value(&outdated).unwrap();
         assert_eq!(json["kind"], "outdated");

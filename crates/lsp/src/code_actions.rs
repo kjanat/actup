@@ -12,7 +12,8 @@ use std::collections::HashMap;
 
 use tower_lsp_server::ls_types::{
     CodeAction, CodeActionKind, CodeActionOrCommand, Diagnostic, DocumentChanges, OneOf,
-    OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+    OptionalVersionedTextDocumentIdentifier, Position, Range, TextDocumentEdit, TextEdit, Uri,
+    WorkspaceEdit,
 };
 
 use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};
@@ -56,6 +57,32 @@ fn make_edit(
             ..Default::default()
         }
     }
+}
+
+/// Build the replacement edit for an outdated ref.
+///
+/// `replace_end_col` (when set) extends the edit past the ref to overwrite a
+/// stale `# vX.Y.Z` version comment; `repin_comment` is the refreshed comment
+/// appended after a SHA re-pin. Tag updates pass both as `None`/default and just
+/// replace the ref range.
+pub fn outdated_text_edit(
+    diag_range: Range,
+    target_ref: &str,
+    repin_comment: Option<&str>,
+    replace_end_col: Option<u32>,
+) -> TextEdit {
+    let range = replace_end_col.map_or(diag_range, |end| Range {
+        start: diag_range.start,
+        end: Position {
+            line: diag_range.start.line,
+            character: end,
+        },
+    });
+    let new_text = repin_comment.map_or_else(
+        || target_ref.to_string(),
+        |comment| format!("{target_ref}{comment}"),
+    );
+    TextEdit { range, new_text }
 }
 
 /// Shorten a ref for a code-action title: a full 40-char commit SHA is
@@ -107,11 +134,17 @@ pub fn code_actions_for_diagnostics(
         };
 
         match data {
-            DiagnosticData::Outdated { target_ref } => {
-                let edit = TextEdit {
-                    range: diag.range,
-                    new_text: target_ref.clone(),
-                };
+            DiagnosticData::Outdated {
+                target_ref,
+                repin_comment,
+                replace_end_col,
+            } => {
+                let edit = outdated_text_edit(
+                    diag.range,
+                    &target_ref,
+                    repin_comment.as_deref(),
+                    replace_end_col,
+                );
 
                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                     title: format!("Update to {}", display_ref(&target_ref)),
@@ -194,11 +227,18 @@ pub fn fix_all_in_file(
             continue;
         };
 
-        if let DiagnosticData::Outdated { target_ref } = data {
-            edits.push(TextEdit {
-                range: diag.range,
-                new_text: target_ref,
-            });
+        if let DiagnosticData::Outdated {
+            target_ref,
+            repin_comment,
+            replace_end_col,
+        } = data
+        {
+            edits.push(outdated_text_edit(
+                diag.range,
+                &target_ref,
+                repin_comment.as_deref(),
+                replace_end_col,
+            ));
             fixed_diagnostics.push(diag.clone());
         }
     }
@@ -433,15 +473,43 @@ mod tests {
     }
 
     #[test]
+    fn outdated_text_edit_refreshes_stale_comment() {
+        // Re-pin replaces SHA *and* the stale comment in one edit, extending to
+        // the supplied end column.
+        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
+        let edit = outdated_text_edit(make_range(0, 31, 71), new_sha, Some(" # v8.2.0"), Some(86));
+        assert_eq!(edit.new_text, format!("{new_sha} # v8.2.0"));
+        assert_eq!(edit.range.start.character, 31);
+        assert_eq!(edit.range.end.character, 86); // extends over the old comment
+    }
+
+    #[test]
+    fn outdated_text_edit_appends_comment_no_extend() {
+        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
+        let edit = outdated_text_edit(make_range(0, 31, 71), new_sha, Some(" # v8.2.0"), None);
+        assert_eq!(edit.new_text, format!("{new_sha} # v8.2.0"));
+        assert_eq!(edit.range.end.character, 71); // only the ref range
+    }
+
+    #[test]
+    fn outdated_text_edit_tag_is_plain_replacement() {
+        let edit = outdated_text_edit(make_range(0, 31, 33), "v4.2.0", None, None);
+        assert_eq!(edit.new_text, "v4.2.0");
+        assert_eq!(edit.range, make_range(0, 31, 33));
+    }
+
+    #[test]
     fn diagnostic_data_roundtrips_through_json() {
         let data = DiagnosticData::Outdated {
             target_ref: "v5.0.0".into(),
+            repin_comment: None,
+            replace_end_col: None,
         };
         let json = serde_json::to_value(&data).unwrap();
         let back: DiagnosticData = serde_json::from_value(json).unwrap();
 
         match back {
-            DiagnosticData::Outdated { target_ref } => assert_eq!(target_ref, "v5.0.0"),
+            DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v5.0.0"),
             DiagnosticData::Unresolvable { .. } => panic!("wrong variant"),
         }
     }
@@ -726,6 +794,8 @@ mod tests {
     fn diagnostic_data_json_has_kind_field() {
         let data = DiagnosticData::Outdated {
             target_ref: "v2.0.0".into(),
+            repin_comment: None,
+            replace_end_col: None,
         };
         let json = serde_json::to_value(&data).unwrap();
         assert_eq!(json.get("kind").unwrap().as_str(), Some("outdated"));
