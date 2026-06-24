@@ -34,17 +34,17 @@ inst-all: install-actup install-actup-lsp install-actup-mcp
 # Install actup CLI
 [group('install')]
 install-actup:
-    cargo install-actup
+    cargo +stable install-actup
 
 # Install actup-lsp language server
 [group('install')]
 install-actup-lsp:
-    cargo install-lsp
+    cargo +stable install-lsp
 
 # Install actup-mcp server (stub)
 [group('install')]
 install-actup-mcp:
-    -cargo install-mcp
+    -cargo +stable install-mcp
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]
