@@ -60,7 +60,7 @@ pub enum DiagnosticData {
 /// What follows a `uses:` ref on its line, used to keep a SHA pin's version
 /// comment accurate when re-pinning.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TrailingComment {
+pub enum TrailingComment {
     /// Nothing meaningful after the ref.
     None,
     /// A version comment like `# v8.1.0` that should be refreshed.
@@ -92,21 +92,23 @@ fn classify_trailing(raw_line: &str, ref_end: usize) -> TrailingComment {
 }
 
 /// The replacement an outdated diagnostic should apply.
-struct OutdatedEdit {
-    target_ref: String,
-    repin_comment: Option<String>,
-    replace_end_col: Option<u32>,
+pub struct OutdatedEdit {
+    pub target_ref: String,
+    pub repin_comment: Option<String>,
+    pub replace_end_col: Option<u32>,
 }
 
-/// Build the edit for re-pinning a SHA to `target`, keeping the version comment
-/// accurate: refresh a stale one, append a missing one, preserve a foreign one.
-fn sha_repin_edit(
-    target: &actup_core::version::Info,
+/// Build the edit for re-pinning to `new_sha` (whose version is `version`),
+/// keeping the version comment accurate: refresh a stale one, append a missing
+/// one, preserve a foreign one.
+pub fn sha_repin_edit(
+    new_sha: &str,
+    version: &str,
     trailing: TrailingComment,
     line_end_col: u32,
 ) -> OutdatedEdit {
-    let target_ref = target.sha().to_string();
-    let comment = format!(" # {}", target.version());
+    let target_ref = new_sha.to_string();
+    let comment = format!(" # {version}");
     match trailing {
         TrailingComment::Version => OutdatedEdit {
             target_ref,
@@ -127,22 +129,38 @@ fn sha_repin_edit(
 }
 
 /// Parsed action reference with its source location in the document.
-struct LocatedAction {
+pub struct LocatedAction {
     /// Parsed action reference (owner/repo@ref).
-    action_ref: ActionRef,
+    pub action_ref: ActionRef,
     /// 0-indexed line in the document.
-    line: u32,
+    pub line: u32,
     /// Byte range of the ref portion (after `@`) within the line.
     /// Falls back to the full value range if no `@` is present.
-    col_start: u32,
-    col_end: u32,
+    pub col_start: u32,
+    pub col_end: u32,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
     /// What follows the ref on its line (only meaningful for SHA pins).
-    trailing: TrailingComment,
+    pub trailing: TrailingComment,
     /// 0-indexed end-of-line column (negotiated encoding), used to overwrite a
     /// stale version comment when re-pinning.
-    line_end_col: u32,
+    pub line_end_col: u32,
+}
+
+/// Find the `uses:` action whose ref range contains the cursor `position`.
+///
+/// Used by code actions to offer pin transformations on the ref under the
+/// cursor regardless of whether it has a diagnostic.
+pub fn locate_action_at(
+    text: &str,
+    position: tower_lsp_server::ls_types::Position,
+    encoding: crate::position::PositionEncoding,
+) -> Option<LocatedAction> {
+    extract_located_actions(text, encoding)
+        .into_iter()
+        .find(|a| {
+            a.line == position.line && (a.col_start..=a.col_end).contains(&position.character)
+        })
 }
 
 /// Extract and parse all `uses:` references from document text.
@@ -300,7 +318,12 @@ async fn compute_diagnostics_for_actions(
         // the line's trailing comment is known.
         let edit = match result.status() {
             CheckStatus::Outdated { target, .. } if action.action_ref.is_sha() => {
-                Some(sha_repin_edit(target, action.trailing, action.line_end_col))
+                Some(sha_repin_edit(
+                    target.sha(),
+                    &target.version().to_string(),
+                    action.trailing,
+                    action.line_end_col,
+                ))
             }
             _ => None,
         };
@@ -617,8 +640,7 @@ mod tests {
     fn sha_repin_refreshes_stale_version_comment() {
         // Stale `# v8.1.0` next to an outdated SHA must be overwritten, not kept.
         let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
-        let target = version::Info::new(version::Version::parse("v8.2.0"), new_sha);
-        let edit = sha_repin_edit(&target, TrailingComment::Version, 70);
+        let edit = sha_repin_edit(new_sha, "v8.2.0", TrailingComment::Version, 70);
         assert_eq!(edit.target_ref, new_sha);
         assert_eq!(edit.repin_comment.as_deref(), Some(" # v8.2.0"));
         assert_eq!(edit.replace_end_col, Some(70));
@@ -627,8 +649,7 @@ mod tests {
     #[test]
     fn sha_repin_appends_comment_when_absent() {
         let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
-        let target = version::Info::new(version::Version::parse("v8.2.0"), new_sha);
-        let edit = sha_repin_edit(&target, TrailingComment::None, 70);
+        let edit = sha_repin_edit(new_sha, "v8.2.0", TrailingComment::None, 70);
         assert_eq!(edit.repin_comment.as_deref(), Some(" # v8.2.0"));
         assert_eq!(edit.replace_end_col, None);
     }
@@ -636,8 +657,7 @@ mod tests {
     #[test]
     fn sha_repin_preserves_foreign_comment() {
         let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
-        let target = version::Info::new(version::Version::parse("v8.2.0"), new_sha);
-        let edit = sha_repin_edit(&target, TrailingComment::Foreign, 70);
+        let edit = sha_repin_edit(new_sha, "v8.2.0", TrailingComment::Foreign, 70);
         assert_eq!(edit.target_ref, new_sha);
         assert_eq!(edit.repin_comment, None);
         assert_eq!(edit.replace_end_col, None);

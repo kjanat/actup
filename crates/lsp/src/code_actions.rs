@@ -16,7 +16,7 @@ use tower_lsp_server::ls_types::{
     WorkspaceEdit,
 };
 
-use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};
+use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, TrailingComment, sha_repin_edit};
 
 /// Custom [`CodeActionKind`] for actup's fix-all source action.
 ///
@@ -189,6 +189,94 @@ pub fn code_actions_for_diagnostics(
     }
 
     actions
+}
+
+/// Resolved targets for the three "Pin to …" code actions. Each is `None` when
+/// it's unavailable or would be a no-op for the current ref.
+pub struct PinTargets {
+    /// `(full commit SHA, version label)` for the version-commented SHA pin.
+    pub sha: Option<(String, String)>,
+    /// Major tag to float on, e.g. `v7`.
+    pub major: Option<String>,
+    /// Default branch to track, e.g. `main`.
+    pub branch: Option<String>,
+}
+
+/// Build "Pin to …" refactor actions for the ref under the cursor.
+///
+/// `ref_range` is the ref portion's range; `trailing`/`line_end_col` describe
+/// the line's existing comment so the SHA pin refreshes a `# vX.Y.Z` note and
+/// the floating pins (major/branch) drop a now-stale one.
+pub fn pin_code_actions(
+    uri: &Uri,
+    version: Option<i32>,
+    supports_document_changes: bool,
+    ref_range: Range,
+    trailing: TrailingComment,
+    line_end_col: u32,
+    targets: &PinTargets,
+) -> Vec<CodeActionOrCommand> {
+    // Switching to a floating ref drops a now-inaccurate version comment.
+    let strip_end = matches!(trailing, TrailingComment::Version).then_some(line_end_col);
+    let mut actions = Vec::new();
+
+    if let Some((sha, label)) = &targets.sha {
+        let e = sha_repin_edit(sha, label, trailing, line_end_col);
+        let edit = outdated_text_edit(
+            ref_range,
+            &e.target_ref,
+            e.repin_comment.as_deref(),
+            e.replace_end_col,
+        );
+        actions.push(pin_action(
+            uri,
+            version,
+            supports_document_changes,
+            format!("Pin to commit SHA ({label})"),
+            edit,
+        ));
+    }
+    if let Some(major) = &targets.major {
+        let edit = outdated_text_edit(ref_range, major, None, strip_end);
+        actions.push(pin_action(
+            uri,
+            version,
+            supports_document_changes,
+            format!("Pin to major tag {major}"),
+            edit,
+        ));
+    }
+    if let Some(branch) = &targets.branch {
+        let edit = outdated_text_edit(ref_range, branch, None, strip_end);
+        actions.push(pin_action(
+            uri,
+            version,
+            supports_document_changes,
+            format!("Pin to branch {branch}"),
+            edit,
+        ));
+    }
+    actions
+}
+
+fn pin_action(
+    uri: &Uri,
+    version: Option<i32>,
+    supports_document_changes: bool,
+    title: String,
+    edit: TextEdit,
+) -> CodeActionOrCommand {
+    CodeActionOrCommand::CodeAction(CodeAction {
+        title,
+        kind: Some(CodeActionKind::REFACTOR),
+        edit: Some(make_edit(
+            uri,
+            version,
+            vec![edit],
+            supports_document_changes,
+        )),
+        ..Default::default()
+    })
 }
 
 /// Build a single "Fix all outdated actions" source action for the file.
@@ -496,6 +584,96 @@ mod tests {
         let edit = outdated_text_edit(make_range(0, 31, 33), "v4.2.0", None, None);
         assert_eq!(edit.new_text, "v4.2.0");
         assert_eq!(edit.range, make_range(0, 31, 33));
+    }
+
+    #[test]
+    fn pin_actions_offer_sha_major_branch() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
+        let targets = PinTargets {
+            sha: Some((sha.to_string(), "v7.2.3".to_string())),
+            major: Some("v7".to_string()),
+            branch: Some("main".to_string()),
+        };
+        let actions = pin_code_actions(
+            &uri,
+            TEST_VERSION,
+            true,
+            make_range(0, 31, 37),
+            TrailingComment::None,
+            40,
+            &targets,
+        );
+        let titles: Vec<&str> = actions
+            .iter()
+            .map(|a| match a {
+                CodeActionOrCommand::CodeAction(c) => c.title.as_str(),
+                CodeActionOrCommand::Command(_) => panic!("expected CodeAction"),
+            })
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Pin to commit SHA (v7.2.3)",
+                "Pin to major tag v7",
+                "Pin to branch main"
+            ]
+        );
+
+        // The SHA pin writes the full SHA plus a version comment.
+        let CodeActionOrCommand::CodeAction(sha_action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edits = extract_text_edits(sha_action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, format!("{sha} # v7.2.3"));
+        assert_eq!(sha_action.kind, Some(CodeActionKind::REFACTOR));
+    }
+
+    #[test]
+    fn pin_to_major_strips_stale_version_comment() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let targets = PinTargets {
+            sha: None,
+            major: Some("v7".to_string()),
+            branch: None,
+        };
+        // trailing Version + end col 86 => the edit overwrites the old comment.
+        let actions = pin_code_actions(
+            &uri,
+            TEST_VERSION,
+            true,
+            make_range(0, 31, 71),
+            TrailingComment::Version,
+            86,
+            &targets,
+        );
+        assert_eq!(actions.len(), 1);
+        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+            panic!("expected CodeAction");
+        };
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, "v7");
+        assert_eq!(edits[0].range.end.character, 86);
+    }
+
+    #[test]
+    fn pin_actions_empty_when_no_targets() {
+        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let targets = PinTargets {
+            sha: None,
+            major: None,
+            branch: None,
+        };
+        let actions = pin_code_actions(
+            &uri,
+            TEST_VERSION,
+            true,
+            make_range(0, 31, 37),
+            TrailingComment::None,
+            40,
+            &targets,
+        );
+        assert!(actions.is_empty());
     }
 
     #[test]

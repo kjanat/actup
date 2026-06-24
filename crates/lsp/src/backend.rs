@@ -149,6 +149,7 @@ fn server_capabilities(encoding: crate::position::PositionEncoding) -> ServerCap
         code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
             code_action_kinds: Some(vec![
                 tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
+                tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
                 crate::code_actions::SOURCE_FIX_ALL_ACTUP,
             ]),
             work_done_progress_options: WorkDoneProgressOptions {
@@ -694,6 +695,18 @@ impl LanguageServer for LspBackend {
             }
         }
 
+        // "Pin to {SHA, major, branch}" refactor actions for the ref under the
+        // cursor — offered regardless of diagnostics.
+        if crate::code_actions::kind_allowed(
+            only,
+            &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
+        ) {
+            actions.extend(
+                self.pin_actions_at(&uri, params.range.start, doc_version, supports_doc_changes)
+                    .await,
+            );
+        }
+
         if actions.is_empty() {
             Ok(None)
         } else {
@@ -841,6 +854,118 @@ impl LspBackend {
             .and_then(|ws| ws.workspace_edit.as_ref())
             .is_some_and(|we| we.document_changes == Some(true))
     }
+
+    /// Build "Pin to {SHA, major, branch}" code actions for the ref at `position`.
+    ///
+    /// Returns an empty vec when there's no ref under the cursor or no provider.
+    async fn pin_actions_at(
+        &self,
+        uri: &Uri,
+        position: tower_lsp_server::ls_types::Position,
+        doc_version: Option<i32>,
+        supports_doc_changes: bool,
+    ) -> Vec<tower_lsp_server::ls_types::CodeActionOrCommand> {
+        let encoding = self.position_encoding.get().copied().unwrap_or_default();
+
+        // Resolve the ref under the cursor and copy out what we need before any
+        // await, so the `DashMap` guard isn't held across await points.
+        let (action, version_sets) = {
+            let Some(doc) = self.documents.get(uri) else {
+                return Vec::new();
+            };
+            let Some(action) = crate::diagnostics::locate_action_at(&doc.text, position, encoding)
+            else {
+                return Vec::new();
+            };
+            (action, Arc::clone(&doc.version_sets))
+        };
+
+        let Some(registry) = self.registry.read().await.clone() else {
+            return Vec::new();
+        };
+        let repo_id = action.action_ref.to_repo_id().without_subpath();
+        let Some(provider) = registry.find_for_repo(&repo_id) else {
+            return Vec::new();
+        };
+
+        let targets = compute_pin_targets(&action, version_sets.get(&repo_id), provider).await;
+
+        let ref_range = tower_lsp_server::ls_types::Range {
+            start: tower_lsp_server::ls_types::Position {
+                line: action.line,
+                character: action.col_start,
+            },
+            end: tower_lsp_server::ls_types::Position {
+                line: action.line,
+                character: action.col_end,
+            },
+        };
+        crate::code_actions::pin_code_actions(
+            uri,
+            doc_version,
+            supports_doc_changes,
+            ref_range,
+            action.trailing,
+            action.line_end_col,
+            &targets,
+        )
+    }
+}
+
+/// Resolve the SHA, major-tag, and default-branch targets for a ref.
+///
+/// Cached tags resolve the SHA without a network call; branch refs (and
+/// uncached tags) fall back to a provider lookup. No-op targets (a target equal
+/// to the current ref, or a SHA pin of an already-pinned ref) are dropped.
+async fn compute_pin_targets(
+    action: &crate::diagnostics::LocatedAction,
+    versions: Option<&actup_core::version::Set>,
+    provider: &dyn actup_core::Provider,
+) -> crate::code_actions::PinTargets {
+    let action_ref = &action.action_ref;
+    let ref_str = action_ref.ref_str();
+    let repo_id = action_ref.to_repo_id().without_subpath();
+
+    let sha = if action_ref.is_sha() {
+        None
+    } else {
+        let cached = versions.and_then(|v| {
+            v.semver_tags()
+                .iter()
+                .find(|t| t.version().to_string() == ref_str)
+                .map(|t| t.sha().to_string())
+        });
+        match cached {
+            Some(s) => Some((s, ref_str.to_string())),
+            None => provider
+                .resolve_ref_to_sha(&repo_id, ref_str)
+                .await
+                .ok()
+                .map(|s| (s.as_str().to_string(), ref_str.to_string())),
+        }
+    };
+
+    let current_major = if action_ref.is_sha() {
+        versions.and_then(|v| {
+            v.semver_tags()
+                .iter()
+                .find(|t| t.sha() == ref_str)
+                .and_then(|t| t.version().major())
+        })
+    } else {
+        actup_core::version::Version::parse(ref_str).major()
+    };
+    let major = current_major
+        .map(|m| format!("v{m}"))
+        .filter(|m| m.as_str() != ref_str);
+
+    let branch = provider
+        .get_default_branch(&repo_id)
+        .await
+        .ok()
+        .filter(|b| b.as_str() != ref_str);
+
+    crate::code_actions::PinTargets { sha, major, branch }
 }
 
 /// Post-command helpers (separate impl block to keep `LanguageServer` methods focused).
