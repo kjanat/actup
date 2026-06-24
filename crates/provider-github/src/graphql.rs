@@ -176,6 +176,12 @@ impl GraphQLClient {
         }}
       }}
     }}
+    releases(first: {max_tags}, orderBy: {{field: CREATED_AT, direction: DESC}}) {{
+      nodes {{
+        tagName
+        tagCommit {{ oid }}
+      }}
+    }}
   }}
 "#,
                 i = i,
@@ -365,29 +371,48 @@ impl GraphQLClient {
     /// Uses the shared [`process_tags`] function from `actup_providers::tags`
     /// to ensure consistent tag processing across all providers.
     fn build_version_set(repo_data: &RepositoryData) -> version::Set {
-        // Convert GraphQL TagNodes to ProcessableTags, filtering those with valid SHAs
-        let tags = repo_data
-            .refs
-            .as_ref()
-            .map(|refs| {
-                refs.nodes
-                    .iter()
-                    .filter_map(|node| {
-                        let sha = node.target_sha()?;
-                        if sha.is_empty() {
-                            return None;
-                        }
-                        Some(ProcessableTag {
-                            name: node.name.clone(),
-                            sha,
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        // Merge git tags and releases into one name-keyed set. Tags win on
+        // collision (their SHA is the ref's own commit); releases add versions
+        // that aren't in the recent-tags window (or aren't tagged at HEAD).
+        let mut by_name: std::collections::HashMap<String, ProcessableTag> =
+            std::collections::HashMap::new();
+
+        if let Some(refs) = repo_data.refs.as_ref() {
+            for node in &refs.nodes {
+                let Some(sha) = node.target_sha().filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                by_name.insert(
+                    node.name.clone(),
+                    ProcessableTag {
+                        name: node.name.clone(),
+                        sha,
+                    },
+                );
+            }
+        }
+
+        if let Some(releases) = repo_data.releases.as_ref() {
+            for rel in &releases.nodes {
+                let Some(name) = rel.tag_name.clone() else {
+                    continue;
+                };
+                let Some(sha) = rel
+                    .tag_commit
+                    .as_ref()
+                    .and_then(GitTarget::sha)
+                    .filter(|s| !s.is_empty())
+                else {
+                    continue;
+                };
+                by_name
+                    .entry(name.clone())
+                    .or_insert(ProcessableTag { name, sha });
+            }
+        }
 
         // Use shared tag processing logic
-        let mut set = process_tags(tags);
+        let mut set = process_tags(by_name.into_values());
 
         // Set default branch if present (GraphQL-specific: fetched in same query)
         if let Some(br) = &repo_data.default_branch_ref
@@ -424,11 +449,27 @@ struct GraphQLError {
 struct RepositoryData {
     default_branch_ref: Option<RefNode>,
     refs: Option<RefsConnection>,
+    releases: Option<ReleasesConnection>,
 }
 
 #[derive(Debug, Deserialize)]
 struct RefsConnection {
     nodes: Vec<TagNode>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ReleasesConnection {
+    nodes: Vec<ReleaseNode>,
+}
+
+/// A GitHub Release. Many actions (e.g. `taiki-e/install-action`) version their
+/// real releases here while their git tags are dominated by non-semver tags, so
+/// releases are a second version source merged with tags.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReleaseNode {
+    tag_name: Option<String>,
+    tag_commit: Option<GitTarget>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -507,8 +548,44 @@ mod tests {
         assert!(query.contains(r#"owner: "actions""#));
         assert!(query.contains(r#"name: "checkout""#));
         assert!(query.contains("first: 10"));
+        assert!(query.contains("releases(first: 10"));
+        assert!(query.contains("CREATED_AT"));
         assert_eq!(valid_repos.len(), 1);
         assert_eq!(valid_repos[0].owner(), "actions");
+    }
+
+    #[test]
+    fn test_build_version_set_merges_releases() {
+        // Tags are all non-semver (tool names, à la taiki-e/install-action),
+        // but releases carry the real semver — which must surface in the set.
+        let repo = RepositoryData {
+            default_branch_ref: None,
+            refs: Some(RefsConnection {
+                nodes: vec![TagNode {
+                    name: "zola".to_string(),
+                    target: Some(GitTarget {
+                        oid: Some("a".repeat(40)),
+                        target: None,
+                    }),
+                }],
+            }),
+            releases: Some(ReleasesConnection {
+                nodes: vec![ReleaseNode {
+                    tag_name: Some("v2.82.3".to_string()),
+                    tag_commit: Some(GitTarget {
+                        oid: Some("b".repeat(40)),
+                        target: None,
+                    }),
+                }],
+            }),
+        };
+
+        let set = GraphQLClient::build_version_set(&repo);
+        let Some(latest) = set.latest() else {
+            panic!("release version should surface");
+        };
+        assert_eq!(latest.version().to_string(), "v2.82.3");
+        assert_eq!(latest.sha(), "b".repeat(40));
     }
 
     #[test]

@@ -159,36 +159,68 @@ pub async fn check_action_with_provider(
     provider: &dyn provider::Provider,
 ) -> CheckResult {
     let result = check_action(action_ref, versions, config);
-    if !should_respect_branch_policy_for_major_ref(action_ref, versions, result.status()) {
-        return result;
-    }
 
-    let repo_id = action_ref.to_repo_id().without_subpath();
-
-    match provider
-        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-        .await
-    {
-        Ok(_) => CheckResult::new(
-            action_ref.clone(),
-            status_for_non_semver(
-                &version::Version::Other {
-                    tag: action_ref.ref_str().to_string(),
-                },
-                config.branch_policy,
-                versions,
-                config.allow_prerelease,
+    if should_respect_branch_policy_for_major_ref(action_ref, versions, result.status()) {
+        let repo_id = action_ref.to_repo_id().without_subpath();
+        return match provider
+            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
+            .await
+        {
+            Ok(_) => CheckResult::new(
+                action_ref.clone(),
+                status_for_non_semver(
+                    &version::Version::Other {
+                        tag: action_ref.ref_str().to_string(),
+                    },
+                    config.branch_policy,
+                    versions,
+                    config.allow_prerelease,
+                ),
             ),
-        ),
-        Err(e) if e.is_environment_error() => CheckResult::new(
-            action_ref.clone(),
-            CheckStatus::Unresolvable {
-                reason: e.to_string(),
-                is_environment_error: true,
-            },
-        ),
-        Err(_) => result,
+            Err(e) if e.is_environment_error() => CheckResult::new(
+                action_ref.clone(),
+                CheckStatus::Unresolvable {
+                    reason: e.to_string(),
+                    is_environment_error: true,
+                },
+            ),
+            Err(_) => result,
+        };
     }
+
+    // Last-resort existence probe: before reporting a ref as a user-facing
+    // "unresolvable", ask the provider whether it actually resolves. Version
+    // enumeration can come up empty for repos whose newest tags are non-semver
+    // (so the batch fetch finds nothing to compare), yet the ref itself is
+    // perfectly valid. Confirming existence avoids crying wolf.
+    if matches!(
+        result.status(),
+        CheckStatus::Unresolvable {
+            is_environment_error: false,
+            ..
+        }
+    ) {
+        let repo_id = action_ref.to_repo_id().without_subpath();
+        return match provider
+            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
+            .await
+        {
+            // The ref exists; we just couldn't enumerate versions to compare
+            // against, so don't flag it as broken.
+            Ok(_) => CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
+            Err(e) if e.is_environment_error() => CheckResult::new(
+                action_ref.clone(),
+                CheckStatus::Unresolvable {
+                    reason: e.to_string(),
+                    is_environment_error: true,
+                },
+            ),
+            // Genuinely doesn't resolve — keep the original user-facing error.
+            Err(_) => result,
+        };
+    }
+
+    result
 }
 
 /// Check action against already-fetched versions.
@@ -1038,6 +1070,47 @@ mod tests {
         let result = check_action_with_provider(&action, &versions, &config, &provider).await;
 
         assert!(matches!(result.status(), CheckStatus::Outdated { current, .. } if current == "6"));
+    }
+
+    #[tokio::test]
+    async fn test_last_resort_resolves_existing_ref_with_no_versions() {
+        // Empty version set (e.g. a repo whose newest tags are all non-semver,
+        // like taiki-e/install-action's tool tags) makes check_action report
+        // "no versions found". If the provider can still resolve the ref, it
+        // exists — so we must not call it unresolvable.
+        let action = make_action_ref("taiki-e", "install-action", "v2");
+        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+        let config = Config::default();
+
+        let provider = ResolveMockProvider::new(true);
+        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+        assert!(
+            matches!(result.status(), CheckStatus::UpToDate),
+            "got: {:?}",
+            result.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_last_resort_keeps_unresolvable_when_ref_truly_missing() {
+        // Empty set AND the ref genuinely doesn't resolve -> stays unresolvable.
+        let action = make_action_ref("owner", "repo", "v99");
+        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+        let config = Config::default();
+
+        let provider = ResolveMockProvider::new(false); // RefNotFound (user error)
+        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+        assert!(
+            matches!(
+                result.status(),
+                CheckStatus::Unresolvable {
+                    is_environment_error: false,
+                    ..
+                }
+            ),
+            "got: {:?}",
+            result.status()
+        );
     }
 
     #[test]
