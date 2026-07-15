@@ -3,7 +3,9 @@
 [alias]
 actup         = ["run", "--bin=actup", "--quiet", "--"]
 actup-lsp     = ["run", "--bin=actup-lsp", "--quiet", "--"]
+dwn           = "--config .cargo/nightly.toml doc --workspace --all-features"
 i             = "install"
 install-actup = "i --path crates/actup --bin actup"
 install-lsp   = "i --path crates/lsp --bin actup-lsp"
 install-mcp   = "i --path crates/mcp --bin actup-mcp"
+lint          = "clippy --workspace --all-targets --all-features -- -D warnings -D clippy::all"

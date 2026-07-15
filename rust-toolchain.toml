@@ -1,5 +1,5 @@
 [toolchain]
-channel    = "stable"
+channel    = "nightly"
 profile    = "default"
 components = ["rustfmt", "clippy", "llvm-tools", "cargo", "rust-analyzer"]
 targets    = ["wasm32-unknown-unknown", "wasm32-wasip2"]

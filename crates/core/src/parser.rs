@@ -6,8 +6,9 @@
 //! - `host/owner/repo@ref` (explicit host)
 //! - `./path` (local, returned as None)
 
-use crate::{ActionRef, Error, Result};
 use saphyr_parser::{Event, Parser, ScalarStyle, Span};
+
+use crate::{ActionRef, Error, Result};
 
 /// Parse a `uses:` string into an `ActionRef`
 ///

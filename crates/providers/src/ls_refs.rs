@@ -287,8 +287,9 @@ fn chain(source: &dyn std::error::Error) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
-    use super::*;
     use gix_hash::ObjectId;
+
+    use super::*;
 
     fn oid(byte: u8) -> ObjectId {
         ObjectId::from_bytes_or_panic(&[byte; 20])

@@ -65,12 +65,13 @@ pub struct YourCommit {
 Create `src/client.rs`:
 
 ```rust
+use std::time::Duration;
+
 use actup_core::{Error, Result};
 use reqwest::{
     Client, Response, StatusCode,
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
-use std::time::Duration;
 
 pub struct YourClient {
     client: Client,
@@ -180,10 +181,12 @@ impl YourClient {
 Create `src/provider.rs`:
 
 ```rust
-use actup_core::provider::{ActionYml, Kind, Provider, Sha40};
-use actup_core::version;
-use std::future::Future;
-use std::pin::Pin;
+use std::{future::Future, pin::Pin};
+
+use actup_core::{
+    provider::{ActionYml, Kind, Provider, Sha40},
+    version,
+};
 
 pub struct YourProvider {
     client: YourClient,
