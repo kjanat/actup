@@ -14,8 +14,17 @@ path = "src/lib.rs"
 
 [dependencies]
 actup-core    = { workspace = true }
+bstr          = { workspace = true }
+gix-features  = { workspace = true }
+gix-protocol  = { workspace = true }
+gix-transport = { workspace = true }
 serde         = { workspace = true }
 serde_yaml_ng = { workspace = true }
+tokio         = { workspace = true }
+tracing       = { workspace = true }
+
+[dev-dependencies]
+gix-hash = { version = "0.25", features = ["sha1"] }
 
 [lints]
 workspace = true

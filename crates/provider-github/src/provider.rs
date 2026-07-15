@@ -7,9 +7,9 @@ use actup_core::{
     provider::{self, ActionYml, Provider, Sha40},
     version,
 };
-use actup_providers::{filename_label, parse_action_yml, process_tags};
+use actup_providers::{RepoLabel, filename_label, list_refs, parse_action_yml, process_tags};
 use base64::{Engine, engine::general_purpose::STANDARD};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::client::GitHubClient;
 
@@ -18,6 +18,7 @@ pub struct GitHubProvider {
     client: GitHubClient,
     host: String,
     max_tags: u8,
+    token: Option<String>,
 }
 
 impl GitHubProvider {
@@ -65,7 +66,64 @@ impl GitHubProvider {
             host: host.to_string(),
             client,
             max_tags: max_tags.max(1),
+            token: token.map(String::from),
         })
+    }
+
+    fn clone_url(&self, repo: &ActionRepoId) -> String {
+        format!("https://{}/{}/{}.git", self.host, repo.owner(), repo.repo())
+    }
+
+    /// Fetch every tag and the default branch over the git wire protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the remote rejects the connection or the repository
+    /// does not exist.
+    pub async fn versions_via_git(&self, repo: &ActionRepoId) -> Result<version::Set> {
+        let label = RepoLabel::new(repo.owner(), repo.repo(), Some(self.host.clone()));
+        let refs = list_refs(self.clone_url(repo), self.token.clone(), label).await?;
+
+        debug!(
+            owner = %repo.owner(),
+            repo = %repo.repo(),
+            tags = refs.tags().len(),
+            "listed refs over git protocol"
+        );
+
+        Ok(refs.into_version_set())
+    }
+
+    /// Fetch the newest `max_tags` tags and the default branch over the REST API.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any of the REST calls fail.
+    pub async fn versions_via_rest(&self, repo: &ActionRepoId) -> Result<version::Set> {
+        let owner = repo.owner();
+        let repo_name = repo.repo();
+
+        debug!(owner = %owner, repo = %repo_name, "fetching versions from GitHub REST");
+
+        let tags = self
+            .client
+            .list_tags_limited(owner, repo_name, self.max_tags)
+            .await?;
+
+        let mut version_set = process_tags(tags);
+
+        let repo_info = self.client.get_repo(owner, repo_name).await?;
+        let branch = self
+            .client
+            .get_branch(owner, repo_name, &repo_info.default_branch)
+            .await?;
+
+        version_set.set_default_branch(version::BranchInfo::new(
+            repo_info.default_branch,
+            branch.commit.sha,
+        ));
+
+        Ok(version_set)
     }
 
     #[must_use]
@@ -99,35 +157,22 @@ impl Provider for GitHubProvider {
     }
 
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
-        let owner = repo.owner().to_string();
-        let repo_name = repo.repo().to_string();
+        let repo = repo.clone();
 
         Box::pin(async move {
-            debug!(owner = %owner, repo = %repo_name, "fetching versions from GitHub");
-
-            // Only fetch the newest configured tags. Older refs fall back to
-            // direct resolution when needed instead of walking the full tag history.
-            let tags = self
-                .client
-                .list_tags_limited(&owner, &repo_name, self.max_tags)
-                .await?;
-
-            // Process into [`version::Set`]
-            let mut version_set = process_tags(tags);
-
-            // Get default branch info
-            let repo_info = self.client.get_repo(&owner, &repo_name).await?;
-            let branch = self
-                .client
-                .get_branch(&owner, &repo_name, &repo_info.default_branch)
-                .await?;
-
-            version_set.set_default_branch(version::BranchInfo::new(
-                repo_info.default_branch,
-                branch.commit.sha,
-            ));
-
-            Ok(version_set)
+            match self.versions_via_git(&repo).await {
+                Ok(versions) => Ok(versions),
+                Err(e) if e.is_environment_error() => {
+                    warn!(
+                        owner = %repo.owner(),
+                        repo = %repo.repo(),
+                        error = %e,
+                        "git protocol unavailable, falling back to REST"
+                    );
+                    self.versions_via_rest(&repo).await
+                }
+                Err(e) => Err(e),
+            }
         })
     }
 

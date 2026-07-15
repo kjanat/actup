@@ -628,8 +628,10 @@ The CLI uses batch fetching for optimal performance:
 
 1. **In-memory deduplication** (`CachingProvider`): Same repo only fetched once
    per run
-2. **GraphQL batching**: Single query for all repos (requires `GITHUB_TOKEN`)
-3. **Parallel REST fallback**: Concurrent requests when no token available
+2. **Parallel git ls-refs**: One `ls-refs` per repo over the git wire protocol,
+   listing every tag and branch without an API token or rate limit
+3. **API fallback**: GraphQL batching (with `GITHUB_TOKEN`) or parallel REST,
+   used only for repos the git protocol could not list
 4. **File-based cache**: Results cached in `~/.cache/actup/` with configurable
    TTL
 

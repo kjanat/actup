@@ -5,10 +5,12 @@
 
 mod action_yml;
 mod client;
+mod ls_refs;
 mod tags;
 
 pub use action_yml::{RawActionYml, RawInput, RawOutput, RawRuns, RawStep, parse_action_yml};
 pub use client::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE};
+pub use ls_refs::{RemoteRefs, RemoteTag, RepoLabel, list_refs};
 pub use tags::{TagLike, process_tags};
 
 /// Extract the trailing filename component of a path for diagnostics.

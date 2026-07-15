@@ -28,6 +28,28 @@ struct RegistryFetchPlan {
     fallback_repos: Vec<ActionRepoId>,
 }
 
+fn collect_fetched(
+    results: Vec<(ActionRepoId, actup_core::Result<version::Set>)>,
+) -> HashMap<ActionRepoId, version::Set> {
+    let mut map = HashMap::new();
+    for (repo, result) in results {
+        match result {
+            Ok(versions) => {
+                map.insert(repo, versions);
+            }
+            Err(e) => {
+                warn!(
+                    owner = %repo.owner(),
+                    repo = %repo.repo(),
+                    error = %e,
+                    "failed to fetch versions"
+                );
+            }
+        }
+    }
+    map
+}
+
 fn provider_not_found_error(
     repo: &ActionRepoId,
     registry: &provider::Registry,
@@ -297,11 +319,22 @@ impl<C: Cache> BatchFetcher<C> {
         debug!(count = uncached.len(), "fetching uncached repos");
 
         // 2. Batch fetch missing repos
-        let fetched = if let Some(graphql) = &self.graphql {
-            self.fetch_graphql(graphql, &uncached).await
-        } else {
-            self.fetch_parallel_rest(&uncached).await
-        };
+        let mut fetched = self.fetch_parallel_git(&uncached).await;
+
+        let unlisted: Vec<_> = uncached
+            .iter()
+            .filter(|repo| !fetched.contains_key(*repo))
+            .cloned()
+            .collect();
+
+        if !unlisted.is_empty() {
+            let recovered = if let Some(graphql) = &self.graphql {
+                self.fetch_graphql(graphql, &unlisted).await
+            } else {
+                self.fetch_parallel_rest(&unlisted).await
+            };
+            fetched.extend(recovered);
+        }
 
         // 3. Store results in cache and collect
         for (repo, versions) in fetched {
@@ -340,42 +373,42 @@ impl<C: Cache> BatchFetcher<C> {
         }
     }
 
-    /// Fetch using parallel REST requests with bounded concurrency
-    async fn fetch_parallel_rest(
+    /// Fetch using parallel git ls-refs with bounded concurrency
+    async fn fetch_parallel_git(
         &self,
         repos: &[ActionRepoId],
     ) -> HashMap<ActionRepoId, version::Set> {
-        use actup_core::Provider;
-
-        debug!(count = repos.len(), "using parallel REST fetch");
+        debug!(count = repos.len(), "using parallel git ls-refs fetch");
 
         let results: Vec<_> = futures::stream::iter(repos.iter().cloned())
             .map(|repo| async move {
-                let result = self.provider.get_versions(&repo).await;
+                let result = self.provider.versions_via_git(&repo).await;
                 (repo, result)
             })
             .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
             .collect()
             .await;
 
-        let mut map = HashMap::new();
-        for (repo, result) in results {
-            match result {
-                Ok(versions) => {
-                    map.insert(repo, versions);
-                }
-                Err(e) => {
-                    warn!(
-                        owner = %repo.owner(),
-                        repo = %repo.repo(),
-                        error = %e,
-                        "failed to fetch versions"
-                    );
-                }
-            }
-        }
+        collect_fetched(results)
+    }
 
-        map
+    /// Fetch using parallel REST requests with bounded concurrency
+    async fn fetch_parallel_rest(
+        &self,
+        repos: &[ActionRepoId],
+    ) -> HashMap<ActionRepoId, version::Set> {
+        debug!(count = repos.len(), "using parallel REST fetch");
+
+        let results: Vec<_> = futures::stream::iter(repos.iter().cloned())
+            .map(|repo| async move {
+                let result = self.provider.versions_via_rest(&repo).await;
+                (repo, result)
+            })
+            .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
+            .collect()
+            .await;
+
+        collect_fetched(results)
     }
 
     /// Get access to the underlying provider for single-repo operations

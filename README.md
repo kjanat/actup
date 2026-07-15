@@ -69,6 +69,7 @@ Create `actup.toml` or `.actup.toml` in your repo root:
 # Default host for bare owner/repo refs
 default_host = "github.com"
 
+# API fallback, used only when a host refuses a git connection
 [fetch]
 api_mode          = "graphql"  # "graphql" or "rest"
 max_tags_per_repo = 10  # Tags to fetch per repo (1-255)

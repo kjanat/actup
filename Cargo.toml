@@ -33,6 +33,7 @@ actup-core.path            = "crates/core"
 actup-provider-github.path = "crates/provider-github"
 actup-providers.path       = "crates/providers"
 base64                     = "0.22"  # encoding
+bstr                       = "1"  # byte strings (git refs)
 cc                         = "1.2"
 clap_complete              = "4.5"  # completions
 dashmap                    = "6"  # concurrency
@@ -79,6 +80,20 @@ features = ["derive", "env", "wrap_help"]
 [workspace.dependencies.figment]  # Configuration
 version  = "0.10"
 features = ["env", "json", "toml", "yaml"]
+
+[workspace.dependencies.gix-features]  # git progress traits
+version  = "0.48"
+features = ["progress"]
+
+[workspace.dependencies.gix-protocol]  # git wire protocol (ls-refs)
+version          = "0.63"
+default-features = false
+features         = ["blocking-client", "sha1"]
+
+[workspace.dependencies.gix-transport]  # git transport (https)
+version          = "0.57"
+default-features = false
+features         = ["blocking-client", "http-client-reqwest-rust-tls"]
 
 [workspace.dependencies.insta]  # snapshots
 version  = "1.42"

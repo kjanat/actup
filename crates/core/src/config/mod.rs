@@ -266,16 +266,16 @@ impl std::fmt::Display for HostKind {
 
 /// Global fetch settings applied to all providers unless overridden per-host.
 ///
-/// Controls how actup communicates with provider APIs. Per-host overrides
-/// in `HostConfig` take precedence over these values.
+/// Versions come from the git wire protocol, which needs no API and lists every
+/// tag. These settings govern the HTTP API fallback used when a host refuses a
+/// git connection. Per-host overrides in `HostConfig` take precedence.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct FetchSettings {
-    /// API mode: `"graphql"` (batched, requires auth) or `"rest"` (parallel)
+    /// API fallback mode: `"graphql"` (batched, requires auth) or `"rest"` (parallel)
     pub api_mode: ApiMode,
 
-    /// Maximum tags to fetch per repository (1–255).
-    /// Stops early when a stable release satisfying policy is found.
+    /// Maximum tags the API fallback fetches per repository (1–255).
     pub max_tags_per_repo: NonZeroU8,
 }
 

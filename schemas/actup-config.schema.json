@@ -181,16 +181,16 @@
       }
     },
     "FetchSettings": {
-      "description": "Global fetch settings applied to all providers unless overridden per-host.\n\nControls how actup communicates with provider APIs. Per-host overrides\nin `HostConfig` take precedence over these values.",
+      "description": "Global fetch settings applied to all providers unless overridden per-host.\n\nVersions come from the git wire protocol, which needs no API and lists every\ntag. These settings govern the HTTP API fallback used when a host refuses a\ngit connection. Per-host overrides in `HostConfig` take precedence.",
       "type": "object",
       "properties": {
         "api_mode": {
-          "description": "API mode: `\"graphql\"` (batched, requires auth) or `\"rest\"` (parallel)",
+          "description": "API fallback mode: `\"graphql\"` (batched, requires auth) or `\"rest\"` (parallel)",
           "$ref": "#/$defs/ApiMode",
           "default": "graphql"
         },
         "max_tags_per_repo": {
-          "description": "Maximum tags to fetch per repository (1–255).\nStops early when a stable release satisfying policy is found.",
+          "description": "Maximum tags the API fallback fetches per repository (1–255).",
           "type": "integer",
           "format": "uint8",
           "default": 10,
