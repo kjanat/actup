@@ -15,12 +15,12 @@ languages = ["GitHub Actions", "YAML"]
 "GitHub Actions" = "github_actions"
 "YAML"           = "github_actions"
 
-[language_servers.actions-languageserver]
-languages = ["GitHub Actions", "YAML"]
+# [language_servers.actions-languageserver]
+# languages = ["GitHub Actions", "YAML"]
 
-[language_servers.actions-languageserver.language_ids]
-"GitHub Actions" = "github_actions"
-"YAML"           = "github_actions"
+# [language_servers.actions-languageserver.language_ids]
+# "GitHub Actions" = "github_actions"
+# "YAML"           = "github_actions"
 
 [[capabilities]]  # TODO: when not dev, and pre-pr to zed-extensions repo, rm this block.
 kind    = "process:exec"
