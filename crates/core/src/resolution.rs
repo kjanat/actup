@@ -68,6 +68,12 @@ pub enum CheckStatus {
     },
     /// Action is in the ignore list
     Ignored,
+    /// Action references a floating branch (or non-semver tag) under `warn`
+    /// branch policy: the ref resolves, but it moves, so it is advisory only.
+    Floating {
+        /// The branch or non-semver ref that floats
+        ref_name: String,
+    },
     /// Could not resolve version info
     Unresolvable {
         /// Reason for failure
@@ -184,38 +190,6 @@ pub async fn check_action_with_provider(
                     is_environment_error: true,
                 },
             ),
-            Err(_) => result,
-        };
-    }
-
-    // Last-resort existence probe: before reporting a ref as a user-facing
-    // "unresolvable", ask the provider whether it actually resolves. Version
-    // enumeration can come up empty for repos whose newest tags are non-semver
-    // (so the batch fetch finds nothing to compare), yet the ref itself is
-    // perfectly valid. Confirming existence avoids crying wolf.
-    if matches!(
-        result.status(),
-        CheckStatus::Unresolvable {
-            is_environment_error: false,
-            ..
-        }
-    ) {
-        let repo_id = action_ref.to_repo_id().without_subpath();
-        return match provider
-            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-            .await
-        {
-            // The ref exists; we just couldn't enumerate versions to compare
-            // against, so don't flag it as broken.
-            Ok(_) => CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
-            Err(e) if e.is_environment_error() => CheckResult::new(
-                action_ref.clone(),
-                CheckStatus::Unresolvable {
-                    reason: e.to_string(),
-                    is_environment_error: true,
-                },
-            ),
-            // Genuinely doesn't resolve — keep the original user-facing error.
             Err(_) => result,
         };
     }
@@ -363,9 +337,8 @@ fn status_for_non_semver(
     // the specific ref type (branch vs non-standard tag).
     match branch_policy {
         policy::Branch::Ignore => CheckStatus::UpToDate,
-        policy::Branch::Warn => CheckStatus::Unresolvable {
-            reason: "non-semver ref (branch or tag)".into(),
-            is_environment_error: false,
+        policy::Branch::Warn => CheckStatus::Floating {
+            ref_name: current.to_string(),
         },
         policy::Branch::Update => {
             // Suggest pinning to latest version, respecting prerelease config
@@ -810,7 +783,7 @@ mod tests {
         };
 
         let result = check_action(&action, &versions, &config);
-        assert!(matches!(result.status(), CheckStatus::Unresolvable { .. }));
+        assert!(matches!(result.status(), CheckStatus::Floating { .. }));
     }
 
     #[test]
@@ -867,7 +840,7 @@ mod tests {
 
     #[test]
     fn test_check_action_non_semver_branch_policy_warn() {
-        // Non-semver ref like "stable" should be Unresolvable with warning when branch_policy is warn
+        // Non-semver ref like "stable" is a floating branch under branch_policy: warn
         let action = make_action_ref("dtolnay", "rust-toolchain", "stable");
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
@@ -881,16 +854,12 @@ mod tests {
         };
 
         let result = check_action(&action, &versions, &config);
-        // With branch_policy: warn, non-semver refs should be flagged as unresolvable
         match result.status() {
-            CheckStatus::Unresolvable { reason, .. } => {
-                assert!(
-                    reason.contains("non-semver"),
-                    "Expected reason to mention non-semver, got: {reason}"
-                );
+            CheckStatus::Floating { ref_name } => {
+                assert_eq!(ref_name, "stable");
             }
             other => {
-                panic!("Expected Unresolvable for 'stable' with branch_policy: warn, got {other:?}")
+                panic!("Expected Floating for 'stable' with branch_policy: warn, got {other:?}")
             }
         }
     }
@@ -1072,34 +1041,16 @@ mod tests {
         assert!(matches!(result.status(), CheckStatus::Outdated { current, .. } if current == "6"));
     }
 
-    #[tokio::test]
-    async fn test_last_resort_resolves_existing_ref_with_no_versions() {
-        // Empty version set (e.g. a repo whose newest tags are all non-semver,
-        // like taiki-e/install-action's tool tags) makes check_action report
-        // "no versions found". If the provider can still resolve the ref, it
-        // exists — so we must not call it unresolvable.
-        let action = make_action_ref("taiki-e", "install-action", "v2");
-        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
-        let config = Config::default();
-
-        let provider = ResolveMockProvider::new(true);
-        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
-        assert!(
-            matches!(result.status(), CheckStatus::UpToDate),
-            "got: {:?}",
-            result.status()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_last_resort_keeps_unresolvable_when_ref_truly_missing() {
-        // Empty set AND the ref genuinely doesn't resolve -> stays unresolvable.
+    #[test]
+    fn test_semver_ref_with_no_versions_is_unresolvable() {
+        // A semver ref against a repo with no semver tags cannot be compared.
+        // ls-refs lists every tag, so an empty set means genuinely no versions,
+        // not a truncated fetch window.
         let action = make_action_ref("owner", "repo", "v99");
         let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
         let config = Config::default();
 
-        let provider = ResolveMockProvider::new(false); // RefNotFound (user error)
-        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+        let result = check_action(&action, &versions, &config);
         assert!(
             matches!(
                 result.status(),

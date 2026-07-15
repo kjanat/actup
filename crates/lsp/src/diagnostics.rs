@@ -436,6 +436,17 @@ fn status_to_diagnostic(
             })
         }
 
+        CheckStatus::Floating { ref_name } => Some(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("floating".into())),
+            source: Some(DIAGNOSTIC_SOURCE.into()),
+            message: format!(
+                "{uses_value}: '{ref_name}' is a floating branch ref, pin to a tag or SHA"
+            ),
+            ..Default::default()
+        }),
+
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,

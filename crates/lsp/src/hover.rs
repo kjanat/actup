@@ -232,6 +232,9 @@ fn format_version_status(status: &CheckStatus) -> String {
             )
         }
         CheckStatus::Ignored => "Ignored by config".to_owned(),
+        CheckStatus::Floating { ref_name } => {
+            format!("**Floating branch** `{ref_name}` — pin to a tag or SHA")
+        }
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,

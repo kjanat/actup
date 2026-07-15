@@ -70,6 +70,15 @@ impl From<&Finding> for JsonFinding {
                 tag.clone(),
                 None,
             ),
+            FindingStatus::Floating { ref_name } => (
+                "floating",
+                Some(ref_name.clone()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
             FindingStatus::Unknown { reason } => (
                 "unknown",
                 None,
@@ -194,6 +203,8 @@ pub enum FindingStatus {
     },
     /// Action is pinned to a specific SHA.
     Pinned { sha: String, tag: Option<String> },
+    /// Action references a floating branch under `warn` branch policy.
+    Floating { ref_name: String },
     /// Action ref exists but version comparison unavailable.
     ///
     /// This occurs when the ref resolves successfully but version information
@@ -288,6 +299,14 @@ fn print_human(findings: &[Finding]) {
                     tag_info.dimmed()
                 );
             }
+            FindingStatus::Floating { ref_name } => {
+                println!(
+                    "{}{}  {}",
+                    line_prefix.dimmed(),
+                    action_str.yellow(),
+                    format!("floating branch '{ref_name}' — pin to a tag or SHA").yellow()
+                );
+            }
             FindingStatus::Unknown { reason } => {
                 println!(
                     "{}{}  {}",
@@ -360,6 +379,10 @@ pub fn print_summary(findings: &[Finding]) {
         .iter()
         .filter(|f| matches!(f.status(), FindingStatus::Pinned { .. }))
         .count();
+    let floating = findings
+        .iter()
+        .filter(|f| matches!(f.status(), FindingStatus::Floating { .. }))
+        .count();
     let unresolvable = findings
         .iter()
         .filter(|f| matches!(f.status(), FindingStatus::Unresolvable { .. }))
@@ -369,7 +392,7 @@ pub fn print_summary(findings: &[Finding]) {
     println!(
         "{}",
         format!(
-            "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {unresolvable} unresolvable",
+            "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {unresolvable} unresolvable",
             if total == 1 { "" } else { "s" }
         )
         .bold()
@@ -379,7 +402,7 @@ pub fn print_summary(findings: &[Finding]) {
 /// Determines CLI exit code based on findings.
 ///
 /// Exit codes:
-/// - 0: Success ([`FindingStatus::UpToDate`], Ignored, Pinned are all considered healthy)
+/// - 0: Success ([`FindingStatus::UpToDate`], Ignored, Pinned, Floating are all considered healthy)
 /// - 1: Outdated found (only with `strict` mode)
 /// - 2: Unresolvable user error (bad ref, repo not found)
 /// - 3: Environment error (network, rate limit, auth)

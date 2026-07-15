@@ -462,6 +462,7 @@ fn format_check_output(
     let mut up_to_date = 0usize;
     let mut pinned = 0usize;
     let mut unresolvable: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
+    let mut floating: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
     let mut ignored = 0usize;
 
     for r in results {
@@ -470,6 +471,7 @@ fn format_check_output(
             CheckStatus::Outdated { .. } => outdated.push(r),
             CheckStatus::Pinned { .. } => pinned += 1,
             CheckStatus::Ignored => ignored += 1,
+            CheckStatus::Floating { .. } => floating.push(r),
             CheckStatus::Unresolvable { .. } => unresolvable.push(r),
         }
     }
@@ -477,10 +479,11 @@ fn format_check_output(
     // Summary line
     let _ = writeln!(
         out,
-        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} ignored\n",
+        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} ignored\n",
         outdated.len(),
         up_to_date,
         pinned,
+        floating.len(),
         ignored,
     );
 
@@ -495,6 +498,22 @@ fn format_check_output(
                     uses_loc.line(),
                     uses_loc.value(),
                     target.version(),
+                );
+            }
+        }
+        out.push('\n');
+    }
+
+    // Floating branch refs
+    if !floating.is_empty() {
+        out.push_str("### Floating\n\n");
+        for (path, uses_loc, result) in &floating {
+            if let CheckStatus::Floating { ref_name } = result.status() {
+                let _ = writeln!(
+                    out,
+                    "- `{path}` line {}: `{}` — floating branch `{ref_name}`, pin to a tag or SHA",
+                    uses_loc.line(),
+                    uses_loc.value(),
                 );
             }
         }
