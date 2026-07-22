@@ -79,6 +79,15 @@ impl From<&Finding> for JsonFinding {
                 None,
                 None,
             ),
+            FindingStatus::PinBranch { ref_name, sha } => (
+                "pin_branch",
+                Some(ref_name.clone()),
+                None,
+                Some(sha.clone()),
+                None,
+                None,
+                None,
+            ),
             FindingStatus::Unknown { reason } => (
                 "unknown",
                 None,
@@ -205,6 +214,9 @@ pub enum FindingStatus {
     Pinned { sha: String, tag: Option<String> },
     /// Action references a floating branch under `warn` branch policy.
     Floating { ref_name: String },
+    /// Action references a floating branch under `update` branch policy, to be
+    /// pinned to the branch's current HEAD SHA.
+    PinBranch { ref_name: String, sha: String },
     /// Action ref exists but version comparison unavailable.
     ///
     /// This occurs when the ref resolves successfully but version information
@@ -249,88 +261,105 @@ fn print_human(findings: &[Finding]) {
             current_file = finding.file().to_string();
         }
 
-        let line_prefix = format!("  L{}: ", finding.line());
-        let action_str = finding.action_ref().to_string();
+        print_finding_line(finding);
+    }
+}
 
-        match finding.status() {
-            FindingStatus::UpToDate => {
-                println!(
-                    "{}{}  {}",
-                    line_prefix.dimmed(),
-                    action_str,
-                    "up to date".green()
-                );
-            }
-            FindingStatus::Ignored => {
-                println!(
-                    "{}{}  {}",
-                    line_prefix.dimmed(),
-                    action_str.dimmed(),
-                    "ignored".dimmed()
-                );
-            }
-            FindingStatus::Outdated {
-                current,
-                latest,
-                exact_version,
-            } => {
-                let version_str = latest.version().to_string();
-                let suffix = exact_version
-                    .as_ref()
-                    .filter(|ev| ev.as_str() != version_str)
-                    .map(|ev| format!(" ({ev})"))
-                    .unwrap_or_default();
-                println!(
-                    "{}{}  {} -> {}{}",
-                    line_prefix.dimmed(),
-                    action_str.yellow(),
-                    current.red(),
-                    version_str.green(),
-                    suffix.dimmed()
-                );
-            }
-            FindingStatus::Pinned { sha, tag } => {
-                let tag_info = tag.as_ref().map(|t| format!(" ({t})")).unwrap_or_default();
-                println!(
-                    "{}{}  {}{}",
-                    line_prefix.dimmed(),
-                    action_str,
-                    format!("pinned to {}", &sha[..7.min(sha.len())]).cyan(),
-                    tag_info.dimmed()
-                );
-            }
-            FindingStatus::Floating { ref_name } => {
-                println!(
-                    "{}{}  {}",
-                    line_prefix.dimmed(),
-                    action_str.yellow(),
-                    format!("floating branch '{ref_name}' — pin to a tag or SHA").yellow()
-                );
-            }
-            FindingStatus::Unknown { reason } => {
-                println!(
-                    "{}{}  {}",
-                    line_prefix.dimmed(),
-                    action_str.yellow(),
-                    format!("unknown: {reason}").yellow()
-                );
-            }
-            FindingStatus::Unresolvable {
-                reason,
-                is_environment_error,
-            } => {
-                let label = if *is_environment_error {
-                    "error"
-                } else {
-                    "unresolvable"
-                };
-                println!(
-                    "{}{}  {}",
-                    line_prefix.dimmed(),
-                    action_str.red(),
-                    format!("{label}: {reason}").red()
-                );
-            }
+/// Print one finding's `  Lnn: <action>  <status>` line.
+fn print_finding_line(finding: &Finding) {
+    let line_prefix = format!("  L{}: ", finding.line());
+    let action_str = finding.action_ref().to_string();
+
+    match finding.status() {
+        FindingStatus::UpToDate => {
+            println!(
+                "{}{}  {}",
+                line_prefix.dimmed(),
+                action_str,
+                "up to date".green()
+            );
+        }
+        FindingStatus::Ignored => {
+            println!(
+                "{}{}  {}",
+                line_prefix.dimmed(),
+                action_str.dimmed(),
+                "ignored".dimmed()
+            );
+        }
+        FindingStatus::Outdated {
+            current,
+            latest,
+            exact_version,
+        } => {
+            let version_str = latest.version().to_string();
+            let suffix = exact_version
+                .as_ref()
+                .filter(|ev| ev.as_str() != version_str)
+                .map(|ev| format!(" ({ev})"))
+                .unwrap_or_default();
+            println!(
+                "{}{}  {} -> {}{}",
+                line_prefix.dimmed(),
+                action_str.yellow(),
+                current.red(),
+                version_str.green(),
+                suffix.dimmed()
+            );
+        }
+        FindingStatus::Pinned { sha, tag } => {
+            let tag_info = tag.as_ref().map(|t| format!(" ({t})")).unwrap_or_default();
+            println!(
+                "{}{}  {}{}",
+                line_prefix.dimmed(),
+                action_str,
+                format!("pinned to {}", &sha[..7.min(sha.len())]).cyan(),
+                tag_info.dimmed()
+            );
+        }
+        FindingStatus::Floating { ref_name } => {
+            println!(
+                "{}{}  {}",
+                line_prefix.dimmed(),
+                action_str.yellow(),
+                format!("floating branch '{ref_name}' — pin to a tag or SHA").yellow()
+            );
+        }
+        FindingStatus::PinBranch { ref_name, sha } => {
+            println!(
+                "{}{}  {}",
+                line_prefix.dimmed(),
+                action_str.yellow(),
+                format!(
+                    "pin branch '{ref_name}' -> {} # {ref_name}",
+                    &sha[..7.min(sha.len())]
+                )
+                .yellow()
+            );
+        }
+        FindingStatus::Unknown { reason } => {
+            println!(
+                "{}{}  {}",
+                line_prefix.dimmed(),
+                action_str.yellow(),
+                format!("unknown: {reason}").yellow()
+            );
+        }
+        FindingStatus::Unresolvable {
+            reason,
+            is_environment_error,
+        } => {
+            let label = if *is_environment_error {
+                "error"
+            } else {
+                "unresolvable"
+            };
+            println!(
+                "{}{}  {}",
+                line_prefix.dimmed(),
+                action_str.red(),
+                format!("{label}: {reason}").red()
+            );
         }
     }
 }
@@ -383,6 +412,10 @@ pub fn print_summary(findings: &[Finding]) {
         .iter()
         .filter(|f| matches!(f.status(), FindingStatus::Floating { .. }))
         .count();
+    let to_pin = findings
+        .iter()
+        .filter(|f| matches!(f.status(), FindingStatus::PinBranch { .. }))
+        .count();
     let unresolvable = findings
         .iter()
         .filter(|f| matches!(f.status(), FindingStatus::Unresolvable { .. }))
@@ -392,7 +425,7 @@ pub fn print_summary(findings: &[Finding]) {
     println!(
         "{}",
         format!(
-            "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {unresolvable} unresolvable",
+            "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {to_pin} to pin, {unresolvable} unresolvable",
             if total == 1 { "" } else { "s" }
         )
         .bold()
@@ -403,13 +436,16 @@ pub fn print_summary(findings: &[Finding]) {
 ///
 /// Exit codes:
 /// - 0: Success ([`FindingStatus::UpToDate`], Ignored, Pinned, Floating are all considered healthy)
-/// - 1: Outdated found (only with `strict` mode)
+/// - 1: Outdated or pinnable branch found (only with `strict` mode)
 /// - 2: Unresolvable user error (bad ref, repo not found)
 /// - 3: Environment error (network, rate limit, auth)
 pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
-    let has_outdated = findings
-        .iter()
-        .any(|f| matches!(f.status(), FindingStatus::Outdated { .. }));
+    let has_outdated = findings.iter().any(|f| {
+        matches!(
+            f.status(),
+            FindingStatus::Outdated { .. } | FindingStatus::PinBranch { .. }
+        )
+    });
     let has_env_error = findings.iter().any(|f| {
         matches!(
             f.status(),

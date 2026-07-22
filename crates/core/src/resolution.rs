@@ -74,6 +74,14 @@ pub enum CheckStatus {
         /// The branch or non-semver ref that floats
         ref_name: String,
     },
+    /// Action references a floating branch under `update` branch policy: it
+    /// should be pinned to the branch's current HEAD SHA.
+    PinBranch {
+        /// The branch ref to pin (used for the `# branch` comment)
+        ref_name: String,
+        /// The branch's current HEAD commit SHA to pin to
+        sha: String,
+    },
     /// Could not resolve version info
     Unresolvable {
         /// Reason for failure
@@ -178,9 +186,8 @@ pub async fn check_action_with_provider(
                     &version::Version::Other {
                         tag: action_ref.ref_str().to_string(),
                     },
-                    config.branch_policy,
+                    config.branch_policy_for(action_ref.owner(), action_ref.repo()),
                     versions,
-                    config.allow_prerelease,
                 ),
             ),
             Err(e) if e.is_environment_error() => CheckResult::new(
@@ -224,9 +231,8 @@ pub fn check_action(
             action_ref.clone(),
             status_for_non_semver(
                 &current,
-                config.branch_policy,
+                config.branch_policy_for(action_ref.owner(), action_ref.repo()),
                 versions,
-                config.allow_prerelease,
             ),
         );
     }
@@ -330,29 +336,24 @@ fn status_for_non_semver(
     current: &version::Version,
     branch_policy: policy::Branch,
     versions: &version::Set,
-    allow_prerelease: bool,
 ) -> CheckStatus {
-    // TODO: Use `current` to provide smarter suggestions for non-semver refs,
-    // e.g., comparing branch head commits or suggesting SHA pinning based on
-    // the specific ref type (branch vs non-standard tag).
+    let ref_name = current.to_string();
     match branch_policy {
         policy::Branch::Ignore => CheckStatus::UpToDate,
-        policy::Branch::Warn => CheckStatus::Floating {
-            ref_name: current.to_string(),
-        },
+        policy::Branch::Warn => CheckStatus::Floating { ref_name },
         policy::Branch::Update => {
-            // Suggest pinning to latest version, respecting prerelease config
-            let latest = versions
-                .latest()
-                .filter(|v| allow_prerelease || !v.version().is_prerelease());
-            latest.map_or_else(
+            // Pin the branch to its current HEAD commit SHA (locking it where it
+            // is), keeping the ref's meaning. Only a `# branch` comment marks
+            // what was pinned. Falls back when the branch head is unknown (e.g.
+            // versions came from an API that doesn't enumerate branches).
+            versions.branch_sha(&ref_name).map_or_else(
                 || CheckStatus::Unresolvable {
-                    reason: "non-semver ref should be pinned to SHA".into(),
+                    reason: "branch ref should be pinned to a SHA".into(),
                     is_environment_error: false,
                 },
-                |l| CheckStatus::Outdated {
-                    current: current.to_string(),
-                    target: l.clone(),
+                |sha| CheckStatus::PinBranch {
+                    ref_name: ref_name.clone(),
+                    sha: sha.to_string(),
                 },
             )
         }
@@ -865,14 +866,18 @@ mod tests {
     }
 
     #[test]
-    fn test_check_action_non_semver_branch_policy_update() {
-        // Non-semver ref like "stable" should suggest pinning when branch_policy is update
+    fn test_check_action_non_semver_branch_policy_update_pins_branch_sha() {
+        // Under update, a branch ref pins to the branch's current HEAD SHA.
         let action = make_action_ref("dtolnay", "rust-toolchain", "stable");
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(1, v1.clone());
-        let versions =
+        let mut versions =
             make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new());
+        versions.set_branches(HashMap::from([(
+            "stable".to_string(),
+            "deadbeef".to_string(),
+        )]));
 
         let config = Config {
             branch_policy: policy::Branch::Update,
@@ -880,27 +885,66 @@ mod tests {
         };
 
         let result = check_action(&action, &versions, &config);
-        // With branch_policy: update, non-semver refs should be flagged for pinning
-        // Current implementation returns Unresolvable - but ideally should return Outdated
-        // with a target to pin to (either latest version or SHA)
         match result.status() {
-            CheckStatus::Unresolvable { reason, .. } => {
-                assert!(
-                    reason.contains("pin") || reason.contains("SHA"),
-                    "Expected reason to mention pinning/SHA, got: {reason}"
-                );
+            CheckStatus::PinBranch { ref_name, sha } => {
+                assert_eq!(ref_name, "stable");
+                assert_eq!(sha, "deadbeef");
             }
-            CheckStatus::Outdated { target, .. } => {
-                // This is the preferred behavior - suggest updating to latest
-                assert!(
-                    target.version().is_semver(),
-                    "Expected target to be a semver version"
-                );
-            }
-            other => panic!(
-                "Expected Unresolvable or Outdated for 'stable' with branch_policy: update, got {other:?}"
-            ),
+            other => panic!("Expected PinBranch for 'stable' under update, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_check_action_update_unresolvable_when_branch_head_unknown() {
+        // Update policy but no branch head available (e.g. API without branch
+        // enumeration) falls back to unresolvable rather than guessing a tag.
+        let action = make_action_ref("dtolnay", "rust-toolchain", "stable");
+        let v1 = make_version_info("v1.0.0", "abc123");
+        let versions = make_version_set(vec![v1.clone()], Some(v1), HashMap::new(), HashMap::new());
+
+        let config = Config {
+            branch_policy: policy::Branch::Update,
+            ..Default::default()
+        };
+
+        let result = check_action(&action, &versions, &config);
+        assert!(
+            matches!(
+                result.status(),
+                CheckStatus::Unresolvable {
+                    is_environment_error: false,
+                    ..
+                }
+            ),
+            "got: {:?}",
+            result.status()
+        );
+    }
+
+    #[test]
+    fn test_per_action_branch_policy_override() {
+        // Global ignore stays quiet, but a per-action override flags one repo.
+        let action = make_action_ref("kjanat", "runner", "master");
+        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+
+        let config = Config {
+            branch_policy: policy::Branch::Ignore,
+            action_overrides: std::collections::HashMap::from([(
+                "kjanat/runner".to_string(),
+                crate::config::ActionOverride {
+                    branch_policy: Some(policy::Branch::Warn),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let result = check_action(&action, &versions, &config);
+        assert!(
+            matches!(result.status(), CheckStatus::Floating { .. }),
+            "override should flag master as floating, got {:?}",
+            result.status()
+        );
     }
 
     // Issue 2: Version Style Preservation (major-only vs full semver)

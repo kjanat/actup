@@ -46,6 +46,7 @@ fn to_finding_status(status: CheckStatus, versions: Option<&version::Set>) -> Fi
         }
         CheckStatus::Pinned { sha, tag } => FindingStatus::Pinned { sha, tag },
         CheckStatus::Floating { ref_name } => FindingStatus::Floating { ref_name },
+        CheckStatus::PinBranch { ref_name, sha } => FindingStatus::PinBranch { ref_name, sha },
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,

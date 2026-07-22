@@ -78,16 +78,42 @@ use crate::{Error, policy};
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
-    /// Global update policy
+    /// How far to bump outdated version refs.
+    ///
+    /// `patch` stays on `major.minor`, `minor` stays on `major`, `major`
+    /// allows a new major, `latest` takes the newest stable overall.
+    ///
+    /// ```toml
+    /// update_policy = "minor"   # v1.2.3 -> v1.5.0, never v2
+    /// ```
     pub update_policy: policy::Update,
 
-    /// How to format refs when updating
+    /// How a ref is written when updating.
+    ///
+    /// `preserve` keeps the current style (tag stays a tag, SHA stays a SHA),
+    /// `tag` rewrites to the version tag, `sha` pins to the commit SHA with a
+    /// `# vX.Y.Z` comment.
+    ///
+    /// ```toml
+    /// ref_style = "sha"   # actions/checkout@v4 -> @<sha> # v4.2.0
+    /// ```
     pub ref_style: policy::Style,
 
-    /// How to handle branch references
+    /// How to handle floating branch refs like `@main` or `@v2`.
+    ///
+    /// `ignore` leaves them untouched (default), `warn` flags them as
+    /// floating, `update` pins the branch to its current HEAD SHA.
+    ///
+    /// ```toml
+    /// branch_policy = "warn"   # @main -> flagged, pin to a tag or SHA
+    /// ```
     pub branch_policy: policy::Branch,
 
-    /// Whether to consider prerelease versions
+    /// Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.
+    ///
+    /// ```toml
+    /// allow_prerelease = false   # skip -rc/-beta tags unless already on one
+    /// ```
     pub allow_prerelease: bool,
 
     /// Actions to ignore (supports owner/repo, owner/repo@ref, and owner/* patterns)
@@ -99,21 +125,55 @@ pub struct Config {
     /// - `"tool/action@1.91.0"` - ignores specific version (e.g., MSRV pin)
     pub ignore: Vec<String>,
 
-    /// Per-action policy overrides (keyed by "owner/repo")
+    /// Per-action policy overrides, keyed by `owner/repo`.
+    ///
+    /// Each entry can override `update_policy`, `ref_style`, `branch_policy`,
+    /// or `ignore` for just that action.
+    ///
+    /// ```toml
+    /// [actions."actions/checkout"]
+    /// update_policy = "patch"    # only patch-bump this one
+    /// ```
     #[serde(default, rename = "actions")]
     pub action_overrides: HashMap<String, ActionOverride>,
 
-    /// Cache configuration
+    /// Version-cache settings (TTL, location, on/off).
+    ///
+    /// ```toml
+    /// [cache]
+    /// ttl = 86400        # re-check a repo at most once a day
+    /// enabled = true
+    /// ```
     pub cache: Cache,
 
-    /// Default host for bare `owner/repo` refs.
-    /// If `None`, resolves via provider preset for `"github.com"` when present, else errors.
+    /// Host used for bare `owner/repo` refs that carry no host prefix.
+    ///
+    /// Absent resolves to `github.com` via the built-in preset.
+    ///
+    /// ```toml
+    /// default_host = "github.com"
+    /// ```
     pub default_host: Option<String>,
 
-    /// Fetch settings (`api_mode`, `max_tags_per_repo`)
+    /// API fallback settings, used only when the git protocol can't list a repo.
+    ///
+    /// ```toml
+    /// [fetch]
+    /// api_mode = "graphql"       # or "rest"
+    /// max_tags_per_repo = 10
+    /// ```
     pub fetch: FetchSettings,
 
-    /// Per-host configuration (keyed by lowercase hostname)
+    /// Per-host provider config, keyed by lowercase hostname.
+    ///
+    /// Used for GitHub Enterprise, self-hosted GitLab/Gitea, and custom tokens.
+    ///
+    /// ```toml
+    /// [hosts."ghe.corp.internal"]
+    /// kind = "github"
+    /// api_base = "https://ghe.corp.internal/api/v3"
+    /// token_env = "GHE_TOKEN"
+    /// ```
     pub hosts: HashMap<String, HostConfig>,
 
     /// Additional paths to scan (beyond defaults)
@@ -166,6 +226,20 @@ pub struct ActionOverride {
 
     /// Override ref style for this action
     pub ref_style: Option<policy::Style>,
+
+    /// Override branch-ref handling for this action.
+    ///
+    /// Same values as the global `branch_policy`: `ignore` leaves branch refs
+    /// untouched, `warn` flags them as floating, `update` pins them to the
+    /// branch's current HEAD SHA.
+    ///
+    /// ```toml
+    /// branch_policy = "ignore"           # quiet everywhere by default
+    ///
+    /// [actions."kjanat/runner"]
+    /// branch_policy = "update"           # but pin this one to its master SHA
+    /// ```
+    pub branch_policy: Option<policy::Branch>,
 
     /// Whether to completely ignore this action
     pub ignore: bool,
@@ -221,10 +295,20 @@ where
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ApiMode {
-    /// Use GraphQL API for batched requests (requires auth token)
+    /// One batched GraphQL query for all repos. Fast, but needs an auth token.
+    ///
+    /// ```toml
+    /// [fetch]
+    /// api_mode = "graphql"
+    /// ```
     #[default]
     Graphql,
-    /// Use REST API with parallel requests
+    /// Parallel REST requests, one per repo. Works without a token.
+    ///
+    /// ```toml
+    /// [fetch]
+    /// api_mode = "rest"
+    /// ```
     Rest,
 }
 
@@ -436,6 +520,16 @@ impl Config {
             .get(&key)
             .and_then(|o| o.ref_style)
             .unwrap_or(self.ref_style)
+    }
+
+    /// Get the effective branch policy for an action
+    #[must_use]
+    pub fn branch_policy_for(&self, owner: &str, repo: &str) -> policy::Branch {
+        let key = format!("{owner}/{repo}");
+        self.action_overrides
+            .get(&key)
+            .and_then(|o| o.branch_policy)
+            .unwrap_or(self.branch_policy)
     }
 
     /// Check if an action should be ignored.
@@ -652,10 +746,12 @@ mod tests {
         let override_cfg = ActionOverride {
             update_policy: Some(policy::Update::Patch),
             ref_style: Some(policy::Style::Sha),
+            branch_policy: Some(policy::Branch::Update),
             ignore: true,
         };
         assert_eq!(override_cfg.update_policy, Some(policy::Update::Patch));
         assert_eq!(override_cfg.ref_style, Some(policy::Style::Sha));
+        assert_eq!(override_cfg.branch_policy, Some(policy::Branch::Update));
         assert!(override_cfg.ignore);
     }
 

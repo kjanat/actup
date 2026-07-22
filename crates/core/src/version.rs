@@ -331,6 +331,13 @@ pub struct Set {
     /// Default branch info
     default_branch: Option<BranchInfo>,
 
+    /// Branch name -> current HEAD SHA, for pinning floating branch refs.
+    ///
+    /// Populated by the git ls-refs path; empty when versions came from an
+    /// API that does not enumerate branches.
+    #[serde(default)]
+    branches: std::collections::HashMap<String, String>,
+
     /// When this data was fetched (skipped in serialization — platform-dependent)
     #[serde(skip)]
     fetched_at: Option<std::time::SystemTime>,
@@ -446,6 +453,7 @@ impl Set {
             major_tags,
             latest,
             default_branch: None,
+            branches: std::collections::HashMap::new(),
             fetched_at: Some(clock.now()),
         }
     }
@@ -532,6 +540,24 @@ impl Set {
     /// Set the default branch information
     pub fn set_default_branch(&mut self, branch: BranchInfo) {
         self.default_branch = Some(branch);
+    }
+
+    /// Set the branch name -> HEAD SHA map used for pinning branch refs.
+    pub fn set_branches(&mut self, branches: std::collections::HashMap<String, String>) {
+        self.branches = branches;
+    }
+
+    /// Resolve a branch name to its current HEAD SHA, if known.
+    ///
+    /// Checks the branch map first, then the default branch.
+    #[must_use]
+    pub fn branch_sha(&self, name: &str) -> Option<&str> {
+        self.branches.get(name).map(String::as_str).or_else(|| {
+            self.default_branch
+                .as_ref()
+                .filter(|b| b.name() == name)
+                .map(BranchInfo::sha)
+        })
     }
 
     /// Builder-style setter for default branch
@@ -879,6 +905,7 @@ mod tests {
             major_tags: HashMap::new(),
             latest: Some(v4),
             default_branch: None,
+            branches: HashMap::new(),
             fetched_at: None,
         };
 
@@ -903,6 +930,7 @@ mod tests {
             major_tags: HashMap::new(),
             latest: Some(v4),
             default_branch: None,
+            branches: HashMap::new(),
             fetched_at: None,
         };
 
@@ -922,6 +950,7 @@ mod tests {
             major_tags: HashMap::new(),
             latest: Some(v4),
             default_branch: None,
+            branches: HashMap::new(),
             fetched_at: None,
         };
 
@@ -950,6 +979,7 @@ mod tests {
             major_tags: HashMap::new(),
             latest: Some(beta),
             default_branch: None,
+            branches: HashMap::new(),
             fetched_at: None,
         };
 

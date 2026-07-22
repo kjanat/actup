@@ -447,35 +447,58 @@ fn status_to_diagnostic(
             ..Default::default()
         }),
 
+        CheckStatus::PinBranch { ref_name, sha } => Some(Diagnostic {
+            range,
+            severity: Some(DiagnosticSeverity::WARNING),
+            code: Some(NumberOrString::String("pin-branch".into())),
+            source: Some(DIAGNOSTIC_SOURCE.into()),
+            message: format!(
+                "{uses_value}: pin branch '{ref_name}' to {} # {ref_name}",
+                sha.get(..7).unwrap_or(sha)
+            ),
+            ..Default::default()
+        }),
+
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,
-        } => {
-            let severity = if *is_environment_error {
-                DiagnosticSeverity::INFORMATION
-            } else {
-                DiagnosticSeverity::ERROR
-            };
-            // Environment errors use "(check failed: reason)" to distinguish
-            // from user errors which show the reason directly.
-            let message = if *is_environment_error {
-                error_ux::format_check_failed(uses_value, reason)
-            } else {
-                format!("{uses_value}: {reason}")
-            };
-            // TODO: attach `DiagnosticData::Unresolvable { suggested_ref }` via
-            // `data:` once closest-tag suggestion logic is implemented (like
-            // the Outdated branch does). Without it, the code action handler in
-            // `code_actions.rs` cannot offer "Change to ..." quickfixes.
-            Some(Diagnostic {
-                range,
-                severity: Some(severity),
-                code: Some(NumberOrString::String("unresolvable".into())),
-                source: Some(DIAGNOSTIC_SOURCE.into()),
-                message,
-                ..Default::default()
-            })
-        }
+        } => Some(unresolvable_diagnostic(
+            range,
+            uses_value,
+            reason,
+            *is_environment_error,
+        )),
+    }
+}
+
+/// Build the diagnostic for an unresolvable ref, splitting environment errors
+/// (info-level, "check failed") from user errors (error-level, reason shown).
+fn unresolvable_diagnostic(
+    range: Range,
+    uses_value: &str,
+    reason: &str,
+    is_environment_error: bool,
+) -> Diagnostic {
+    let severity = if is_environment_error {
+        DiagnosticSeverity::INFORMATION
+    } else {
+        DiagnosticSeverity::ERROR
+    };
+    let message = if is_environment_error {
+        error_ux::format_check_failed(uses_value, reason)
+    } else {
+        format!("{uses_value}: {reason}")
+    };
+    // TODO: attach `DiagnosticData::Unresolvable { suggested_ref }` via `data:`
+    // once closest-tag suggestion logic is implemented (like the Outdated
+    // branch does), so `code_actions.rs` can offer "Change to ..." quickfixes.
+    Diagnostic {
+        range,
+        severity: Some(severity),
+        code: Some(NumberOrString::String("unresolvable".into())),
+        source: Some(DIAGNOSTIC_SOURCE.into()),
+        message,
+        ..Default::default()
     }
 }
 

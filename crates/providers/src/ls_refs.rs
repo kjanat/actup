@@ -76,13 +76,14 @@ impl RemoteRefs {
             .or_else(|| self.branches.get(ref_name).map(String::as_str))
     }
 
-    /// Convert into a [`version::Set`] with the default branch attached.
+    /// Convert into a [`version::Set`] with branches and default branch attached.
     #[must_use]
     pub fn into_version_set(self) -> version::Set {
         let mut set = process_tags(self.tags);
         if let Some(branch) = self.default_branch {
             set.set_default_branch(branch);
         }
+        set.set_branches(self.branches);
         set
     }
 }

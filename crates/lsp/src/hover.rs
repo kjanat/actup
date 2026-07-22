@@ -235,6 +235,12 @@ fn format_version_status(status: &CheckStatus) -> String {
         CheckStatus::Floating { ref_name } => {
             format!("**Floating branch** `{ref_name}` — pin to a tag or SHA")
         }
+        CheckStatus::PinBranch { ref_name, sha } => {
+            format!(
+                "**Pin branch** `{ref_name}` -> `{}` # {ref_name}",
+                sha.get(..12).unwrap_or(sha)
+            )
+        }
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,

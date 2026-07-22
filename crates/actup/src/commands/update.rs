@@ -38,6 +38,12 @@ fn build_edit(loc: &UsesLocation, action_ref: &ActionRef, target: &version::Info
     }
 }
 
+/// Pin a floating branch ref to its HEAD SHA, tagging it with a `# branch` comment.
+fn pin_branch_edit(loc: &UsesLocation, ref_name: &str, sha: &str) -> PendingEdit {
+    PendingEdit::replace_ref(loc.line(), ref_name.to_string(), sha.to_string())
+        .with_comment(format!(" # {ref_name}"))
+}
+
 /// Write accumulated file edits, recording errors.
 fn write_files(files: &[FileEdits], dry_run: bool, errors: &mut ErrorTally) {
     for file_edits in files {
@@ -97,11 +103,17 @@ pub async fn run(
 
             // Use core check_action to determine if update needed
             let result = check_action_with_provider(&action_ref, &versions, config, provider).await;
-            let CheckStatus::Outdated { target, .. } = result.status() else {
-                continue; // Not outdated, skip
+            let (edit, target_display) = match result.status() {
+                CheckStatus::Outdated { target, .. } => (
+                    build_edit(&loc, &action_ref, target),
+                    target.version().to_string(),
+                ),
+                CheckStatus::PinBranch { ref_name, sha } => (
+                    pin_branch_edit(&loc, ref_name, sha),
+                    format!("{} # {ref_name}", &sha[..7.min(sha.len())]),
+                ),
+                _ => continue, // Not actionable, skip
             };
-
-            let edit = build_edit(&loc, &action_ref, target);
 
             if !file_edits.add(edit) {
                 eprintln!(
@@ -120,7 +132,7 @@ pub async fn run(
                     relative,
                     loc.line(),
                     action_ref.ref_str().red(),
-                    target.version().to_string().green()
+                    target_display.green()
                 );
             }
             total_updates += 1;

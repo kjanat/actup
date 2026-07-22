@@ -443,6 +443,26 @@ fn discover_workflow_files(worktree: &zed::Worktree) -> Vec<(String, String)> {
     files
 }
 
+/// Render the "Pin branch" section: branch refs to pin to their HEAD SHA.
+fn write_pin_branch_section(out: &mut String, pin_branch: &[&(String, UsesLocation, CheckResult)]) {
+    if pin_branch.is_empty() {
+        return;
+    }
+    out.push_str("### Pin branch\n\n");
+    for (path, uses_loc, result) in pin_branch {
+        if let CheckStatus::PinBranch { ref_name, sha } = result.status() {
+            let short = sha.get(..7).unwrap_or(sha);
+            let _ = writeln!(
+                out,
+                "- `{path}` line {}: `{}` — pin `{ref_name}` to `{short}`",
+                uses_loc.line(),
+                uses_loc.value(),
+            );
+        }
+    }
+    out.push('\n');
+}
+
 /// Format check results into human-readable output for the slash command.
 fn format_check_output(
     results: &[(String, UsesLocation, CheckResult)],
@@ -463,6 +483,7 @@ fn format_check_output(
     let mut pinned = 0usize;
     let mut unresolvable: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
     let mut floating: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
+    let mut pin_branch: Vec<&(String, UsesLocation, CheckResult)> = Vec::new();
     let mut ignored = 0usize;
 
     for r in results {
@@ -472,6 +493,7 @@ fn format_check_output(
             CheckStatus::Pinned { .. } => pinned += 1,
             CheckStatus::Ignored => ignored += 1,
             CheckStatus::Floating { .. } => floating.push(r),
+            CheckStatus::PinBranch { .. } => pin_branch.push(r),
             CheckStatus::Unresolvable { .. } => unresolvable.push(r),
         }
     }
@@ -479,11 +501,12 @@ fn format_check_output(
     // Summary line
     let _ = writeln!(
         out,
-        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} ignored\n",
+        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} to pin, {} ignored\n",
         outdated.len(),
         up_to_date,
         pinned,
         floating.len(),
+        pin_branch.len(),
         ignored,
     );
 
@@ -519,6 +542,8 @@ fn format_check_output(
         }
         out.push('\n');
     }
+
+    write_pin_branch_section(&mut out, &pin_branch);
 
     // Unresolvable refs
     if !unresolvable.is_empty() {
