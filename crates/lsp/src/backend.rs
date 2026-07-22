@@ -470,6 +470,8 @@ impl LanguageServer for LspBackend {
         });
         if count > 0 {
             tracing::debug!(count, "aborted in-flight diagnostic tasks");
+            // Yield so the aborts are processed before teardown continues.
+            tokio::task::yield_now().await;
         }
 
         Ok(())

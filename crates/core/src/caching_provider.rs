@@ -883,9 +883,8 @@ mod tests {
                         // First call: hang. Yields so cancellation can land.
                         std::future::pending::<()>().await;
                         unreachable!()
-                    } else {
-                        Ok(version::Set::default())
                     }
+                    Ok(version::Set::default())
                 })
             }
             fn resolve_ref_to_sha(
