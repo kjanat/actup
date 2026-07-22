@@ -6,13 +6,13 @@ jobs:
   autofix:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with: { components: "rustfmt,clippy" }
       - uses: Swatinem/rust-cache@v2
       - uses: extractions/setup-just@v4
       - uses: tombi-toml/setup-tombi@v1
-      - uses: kjanat/install-dprint@v1
+      - uses: kjanat/install-dprint@v2
       - uses: kjanat/install-shfmt@v1
       - name: Clippy fix
         run: cargo clippy --fix --allow-dirty --allow-staged --workspace --all-features
