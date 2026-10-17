@@ -234,4 +234,16 @@ await assert.rejects(
 
 console.log("PASS: array configs are rejected");
 
+// Test 11: configs nested past serde_json's 128-level recursion limit are rejected.
+let deep = [];
+for (let i = 0; i < 200; i++) {
+	deep = [deep];
+}
+await assert.rejects(
+	checkRefs(outdatedYaml, majorProvider, { default_host: deep }),
+	/invalid config: recursion limit exceeded/,
+);
+
+console.log("PASS: deeply nested configs are rejected");
+
 console.log("\nAll npm package integration tests PASSED");
