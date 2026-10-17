@@ -248,7 +248,7 @@ loc:
 
 # Check all editor extensions
 [group('extensions')]
-ext-check: zed::clippy vscode::lint vscode::typecheck
+ext-check: zed::clippy vscode::lint vscode::typecheck vscode::test
 
 # Verify the Rust→tsify→TS→consumer chain end-to-end (wasm build, wasm tests, then VS Code typecheck against fresh `.d.ts`)
 [group('extensions')]

@@ -1,0 +1,1 @@
+{ "extends": "./tsconfig.web.json", "compilerOptions": { "types": ["bun"] }, "include": ["./src/web/**/*.ts"], "exclude": [] }

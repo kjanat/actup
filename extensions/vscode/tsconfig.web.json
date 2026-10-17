@@ -20,5 +20,6 @@
 		"allowImportingTsExtensions": true,
 		"emitDeclarationOnly": true
 	},
-	"include": ["./src/web/**/*.ts"]
+	"include": ["./src/web/**/*.ts"],
+	"exclude": ["./src/web/test/**"]
 }

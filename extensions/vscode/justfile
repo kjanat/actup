@@ -8,6 +8,10 @@ lint:
 typecheck:
     bun run typecheck
 
+# Run unit tests
+test:
+    bun run test
+
 # Compile TypeScript
 build: lint typecheck
     bun run compile

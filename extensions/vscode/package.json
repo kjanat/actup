@@ -19,6 +19,7 @@
 		"generate:icon": "bun --cwd=../../branding/ generate-icon.ts -p 0 none icon.svg ../extensions/vscode/icon.png",
 		"lint": "eslint .",
 		"package": "vsce package --no-dependencies",
+		"test": "tsc -p tsconfig.test.json --noEmit && bun test",
 		"typecheck": "tsc --noEmit",
 		"typecheck:web": "tsc -p tsconfig.web.json --noEmit",
 		"vsce": "vsce",

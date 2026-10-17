@@ -166,6 +166,9 @@ jobs:
       - name: VSCode — lint + typecheck (against fresh wasm types)
         working-directory: extensions/vscode
         run: bun run lint && bun run typecheck
+      - name: VSCode — test
+        working-directory: extensions/vscode
+        run: bun run test
 
   wasm:
     name: WASM
