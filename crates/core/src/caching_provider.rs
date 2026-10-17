@@ -180,7 +180,6 @@ fn claim_flight<K: Eq + Hash + Clone>(
     }
 }
 
-/// Whether a provider answer may be reused.
 fn settled<T>(result: &Result<T>) -> bool {
     result
         .as_ref()
