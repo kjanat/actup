@@ -24,8 +24,8 @@ serde         = { workspace = true }  # Serialization
 strsim        = { workspace = true }  # Did-you-mean hints, closest-tag suggestions
 thiserror     = { workspace = true }  # Error derive
 tracing       = { workspace = true }  # Logging
-tsify-next    = { workspace = true, optional = true }  # gated by `tsify` feature
-wasm-bindgen  = { workspace = true, optional = true }  # required by tsify-next for `typescript_custom_section`
+tsify         = { workspace = true, optional = true }  # gated by `tsify` feature
+wasm-bindgen  = { workspace = true, optional = true }  # required by tsify for `typescript_custom_section`
 
 [dev-dependencies]
 actup-test-support = { path = "../test-support" }
@@ -45,11 +45,11 @@ tokio = { version = "1", default-features = false, features = ["sync"] }  # sync
 [features]
 # Clap helpers shared by the `actup` and `actup-mcp` binaries.
 clap  = ["dep:clap"]
-# Opt-in TypeScript binding generation via tsify-next. Enabled by `actup-wasm`
+# Opt-in TypeScript binding generation via tsify. Enabled by `actup-wasm`
 # for the npm package build (wasm32-unknown-unknown). NOT enabled by the Zed
 # extension (wasm32-wasip2) — wasm-bindgen's placeholder imports do not
 # resolve under `wasm-component-ld`.
-tsify = ["dep:tsify-next", "dep:wasm-bindgen"]
+tsify = ["dep:tsify", "dep:wasm-bindgen"]
 
 [lints]
 workspace = true

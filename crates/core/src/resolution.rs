@@ -25,8 +25,7 @@ pub const SHORT_SHA_REASON: &str = "short SHA; pin to the full 40-character comm
 
 /// Result of checking a single action reference
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
-#[cfg_attr(feature = "tsify", tsify(into_wasm_abi, from_wasm_abi))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct CheckResult {
     /// The action reference that was checked
     action_ref: ActionRef,
@@ -45,7 +44,7 @@ pub struct CheckResult {
 
 /// Kind of ref a `uses:` reference names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 #[serde(rename_all = "lowercase")]
 pub enum RefKind {
     /// A git tag
@@ -185,7 +184,7 @@ impl CheckResult {
 
 /// Status of an action version check
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub enum CheckStatus {
     /// Action is at the latest allowed version
     UpToDate,

@@ -485,7 +485,7 @@ pub enum Listing {
 
 /// Information about a specific version
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub struct Info {
     /// The parsed version. Wire form is the Display string (see [`Version`]).
     #[cfg_attr(feature = "tsify", tsify(type = "string"))]

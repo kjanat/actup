@@ -26,7 +26,7 @@ use serde::{
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub enum Update {
     /// Only patch updates within same major.minor (1.2.3 -> 1.2.4).
     ///
@@ -143,7 +143,7 @@ impl<'de> Deserialize<'de> for Update {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub enum Style {
     /// Keep the original style (tag stays tag, SHA stays SHA).
     ///
@@ -264,7 +264,7 @@ impl<'de> Deserialize<'de> for Style {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub enum Track {
     /// Write the major-only tag for a major-only ref when it points at the target commit,
     /// else the full version.
@@ -345,7 +345,7 @@ impl<'de> Deserialize<'de> for Track {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 pub enum Branch {
     /// Ignore branch refs (don't flag as outdated).
     ///
@@ -431,7 +431,7 @@ impl<'de> Deserialize<'de> for Branch {
 
 /// How the LSP reports an action whose repository is archived or disabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
-#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
 #[serde(rename_all = "lowercase")]
 pub enum Archived {
     /// A hint diagnostic with code `archived` and a hover warning.

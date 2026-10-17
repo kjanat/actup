@@ -225,7 +225,7 @@ pub fn sort_version_tags(
 }
 
 /// A [`CheckResult`] with the `uses:` location it was checked from.
-#[derive(Debug, Serialize, Deserialize, tsify_next::Tsify)]
+#[derive(Debug, Serialize, Deserialize, tsify::Tsify)]
 struct LocatedCheckResult {
     /// The `uses:` value in the YAML that produced this result
     location: UsesLocation,
@@ -373,7 +373,7 @@ pub fn check_refs(
 }
 
 /// A text edit to apply to the YAML content.
-#[derive(Debug, Serialize, tsify_next::Tsify)]
+#[derive(Debug, Serialize, tsify::Tsify)]
 #[serde(rename_all = "camelCase")]
 struct UpdateEdit {
     /// 1-indexed line number

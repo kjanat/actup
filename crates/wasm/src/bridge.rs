@@ -76,9 +76,8 @@ extern "C" {
 ///
 /// Matches the shape the JS provider should return from `getVersions()`.
 /// Deserialized via `serde_wasm_bindgen` from the JS object.
-#[derive(serde::Deserialize, tsify_next::Tsify)]
+#[derive(serde::Deserialize, tsify::Tsify)]
 #[serde(rename_all = "camelCase")]
-#[tsify(from_wasm_abi)]
 pub struct VersionSet {
     /// Semver tags: `[{ version: "v4.2.0", sha: "abc..." }, ...]`
     #[serde(default)]
@@ -89,7 +88,7 @@ pub struct VersionSet {
 }
 
 /// A single version tag as returned from JS.
-#[derive(serde::Deserialize, serde::Serialize, tsify_next::Tsify)]
+#[derive(serde::Deserialize, serde::Serialize, tsify::Tsify)]
 pub struct VersionTag {
     /// Tag string (e.g. "v4.2.0", "v1")
     version: String,
@@ -103,7 +102,7 @@ pub fn sort_newest_first(tags: &mut [VersionTag]) {
 }
 
 /// Branch info as returned from JS.
-#[derive(serde::Deserialize, tsify_next::Tsify)]
+#[derive(serde::Deserialize, tsify::Tsify)]
 pub struct BranchInfo {
     /// Branch name (e.g. "main")
     name: String,
