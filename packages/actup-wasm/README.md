@@ -93,7 +93,8 @@ Parse `uses:` references from workflow YAML. Pure, synchronous. No network
 access.
 
 Returns `UsesLocation[]` — each entry has `line`, `column`, `value`, `raw_line`,
-and `ref_range` (byte offsets of the `@ref` portion, or `null`).
+`value_range` (byte offsets of the value, or `null` when the line holds it
+escaped), and `ref_range` (byte offsets of the `@ref` portion, or `null`).
 
 ### `checkRefs(yaml, provider, config?)`
 

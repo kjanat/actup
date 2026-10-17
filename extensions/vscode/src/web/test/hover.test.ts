@@ -3,27 +3,31 @@ import { describe, expect, mock, test } from "bun:test";
 import * as vscode from "vscode";
 import { checkResultsByUri, clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
 import { ActupHoverProvider } from "../hover.ts";
-import { FakeDocument, fakeProvider } from "./fixtures.ts";
+import { FakeDocument, fakeProvider, rangeOf } from "./fixtures.ts";
 
-const provider = fakeProvider({
-	"actions/checkout": [
-		{ version: "v1.0.0", sha: "a".repeat(40) },
-		{ version: "v1.2.0", sha: "b".repeat(40) },
-	],
-});
+const tags = [
+	{ version: "v1.0.0", sha: "a".repeat(40) },
+	{ version: "v1.2.0", sha: "b".repeat(40) },
+];
+const provider = fakeProvider({ "actions/checkout": tags, "actions/setup-node": tags });
 
 function workflow(ref: string): string {
 	return `jobs:\n  build:\n    steps:\n      - uses: actions/checkout@${ref}\n`;
 }
 
-async function statusRows(document: FakeDocument): Promise<string[]> {
-	const hover = await new ActupHoverProvider(provider, checkResultsByUri).provideHover(
+function hoverAt(document: FakeDocument, line: number, character: number): Promise<vscode.Hover | undefined> {
+	return new ActupHoverProvider(provider, checkResultsByUri).provideHover(
 		document,
-		new vscode.Position(3, 20),
+		new vscode.Position(line, character),
 	);
-	return (hover?.contents ?? [])
-		.flatMap(content => (typeof content === "string" ? content : content.value).split("\n"))
-		.filter(row => row.startsWith("$("));
+}
+
+function rows(hover: vscode.Hover | undefined): string[] {
+	return (hover?.contents ?? []).flatMap(content => (typeof content === "string" ? content : content.value).split("\n"));
+}
+
+async function statusRows(document: FakeDocument): Promise<string[]> {
+	return rows(await hoverAt(document, 3, 20)).filter(row => row.startsWith("$("));
 }
 
 describe("hover status from computed diagnostics", () => {
@@ -76,5 +80,45 @@ describe("hover status from computed diagnostics", () => {
 
 		expect(checkResultsByUri.has(document.uri.toString())).toBe(false);
 		expect(collection.get(document.uri)).toEqual([]);
+	});
+});
+
+describe("hover range", () => {
+	test("covers a quoted value without its quotes", async () => {
+		const document = new FakeDocument("hover-quoted.yml", "jobs:\n  build:\n    steps:\n      - uses: 'actions/checkout@v1.0.0'\n");
+
+		expect((await hoverAt(document, 3, 20))?.range).toEqual(rangeOf(document, 3, "actions/checkout@v1.0.0"));
+	});
+
+	test("covers the whole line when the line holds the value escaped", async () => {
+		const document = new FakeDocument(
+			"hover-escaped.yml",
+			"jobs:\n  build:\n    steps:\n      - uses: \"actions/checkout@v1.0.\\x30\"\n",
+		);
+		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());
+		const hover = await hoverAt(document, 3, 20);
+
+		expect(hover?.range).toEqual(document.lineAt(3).range);
+		expect(rows(hover)).toContain("$(warning) Outdated: `v1.0.0` → `v1.2.0`");
+	});
+
+	test("describes the action under the cursor on a line with two actions", async () => {
+		const line = "    steps: [{ uses: actions/checkout@v1.0.0 }, { uses: actions/setup-node@v1.2.0 }]";
+		const document = new FakeDocument("hover-two.yml", `jobs:\n  build:\n${line}\n`);
+		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());
+		const first = await hoverAt(document, 2, line.indexOf("checkout"));
+		const second = await hoverAt(document, 2, line.indexOf("setup-node"));
+
+		expect(first?.range).toEqual(rangeOf(document, 2, "actions/checkout@v1.0.0"));
+		expect(rows(first)).toEqual(expect.arrayContaining(["**actions/checkout**", "$(warning) Outdated: `v1.0.0` → `v1.2.0`"]));
+		expect(second?.range).toEqual(rangeOf(document, 2, "actions/setup-node@v1.2.0"));
+		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "$(check) Up to date at `v1.2.0`"]));
+	});
+
+	test("shows nothing when the cursor is outside every value on the line", async () => {
+		const line = "    steps: [{ uses: actions/checkout@v1.0.0 }, { uses: actions/setup-node@v1.2.0 }]";
+		const document = new FakeDocument("hover-between.yml", `jobs:\n  build:\n${line}\n`);
+
+		expect(await hoverAt(document, 2, line.indexOf("}, {"))).toBeUndefined();
 	});
 });

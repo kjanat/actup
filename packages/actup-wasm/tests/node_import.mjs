@@ -49,6 +49,8 @@ if (first.value !== "actions/checkout@v4") {
 if (first.line !== 7) {
 	throw new Error(`Expected line 7, got ${first.line}`);
 }
+assert.deepEqual(first.value_range, { start: 14, end: 33 }, "value range covers the value");
+assert.deepEqual(locations[1].value_range, { start: 15, end: 36 }, "value range of a quoted value skips the quotes");
 
 console.log("PASS: parseUsesRefs returned", locations.length, "locations");
 console.log("  [0]", JSON.stringify(first));
@@ -278,6 +280,7 @@ jobs:
 const [escapedLoc] = parseUsesRefs(escapedYaml);
 assert.equal(escapedLoc.value, "actions/checkout@v4.0.0", "escape is decoded");
 assert.equal(escapedLoc.ref_range, null, "no ref range for an escaped value");
+assert.equal(escapedLoc.value_range, null, "no value range for an escaped value");
 const escapedResults = await checkRefs(escapedYaml, mockProvider);
 assert.equal(statusName(escapedResults[0].status), "Outdated", "escaped ref is still checked");
 assert.deepEqual(planUpdates(escapedResults), [], "no edit for an escaped value");

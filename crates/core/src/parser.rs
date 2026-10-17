@@ -362,6 +362,9 @@ pub struct UsesLocation {
     value: String,
     /// The full line (for context)
     raw_line: String,
+    /// Byte range of the value within the line. Present only if `raw_line`
+    /// holds the value verbatim.
+    value_range: Option<RefRange>,
     /// Byte range of the ref portion (after `@`) within the line. Present
     /// only if the value contains `@` and `raw_line` holds the value verbatim.
     ref_range: Option<RefRange>,
@@ -371,21 +374,25 @@ impl UsesLocation {
     /// Create a new `UsesLocation`
     #[must_use]
     pub fn new(line: usize, column: usize, value: String, raw_line: String) -> Self {
-        let mut loc = Self {
-            line,
-            column,
-            value,
-            raw_line,
-            ref_range: None,
-        };
-        loc.ref_range = loc.value_range().and_then(|range| {
-            let at_pos = loc.value.find('@')?;
+        let value_range = column.checked_sub(1).and_then(|start| {
+            let end = start.checked_add(value.len())?;
+            (raw_line.get(start..end) == Some(value.as_str())).then_some(RefRange { start, end })
+        });
+        let ref_range = value_range.and_then(|range| {
+            let at_pos = value.find('@')?;
             Some(RefRange {
                 start: range.start + at_pos + 1,
                 end: range.end,
             })
         });
-        loc
+        Self {
+            line,
+            column,
+            value,
+            raw_line,
+            value_range,
+            ref_range,
+        }
     }
 
     /// Get the line number
@@ -417,9 +424,7 @@ impl UsesLocation {
     /// Get the byte range of the uses value in the line, if the line holds it verbatim.
     #[must_use]
     pub fn value_range(&self) -> Option<std::ops::Range<usize>> {
-        let start = self.column.checked_sub(1)?;
-        let range = start..start.checked_add(self.value.len())?;
-        (self.raw_line.get(range.clone()) == Some(self.value.as_str())).then_some(range)
+        self.value_range.map(|r| r.start..r.end)
     }
 
     /// Get just the ref portion range (after @)
@@ -812,6 +817,29 @@ jobs:
             })
             .collect();
         assert_eq!(refs, ["v1", "v2", "v3", "v4"]);
+    }
+
+    #[test]
+    fn uses_location_serializes_its_value_range()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let verbatim = UsesLocation::new(1, 9, "a/b@v1".into(), "  uses: a/b@v1".into());
+        let json = serde_json::to_value(&verbatim)?;
+        assert_eq!(
+            json["value_range"],
+            serde_json::json!({ "start": 8, "end": 14 })
+        );
+        assert_eq!(
+            json["ref_range"],
+            serde_json::json!({ "start": 12, "end": 14 })
+        );
+        assert_eq!(serde_json::from_value::<UsesLocation>(json)?, verbatim);
+
+        let escaped = UsesLocation::new(1, 10, "a/b@v10".into(), r#"  uses: "a/b@v1\x30""#.into());
+        let json = serde_json::to_value(&escaped)?;
+        assert_eq!(json["value_range"], serde_json::Value::Null);
+        assert_eq!(json["ref_range"], serde_json::Value::Null);
+        assert_eq!(escaped.value_range(), None);
+        Ok(())
     }
 
     #[test]

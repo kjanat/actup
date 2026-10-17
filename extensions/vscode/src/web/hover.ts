@@ -1,5 +1,5 @@
 import { parseUsesRefs } from "actup-wasm";
-import type { ActupProvider, LocatedCheckResult } from "actup-wasm";
+import type { ActupProvider, LocatedCheckResult, UsesLocation } from "actup-wasm";
 import * as vscode from "vscode";
 import { byteToColumn } from "./position.ts";
 
@@ -14,13 +14,11 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		position: vscode.Position,
 	): Promise<vscode.Hover | undefined> {
 		const text = document.getText();
-		const locations = parseUsesRefs(text);
-
-		// Find the uses: ref at the cursor position
-		const loc = locations.find(l => {
-			const line = l.line - 1; // 1-indexed -> 0-indexed
-			return line === position.line;
-		});
+		const onLine = parseUsesRefs(text).filter(l => l.line - 1 === position.line);
+		const loc = onLine.find(l => {
+			const columns = valueColumns(l);
+			return columns !== undefined && position.character >= columns.start && position.character < columns.end;
+		}) ?? onLine.find(l => l.value_range === null);
 		if (loc === undefined) {
 			return undefined;
 		}
@@ -77,10 +75,16 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		);
 
 		const line = loc.line - 1;
-		const start = byteToColumn(loc.raw_line, loc.column - 1);
-		const range = new vscode.Range(line, start, line, start + loc.value.length);
-		return new vscode.Hover(md, range);
+		const columns = valueColumns(loc) ?? { start: 0, end: loc.raw_line.length };
+		return new vscode.Hover(md, new vscode.Range(line, columns.start, line, columns.end));
 	}
+}
+
+function valueColumns(loc: UsesLocation): { start: number; end: number } | undefined {
+	const range = loc.value_range;
+	return range === null
+		? undefined
+		: { start: byteToColumn(loc.raw_line, range.start), end: byteToColumn(loc.raw_line, range.end) };
 }
 
 function parseActionRef(

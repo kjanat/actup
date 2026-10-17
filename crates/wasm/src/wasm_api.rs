@@ -76,8 +76,8 @@ fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
 
 /// Parse `uses:` references from workflow YAML content.
 ///
-/// Returns a JS array of objects with `line`, `column`, `value`, and
-/// `raw_line` fields (matching [`actup_core::UsesLocation`] serialization).
+/// Returns a JS array of serialized [`actup_core::UsesLocation`] objects
+/// (`line`, `column`, `value`, `raw_line`, `value_range`, `ref_range`).
 ///
 /// This is a pure, synchronous function — no network or filesystem access.
 ///
