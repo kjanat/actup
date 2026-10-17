@@ -979,53 +979,72 @@ impl LspBackend {
             return Vec::new();
         };
 
-        let targets = compute_pin_targets(&action, version_sets.get(&repo_id), provider).await;
-
-        let ref_range = tower_lsp_server::ls_types::Range {
-            start: tower_lsp_server::ls_types::Position {
-                line: action.line,
-                character: action.col_start,
-            },
-            end: tower_lsp_server::ls_types::Position {
-                line: action.line,
-                character: action.col_end,
-            },
-        };
-        crate::code_actions::pin_code_actions(
+        pin_actions_for(
+            &action,
+            version_sets.get(&repo_id),
+            provider,
             uri,
             doc_version,
             supports_doc_changes,
-            ref_range,
-            action.trailing(version_sets.get(&repo_id)),
-            action.line_end(),
-            &targets,
         )
+        .await
     }
+}
+
+/// Build the pin and unpin code actions for `action` from `cached` versions, or versions fetched now.
+///
+/// The targets and the label comment after the ref read the same version set.
+async fn pin_actions_for(
+    action: &crate::diagnostics::LocatedAction,
+    cached: Option<&actup_core::version::Set>,
+    provider: &dyn actup_core::Provider,
+    uri: &Uri,
+    doc_version: Option<i32>,
+    supports_doc_changes: bool,
+) -> Vec<tower_lsp_server::ls_types::CodeActionOrCommand> {
+    let fetched = if cached.is_none() {
+        let repo_id = action.action_ref.to_repo_id().without_subpath();
+        provider.get_versions(&repo_id).await.ok()
+    } else {
+        None
+    };
+    let versions = cached.or(fetched.as_ref());
+    let targets = compute_pin_targets(action, versions, provider).await;
+    let ref_range = tower_lsp_server::ls_types::Range {
+        start: tower_lsp_server::ls_types::Position {
+            line: action.line,
+            character: action.col_start,
+        },
+        end: tower_lsp_server::ls_types::Position {
+            line: action.line,
+            character: action.col_end,
+        },
+    };
+    crate::code_actions::pin_code_actions(
+        uri,
+        doc_version,
+        supports_doc_changes,
+        ref_range,
+        action.trailing(versions),
+        action.line_end(),
+        &targets,
+    )
 }
 
 /// Resolve the SHA, major-tag, default-branch and unpin targets for a ref.
 ///
-/// Cached tags resolve the SHA without a network call; branch refs (and
-/// uncached tags) fall back to a provider lookup. No-op targets (a target equal
+/// Tags in `versions` resolve the SHA without a network call; branch refs (and
+/// unlisted tags) fall back to a provider lookup. No-op targets (a target equal
 /// to the current ref, or a SHA pin of an already-pinned ref) are dropped. The
 /// unpin target needs a pin marker naming a fetched tag on the pinned commit.
 async fn compute_pin_targets(
     action: &crate::diagnostics::LocatedAction,
-    cached_versions: Option<&actup_core::version::Set>,
+    versions: Option<&actup_core::version::Set>,
     provider: &dyn actup_core::Provider,
 ) -> crate::code_actions::PinTargets {
     let action_ref = &action.action_ref;
     let ref_str = action_ref.ref_str();
     let repo_id = action_ref.to_repo_id().without_subpath();
-
-    // Resolving the SHA and the major both need version data; fetch it if the
-    // diagnostics pass hasn't cached it yet so the actions appear consistently.
-    let fetched = if cached_versions.is_none() {
-        provider.get_versions(&repo_id).await.ok()
-    } else {
-        None
-    };
-    let versions = cached_versions.or(fetched.as_ref());
 
     let sha = if action_ref.is_sha() {
         None
@@ -1734,6 +1753,61 @@ mod tests {
         let text = crate::workspace_commands::apply_text_edits(line, edits, encoding)
             .ok_or("unpin edit does not fit")?;
         Ok(Some(format!("{}: {text}", unpin.title)))
+    }
+
+    #[tokio::test]
+    async fn pin_actions_read_labels_from_the_versions_they_fetch()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let line = "  - uses: actions/checkout@dev # main keep";
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let action = crate::diagnostics::locate_action_at(
+            line,
+            actup_core::SourceFormat::Yaml,
+            tower_lsp_server::ls_types::Position {
+                line: 0,
+                character: 28,
+            },
+            encoding,
+        )
+        .ok_or("no action under the cursor")?;
+        let mut versions = actup_core::version::Set::new();
+        versions.set_branches(std::collections::HashMap::from([
+            ("main".to_string(), "c".repeat(40)),
+            ("dev".to_string(), "d".repeat(40)),
+        ]));
+        let dev = "d".repeat(40);
+        let provider = crate::test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions)
+            .with_resolve(Ok(&dev));
+        let calls = provider.call_count();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let actions = pin_actions_for(&action, None, &provider, &uri, None, false).await;
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let written: Vec<(String, String)> = actions
+            .iter()
+            .filter_map(|action| match action {
+                tower_lsp_server::ls_types::CodeActionOrCommand::CodeAction(action) => {
+                    let edits = action.edit.as_ref()?.changes.as_ref()?.get(&uri)?;
+                    let text = crate::workspace_commands::apply_text_edits(line, edits, encoding)?;
+                    Some((action.title.clone(), text))
+                }
+                tower_lsp_server::ls_types::CodeActionOrCommand::Command(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            written,
+            [
+                (
+                    "Pin to commit SHA (dev)".to_string(),
+                    format!("  - uses: actions/checkout@{dev} # dev keep"),
+                ),
+                (
+                    "Pin to branch main".to_string(),
+                    "  - uses: actions/checkout@main # keep".to_string(),
+                ),
+            ]
+        );
+        Ok(())
     }
 
     #[tokio::test]
