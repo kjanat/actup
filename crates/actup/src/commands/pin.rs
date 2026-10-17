@@ -727,6 +727,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_pins_named_refs_with_the_editor_comment_rule()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = [
+            "steps:",
+            "  - uses: o/b@main # v1.0.0",
+            "  - uses: \"o/b@main\" # v1.0.0",
+            "  - { uses: o/b@main } # v1.0.0",
+            "  - { uses: o/b@main, with: { x: 1 } }",
+            "  - { uses: 'o/b@main', with: { b: 'x # v9' } }",
+            "  - { uses: o/b@main, with: { b: !!str 'x # v9' } }",
+            "  - uses: 'o/b@main' # keep me",
+            "  - uses: o/b@v1 # v0.9.0",
+            "",
+        ]
+        .join("\n");
+        let expected = [
+            "steps:",
+            "  - uses: o/b@CCC # main",
+            "  - uses: \"o/b@CCC\" # main",
+            "  - { uses: o/b@CCC } # main",
+            "  - { uses: o/b@CCC, with: { x: 1 } }",
+            "  - { uses: 'o/b@CCC', with: { b: 'x # v9' } }",
+            "  - { uses: o/b@CCC, with: { b: !!str 'x # v9' } }",
+            "  - uses: 'o/b@CCC' # keep me",
+            "  - uses: o/b@CCC # v1",
+            "",
+        ]
+        .join("\n")
+        .replace("CCC", &sha('c'));
+        assert_pin_writes(&content, &expected).await
+    }
+
+    #[tokio::test]
     async fn test_edit_records_edited_and_errored_refs() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         workflow(

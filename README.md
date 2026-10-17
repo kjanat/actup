@@ -325,7 +325,8 @@ a scalar, and never in a plain-text file. The comment goes after the closing
 quote and the flow `}` or `]` that close the value, as in
 `{ uses: "o/b@<sha>" } # v4.2.0`. Other text after the value, such as more flow
 keys, means no new comment, but a version comment at the end of the line is
-still refreshed and keeps its note. The CLI, the LSP, the MCP server and the
+still refreshed and keeps its note. `actup pin` and `branch = "update"` place
+their `# <ref>` comment the same way. The CLI, the LSP, the MCP server and the
 wasm package follow the same rule.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``

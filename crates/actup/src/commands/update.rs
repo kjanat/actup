@@ -424,6 +424,14 @@ mod tests {
         toml: &str,
         content: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
+        update_with_config_runs(toml, content, 2).await
+    }
+
+    async fn update_with_config_runs(
+        toml: &str,
+        content: &str,
+        runs: usize,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let workflows = dir.path().join(".github/workflows");
         std::fs::create_dir_all(&workflows)?;
@@ -449,17 +457,19 @@ mod tests {
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         let written = std::fs::read_to_string(&file)?;
-        let code = run(
-            dir.path(),
-            false,
-            OutputFormat::Json,
-            &config,
-            &registry,
-            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
-        )
-        .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
-        assert_eq!(std::fs::read_to_string(&file)?, written);
+        for _ in 1..runs {
+            let code = run(
+                dir.path(),
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+            )
+            .await;
+            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(std::fs::read_to_string(&file)?, written);
+        }
         Ok(written)
     }
 
@@ -541,6 +551,44 @@ mod tests {
         ]
         .join("\n")
         .replace("NEW", &sha40('b'));
+        assert_eq!(written, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_pins_branches_with_the_editor_comment_rule()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = [
+            "steps:",
+            "  - uses: o/a@main",
+            "  - uses: o/b@main # v1.0.0",
+            "  - uses: \"o/c@main\" # v1.0.0",
+            "  - uses: 'o/d@main'",
+            "  - { uses: o/e@main } # v1.0.0",
+            "  - { uses: o/f@main, with: { x: 1 } }",
+            "  - { uses: 'o/g@main', with: { b: 'x # v9' } }",
+            "  - { uses: o/h@main, with: { b: !!str 'x # v9' } }",
+            "  - uses: o/i@main # keep me",
+            "",
+        ]
+        .join("\n");
+        let written =
+            update_with_config_runs("[policy]\nbranch = \"update\"\n", &content, 1).await?;
+        let expected = [
+            "steps:",
+            "  - uses: o/a@PIN # main",
+            "  - uses: o/b@PIN # main",
+            "  - uses: \"o/c@PIN\" # main",
+            "  - uses: 'o/d@PIN' # main",
+            "  - { uses: o/e@PIN } # main",
+            "  - { uses: o/f@PIN, with: { x: 1 } }",
+            "  - { uses: 'o/g@PIN', with: { b: 'x # v9' } }",
+            "  - { uses: o/h@PIN, with: { b: !!str 'x # v9' } }",
+            "  - uses: o/i@PIN # keep me",
+            "",
+        ]
+        .join("\n")
+        .replace("PIN", &sha40('a'));
         assert_eq!(written, expected);
         Ok(())
     }
