@@ -117,9 +117,9 @@ pub trait Clock: fmt::Debug + MaybeSend + MaybeSync {
 
 /// Default: delegates to std.
 #[derive(Debug, Clone, Copy, Default)]
-pub struct SystemClock;
+pub struct System;
 
-impl Clock for SystemClock {
+impl Clock for System {
     fn now(&self) -> std::time::SystemTime {
         std::time::SystemTime::now()
     }

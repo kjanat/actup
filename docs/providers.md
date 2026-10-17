@@ -257,7 +257,7 @@ jobs:
    - Validate required fields; a host's own `api_mode` must be one its provider
      supports, and the global `[fetch] api_mode` is only a preference
 
-3. **Construct provider** via `(registration.create)(config)`
+3. **Construct provider** via `(registration.create)(&config)`
    - Provider is registered in the host-to-provider registry
    - Provider knows its own API structure, auth, pagination, encoding
    - Provider returns data in actup-core types

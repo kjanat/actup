@@ -99,7 +99,7 @@ pub struct Config {
 
     /// Host configs (validated: lowercase keys only)
     #[serde(default)]
-    pub hosts: HashMap<String, HostConfig>,
+    pub hosts: HashMap<String, Host>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -120,7 +120,7 @@ impl Default for FetchSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct HostConfig {
+pub struct Host {
     /// Provider kind. Required for non-preset hosts.
     pub kind: Option<HostKind>,
 
@@ -292,7 +292,7 @@ After preset merge + host overrides + provider defaults/inference:
 
 ## Merge Semantics
 
-For each field in `HostConfig`, if user value is `Some`, it replaces
+For each field in `config::Host`, if user value is `Some`, it replaces
 preset/default; otherwise preset/default/inferred value remains. Empty strings
 are treated as `Some("")`, not as "inherit."
 
@@ -403,7 +403,7 @@ migration.
 | -- | --------------------------------------------------------- | ------ | ------- |
 | 1  | Add `HostKind`, `ApiMode` enums                           | S      | -       |
 | 2  | Add `FetchSettings` + Default impl                        | S      | -       |
-| 3  | Add `HostConfig` struct                                   | S      | 1       |
+| 3  | Add `config::Host` struct                                 | S      | 1       |
 | 4  | Add `Registration`, `Preset`, `Capabilities` to core      | S      | 1       |
 | 5  | Providers export `REGISTRATION` (presets + inference)     | M      | 4       |
 | 6  | Feature-gated `available_registrations()` (CLI/providers) | S      | 4,5     |
