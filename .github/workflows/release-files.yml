@@ -1,0 +1,28 @@
+name: Release files
+on:
+  push: { branches: [master] }
+  pull_request:
+permissions: { contents: read }
+jobs:
+  docs:
+    name: Release archive documents exist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - name: Check every file the Package step copies
+        run: |
+          docs="$(yq '.jobs.build.steps[] | select(.name == "Package") | .env.RELEASE_DOCS' .github/workflows/release.yml)"
+          if [[ -z "${docs}" || "${docs}" == null ]]; then
+            echo "::error file=.github/workflows/release.yml::the Package step sets no RELEASE_DOCS"
+            exit 1
+          fi
+          missing=0
+          for file in ${docs}; do
+            if [[ ! -f "${file}" ]]; then
+              echo "::error::release.yml copies ${file}, which the repository lacks"
+              missing=1
+            fi
+          done
+          exit "${missing}"

@@ -65,10 +65,12 @@ jobs:
           ARCHIVE: ${{ matrix.archive }}
           PACKAGE: ${{ matrix.package }}
           EXT: ${{ matrix.ext }}
+          RELEASE_DOCS: README.md LICENSE-MIT LICENSE-APACHE
         run: |
           mkdir -p dist
           cp "target/${TARGET}/release/${PACKAGE}${EXT}" dist/
-          cp README.md LICENSE dist/
+          read -ra docs <<<"${RELEASE_DOCS}"
+          cp "${docs[@]}" dist/
           if [[ "${ARCHIVE}" == ".zip" ]]; then
             cd dist && 7z a "../${PACKAGE}-${REF_NAME}-${TARGET}${ARCHIVE}" ./*
           else
