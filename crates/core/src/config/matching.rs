@@ -100,11 +100,7 @@ impl FromStr for ActionPattern {
             return Err(invalid("empty path segment"));
         }
         for (field, name) in [("owner", owner), ("repo", repo)] {
-            if let Some(c) = name.chars().find(|&c| {
-                !(c.is_ascii_alphanumeric()
-                    || matches!(c, '.' | '_' | '-')
-                    || GLOB_META.contains(&c))
-            }) {
+            if let Some(c) = foreign_char(name) {
                 return Err(invalid(&format!(
                     "{field} `{name}` contains `{c}`, and names match `[A-Za-z0-9._-]+`"
                 )));
@@ -122,6 +118,22 @@ impl FromStr for ActionPattern {
             ref_name: ref_name.map(glob).transpose()?,
         })
     }
+}
+
+fn foreign_char(name: &str) -> Option<char> {
+    let name_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
+    let mut class: Option<usize> = None;
+    for c in name.chars() {
+        match class {
+            Some(0) if c == '!' => {}
+            Some(len) if c == ']' && len > 0 => class = None,
+            Some(len) if name_char(c) || GLOB_META.contains(&c) => class = Some(len + 1),
+            None if c == '[' => class = Some(0),
+            None if name_char(c) || matches!(c, '*' | '?') => {}
+            _ => return Some(c),
+        }
+    }
+    None
 }
 
 fn has_glob_port(first: &str, depth: usize) -> bool {
@@ -310,6 +322,11 @@ mod tests {
             ("o/r~x", "repo", "r~x", '~'),
             ("my org/r", "owner", "my org", ' '),
             ("o/é*", "repo", "é*", 'é'),
+            ("o/r!x", "repo", "r!x", '!'),
+            ("o/r]", "repo", "r]", ']'),
+            ("o!/r", "owner", "o!", '!'),
+            ("o/[a]]", "repo", "[a]]", ']'),
+            ("o/[~]", "repo", "[~]", '~'),
         ] {
             assert_eq!(
                 raw.parse::<ActionPattern>().err(),
@@ -323,10 +340,16 @@ mod tests {
             "*/se?up-[a-z]*",
             "o-1/r_2.x",
             "o/[!x]*",
+            "o/[]a]x",
+            "o/[!]a]x",
+            "o/[a!]x",
             "o/r/sub dir/x@ref~1",
         ] {
             raw.parse::<ActionPattern>()?;
         }
+        assert!(matches("o/[]a]x", "o/ax@v1")?);
+        assert!(matches("o/[!]a]x", "o/bx@v1")?);
+        assert!(!matches("o/[!]a]x", "o/ax@v1")?);
         Ok(())
     }
 
