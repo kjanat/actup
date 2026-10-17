@@ -196,6 +196,9 @@ jobs:
       - name: Test
         working-directory: packages/actup-wasm
         run: bun run test
+      - uses: extractions/setup-just@v4
+      - name: Crate node tests
+        run: just wasm-node-test
 
   # Final status check for branch protection
   ci-success:

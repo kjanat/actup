@@ -100,6 +100,13 @@ test-verbose:
 test-pkg pkg:
     cargo test --package {{ pkg }}
 
+# Build actup-wasm for Node.js and run its crate node tests
+[group('test')]
+wasm-node-test:
+    wasm-pack build crates/wasm --target nodejs --out-dir ../../target/wasm-pkg
+    node crates/wasm/tests/node_parse.mjs
+    node crates/wasm/tests/node_check.mjs
+
 # Run tests with coverage (llvm-cov)
 [group('test')]
 cov:
@@ -214,7 +221,7 @@ schema:
 
 # Run full CI checks locally
 [group('ci')]
-ci: fmt-check clippy-strict clippy-wasm test
+ci: fmt-check clippy-strict clippy-wasm test wasm-node-test
     @echo "All CI checks passed!"
 
 # Run actup on this repo
