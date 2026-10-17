@@ -4,6 +4,8 @@
 //! `actup actions/checkout@v4` prints the latest within major v4.
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
+use std::sync::Arc;
+
 use actup_core::{
     ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_line, version,
 };
@@ -13,6 +15,7 @@ use serde::Serialize;
 
 use crate::{
     cli::{CliExitCode, LatestArgs, OutputFormat},
+    file_cache::FileCache,
     scan::{batch_fetch_versions, versions_for},
 };
 
@@ -109,7 +112,12 @@ fn full_tag_on(versions: &version::Set, major_tag: &version::Info) -> Option<Str
 }
 
 /// Run the latest-version lookup.
-pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Registry) -> i32 {
+pub async fn run(
+    args: &LatestArgs,
+    config: &Config,
+    registry: &provider::Registry,
+    cache: &Arc<FileCache>,
+) -> i32 {
     let Some(action_str) = args.action.as_deref() else {
         // No action provided — caller should have printed help already
         return CliExitCode::Success.into();
@@ -138,7 +146,8 @@ pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Regist
     };
 
     let repo_id = action_ref.to_repo_id().without_subpath();
-    let fetched = batch_fetch_versions(std::slice::from_ref(&repo_id), config, registry).await;
+    let fetched =
+        batch_fetch_versions(std::slice::from_ref(&repo_id), config, registry, cache).await;
     let versions = match versions_for(&fetched, &repo_id) {
         Ok(v) => v,
         Err(e) => {
@@ -281,7 +290,16 @@ mod tests {
             format: crate::cli::OutputFormat::Json,
         };
         assert_eq!(
-            run(&args, &config, &registry).await,
+            run(
+                &args,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(
+                    &config,
+                    crate::file_cache::Access::ReadWrite
+                ))
+            )
+            .await,
             i32::from(CliExitCode::EnvironmentError)
         );
         Ok(())
@@ -338,7 +356,16 @@ mod tests {
         };
 
         assert_eq!(
-            run(&args, &config, &registry).await,
+            run(
+                &args,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(
+                    &config,
+                    crate::file_cache::Access::ReadWrite
+                ))
+            )
+            .await,
             i32::from(CliExitCode::Success)
         );
         let requests = server.received_requests().await.unwrap_or_default();

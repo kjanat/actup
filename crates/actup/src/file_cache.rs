@@ -14,32 +14,46 @@ use actup_core::{
 };
 use tracing::debug;
 
+/// What a [`FileCache`] does with its entries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    /// Neither read nor write entries.
+    Off,
+    /// Read fresh entries and write fetched ones.
+    ReadWrite,
+    /// Write fetched entries and read none.
+    WriteOnly,
+}
+
 /// File-based cache implementation
 pub struct FileCache {
     cache_dir: PathBuf,
     ttl: Duration,
-    enabled: bool,
+    access: Access,
 }
 
 impl FileCache {
-    /// Create the file cache that `config.cache` selects.
+    /// Create the file cache that `config.cache` selects, with `access` unless `config` disables caching.
     ///
     /// The cache lives in `cache.path`, else in [`cache::default_dir`]. With
     /// neither, it logs [`cache::NO_DIR_WARNING`] and is disabled.
     #[must_use]
-    pub fn from_config(config: &Config) -> Self {
-        Self::in_dir(config, cache::dir(config.cache.path.as_deref()))
+    pub fn from_config(config: &Config, access: Access) -> Self {
+        Self::in_dir(config, cache::dir(config.cache.path.as_deref()), access)
     }
 
-    fn in_dir(config: &Config, dir: Option<PathBuf>) -> Self {
-        if !config.cache.enabled {
+    fn in_dir(config: &Config, dir: Option<PathBuf>, access: Access) -> Self {
+        if !config.cache.enabled || access == Access::Off {
             return Self::disabled();
         }
         let Some(dir) = dir else {
             tracing::warn!("{}", cache::NO_DIR_WARNING);
             return Self::disabled();
         };
-        Self::with_path(dir, config.cache.ttl)
+        Self {
+            access,
+            ..Self::with_path(dir, config.cache.ttl)
+        }
     }
 
     /// Create a file cache with custom directory
@@ -48,7 +62,7 @@ impl FileCache {
         Self {
             cache_dir: path,
             ttl,
-            enabled: true,
+            access: Access::ReadWrite,
         }
     }
 
@@ -58,7 +72,7 @@ impl FileCache {
         Self {
             cache_dir: PathBuf::new(),
             ttl: Duration::ZERO,
-            enabled: false,
+            access: Access::Off,
         }
     }
 
@@ -103,8 +117,10 @@ impl Cache for FileCache {
         let key = key.to_string();
 
         Box::pin(async move {
-            if !self.enabled {
-                return Err(cache::Error::Disabled);
+            match self.access {
+                Access::Off => return Err(cache::Error::Disabled),
+                Access::WriteOnly => return Err(cache::Error::NotFound),
+                Access::ReadWrite => {}
             }
 
             let path = self.key_to_path(&key);
@@ -147,8 +163,8 @@ impl Cache for FileCache {
         let key = key.to_string();
 
         Box::pin(async move {
-            if !self.enabled {
-                return Ok(()); // Silently ignore writes when disabled
+            if self.access == Access::Off {
+                return Ok(());
             }
 
             self.ensure_dir().await?;
@@ -172,7 +188,7 @@ impl Cache for FileCache {
         let key = key.to_string();
 
         Box::pin(async move {
-            if !self.enabled {
+            if self.access == Access::Off {
                 return Ok(());
             }
 
@@ -188,7 +204,7 @@ impl Cache for FileCache {
 
     fn clear(&self) -> Pin<Box<dyn Future<Output = cache::Result<()>> + Send + '_>> {
         Box::pin(async move {
-            if !self.enabled {
+            if self.access == Access::Off {
                 return Ok(());
             }
 
@@ -223,7 +239,7 @@ impl Cache for FileCache {
     }
 
     fn is_enabled(&self) -> bool {
-        self.enabled
+        self.access != Access::Off
     }
 }
 
@@ -359,6 +375,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn write_only_cache_misses_and_keeps_stored_entries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let mut config = Config::default();
+        config.cache.path = Some(temp.path().to_path_buf());
+        config.cache.ttl = Duration::ZERO;
+        let reader = FileCache::from_config(&config, Access::ReadWrite);
+        let writer = FileCache::from_config(&config, Access::WriteOnly);
+        let entry = actup_core::cache::Entry::new(version::Set::default());
+        reader.set("stored", entry.clone()).await?;
+
+        assert!(writer.is_enabled());
+        assert!(matches!(
+            writer.get("stored").await,
+            Err(actup_core::cache::Error::NotFound)
+        ));
+        assert!(matches!(
+            writer.lookup("stored").await,
+            Err(actup_core::cache::Error::NotFound)
+        ));
+        assert!(writer.key_to_path("stored").exists());
+        writer.set("written", entry).await?;
+        assert!(writer.key_to_path("written").exists());
+
+        let mut disabled = config.clone();
+        disabled.cache.enabled = false;
+        assert!(!FileCache::from_config(&disabled, Access::ReadWrite).is_enabled());
+        assert!(!FileCache::from_config(&config, Access::Off).is_enabled());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn old_format_entry_is_a_cache_miss() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
         let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
@@ -473,19 +521,21 @@ mod tests {
     fn without_a_cache_dir_the_cache_is_off_with_one_warning()
     -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::default();
-        let (cache, log) = logged(|| FileCache::in_dir(&config, None))?;
+        let (cache, log) = logged(|| FileCache::in_dir(&config, None, Access::ReadWrite))?;
         assert!(!cache.is_enabled());
         assert_eq!(log, format!(" WARN {}\n", cache::NO_DIR_WARNING));
 
         let temp = TempDir::new()?;
-        let (cache, log) = logged(|| FileCache::in_dir(&config, Some(temp.path().to_path_buf())))?;
+        let (cache, log) = logged(|| {
+            FileCache::in_dir(&config, Some(temp.path().to_path_buf()), Access::ReadWrite)
+        })?;
         assert!(cache.is_enabled());
         assert_eq!(cache.cache_dir(), temp.path());
         assert_eq!(log, "");
 
         let mut off = Config::default();
         off.cache.enabled = false;
-        let (cache, log) = logged(|| FileCache::in_dir(&off, None))?;
+        let (cache, log) = logged(|| FileCache::in_dir(&off, None, Access::ReadWrite))?;
         assert!(!cache.is_enabled());
         assert_eq!(log, "");
         Ok(())

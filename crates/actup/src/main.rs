@@ -13,7 +13,7 @@ mod sarif;
 mod scan;
 
 use anstream::{eprintln, println};
-use std::process::ExitCode;
+use std::{process::ExitCode, sync::Arc};
 
 use actup_core::{
     Config, Registration, Retention, error::chain, neutralize_workflow_commands, provider,
@@ -21,7 +21,10 @@ use actup_core::{
 };
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{CacheMode, Cli, CliExitCode, Command};
+use crate::{
+    cli::{CacheMode, Cli, CliExitCode, Command},
+    file_cache::FileCache,
+};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -93,32 +96,11 @@ async fn run(cli: Cli) -> i32 {
         return CliExitCode::Success.into();
     }
 
-    // Get the start directory from command path
-    let start_dir = match &cli.command {
-        Some(
-            Command::Check { path, .. }
-            | Command::Update { path, .. }
-            | Command::Fix { path, .. }
-            | Command::Pin { path, .. }
-            | Command::Config { path, .. },
-        ) => path.clone(),
-        Some(Command::Cache { .. }) | None => match std::env::current_dir() {
-            Ok(dir) => dir,
-            Err(e) => {
-                eprintln!(
-                    "Error reading current directory: {}",
-                    sanitize_for_terminal(&e.to_string())
-                );
-                return CliExitCode::EnvironmentError.into();
-            }
-        },
-        Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
-    };
-
-    let (config, registry) = match setup(&cli, &start_dir) {
-        Ok(setup) => setup,
-        Err(code) => return code.into(),
-    };
+    let (config, registry, cache) =
+        match start_dir(cli.command.as_ref()).and_then(|start_dir| setup(&cli, &start_dir)) {
+            Ok(setup) => setup,
+            Err(code) => return code.into(),
+        };
 
     match cli.command {
         Some(Command::Check {
@@ -138,6 +120,7 @@ async fn run(cli: Cli) -> i32 {
                 github_annotations,
                 &config,
                 &registry,
+                &cache,
             )
             .await
         }
@@ -152,7 +135,7 @@ async fn run(cli: Cli) -> i32 {
                 dry_run,
                 format,
             },
-        ) => commands::update::run(&path, dry_run, format, &config, &registry).await,
+        ) => commands::update::run(&path, dry_run, format, &config, &registry, &cache).await,
         Some(Command::Pin {
             path,
             unpin,
@@ -160,7 +143,7 @@ async fn run(cli: Cli) -> i32 {
             format,
         }) => {
             let mode = commands::pin::Mode::from_unpin_flag(unpin);
-            commands::pin::run(&path, mode, dry_run, format, &config, &registry).await
+            commands::pin::run(&path, mode, dry_run, format, &config, &registry, &cache).await
         }
         Some(Command::Config { path, format }) => {
             let registrations = available_registrations();
@@ -172,7 +155,7 @@ async fn run(cli: Cli) -> i32 {
         Some(Command::Completions { .. } | Command::Schema) => {
             unreachable!("handled before config load")
         }
-        None => commands::latest::run(&cli.latest, &config, &registry).await,
+        None => commands::latest::run(&cli.latest, &config, &registry, &cache).await,
     }
 }
 
@@ -191,15 +174,34 @@ impl<W: std::io::Write> std::io::Write for CommandSafe<W> {
     }
 }
 
+fn start_dir(command: Option<&Command>) -> Result<std::path::PathBuf, CliExitCode> {
+    match command {
+        Some(
+            Command::Check { path, .. }
+            | Command::Update { path, .. }
+            | Command::Fix { path, .. }
+            | Command::Pin { path, .. }
+            | Command::Config { path, .. },
+        ) => Ok(path.clone()),
+        Some(Command::Cache { .. }) | None => std::env::current_dir().map_err(|e| {
+            eprintln!(
+                "Error reading current directory: {}",
+                sanitize_for_terminal(&e.to_string())
+            );
+            CliExitCode::EnvironmentError
+        }),
+        Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
+    }
+}
+
 fn setup(
     cli: &Cli,
     start_dir: &std::path::Path,
-) -> Result<(Config, provider::Registry), CliExitCode> {
+) -> Result<(Config, provider::Registry, Arc<FileCache>), CliExitCode> {
     let mut config = load_config(cli.config.as_deref(), start_dir).ok_or(CliExitCode::UserError)?;
     match cli.cache_mode() {
         CacheMode::Bypass => config.cache.enabled = false,
-        CacheMode::Refresh => config.cache.ttl = std::time::Duration::ZERO,
-        CacheMode::Default | CacheMode::Offline => {}
+        CacheMode::Default | CacheMode::Offline | CacheMode::Refresh => {}
     }
     let registry = build_registry(&config).map_err(|e| {
         eprintln!(
@@ -213,7 +215,8 @@ fn setup(
     } else {
         registry
     };
-    Ok((config, registry))
+    let cache = Arc::new(FileCache::from_config(&config, cli.cache_access()));
+    Ok((config, registry, cache))
 }
 
 /// Returns all compiled-in provider registrations.

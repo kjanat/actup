@@ -105,6 +105,7 @@ impl Scan {
         scanner: &WorkflowScanner<'_>,
         config: &Config,
         registry: &provider::Registry,
+        cache: &Arc<FileCache>,
         wanted: impl Fn(&ScannedRef) -> bool,
     ) -> Versions {
         let repos: Vec<ActionRepoId> = self
@@ -124,7 +125,7 @@ impl Scan {
             unique_repos = repos.len(),
             "batch fetching versions"
         );
-        batch_fetch_versions(&repos, config, registry).await
+        batch_fetch_versions(&repos, config, registry, cache).await
     }
 }
 
@@ -144,17 +145,20 @@ pub fn versions_for<'a>(
     }
 }
 
-/// Batch fetch versions for `repos` through the registry, using the file cache that `config` selects.
+/// Batch fetch versions for `repos` through the registry and `cache`.
 pub async fn batch_fetch_versions(
     repos: &[ActionRepoId],
     config: &Config,
     registry: &provider::Registry,
+    cache: &Arc<FileCache>,
 ) -> Versions {
-    let cache = Arc::new(FileCache::from_config(config));
-
     let spinner = Spinner::stderr();
     let versions = actup_provider_github::fetch_versions_with_registry(
-        repos, config, registry, cache, &spinner,
+        repos,
+        config,
+        registry,
+        Arc::clone(cache),
+        &spinner,
     )
     .await;
     spinner.finish();
@@ -281,7 +285,13 @@ mod tests {
         assert_eq!(scan.refs_in(1).count(), 3);
 
         let versions = scan
-            .fetch(&scanner, &config, &registry, |r| r.action_ref.repo() != "e")
+            .fetch(
+                &scanner,
+                &config,
+                &registry,
+                &Arc::new(FileCache::disabled()),
+                |r| r.action_ref.repo() != "e",
+            )
             .await;
         let mut calls = calls.lock().map_err(|e| e.to_string())?.clone();
         calls.sort_unstable();
@@ -303,6 +313,7 @@ mod tests {
     async fn fetch_without_wanted_refs_asks_nothing() {
         let config = Config::default();
         let registry = provider::Registry::new();
+        let cache = Arc::new(FileCache::disabled());
         let scanner =
             WorkflowScanner::new(Path::new("/repo"), &config, &registry, OutputFormat::Json);
         let scan = Scan {
@@ -311,12 +322,12 @@ mod tests {
             unreadable: Vec::new(),
         };
         assert!(
-            scan.fetch(&scanner, &config, &registry, |_| true)
+            scan.fetch(&scanner, &config, &registry, &cache, |_| true)
                 .await
                 .is_empty()
         );
         assert!(
-            batch_fetch_versions(&[], &config, &registry)
+            batch_fetch_versions(&[], &config, &registry, &cache)
                 .await
                 .is_empty()
         );

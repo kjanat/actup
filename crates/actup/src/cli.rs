@@ -13,6 +13,8 @@ use clap::{
 };
 use clap_complete::Shell;
 
+use crate::file_cache::Access;
+
 #[derive(Parser)]
 #[command(name = "actup")]
 #[command(author, version, about = "GitHub Actions version manager", long_about = None)]
@@ -144,6 +146,16 @@ impl Cli {
             ));
         }
         Ok(cli)
+    }
+
+    /// The file cache access that `--no-cache` or `--refresh` selects.
+    #[must_use]
+    pub const fn cache_access(&self) -> Access {
+        match self.cache_mode() {
+            CacheMode::Bypass => Access::Off,
+            CacheMode::Refresh => Access::WriteOnly,
+            CacheMode::Default | CacheMode::Offline => Access::ReadWrite,
+        }
     }
 
     /// The cache mode that `--offline`, `--no-cache` or `--refresh` selects.

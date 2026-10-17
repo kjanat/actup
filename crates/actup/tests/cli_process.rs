@@ -482,7 +482,17 @@ async fn refresh_skips_cached_versions_and_writes_fresh_ones() -> TestResult {
         .run(&["--refresh", "config", "--format", "json"])
         .await?;
     let config: serde_json::Value = serde_json::from_slice(&shown.stdout)?;
-    assert_eq!(config.pointer("/cache/ttl"), Some(&serde_json::json!(0)));
+    assert_eq!(
+        config.pointer("/cache/ttl"),
+        Some(&serde_json::json!(86400))
+    );
+
+    server.reset().await;
+    let failed = repo.run(&["--refresh", "check", "."]).await?;
+    assert_ne!(failed.status.code(), Some(0), "{failed:?}");
+    let kept = repo.run(&["--offline", "check", "."]).await?;
+    assert_eq!(kept.status.code(), Some(0), "{kept:?}");
+
     let conflict = repo.run(&["--refresh", "--offline", "check", "."]).await?;
     assert_eq!(conflict.status.code(), Some(2));
     Ok(())

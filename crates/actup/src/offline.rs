@@ -84,7 +84,7 @@ mod tests {
     use crate::{
         cli::{CheckFormat, CliExitCode, OutputFormat},
         commands::check,
-        file_cache::FileCache,
+        file_cache::{Access, FileCache},
     };
 
     struct Unreachable;
@@ -202,6 +202,7 @@ mod tests {
             false,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
@@ -217,6 +218,7 @@ mod tests {
             false,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::EnvironmentError));
@@ -229,7 +231,13 @@ mod tests {
                 action: Some(action.to_string()),
                 format: OutputFormat::Json,
             };
-            let code = crate::commands::latest::run(&args, &config, &registry).await;
+            let code = crate::commands::latest::run(
+                &args,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+            )
+            .await;
             assert_eq!(code, i32::from(expected), "{action}");
         }
         Ok(())

@@ -1,6 +1,6 @@
 //! Check command - scan workflows and report outdated actions
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, ActionRepoId, CheckResult, CheckStatus, Config, NO_VERSIONS_FOUND_REASON,
@@ -12,6 +12,7 @@ use anstream::eprintln;
 use crate::{
     cli::{CheckFormat, FailOn, OutputFormat},
     common::{ErrorTally, WorkflowScanner},
+    file_cache::FileCache,
     output::{Finding, FindingStatus, Span, determine_exit_code, print_findings, print_summary},
     sarif,
     scan::{Scan, Versions},
@@ -131,6 +132,7 @@ pub async fn run(
     github_annotations: bool,
     config: &Config,
     registry: &provider::Registry,
+    cache: &Arc<FileCache>,
 ) -> i32 {
     let scanner = WorkflowScanner::new(path, config, registry, format.messages());
     let discovered = scanner.discover();
@@ -147,7 +149,9 @@ pub async fn run(
     let mut io_errors = ErrorTally::default();
 
     let scan = Scan::collect(&scanner, &discovered, &mut io_errors);
-    let versions_map = scan.fetch(&scanner, config, registry, |_| true).await;
+    let versions_map = scan
+        .fetch(&scanner, config, registry, cache, |_| true)
+        .await;
     let collected = collect_actions(&scanner, &scan, config, &mut findings);
     let unresolved =
         process_collected_actions(collected, &versions_map, config, registry, &mut findings).await;
@@ -346,6 +350,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::file_cache::Access;
 
     struct TestProvider {
         resolve_error: Option<actup_core::Error>,
@@ -1267,7 +1272,16 @@ mod tests {
             CheckFormat::Sarif,
         ] {
             assert_eq!(
-                run(dir.path(), &[], format, false, &config, &registry).await,
+                run(
+                    dir.path(),
+                    &[],
+                    format,
+                    false,
+                    &config,
+                    &registry,
+                    &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
+                )
+                .await,
                 0
             );
         }

@@ -1,7 +1,7 @@
 //! Update command - update actions to their latest versions
 
 use anstream::println;
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, CheckStatus, Config, check_action_with_provider,
@@ -16,6 +16,7 @@ use crate::{
         Change, EditResult, WorkflowScanner, commit_file, report_skipped, report_unwritable,
         writable_versions,
     },
+    file_cache::FileCache,
     scan::{Scan, versions_for},
 };
 
@@ -42,8 +43,9 @@ pub async fn run(
     format: OutputFormat,
     config: &Config,
     registry: &provider::Registry,
+    cache: &Arc<FileCache>,
 ) -> i32 {
-    let Some(result) = edit(path, dry_run, format, config, registry).await else {
+    let Some(result) = edit(path, dry_run, format, config, registry, cache).await else {
         EditResult::default().print_report(dry_run, format);
         return 0;
     };
@@ -57,6 +59,7 @@ async fn edit(
     format: OutputFormat,
     config: &Config,
     registry: &provider::Registry,
+    cache: &Arc<FileCache>,
 ) -> Option<EditResult> {
     let scanner = WorkflowScanner::new(path, config, registry, format);
     let discovered = scanner.discover();
@@ -68,7 +71,9 @@ async fn edit(
 
     let mut result = EditResult::default();
     let scan = Scan::collect(&scanner, &discovered, &mut result.errors);
-    let versions = scan.fetch(&scanner, config, registry, |_| true).await;
+    let versions = scan
+        .fetch(&scanner, config, registry, cache, |_| true)
+        .await;
 
     for (index, file) in scan.files.iter().enumerate() {
         let relative = &file.relative;
@@ -146,6 +151,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::file_cache::Access;
     use crate::{
         cli::CliExitCode,
         common::{ErrorKind, SkipCause},
@@ -267,6 +273,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry("v4.2.0"),
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await;
 
@@ -314,6 +321,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await
         else {
@@ -378,11 +386,27 @@ mod tests {
         let registry = registry("v4.10.1");
         let config = uncached();
 
-        let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+        let code = run(
+            dir.path(),
+            false,
+            OutputFormat::Human,
+            &config,
+            &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+        )
+        .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
-        let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+        let code = run(
+            dir.path(),
+            false,
+            OutputFormat::Human,
+            &config,
+            &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+        )
+        .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
@@ -406,10 +430,26 @@ mod tests {
         )?;
         let registry = registry("v4.2.0");
 
-        let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+        let code = run(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+        )
+        .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         let written = std::fs::read_to_string(&file)?;
-        let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+        let code = run(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+        )
+        .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, written);
         Ok(written)
@@ -608,7 +648,15 @@ mod tests {
         let config = uncached();
 
         for _ in 0..2 {
-            let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+            let code = run(
+                dir.path(),
+                false,
+                OutputFormat::Human,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
+            )
+            .await;
             assert_eq!(code, i32::from(CliExitCode::Success));
             assert_eq!(std::fs::read(&file)?, expected.as_bytes());
         }
@@ -650,6 +698,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry("v4.2.0"),
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await
         else {
@@ -724,7 +773,18 @@ mod tests {
         let ts_expected = "const workflow = `\n  - uses: o/p@NEW # v4.0.0\n  - uses: actions/checkout@v4.2.0\n`;\nexport const step = { uses: \"o/r@v4.2.0\" };\nprint(\"- uses: o/p@NEW # v4.0.0\\n\");\n"
             .replace("NEW", &sha40('b'));
         for _ in 0..2 {
-            let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+            let code = run(
+                dir.path(),
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(
+                    &config,
+                    crate::file_cache::Access::ReadWrite,
+                )),
+            )
+            .await;
             assert_eq!(code, i32::from(CliExitCode::Success));
             assert_eq!(std::fs::read_to_string(&readme)?, md_expected);
             assert_eq!(std::fs::read_to_string(&script)?, ts_expected);
@@ -755,6 +815,7 @@ mod tests {
             OutputFormat::Json,
             &config,
             &registry("v4.2.0"),
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await
         else {
@@ -793,6 +854,10 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(
+                &uncached(),
+                crate::file_cache::Access::ReadWrite,
+            )),
         )
         .await
         else {
@@ -828,12 +893,30 @@ mod tests {
         let config = uncached();
         let registry = registry("v4.2.0");
         assert!(
-            edit(dir.path(), false, OutputFormat::Json, &config, &registry)
-                .await
-                .is_none()
+            edit(
+                dir.path(),
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
+            )
+            .await
+            .is_none()
         );
         for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
-            assert_eq!(run(dir.path(), false, format, &config, &registry).await, 0);
+            assert_eq!(
+                run(
+                    dir.path(),
+                    false,
+                    format,
+                    &config,
+                    &registry,
+                    &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
+                )
+                .await,
+                0
+            );
         }
         Ok(())
     }

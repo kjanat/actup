@@ -199,8 +199,8 @@ print no progress.
 or cached longer ago than `cache.ttl`, makes its refs environment errors (exit
 3), and no command touches the network. `--no-cache` neither reads nor writes
 the cache, the same as `cache.enabled = false`. `--refresh` skips cached
-versions and writes the freshly fetched ones, the same as `cache.ttl = 0` for
-the run. Only one of the three flags can be given. The quick lookup
+versions and writes the freshly fetched ones. A repo that fails to fetch keeps
+its cache entry. Only one of the three flags can be given. The quick lookup
 `actup owner/repo` uses the cache too.
 
 A cache entry past its TTL stays on disk. When the provider then rate limits the

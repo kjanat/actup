@@ -18,6 +18,7 @@ use crate::{
         Change, EditResult, RefSite, Unwritable, WorkflowScanner, commit_file, report_skipped,
         report_unwritable, writable_versions,
     },
+    file_cache::FileCache,
     scan::{Scan, versions_for},
 };
 
@@ -215,8 +216,9 @@ pub async fn run(
     format: OutputFormat,
     config: &Config,
     registry: &provider::Registry,
+    cache: &Arc<FileCache>,
 ) -> i32 {
-    let Some(result) = edit(path, mode, dry_run, format, config, registry).await else {
+    let Some(result) = edit(path, mode, dry_run, format, config, registry, cache).await else {
         EditResult::default().print_report(dry_run, format);
         return 0;
     };
@@ -235,6 +237,7 @@ async fn edit(
     format: OutputFormat,
     config: &Config,
     registry: &provider::Registry,
+    cache: &Arc<FileCache>,
 ) -> Option<EditResult> {
     let scanner = WorkflowScanner::new(path, config, registry, format);
     let discovered = scanner.discover();
@@ -251,7 +254,7 @@ async fn edit(
         Mode::Unpin => marked_pin(action_ref, loc).is_some(),
     };
     let versions = scan
-        .fetch(&scanner, config, registry, |r| {
+        .fetch(&scanner, config, registry, cache, |r| {
             wanted(&r.action_ref, &r.loc)
         })
         .await;
@@ -317,6 +320,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::file_cache::Access;
     use crate::{
         cli::CliExitCode,
         common::{ErrorKind, SkipCause},
@@ -503,6 +507,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await
         else {
@@ -576,6 +581,7 @@ mod tests {
             OutputFormat::Human,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
@@ -588,6 +594,7 @@ mod tests {
             OutputFormat::Human,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
@@ -630,6 +637,10 @@ mod tests {
                     OutputFormat::Human,
                     &config,
                     &registry,
+                    &Arc::new(FileCache::from_config(
+                        &config,
+                        crate::file_cache::Access::ReadWrite,
+                    )),
                 )
                 .await;
                 assert_eq!(code, i32::from(CliExitCode::Success), "{name}");
@@ -656,6 +667,7 @@ mod tests {
                 OutputFormat::Human,
                 &config,
                 &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
             )
             .await;
             assert_eq!(code, i32::from(CliExitCode::Success));
@@ -715,6 +727,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &repo_sha_registry(),
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await
         else {
@@ -768,14 +781,24 @@ mod tests {
                 false,
                 OutputFormat::Json,
                 &config,
-                &registry
+                &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
             )
             .await
             .is_none()
         );
         for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
             assert_eq!(
-                run(dir.path(), Mode::Pin, false, format, &config, &registry).await,
+                run(
+                    dir.path(),
+                    Mode::Pin,
+                    false,
+                    format,
+                    &config,
+                    &registry,
+                    &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
+                )
+                .await,
                 0
             );
         }
@@ -796,6 +819,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &repo_sha_registry(),
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await;
 
@@ -1221,6 +1245,10 @@ mod tests {
                 OutputFormat::Json,
                 &uncached(),
                 &registry,
+                &Arc::new(FileCache::from_config(
+                    &uncached(),
+                    crate::file_cache::Access::ReadWrite,
+                )),
             )
             .await
             else {
@@ -1308,6 +1336,7 @@ mod tests {
             OutputFormat::Json,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await
         else {
@@ -1345,6 +1374,7 @@ mod tests {
             OutputFormat::Human,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
@@ -1432,6 +1462,10 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(
+                &uncached(),
+                crate::file_cache::Access::ReadWrite,
+            )),
         )
         .await
         else {
@@ -1472,6 +1506,10 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(
+                &uncached(),
+                crate::file_cache::Access::ReadWrite,
+            )),
         )
         .await
         else {
@@ -1523,6 +1561,7 @@ mod tests {
             OutputFormat::Json,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await
         else {
@@ -1559,6 +1598,7 @@ mod tests {
             OutputFormat::Human,
             &config,
             &registry,
+            &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
@@ -1639,6 +1679,7 @@ mod tests {
             OutputFormat::Json,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await
         else {
@@ -1672,7 +1713,19 @@ mod tests {
             (Mode::Pin, &repinned),
             (Mode::Unpin, &repinned),
         ] {
-            let code = run(&file, mode, false, OutputFormat::Json, &config, &registry).await;
+            let code = run(
+                &file,
+                mode,
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(
+                    &config,
+                    crate::file_cache::Access::ReadWrite,
+                )),
+            )
+            .await;
             assert_eq!(code, i32::from(CliExitCode::Success), "{mode:?}");
             assert_eq!(&std::fs::read_to_string(&file)?, expected, "{mode:?}");
         }
@@ -1694,6 +1747,7 @@ mod tests {
             OutputFormat::Human,
             &uncached(),
             &registry,
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
