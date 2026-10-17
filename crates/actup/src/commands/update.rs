@@ -316,6 +316,46 @@ mod tests {
         Ok(())
     }
 
+    async fn assert_update_writes(
+        content: &str,
+        expected: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        std::fs::write(&file, content)?;
+        let registry = registry("v4.2.0");
+        let config = Config::default();
+
+        for _ in 0..2 {
+            let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(std::fs::read(&file)?, expected.as_bytes());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_changes_only_ref_bytes_in_a_crlf_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = "on: push\r\njobs:\r\n  b:\r\n    runs-on: x\r\n    steps:\r\n      - uses: actions/checkout@v4.0.0\r\n      - uses: o/p@OLD\r\n      - { uses: \"o/q@v4.0.0\" } # keep\r\n"
+            .replace("OLD", &sha40('a'));
+        let expected = "on: push\r\njobs:\r\n  b:\r\n    runs-on: x\r\n    steps:\r\n      - uses: actions/checkout@v4.2.0\r\n      - uses: o/p@NEW # v4.2.0\r\n      - { uses: \"o/q@v4.2.0\" } # keep\r\n"
+            .replace("NEW", &sha40('b'));
+        assert_update_writes(&content, &expected).await
+    }
+
+    #[tokio::test]
+    async fn test_run_keeps_mixed_line_breaks_and_the_bom() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let content = "\u{feff}on: push\r\njobs:\n  b:\r    runs-on: x\r\n    steps:\n      - uses: o/p@OLD\r      - uses: o/q@v4.0.0\r\n      - uses: o/r@v4.0.0"
+            .replace("OLD", &sha40('a'));
+        let expected = "\u{feff}on: push\r\njobs:\n  b:\r    runs-on: x\r\n    steps:\n      - uses: o/p@NEW # v4.2.0\r      - uses: o/q@v4.2.0\r\n      - uses: o/r@v4.2.0"
+            .replace("NEW", &sha40('b'));
+        assert_update_writes(&content, &expected).await
+    }
+
     fn apply_at(line_body: &str, edit: PendingEdit) -> Result<String, Box<dyn std::error::Error>> {
         let content = format!("{}{line_body}", "\n".repeat(edit.line - 1));
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content);

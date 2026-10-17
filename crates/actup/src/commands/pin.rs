@@ -444,6 +444,45 @@ mod tests {
         Ok(())
     }
 
+    async fn assert_pin_writes(
+        content: &str,
+        expected: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let file = workflow(dir.path(), content)?;
+        let registry = repo_sha_registry();
+        let config = Config::default();
+
+        for _ in 0..2 {
+            let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(std::fs::read(&file)?, expected.as_bytes());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_pins_only_ref_bytes_in_a_crlf_file() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let content = "on: push\r\njobs:\r\n  b:\r\n    runs-on: x\r\n    steps:\r\n      - uses: actions/checkout@v4\r\n      - uses: o/b@v1 # mine\r\n      - { uses: 'o/d@main' }\r\n";
+        let expected = "on: push\r\njobs:\r\n  b:\r\n    runs-on: x\r\n    steps:\r\n      - uses: actions/checkout@AAA # v4\r\n      - uses: o/b@CCC # mine\r\n      - { uses: 'o/d@DDD' } # main\r\n"
+            .replace("AAA", &sha('a'))
+            .replace("CCC", &sha('c'))
+            .replace("DDD", &sha('d'));
+        assert_pin_writes(content, &expected).await
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_keeps_mixed_line_breaks_and_the_bom()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = "\u{feff}on: push\r\njobs:\n  b:\r    runs-on: x\r\n    steps:\n      - uses: o/f@v1\r      - uses: \"o/h@v2\"\r\n      - uses: o/i@v3";
+        let expected = "\u{feff}on: push\r\njobs:\n  b:\r    runs-on: x\r\n    steps:\n      - uses: o/f@EEE # v1\r      - uses: \"o/h@FFF\" # v2\r\n      - uses: o/i@111 # v3"
+            .replace("EEE", &sha('e'))
+            .replace("FFF", &sha('f'))
+            .replace("111", &sha('1'));
+        assert_pin_writes(content, &expected).await
+    }
+
     #[tokio::test]
     async fn test_run_skips_an_unplaceable_value_without_a_user_error()
     -> Result<(), Box<dyn std::error::Error>> {

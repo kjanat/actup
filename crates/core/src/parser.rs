@@ -6,7 +6,7 @@
 //! - `host/owner/repo@ref` (explicit host)
 //! - `./path` (local, returned as None)
 
-use std::net::Ipv6Addr;
+use std::{net::Ipv6Addr, ops::Range};
 
 use saphyr_parser::{Event, Parser, ScalarStyle, Span};
 
@@ -146,12 +146,21 @@ fn is_port(port: &str) -> bool {
 /// If the document is not valid YAML (e.g. a half-typed buffer in the LSP), the
 /// refs found in the valid prefix are returned and parsing stops at the error —
 /// no brittle text-scanning fallback.
+///
+/// Lines are numbered as [`line_spans`] splits them. A leading byte order mark
+/// stays part of line 1.
 #[must_use]
 pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
+    let body = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let source = Source {
+        text: content,
+        lines: line_spans(content),
+        bom: body.len() < content.len(),
+    };
     let mut results = Vec::new();
     let mut stack: Vec<Ctx> = Vec::new();
 
-    for event in Parser::new_from_str(content) {
+    for event in Parser::new_from_str(body) {
         let Ok((event, span)) = event else {
             break;
         };
@@ -167,7 +176,7 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
                     }
                 }
                 NodeRole::MapValue { key_was_uses: true } => {
-                    if let Some(loc) = build_location(content, value.as_ref(), style, span) {
+                    if let Some(loc) = build_location(&source, value.as_ref(), style, span) {
                         results.push(loc);
                     }
                 }
@@ -248,12 +257,45 @@ const fn classify_node(stack: &mut [Ctx]) -> NodeRole {
     }
 }
 
+/// Byte range of each line in `content`, excluding its `\r\n`, `\r` or `\n` break.
+#[must_use]
+pub fn line_spans(content: &str) -> Vec<Range<usize>> {
+    let bytes = content.as_bytes();
+    let mut spans = Vec::new();
+    let mut start = 0;
+    let mut i = 0;
+    while let Some(&byte) = bytes.get(i) {
+        let break_len = match byte {
+            b'\r' if bytes.get(i + 1) == Some(&b'\n') => 2,
+            b'\r' | b'\n' => 1,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        spans.push(start..i);
+        i += break_len;
+        start = i;
+    }
+    if start < bytes.len() {
+        spans.push(start..bytes.len());
+    }
+    spans
+}
+
+struct Source<'a> {
+    text: &'a str,
+    lines: Vec<Range<usize>>,
+    bom: bool,
+}
+
 /// Build a [`UsesLocation`] for a `uses:` value scalar.
 ///
-/// `span.start.col()` is a 0-indexed character column. For quoted scalars it
-/// points at the opening quote while `value` holds the unquoted content.
+/// `span.start.col()` is a 0-indexed character column of the text after any
+/// byte order mark. For quoted scalars it points at the opening quote while
+/// `value` holds the unquoted content.
 fn build_location(
-    content: &str,
+    source: &Source<'_>,
     value: &str,
     style: ScalarStyle,
     span: Span,
@@ -262,14 +304,18 @@ fn build_location(
         return None;
     }
     let line = span.start.line(); // 1-indexed
-    let raw_line = content.lines().nth(line - 1)?.to_string();
+    let raw_line = source
+        .text
+        .get(source.lines.get(line.checked_sub(1)?)?.clone())?
+        .to_string();
     let quote_skip = usize::from(matches!(
         style,
         ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted
     ));
+    let bom_skip = usize::from(source.bom && line == 1);
     let byte_col = raw_line
         .char_indices()
-        .nth(span.start.col() + quote_skip)
+        .nth(span.start.col() + quote_skip + bom_skip)
         .map_or(raw_line.len(), |(byte, _)| byte);
     Some(UsesLocation::new(
         line,
@@ -702,6 +748,60 @@ jobs:
                 (2, "e/f@v2", "v2"),
             ],
         );
+    }
+
+    #[test]
+    fn line_spans_end_lines_at_crlf_cr_and_lf() {
+        let cases: [(&str, &[&str]); 11] = [
+            ("", &[]),
+            ("a", &["a"]),
+            ("a\n", &["a"]),
+            ("a\r\nb\r\n", &["a", "b"]),
+            ("a\n\nb", &["a", "", "b"]),
+            ("a\rb\n", &["a", "b"]),
+            ("\r\n\r\n", &["", ""]),
+            ("x\r", &["x"]),
+            ("x\n\r", &["x", ""]),
+            ("x\r\r\ny", &["x", "", "y"]),
+            ("\u{feff}é\r✓\r\n", &["\u{feff}é", "✓"]),
+        ];
+        for (content, lines) in cases {
+            let spans: Vec<&str> = line_spans(content)
+                .into_iter()
+                .map(|span| &content[span])
+                .collect();
+            assert_eq!(spans, lines, "{content:?}");
+        }
+    }
+
+    #[test]
+    fn test_ranges_on_crlf_lone_cr_and_bom_lines() {
+        let yaml = "\u{feff}uses: a/b@v1\r\nx:\r  - uses: c/d@v2\r\n  - uses: \"e/f@v3\" # c\ry: [{ uses: g/h@v4 }]";
+        assert_exact_ranges(
+            yaml,
+            &[
+                (1, "a/b@v1", "v1"),
+                (3, "c/d@v2", "v2"),
+                (4, "e/f@v3", "v3"),
+                (5, "g/h@v4", "v4"),
+            ],
+        );
+        let spans = line_spans(yaml);
+        let refs: Vec<&str> = extract_uses_from_yaml(yaml)
+            .iter()
+            .filter_map(|loc| {
+                let line = spans.get(loc.line() - 1)?;
+                assert_eq!(&yaml[line.clone()], loc.raw_line());
+                let range = loc.ref_range()?;
+                yaml.get(line.start + range.start..line.start + range.end)
+            })
+            .collect();
+        assert_eq!(refs, ["v1", "v2", "v3", "v4"]);
+    }
+
+    #[test]
+    fn test_bom_before_a_flow_mapping() {
+        assert_exact_ranges("\u{feff}{ uses: a/b@v1 }\r\n", &[(1, "a/b@v1", "v1")]);
     }
 
     #[test]

@@ -12,7 +12,7 @@ use std::{
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, UsesLocation, discover_files,
-    extract_uses_from_yaml, parse_uses, provider, version,
+    extract_uses_from_yaml, line_spans, parse_uses, provider, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -375,19 +375,6 @@ impl<L> FileEdits<L> {
                 .collect(),
         }
     }
-}
-
-fn line_spans(content: &str) -> Vec<Range<usize>> {
-    let mut spans = Vec::new();
-    let mut start = 0;
-    for piece in content.split_inclusive('\n') {
-        let text = piece
-            .strip_suffix('\n')
-            .map_or(piece, |line| line.strip_suffix('\r').unwrap_or(line));
-        spans.push(start..start + text.len());
-        start += piece.len();
-    }
-    spans
 }
 
 fn absolute_range(
@@ -1165,25 +1152,34 @@ mod tests {
     }
 
     #[test]
-    fn test_line_spans_split_like_str_lines() {
-        for content in [
-            "",
-            "a",
-            "a\n",
-            "a\r\nb\r\n",
-            "a\n\nb",
-            "a\rb\n",
-            "\r\n\r\n",
-            "x\r",
-            "x\n\r",
-        ] {
-            let spans: Vec<&str> = line_spans(content)
-                .into_iter()
-                .map(|span| &content[span])
-                .collect();
-            let lines: Vec<&str> = content.lines().collect();
-            assert_eq!(spans, lines, "{content:?}");
+    fn test_file_edits_keep_every_line_break_and_the_bom() {
+        let content =
+            "\u{feff}uses: a/b@v1\r\nx:\r  - uses: c/d@v2\r\n  - uses: e/f@v3\n  - uses: g/h@v4";
+        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        for loc in extract_uses_from_yaml(content) {
+            let Some(range) = loc.ref_range() else {
+                panic!("no ref range for {loc:?}");
+            };
+            fe.add(
+                PendingEdit::replace_range(loc.line(), range, "NEW".to_string())
+                    .with_comment(" # c".into()),
+                loc.line(),
+            );
         }
+
+        let plan = fe.plan();
+        assert_eq!(
+            plan.content.as_bytes(),
+            "\u{feff}uses: a/b@NEW # c\r\nx:\r  - uses: c/d@NEW # c\r\n  - uses: e/f@NEW # c\n  - uses: g/h@NEW # c"
+                .as_bytes()
+        );
+        assert_eq!(
+            plan.entries
+                .iter()
+                .map(|(line, _)| *line)
+                .collect::<Vec<_>>(),
+            [1, 3, 4, 5]
+        );
     }
 
     fn change(line: usize, target: &str, show_comment: bool) -> Change {

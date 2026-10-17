@@ -1004,6 +1004,33 @@ jobs:
     }
 
     #[test]
+    fn extract_located_actions_number_lines_at_crlf_cr_and_lf() {
+        let yaml = "\u{feff}uses: a/b@v1\r\nx:\r  - uses: c/d@v2\r\n  - uses: \"e/f@v3\"\ny: [{ uses: g/h@v4 }]";
+        let located: Vec<(String, u32, u32, u32)> =
+            extract_located_actions(yaml, crate::position::PositionEncoding::Utf16)
+                .into_iter()
+                .map(|a| {
+                    assert!(a.editable, "{}", a.action_ref);
+                    (
+                        a.action_ref.ref_str().to_string(),
+                        a.line,
+                        a.col_start,
+                        a.col_end,
+                    )
+                })
+                .collect();
+        assert_eq!(
+            located,
+            [
+                ("v1".to_string(), 0, 11, 13),
+                ("v2".to_string(), 2, 14, 16),
+                ("v3".to_string(), 3, 15, 17),
+                ("v4".to_string(), 4, 16, 18),
+            ]
+        );
+    }
+
+    #[test]
     fn extract_located_actions_without_verbatim_value_cover_the_line()
     -> Result<(), std::num::TryFromIntError> {
         for yaml in [

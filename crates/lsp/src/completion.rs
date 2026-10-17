@@ -141,7 +141,10 @@ fn detect_completion_context(
     position: Position,
     encoding: crate::position::PositionEncoding,
 ) -> Option<CompletionContext> {
-    let line_str = text.lines().nth(position.line as usize)?;
+    let span = actup_core::line_spans(text)
+        .into_iter()
+        .nth(position.line as usize)?;
+    let line_str = text.get(span)?;
 
     // Convert incoming cursor column (negotiated encoding) to byte offset.
     let cursor_byte = crate::position::col_to_byte(line_str, position.character, encoding);
@@ -1014,6 +1017,22 @@ mod tests {
                 repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: String::new(),
             }
+        );
+    }
+
+    #[test]
+    fn detect_context_counts_a_lone_cr_as_a_line_break() {
+        let text = "x: 1\r      - uses: actions/checkout@\r\n";
+        let pos = Position {
+            line: 1,
+            character: 31,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                repo_id: ActionRepoId::simple("actions", "checkout"),
+                version_prefix: String::new(),
+            })
         );
     }
 
