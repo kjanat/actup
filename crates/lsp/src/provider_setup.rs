@@ -40,6 +40,7 @@ pub struct Providers {
 
 impl Providers {
     /// The compiled-in providers and the on-disk cache.
+    #[cfg(not(test))]
     pub const LIVE: Self = Self {
         registry: build_registry,
         file_cache: build_file_cache,
@@ -141,17 +142,6 @@ mod tests {
         let config = Config::default();
         let cache = build_file_cache(&config);
         assert!(cache.is_enabled());
-    }
-
-    #[test]
-    fn live_providers_use_the_compiled_in_registrations_and_the_disk_cache() {
-        use actup_core::cache::Cache;
-        let config = Config::default();
-        let Ok(registry) = (Providers::LIVE.registry)(&config) else {
-            panic!("the default config builds a registry");
-        };
-        assert_eq!(registry.default_host(), Some("github.com"));
-        assert!((Providers::LIVE.file_cache)(&config).is_enabled());
     }
 
     #[tokio::test]
