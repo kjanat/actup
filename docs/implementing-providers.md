@@ -87,6 +87,8 @@ use reqwest::{
     header::{HeaderMap, HeaderValue, USER_AGENT},
 };
 
+use crate::types::YourTag;
+
 pub struct YourClient {
     client: Client,
     api_base: String,
@@ -103,9 +105,9 @@ impl YourClient {
             // Add auth header appropriate for your platform
             headers.insert(
                 "Authorization",
-                HeaderValue::from_str(&format!("Bearer {t}")).map_err(|e| Error::Network {
-                    operation: "set auth header".to_string(),
-                    message: e.to_string(),
+                HeaderValue::from_str(&format!("Bearer {t}")).map_err(|e| Error::Auth {
+                    provider: "yourplatform".to_string(),
+                    reason: format!("invalid token format: {e}"),
                 })?,
             );
         }
@@ -119,9 +121,10 @@ impl YourClient {
                 message: e.to_string(),
             })?;
 
+        // `api_base` is the full API root from `ProviderConfig`, e.g. `https://host/api/v1`
         Ok(Self {
             client,
-            api_base: format!("{api_base}/api/v1"),
+            api_base: api_base.trim_end_matches('/').to_string(),
             host: host.to_string(),
         })
     }
@@ -132,6 +135,8 @@ impl YourClient {
         let response = self.get(&url).await?;
         self.handle_response(response, owner, repo).await
     }
+
+    // `get_repo`, `get_branch`, `resolve_ref` and `get_file` follow the same pattern
 
     /// Helper method to perform GET requests with configured headers
     async fn get(&self, url: &str) -> Result<Response> {
@@ -195,18 +200,28 @@ impl YourClient {
 Create `src/provider.rs`:
 
 ```rust
-use std::{future::Future, pin::Pin};
-
 use actup_core::{
     ActionRepoId, Error, Result,
+    compat::BoxFuture,
     provider::{ActionYml, Kind, Provider, Sha40},
     version,
 };
 use actup_providers::{filename_label, parse_action_yml, process_tags};
 
+use crate::client::YourClient;
+
 pub struct YourProvider {
     client: YourClient,
     host: String,
+}
+
+impl YourProvider {
+    pub fn new(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
+        Ok(Self {
+            client: YourClient::new(api_base, host, token)?,
+            host: host.to_string(),
+        })
+    }
 }
 
 impl Provider for YourProvider {
@@ -218,10 +233,7 @@ impl Provider for YourProvider {
         &self.host
     }
 
-    fn get_versions(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
         // IMPORTANT: Extract all needed data from `repo` before async block
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
@@ -250,7 +262,7 @@ impl Provider for YourProvider {
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<Sha40>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<Sha40>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
         let ref_name = ref_name.to_string();
@@ -268,10 +280,7 @@ impl Provider for YourProvider {
         })
     }
 
-    fn get_default_branch(
-        &self,
-        repo: &ActionRepoId,
-    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + '_>> {
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
 
@@ -285,7 +294,7 @@ impl Provider for YourProvider {
         &self,
         repo: &ActionRepoId,
         ref_name: Option<&str>,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<String>>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<Option<String>>> {
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
         let ref_name = ref_name.unwrap_or("HEAD").to_string();
@@ -315,7 +324,7 @@ impl Provider for YourProvider {
         &self,
         repo: &ActionRepoId,
         ref_name: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<ActionYml>> + Send + '_>> {
+    ) -> BoxFuture<'_, Result<ActionYml>> {
         // Extract data before async block (crucial for lifetimes!)
         let owner = repo.owner().to_string();
         let repo_name = repo.repo().to_string();
@@ -351,15 +360,18 @@ impl Provider for YourProvider {
 }
 ```
 
-### 5. Helper Functions (Module Level)
-
-**IMPORTANT**: These must be module-level functions, not methods:
+### 5. Helper Functions
 
 ```rust
-/// Decode base64-encoded file content (e.g., from GitLab/GitHub file APIs)
+use base64::{Engine, engine::general_purpose::STANDARD};
+
+/// Decode base64 file content, ignoring the line breaks GitHub inserts
 fn decode_base64_content(content: &str) -> Result<String> {
-    use base64::{Engine, engine::general_purpose::STANDARD};
-    let bytes = STANDARD.decode(content).map_err(|e| Error::Internal {
+    let compact: String = content
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    let bytes = STANDARD.decode(compact).map_err(|e| Error::Internal {
         context: "base64 decode".to_string(),
         message: e.to_string(),
     })?;
@@ -412,8 +424,11 @@ fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn actup_c
 }
 ```
 
-Then add the provider to `available_registrations()` in the CLI crate behind a
-feature gate.
+Add `HostKind::YourPlatform` to `actup_core::HostKind` alongside
+`provider::Kind::YourPlatform`. Then add `REGISTRATION` to
+`available_registrations()` in both `crates/actup/src/main.rs` and
+`crates/lsp/src/provider_setup.rs`. In the CLI, put the entry behind a Cargo
+feature named after the provider.
 
 ## Common Patterns
 
@@ -445,10 +460,7 @@ Err(Error::NotFound {
 **DO:**
 
 ```rust
-fn get_versions(
-    &self,
-    repo: &ActionRepoId,
-) -> Pin<Box<dyn Future<Output = Result<version::Set>> + Send + '_>> {
+fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
     // Extract ALL needed data from params before async block
     let owner = repo.owner().to_string();
     let repo_name = repo.repo().to_string();
@@ -470,47 +482,6 @@ Box::pin(async move {
     let owner = repo.owner().to_string();
     self.client.list_tags(&owner, ...).await?;
 })
-```
-
-### Module-Level vs Methods
-
-**DO:**
-
-```rust
-// decode_base64_content as module-level function
-fn decode_base64_content(content: &str) -> Result<String> {
-    // ...
-}
-
-impl Provider for YourProvider {
-    fn get_action_yml(...) -> Pin<Box<...>> {
-        Box::pin(async move {
-            // Call as free function
-            let raw = decode_base64_content(&content)?;
-            parse_action_yml(&raw, filename_label(&path))
-        })
-    }
-}
-```
-
-**DON'T:**
-
-```rust
-impl YourProvider {
-    // ❌ Don't make it a method - causes lifetime issues in async traits
-    fn decode_base64_content(content: &str) -> Result<String> {
-        // ...
-    }
-}
-
-impl Provider for YourProvider {
-    fn get_action_yml(...) -> Pin<Box<...>> {
-        Box::pin(async move {
-            let raw = Self::decode_base64_content(&content)?;  // ❌ Lifetime issues
-            parse_action_yml(&raw, filename_label(&path))
-        })
-    }
-}
 ```
 
 ## API Differences by Platform
@@ -562,14 +533,15 @@ tag list and are filtered at query time. Version processing lives only in
 Create `tests/integration.rs` with tests for your provider:
 
 ```rust
-use actup_core::provider::Provider;
+use actup_core::provider::{Kind, Provider};
 use actup_provider_yourplatform::YourProvider;
 
-#[tokio::test]
-async fn test_provider_kind() {
-    let provider = YourProvider::new("https://api.example.com", "example.com", None).unwrap();
-    assert_eq!(provider.kind(), provider::Kind::YourPlatform);
+#[test]
+fn provider_reports_kind_and_host() -> Result<(), Box<dyn std::error::Error>> {
+    let provider = YourProvider::new("https://api.example.com", "example.com", None)?;
+    assert_eq!(provider.kind(), Kind::YourPlatform);
     assert_eq!(provider.host(), "example.com");
+    Ok(())
 }
 
 // Add tests with wiremock for API mocking
@@ -621,14 +593,14 @@ Sha40::new(&commit_sha).ok_or_else(|| Error::Internal {
 
 ### 4. Base64 Decoding
 
-Most platforms return file content base64-encoded:
+Most platforms return file content base64-encoded. `actup_core::Error` has no
+`From` impl for `base64::DecodeError` or `std::string::FromUtf8Error`, and `?`
+on either result does not compile. Call `decode_base64_content` from step 5. It
+strips whitespace and maps both errors into `Error::Internal`:
 
 ```rust
-use base64::{engine::general_purpose::STANDARD, Engine};
-
 if encoding == "base64" {
-    let decoded = STANDARD.decode(&content)?;
-    let text = String::from_utf8(decoded)?;
+    let text = decode_base64_content(&content)?;
 }
 ```
 
@@ -644,7 +616,7 @@ if encoding == "base64" {
 - [ ] Error handling uses proper `actup_core::Error` variants
 - [ ] SHAs validated with `Sha40::new()`
 - [ ] `REGISTRATION` static exported with presets, inference, and capabilities
-- [ ] `REGISTRATION` wired into `available_registrations()` behind feature gate
+- [ ] `REGISTRATION` wired into both `available_registrations()` functions
 - [ ] Tests added to `tests/integration.rs`
 - [ ] Documentation includes usage examples
 - [ ] Added to workspace `Cargo.toml` members

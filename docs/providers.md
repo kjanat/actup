@@ -20,19 +20,42 @@ All platform details live in provider crates.
 
 ### 2. Provider Trait is Minimal but Complete
 
-The `Provider` trait requires 7 methods:
+The `Provider` trait requires 7 methods and provides defaults for
+`supports_batch_fetch` and `cache_namespace`:
 
 ```rust
-pub trait Provider: Send + Sync {
+pub trait Provider: MaybeSend + MaybeSync {
     fn kind(&self) -> Kind;
+    fn supports_batch_fetch(&self) -> bool {
+        false
+    }
     fn host(&self) -> &str;
-    fn get_versions(&self, repo: &ActionRepoId) -> Future<version::Set>;
-    fn resolve_ref_to_sha(&self, repo: &ActionRepoId, ref_name: &str) -> Future<Sha40>;
-    fn get_default_branch(&self, repo: &ActionRepoId) -> Future<String>;
-    fn get_readme(&self, repo: &ActionRepoId, ref_name: Option<&str>) -> Future<Option<String>>;
-    fn get_action_yml(&self, repo: &ActionRepoId, ref_name: &str) -> Future<ActionYml>;
+    fn cache_namespace(&self) -> &str {
+        self.kind().cache_namespace()
+    }
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>>;
+    fn resolve_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>>;
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>>;
+    fn get_readme(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: Option<&str>,
+    ) -> BoxFuture<'_, Result<Option<String>>>;
+    fn get_action_yml(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<ActionYml>>;
 }
 ```
+
+`BoxFuture` and the `MaybeSend`/`MaybeSync` bounds come from
+`actup_core::compat`. They add `Send` and `Sync` on native targets and drop them
+on `wasm32`.
 
 This is the complete contract needed to support a new platform.
 
@@ -43,6 +66,7 @@ provider implements `TagLike` for its tag response type and calls
 `actup_providers::process_tags`:
 
 ```rust
+use actup_core::version;
 use actup_providers::{TagLike, process_tags};
 
 impl TagLike for PlatformTag {
@@ -269,7 +293,7 @@ When implementing or reviewing a provider:
 - [ ] Base64 decoding handles newlines/whitespace
 - [ ] `REGISTRATION` static exported with presets, `infer_api_base`, and
       capabilities
-- [ ] `REGISTRATION` wired into `available_registrations()` behind feature gate
+- [ ] `REGISTRATION` wired into `available_registrations()` in the CLI and LSP
 - [ ] Tests cover happy path and error cases
 - [ ] Documentation includes usage examples
 - [ ] Follows Rust API guidelines (C-CASE, C-CONV, etc.)
