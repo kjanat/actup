@@ -424,10 +424,10 @@ pub async fn expand_short_sha(
 
 /// Determine status for a SHA-pinned ref.
 ///
-/// If the SHA matches a known tag's commit, the pinned version is compared
-/// against the latest allowed version: a newer version yields `Outdated` whose
-/// `target` carries the newer commit SHA (so updates re-pin rather than unpin to
-/// a tag); otherwise it stays `Pinned`. A SHA that matches no known tag can't be
+/// If the SHA matches a known tag's commit, the most specific tag on it is the
+/// pinned version. It is compared against the latest allowed version: a newer
+/// version yields `Outdated` whose `target` carries the newer commit SHA (so
+/// updates re-pin rather than unpin to a tag); otherwise it stays `Pinned`. A SHA that matches no known tag can't be
 /// compared, so it also stays `Pinned`. A target on the pinned commit is never
 /// an update.
 fn check_pinned_sha(
@@ -437,12 +437,7 @@ fn check_pinned_sha(
 ) -> CheckStatus {
     let sha = action_ref.ref_str().to_string();
 
-    let Some(pinned) = versions
-        .semver_tags()
-        .iter()
-        .find(|v| v.sha() == action_ref.ref_str())
-        .cloned()
-    else {
+    let Some(pinned) = versions.tag_on(action_ref.ref_str()).cloned() else {
         return CheckStatus::Pinned { sha, tag: None };
     };
 
@@ -2428,6 +2423,45 @@ mod tests {
             check_action(&action, &versions, &branch_config(policy::Branch::Warn)).status(),
             &CheckStatus::UpToDate
         );
+    }
+
+    #[test]
+    fn test_sha_pin_takes_the_most_specific_tag_on_its_commit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let pinned = "4".repeat(40);
+        let newer = "9".repeat(40);
+        let action = make_action_ref("actions", "checkout", &pinned);
+        for order in [["v4", "v4.0.0"], ["v4.0.0", "v4"]] {
+            let mut tags: Vec<version::Info> = order
+                .iter()
+                .map(|tag| make_version_info(tag, &pinned))
+                .collect();
+            tags.push(make_version_info("v4.9.3", &newer));
+            let versions = make_version_set(tags, None, HashMap::new(), HashMap::new());
+            for track in ["exact", "major"] {
+                let config: Config =
+                    toml::from_str(&format!("[policy]\nbump = \"patch\"\ntrack = \"{track}\""))?;
+                assert_eq!(
+                    check_action(&action, &versions, &config).status(),
+                    &CheckStatus::Pinned {
+                        sha: pinned.clone(),
+                        tag: Some("v4.0.0".to_string()),
+                    },
+                    "{order:?}, track = {track}"
+                );
+            }
+            let result = check_action(&action, &versions, &Config::default());
+            assert!(
+                matches!(
+                    result.status(),
+                    CheckStatus::Outdated { current, target }
+                        if current == "v4.0.0" && target.version().as_str() == "v4.9.3"
+                ),
+                "{order:?}: {:?}",
+                result.status()
+            );
+        }
+        Ok(())
     }
 
     #[test]
