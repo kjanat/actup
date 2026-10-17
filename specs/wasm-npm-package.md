@@ -141,13 +141,18 @@ Call sites that take a `Clock`:
 - `provider-github/src/graphql.rs:227` — GraphQL rate limit reset time
   comparison
 - `provider-github/src/client.rs:706` — REST rate limit reset time comparison
+- `mcp/src/lib.rs:245`, `:257` — `Server` stamps and ages memoized tool replies;
+  `Server::with_clock` (`:107`) sets the clock
+- `lsp/src/hover.rs:102`, `:110` — `ActionMetaCache::get` ages and `insert`
+  stamps hover metadata; `ActionMetaCache::with_clock` (`:91`) sets the clock
+- `wasm/src/bridge.rs:184` — `build_version_set` passes `JsClock` to
+  `Set::from_tags_with_clock`
 
 These native paths read the system clock directly:
 
 - `version.rs:610` — `Set::from_tags` stamps `fetched_at`. `process_tags`
   (`providers/src/tags.rs:52`) calls it for GitHub REST and GraphQL, git
-  `ls-refs`, GitLab and Gitea. The Zed extension calls it at
-  `extensions/zed/src/provider.rs:176`.
+  `ls-refs`, GitLab and Gitea.
 - `version.rs:577` — `Set::build` stamps `fetched_at`.
 - `cache.rs:39` — `Entry::new` stamps `stored_at`. `FileCache`
   (`file_cache.rs:117`) and the GitHub batch fetcher
