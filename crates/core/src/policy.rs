@@ -250,7 +250,8 @@ impl<'de> Deserialize<'de> for Style {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Track {
-    /// Write a major-only tag for a major-only ref and a full version otherwise.
+    /// Write the major-only tag for a major-only ref when it points at the target commit,
+    /// else the full version.
     #[default]
     Keep,
 

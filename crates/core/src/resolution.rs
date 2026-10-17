@@ -133,6 +133,28 @@ fn is_version_current(
     }
 }
 
+/// Check if `current`, whose tag sits on `current_sha` when listed, is up to date with `target`.
+///
+/// A target on the current commit is current under [`policy::Track::Keep`]
+/// or when it has the current ref's granularity. A higher target on another
+/// commit is newer code.
+fn is_current(
+    current: &version::Version,
+    current_sha: Option<&str>,
+    target: &version::Info,
+    track: policy::Track,
+    versions: &version::Set,
+) -> bool {
+    let granularity = |v: &version::Version| (v.minor().is_some(), v.patch().is_some());
+    match current_sha {
+        Some(sha) if sha == target.sha() => {
+            track == policy::Track::Keep || granularity(current) == granularity(target.version())
+        }
+        Some(_) if target.version() > current => false,
+        _ => is_version_current(current, target, track, versions),
+    }
+}
+
 fn same_release(a: &version::Version, b: &version::Version) -> bool {
     match (a, b) {
         (
@@ -288,8 +310,9 @@ fn classify(
         return (status_for_no_target(&current), None);
     };
 
-    if is_version_current(&current, &target, policy.track, versions) {
-        if versions.has_exact_tag(ref_str) {
+    let current_sha = versions.tag(ref_str).map(|t| t.sha());
+    if is_current(&current, current_sha, &target, policy.track, versions) {
+        if current_sha.is_some() {
             return (CheckStatus::UpToDate, None);
         }
         if !current.is_major_only() {
@@ -446,7 +469,7 @@ fn check_pinned_sha(
     match target {
         Some(t)
             if t.sha() != sha
-                && !is_version_current(pinned.version(), &t, policy.track, versions) =>
+                && !is_current(pinned.version(), Some(&sha), &t, policy.track, versions) =>
         {
             CheckStatus::Outdated {
                 current: pinned.version().to_string(),
@@ -493,9 +516,9 @@ fn status_for_non_semver(
 /// Find the best target version, respecting [`Policy::track`].
 ///
 /// Returns the major-only tag for the target's major (v6) when the track asks
-/// for one and the repo has it. [`policy::Track::Major`] takes that tag only
-/// when it points at the latest version's commit and `bump` allows every
-/// version of that major. Otherwise returns the full version.
+/// for one, the repo has it, and it points at the latest version's commit.
+/// [`policy::Track::Major`] also needs `bump` to allow every version of that
+/// major. Otherwise returns the full version.
 fn find_best_target(
     versions: &version::Set,
     current: &version::Version,
@@ -509,7 +532,11 @@ fn find_best_target(
 
     let whole_major = policy.bump != policy::Update::Patch || current.minor().is_none();
     let target = match (policy.track, major_tag) {
-        (policy::Track::Keep, Some(tag)) if current.is_major_only() => tag,
+        (policy::Track::Keep, Some(tag))
+            if current.is_major_only() && tag.sha() == latest.sha() =>
+        {
+            tag
+        }
         (policy::Track::Major, Some(tag)) if whole_major && tag.sha() == latest.sha() => tag,
         _ => latest,
     };
@@ -818,8 +845,8 @@ mod tests {
     fn test_check_action_major_no_v_prefix_up_to_date_when_exists() {
         // "6" should be UpToDate when a "6" tag actually exists
         let action = make_action_ref("actions", "setup-node", "6");
-        let tag_6 = make_version_info("6", "sha6_no_v"); // exact match
-        let v6_tag = make_version_info("v6", "sha6_with_v");
+        let tag_6 = make_version_info("6", "sha6full"); // exact match
+        let v6_tag = make_version_info("v6", "sha6full");
         let v6_0_2 = make_version_info("v6.0.2", "sha6full");
 
         let mut latest_per_major = HashMap::new();
@@ -1158,7 +1185,7 @@ mod tests {
         let v4_2 = make_version_info("v4.2.0", "sha4");
         let v6_0_2 = make_version_info("v6.0.2", "sha6full");
         // Simulate that v6 major tag exists by having it in semver_tags
-        let v6_major = make_version_info("v6", "sha6major");
+        let v6_major = make_version_info("v6", "sha6full");
 
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(4, v4_2.clone());
@@ -2462,6 +2489,176 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    fn permutations<T: Clone>(items: &[T]) -> Vec<Vec<T>> {
+        if items.len() <= 1 {
+            return vec![items.to_vec()];
+        }
+        (0..items.len())
+            .flat_map(|i| {
+                let mut rest = items.to_vec();
+                let head = rest.remove(i);
+                permutations(&rest).into_iter().map(move |mut order| {
+                    order.insert(0, head.clone());
+                    order
+                })
+            })
+            .collect()
+    }
+
+    fn versions_in_order(tags: &[(&str, &str)]) -> version::Set {
+        let infos: Vec<version::Info> = tags
+            .iter()
+            .map(|(tag, sha)| make_version_info(tag, sha))
+            .collect();
+        let major_tags = infos
+            .iter()
+            .filter(|info| info.version().is_major_only())
+            .filter_map(|info| Some((info.version().major()?, info.clone())))
+            .collect();
+        make_version_set(infos, None, HashMap::new(), major_tags)
+    }
+
+    fn status_under(track: policy::Track, ref_str: &str, versions: &version::Set) -> CheckStatus {
+        let action = make_action_ref("actions", "checkout", ref_str);
+        check_action(&action, versions, &track_config(track))
+            .status()
+            .clone()
+    }
+
+    const TRACKS: [policy::Track; 3] = [
+        policy::Track::Keep,
+        policy::Track::Major,
+        policy::Track::Exact,
+    ];
+
+    #[test]
+    fn test_major_ref_on_the_latest_commit_is_current_in_any_order() {
+        let sha = "4".repeat(40);
+        let older = "3".repeat(40);
+        let tags = [
+            ("v4", sha.as_str()),
+            ("v4.2", sha.as_str()),
+            ("v4.2.0", sha.as_str()),
+            ("v3.9.0", older.as_str()),
+        ];
+        for order in permutations(&tags) {
+            let versions = versions_in_order(&order);
+            assert_eq!(
+                status_under(policy::Track::Keep, "v4", &versions),
+                CheckStatus::UpToDate,
+                "{order:?}"
+            );
+            for track in [policy::Track::Keep, policy::Track::Exact] {
+                assert_eq!(
+                    status_under(track, "v4.2.0", &versions),
+                    CheckStatus::UpToDate,
+                    "{order:?}, track = {track}"
+                );
+            }
+            assert!(
+                matches!(
+                    status_under(policy::Track::Major, "v4.2.0", &versions),
+                    CheckStatus::Outdated { target, .. } if target.version().as_str() == "v4"
+                ),
+                "{order:?}"
+            );
+            for track in TRACKS {
+                assert_eq!(
+                    status_under(track, &sha, &versions),
+                    CheckStatus::Pinned {
+                        sha: sha.clone(),
+                        tag: Some("v4.2.0".to_string()),
+                    },
+                    "{order:?}, track = {track}"
+                );
+            }
+            assert_eq!(
+                status_under(policy::Track::Major, "v4", &versions),
+                CheckStatus::UpToDate,
+                "{order:?}"
+            );
+            assert!(
+                matches!(
+                    status_under(policy::Track::Exact, "v4", &versions),
+                    CheckStatus::Outdated { target, .. } if target.version().as_str() == "v4.2.0"
+                ),
+                "{order:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_major_ref_behind_a_newer_patch_is_outdated_in_any_order() {
+        let old = "4".repeat(40);
+        let new = "5".repeat(40);
+        let tags = [
+            ("v4", old.as_str()),
+            ("v4.2", old.as_str()),
+            ("v4.2.0", old.as_str()),
+            ("v4.2.1", new.as_str()),
+        ];
+        for order in permutations(&tags) {
+            let versions = versions_in_order(&order);
+            for track in TRACKS {
+                for ref_str in ["v4", "v4.2", "v4.2.0"] {
+                    assert!(
+                        matches!(
+                            status_under(track, ref_str, &versions),
+                            CheckStatus::Outdated { current, target }
+                                if current == ref_str
+                                    && target.version().as_str() == "v4.2.1"
+                                    && target.sha() == new
+                        ),
+                        "{ref_str}, {order:?}, track = {track}"
+                    );
+                }
+                assert!(
+                    matches!(
+                        status_under(track, &old, &versions),
+                        CheckStatus::Outdated { current, target }
+                            if current == "v4.2.0" && target.sha() == new
+                    ),
+                    "{order:?}, track = {track}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_newer_tag_on_the_current_commit_is_current() {
+        let sha = "4".repeat(40);
+        for order in permutations(&[("v4.2.0", sha.as_str()), ("v4.2.1", sha.as_str())]) {
+            let versions = versions_in_order(&order);
+            for track in TRACKS {
+                assert_eq!(
+                    status_under(track, "v4.2.0", &versions),
+                    CheckStatus::UpToDate,
+                    "{order:?}, track = {track}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_same_version_on_another_commit_follows_the_track() {
+        let (a, b) = ("a".repeat(40), "b".repeat(40));
+        for order in permutations(&[("v4.2", a.as_str()), ("v4.2.0", b.as_str())]) {
+            let versions = versions_in_order(&order);
+            assert_eq!(
+                status_under(policy::Track::Keep, "v4.2", &versions),
+                CheckStatus::UpToDate,
+                "{order:?}"
+            );
+            assert!(
+                matches!(
+                    status_under(policy::Track::Exact, "v4.2", &versions),
+                    CheckStatus::Outdated { target, .. } if target.sha() == b
+                ),
+                "{order:?}"
+            );
+        }
     }
 
     #[test]

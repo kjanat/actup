@@ -233,8 +233,9 @@ pub struct Policy {
 
     /// Version granularity of an updated tag ref.
     ///
-    /// `keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),
-    /// `major` writes the major-only tag when it points at the target commit
+    /// `keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`)
+    /// and writes the full version when the major-only tag lags the target
+    /// commit, `major` writes the major-only tag when it points at the target commit
     /// and `bump` allows that whole major, `exact` always writes the full
     /// version.
     ///

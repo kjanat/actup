@@ -373,7 +373,7 @@ fn cmp_identifier(x: &str, y: &str) -> Ordering {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Set {
     /// All available semver versions, sorted
-    semver_tags: Vec<Arc<Info>>,
+    semver_tags: Tags,
 
     /// Latest version per major
     ///
@@ -417,6 +417,42 @@ pub struct Set {
     /// When this data was fetched (skipped in serialization — platform-dependent)
     #[serde(skip)]
     fetched_at: Option<std::time::SystemTime>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(from = "Vec<Arc<Info>>")]
+struct Tags {
+    list: Vec<Arc<Info>>,
+    by_sha: std::collections::HashMap<String, Vec<Arc<Info>>>,
+}
+
+impl From<Vec<Arc<Info>>> for Tags {
+    fn from(list: Vec<Arc<Info>>) -> Self {
+        let mut by_sha: std::collections::HashMap<String, Vec<Arc<Info>>> =
+            std::collections::HashMap::new();
+        for info in &list {
+            by_sha
+                .entry(info.sha().to_string())
+                .or_default()
+                .push(Arc::clone(info));
+        }
+        Self { list, by_sha }
+    }
+}
+
+impl Serialize for Tags {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.list.serialize(serializer)
+    }
+}
+
+fn rank(a: &Version, b: &Version) -> Ordering {
+    let parts = |v: &Version| (v.minor().is_some(), v.patch().is_some());
+    let has_build = |v: &Version| v.as_str().contains('+');
+    a.cmp(b)
+        .then_with(|| parts(a).cmp(&parts(b)))
+        .then_with(|| has_build(b).cmp(&has_build(a)))
+        .then_with(|| b.as_str().cmp(a.as_str()))
 }
 
 /// How much of a repository's refs a [`Set`] holds.
@@ -535,7 +571,7 @@ impl Set {
         clock: &dyn Clock,
     ) -> Self {
         Self {
-            semver_tags,
+            semver_tags: semver_tags.into(),
             latest_per_major,
             major_tags,
             latest,
@@ -550,7 +586,7 @@ impl Set {
     /// Get all semver tags
     #[must_use]
     pub fn semver_tags(&self) -> &[Arc<Info>] {
-        &self.semver_tags
+        &self.semver_tags.list
     }
 
     /// Get the latest version per major
@@ -588,32 +624,40 @@ impl Set {
     /// Prevents false "up to date" when user writes `6` but only `v6` exists.
     #[must_use]
     pub fn has_exact_tag(&self, ref_str: &str) -> bool {
+        self.tag(ref_str).is_some()
+    }
+
+    /// Find the semver tag named exactly `name`.
+    #[must_use]
+    pub fn tag(&self, name: &str) -> Option<&Arc<Info>> {
         self.semver_tags
+            .list
             .iter()
-            .any(|t| t.version().as_str() == ref_str)
+            .find(|t| t.version().as_str() == name)
+    }
+
+    /// Get every semver tag on commit `sha`.
+    #[must_use]
+    pub fn tags_on(&self, sha: &str) -> &[Arc<Info>] {
+        self.semver_tags.by_sha.get(sha).map_or(&[], Vec::as_slice)
     }
 
     /// Find the highest full `major.minor.patch` tag on commit `sha`.
     #[must_use]
     pub fn full_tag_on(&self, sha: &str) -> Option<&Arc<Info>> {
-        self.semver_tags
+        self.tags_on(sha)
             .iter()
-            .filter(|t| t.sha() == sha && t.version().patch().is_some())
-            .max_by(|a, b| {
-                a.version()
-                    .cmp(b.version())
-                    .then_with(|| b.version().as_str().cmp(a.version().as_str()))
-            })
+            .filter(|t| t.version().patch().is_some())
+            .max_by(|a, b| rank(a.version(), b.version()))
     }
 
-    /// Find the tag that names commit `sha`: the highest full tag, else the highest tag.
+    /// Find the tag that names commit `sha`: the highest full tag, else the most specific tag.
     #[must_use]
     pub fn tag_on(&self, sha: &str) -> Option<&Arc<Info>> {
         self.full_tag_on(sha).or_else(|| {
-            self.semver_tags
+            self.tags_on(sha)
                 .iter()
-                .filter(|t| t.sha() == sha)
-                .max_by(|a, b| a.version().cmp(b.version()))
+                .max_by(|a, b| rank(a.version(), b.version()))
         })
     }
 
@@ -649,17 +693,10 @@ impl Set {
                     || (current.is_prerelease() && v.release() == current.release()))
         };
         self.semver_tags
+            .list
             .iter()
             .filter(|t| allows(t.version()))
-            .max_by(|a, b| {
-                let (a, b) = (a.version(), b.version());
-                let parts = |v: &Version| (v.minor().is_some(), v.patch().is_some());
-                let has_build = |v: &Version| v.as_str().contains('+');
-                a.cmp(b)
-                    .then_with(|| parts(a).cmp(&parts(b)))
-                    .then_with(|| has_build(b).cmp(&has_build(a)))
-                    .then_with(|| b.as_str().cmp(a.as_str()))
-            })
+            .max_by(|a, b| rank(a.version(), b.version()))
             .filter(|t| t.version() >= current)
     }
 
@@ -1251,7 +1288,7 @@ mod tests {
         latest_per_major.insert(4, Arc::clone(&v4));
 
         let vs = Set {
-            semver_tags: vec![Arc::clone(&v4), v3],
+            semver_tags: vec![Arc::clone(&v4), v3].into(),
             latest_per_major,
             major_tags: HashMap::new(),
             latest: Some(v4),
@@ -1278,7 +1315,7 @@ mod tests {
         latest_per_major.insert(4, Arc::clone(&v4));
 
         let vs = Set {
-            semver_tags: vec![Arc::clone(&v4), v3_1],
+            semver_tags: vec![Arc::clone(&v4), v3_1].into(),
             latest_per_major,
             major_tags: HashMap::new(),
             latest: Some(v4),
@@ -1300,7 +1337,7 @@ mod tests {
         let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
         let vs = Set {
-            semver_tags: vec![Arc::clone(&v4)],
+            semver_tags: vec![Arc::clone(&v4)].into(),
             latest_per_major: HashMap::new(),
             major_tags: HashMap::new(),
             latest: Some(v4),
@@ -1331,7 +1368,7 @@ mod tests {
         latest_per_major.insert(4, Arc::clone(&beta));
 
         let vs = Set {
-            semver_tags: vec![Arc::clone(&beta)],
+            semver_tags: vec![Arc::clone(&beta)].into(),
             latest_per_major,
             major_tags: HashMap::new(),
             latest: Some(beta),
@@ -1408,6 +1445,39 @@ mod tests {
             Some("v3.1.0")
         );
         assert!(vs.full_tag_on("c").is_none());
+    }
+
+    #[test]
+    fn tags_on_indexes_every_tag_by_commit() -> Result<(), Box<dyn std::error::Error>> {
+        let tag = |name: &str, sha: &str| Arc::new(Info::new(Version::parse(name), sha));
+        let tags = vec![
+            tag("v4", "a"),
+            tag("v4.0", "a"),
+            tag("v3.9.0", "b"),
+            tag("v4.1", "c"),
+            tag("v4.1.0", "c"),
+        ];
+        let reversed: Vec<_> = tags.iter().rev().cloned().collect();
+        for semver_tags in [tags, reversed] {
+            let built = Set::build(semver_tags, HashMap::new(), HashMap::new(), None);
+            let restored: Set = serde_json::from_str(&serde_json::to_string(&built)?)?;
+            for vs in [built, restored] {
+                let mut on_a: Vec<&str> = vs
+                    .tags_on("a")
+                    .iter()
+                    .map(|t| t.version().as_str())
+                    .collect();
+                on_a.sort_unstable();
+                assert_eq!(on_a, ["v4", "v4.0"]);
+                assert_eq!(vs.tags_on("d"), []);
+                assert_eq!(vs.tag_on("a").map(|t| t.version().as_str()), Some("v4.0"));
+                assert!(vs.full_tag_on("a").is_none());
+                assert_eq!(vs.tag_on("c").map(|t| t.version().as_str()), Some("v4.1.0"));
+                assert_eq!(vs.tag("v4.1").map(|t| t.sha()), Some("c"));
+                assert!(vs.tag("v4.1.1").is_none());
+            }
+        }
+        Ok(())
     }
 
     #[test]
