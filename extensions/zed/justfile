@@ -22,3 +22,5 @@ build: _ensure-target
 # Clean build artifacts
 clean:
     cargo clean -p zed-actup
+    cargo clean -p zed-actup --target {{ target }}
+    cargo clean -p zed-actup --target {{ target }} --release
