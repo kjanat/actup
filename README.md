@@ -49,6 +49,10 @@ A ref that is neither a release tag like `v1.2.3` nor paired with `version`
 fails the step. Outputs: `exit-code` (see [Exit Codes](#exit-codes)) and
 `actup-bin`, the path of the verified binary for later steps.
 
+`examples/workflows/` holds a check workflow and a reusable workflow that opens
+an update pull request with the `token` secret it receives. After tagging a
+release, `just examples-pin <tag>` pins both examples to the tag's commit.
+
 ### Container Image
 
 Each release publishes `ghcr.io/kjanat/actup:<tag>` for `linux/amd64` and

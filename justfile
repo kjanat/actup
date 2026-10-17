@@ -113,6 +113,17 @@ action-test:
     shellcheck action/*.sh
     action/test.sh
 
+# Test the example-workflow pin script
+[group('test')]
+examples-test:
+    shellcheck examples/*.sh
+    examples/pin.test.sh
+
+# Pin the example workflows to the commit of release tag `tag`
+[group('docs')]
+examples-pin tag:
+    examples/pin.sh {{ tag }}
+
 # Run tests with coverage (llvm-cov)
 [group('test')]
 cov:
@@ -227,7 +238,7 @@ schema:
 
 # Run full CI checks locally
 [group('ci')]
-ci: fmt-check clippy-strict clippy-wasm test wasm-node-test action-test
+ci: fmt-check clippy-strict clippy-wasm test wasm-node-test action-test examples-test
     @echo "All CI checks passed!"
 
 # Run actup on this repo
