@@ -146,6 +146,7 @@ const base = grammar({
 		$._err_rec,
 
 		$._expr_bgn, // `${{` (GitHub Actions expression open) — emitted by scanner before scalar content
+		$._r_if_expr_bgn,
 	],
 
 	extras: $ => [$.comment],
@@ -413,10 +414,13 @@ const base = grammar({
 							$._br_blk_str_val,
 							$._r_flw_val_blk,
 							$._br_flw_val_blk,
+							$._r_if_expr_val,
 						),
 					),
 				),
 			),
+
+		_r_if_expr_val: $ => seq($._r_if_expr_bgn, alias($._if_expression, $.expression)),
 
 		// block scalar
 
@@ -755,6 +759,21 @@ const base = grammar({
 					),
 				),
 			),
+		_if_expr_sep: $ => choice($._expr_ws, $._if_expr_nwl),
+		_if_expr_nwl: _ => token(/[ \t]*(\r?\n[ \t]*)+/),
+		_if_expression: $ =>
+			seq(
+				$._evaluation,
+				repeat(
+					seq(
+						optional($._if_expr_sep),
+						$.operator,
+						optional($._if_expr_sep),
+						optional(seq($.not, optional($._expr_ws))),
+						$._evaluation,
+					),
+				),
+			),
 		delimited_expression: $ =>
 			seq(
 				alias($._expr_bgn, $.expression_marker),
@@ -947,6 +966,7 @@ const aliasedSchema = global_alias(
 			"_r_pln_flw_val",
 			"_br_pln_flw_val",
 			"_r_sgl_pln_flw_val",
+			"_r_if_expr_val",
 		),
 		..._("double_quote_scalar", "_r_dqt_str", "_br_dqt_str", "_r_sgl_dqt_str", "_br_sgl_dqt_str", "_b_sgl_dqt_str"),
 		..._("single_quote_scalar", "_r_sqt_str", "_br_sqt_str", "_r_sgl_sqt_str", "_br_sgl_sqt_str", "_b_sgl_sqt_str"),
