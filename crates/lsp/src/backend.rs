@@ -270,13 +270,13 @@ impl LspBackend {
     /// Create a new backend from the LSP client handle.
     ///
     /// Used as the constructor passed to `LspService::new`.
+    #[cfg(not(test))]
     pub fn new(client: Client) -> Self {
-        Self::with_user_config(client, actup_core::user_config_path())
-    }
-
-    /// Create a new backend that reads the user config from `user_config`.
-    pub fn with_user_config(client: Client, user_config: Option<PathBuf>) -> Self {
-        Self::with_providers(client, user_config, provider_setup::Providers::LIVE)
+        Self::with_providers(
+            client,
+            actup_core::user_config_path(),
+            provider_setup::Providers::LIVE,
+        )
     }
 
     /// Create a new backend that builds its registry and file cache with `providers`.

@@ -22,13 +22,14 @@ mod test_utils;
 #[cfg(test)]
 mod integration_tests;
 
-use std::io::IsTerminal;
-
-use tower_lsp_server::{LspService, Server};
-use tracing_subscriber::EnvFilter;
-
+#[cfg(not(test))]
 #[tokio::main]
 async fn main() {
+    use std::io::IsTerminal;
+
+    use tower_lsp_server::{LspService, Server};
+    use tracing_subscriber::EnvFilter;
+
     let is_tty = std::io::stderr().is_terminal();
     tracing_subscriber::fmt()
         .with_env_filter(
