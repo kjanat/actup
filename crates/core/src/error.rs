@@ -304,7 +304,6 @@ fn retry_hint(retry_after: Option<&std::time::Duration>) -> String {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

@@ -451,9 +451,10 @@ impl fmt::Display for Archived {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     // Update tests
 
@@ -548,36 +549,39 @@ mod tests {
     // Deserialization tests
 
     #[test]
-    fn test_update_policy_deserialize() {
+    fn test_update_policy_deserialize() -> TestResult {
         let json = r#""patch""#;
-        let policy: Update = serde_json::from_str(json).unwrap();
+        let policy: Update = serde_json::from_str(json)?;
         assert_eq!(policy, Update::Patch);
 
         let json = r#""LATEST""#;
-        let policy: Update = serde_json::from_str(json).unwrap();
+        let policy: Update = serde_json::from_str(json)?;
         assert_eq!(policy, Update::Latest);
+        Ok(())
     }
 
     #[test]
-    fn test_ref_style_deserialize() {
+    fn test_ref_style_deserialize() -> TestResult {
         let json = r#""sha""#;
-        let style: Style = serde_json::from_str(json).unwrap();
+        let style: Style = serde_json::from_str(json)?;
         assert_eq!(style, Style::Sha);
 
         let json = r#""TAG""#;
-        let style: Style = serde_json::from_str(json).unwrap();
+        let style: Style = serde_json::from_str(json)?;
         assert_eq!(style, Style::Tag);
+        Ok(())
     }
 
     #[test]
-    fn test_branch_policy_deserialize() {
+    fn test_branch_policy_deserialize() -> TestResult {
         let json = r#""warn""#;
-        let policy: Branch = serde_json::from_str(json).unwrap();
+        let policy: Branch = serde_json::from_str(json)?;
         assert_eq!(policy, Branch::Warn);
 
         let json = r#""UPDATE""#;
-        let policy: Branch = serde_json::from_str(json).unwrap();
+        let policy: Branch = serde_json::from_str(json)?;
         assert_eq!(policy, Branch::Update);
+        Ok(())
     }
 
     #[test]

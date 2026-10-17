@@ -553,7 +553,6 @@ impl<P: Provider> Provider for CachingProvider<P> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use std::sync::{
         Arc,
@@ -610,7 +609,13 @@ mod tests {
             _ref_name: &str,
         ) -> BoxFuture<'_, Result<Sha40>> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
-            Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+            Box::pin(async {
+                Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                    context: "test".into(),
+                    message: "sha".into(),
+                    source: None,
+                })
+            })
         }
 
         fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
@@ -642,51 +647,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_versions_caches() {
+    async fn test_get_versions_caches() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
         // First call
-        let v1 = cached.get_versions(&repo).await.unwrap();
+        let v1 = cached.get_versions(&repo).await?;
         assert_eq!(cached.inner.calls(), 1);
 
         // Second call - should use cache
-        let v2 = cached.get_versions(&repo).await.unwrap();
+        let v2 = cached.get_versions(&repo).await?;
         assert_eq!(cached.inner.calls(), 1); // Still 1
 
         // Results should match
         assert_eq!(
-            v1.latest().unwrap().version(),
-            v2.latest().unwrap().version()
+            v1.latest().ok_or("`v1.latest()` is None")?.version(),
+            v2.latest().ok_or("`v2.latest()` is None")?.version()
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_get_versions_different_repos() {
+    async fn test_get_versions_different_repos() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
 
         let repo1 = make_repo("actions", "checkout");
         let repo2 = make_repo("actions", "setup-node");
 
-        cached.get_versions(&repo1).await.unwrap();
-        cached.get_versions(&repo2).await.unwrap();
+        cached.get_versions(&repo1).await?;
+        cached.get_versions(&repo2).await?;
 
         // Different repos should both call provider
         assert_eq!(cached.inner.calls(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_resolve_ref_caches() {
+    async fn test_resolve_ref_caches() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
-        cached.resolve_ref_to_sha(&repo, "v4").await.unwrap();
-        cached.resolve_ref_to_sha(&repo, "v4").await.unwrap();
+        cached.resolve_ref_to_sha(&repo, "v4").await?;
+        cached.resolve_ref_to_sha(&repo, "v4").await?;
 
         assert_eq!(cached.inner.calls(), 1);
+        Ok(())
     }
 
     struct Resolver {
@@ -782,88 +790,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_resolve_ref_different_refs() {
+    async fn test_resolve_ref_different_refs() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
-        cached.resolve_ref_to_sha(&repo, "v3").await.unwrap();
-        cached.resolve_ref_to_sha(&repo, "v4").await.unwrap();
+        cached.resolve_ref_to_sha(&repo, "v3").await?;
+        cached.resolve_ref_to_sha(&repo, "v4").await?;
 
         assert_eq!(cached.inner.calls(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_get_default_branch_caches() {
+    async fn test_get_default_branch_caches() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
-        cached.get_default_branch(&repo).await.unwrap();
-        cached.get_default_branch(&repo).await.unwrap();
+        cached.get_default_branch(&repo).await?;
+        cached.get_default_branch(&repo).await?;
 
         assert_eq!(cached.inner.calls(), 1);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_readme_not_cached() {
+    async fn test_readme_not_cached() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
-        cached.get_readme(&repo, None).await.unwrap();
-        cached.get_readme(&repo, None).await.unwrap();
+        cached.get_readme(&repo, None).await?;
+        cached.get_readme(&repo, None).await?;
 
         // README is NOT cached
         assert_eq!(cached.inner.calls(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_action_yml_not_cached() {
+    async fn test_action_yml_not_cached() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
-        cached.get_action_yml(&repo, "v4").await.unwrap();
-        cached.get_action_yml(&repo, "v4").await.unwrap();
+        cached.get_action_yml(&repo, "v4").await?;
+        cached.get_action_yml(&repo, "v4").await?;
 
         // action.yml is NOT cached
         assert_eq!(cached.inner.calls(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_clear_cache() {
+    async fn test_clear_cache() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
         let repo = make_repo("actions", "checkout");
 
-        cached.get_versions(&repo).await.unwrap();
+        cached.get_versions(&repo).await?;
         assert_eq!(cached.inner.calls(), 1);
 
         cached.clear_cache().await;
 
         // After clear, should fetch again
-        cached.get_versions(&repo).await.unwrap();
+        cached.get_versions(&repo).await?;
         assert_eq!(cached.inner.calls(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_cache_stats() {
+    async fn test_cache_stats() -> TestResult {
         let inner = CountingProvider::new();
         let cached = CachingProvider::new(inner);
 
         let repo1 = make_repo("actions", "checkout");
         let repo2 = make_repo("actions", "setup-node");
 
-        cached.get_versions(&repo1).await.unwrap();
-        cached.get_versions(&repo2).await.unwrap();
-        cached.resolve_ref_to_sha(&repo1, "v4").await.unwrap();
-        cached.get_default_branch(&repo1).await.unwrap();
+        cached.get_versions(&repo1).await?;
+        cached.get_versions(&repo2).await?;
+        cached.resolve_ref_to_sha(&repo1, "v4").await?;
+        cached.get_default_branch(&repo1).await?;
 
         let stats = cached.cache_stats().await;
         assert_eq!(stats.versions(), 2);
         assert_eq!(stats.shas(), 1);
         assert_eq!(stats.branches(), 1);
+        Ok(())
     }
 
     #[tokio::test]
@@ -877,7 +891,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_versions_ignores_subpath() {
+    async fn test_get_versions_ignores_subpath() -> TestResult {
         let inner = CountingProvider::new();
         let calls = Arc::clone(&inner.call_count);
         let cached = CachingProvider::new(Box::new(inner) as Box<dyn Provider>);
@@ -889,10 +903,11 @@ mod tests {
             Some(".github/workflows/reusable.yml".to_string()),
         );
 
-        cached.get_versions(&composite).await.unwrap();
-        cached.get_versions(&reusable).await.unwrap();
+        cached.get_versions(&composite).await?;
+        cached.get_versions(&reusable).await?;
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     /// Provider whose `get_versions` yields many times before completing so
@@ -937,7 +952,11 @@ mod tests {
                 for _ in 0..64 {
                     tokio::task::yield_now().await;
                 }
-                Ok(Sha40::new("a".repeat(40)).unwrap())
+                Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                    context: "test".into(),
+                    message: "sha".into(),
+                    source: None,
+                })
             })
         }
         fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
@@ -967,7 +986,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_singleflight_dedupes_concurrent_get_versions() {
+    async fn test_singleflight_dedupes_concurrent_get_versions() -> TestResult {
         let calls = Arc::new(AtomicUsize::new(0));
         let inner = SlowProvider {
             call_count: Arc::clone(&calls),
@@ -981,15 +1000,14 @@ mod tests {
         for _ in 0..4 {
             let c = Arc::clone(&cached);
             let r = repo.clone();
-            handles.push(tokio::spawn(
-                async move { c.get_versions(&r).await.unwrap() },
-            ));
+            handles.push(tokio::spawn(async move { c.get_versions(&r).await }));
         }
         for h in handles {
-            h.await.unwrap();
+            h.await??;
         }
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     /// Regression: a fast-completing leader must not leave a follower
@@ -998,7 +1016,7 @@ mod tests {
     /// losing the signal. This test uses a provider that returns instantly
     /// and still expects all followers to complete without timeout.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_singleflight_no_deadlock_on_fast_leader() {
+    async fn test_singleflight_no_deadlock_on_fast_leader() -> TestResult {
         // Fast provider: returns immediately with no yields — maximizes the
         // chance that the leader finishes before followers register.
         struct FastProvider {
@@ -1020,7 +1038,13 @@ mod tests {
                 _: &ActionRepoId,
                 _: &str,
             ) -> BoxFuture<'_, Result<Sha40>> {
-                Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+                Box::pin(async {
+                    Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                        context: "test".into(),
+                        message: "sha".into(),
+                        source: None,
+                    })
+                })
             }
             fn get_default_branch(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
                 Box::pin(async { Ok("main".into()) })
@@ -1055,28 +1079,26 @@ mod tests {
                 for _ in 0..8 {
                     let c = Arc::clone(&cached);
                     let r = make_repo("actions", &format!("repo-{iter}"));
-                    handles.push(tokio::spawn(async move {
-                        c.get_versions(&r).await.unwrap();
-                    }));
+                    handles.push(tokio::spawn(async move { c.get_versions(&r).await }));
                 }
                 for h in handles {
-                    h.await.unwrap();
+                    h.await??;
                 }
             }
+            TestResult::Ok(())
         };
-        if tokio::time::timeout(std::time::Duration::from_secs(5), fut)
-            .await
-            .is_err()
-        {
+        let Ok(done) = tokio::time::timeout(std::time::Duration::from_secs(5), fut).await else {
             panic!("follower deadlocked — singleflight signal was lost");
-        }
+        };
+        done?;
 
         // Each of 32 distinct keys should hit the inner exactly once.
         assert_eq!(calls.load(Ordering::SeqCst), 32);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_singleflight_dedupes_concurrent_resolve_ref_to_sha() {
+    async fn test_singleflight_dedupes_concurrent_resolve_ref_to_sha() -> TestResult {
         let calls = Arc::new(AtomicUsize::new(0));
         let inner = SlowProvider {
             call_count: Arc::clone(&calls),
@@ -1088,19 +1110,20 @@ mod tests {
         for _ in 0..4 {
             let c = Arc::clone(&cached);
             let r = repo.clone();
-            handles.push(tokio::spawn(async move {
-                c.resolve_ref_to_sha(&r, "v4").await.unwrap()
-            }));
+            handles.push(tokio::spawn(
+                async move { c.resolve_ref_to_sha(&r, "v4").await },
+            ));
         }
         for h in handles {
-            h.await.unwrap();
+            h.await??;
         }
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_singleflight_dedupes_concurrent_get_default_branch() {
+    async fn test_singleflight_dedupes_concurrent_get_default_branch() -> TestResult {
         let calls = Arc::new(AtomicUsize::new(0));
         let inner = SlowProvider {
             call_count: Arc::clone(&calls),
@@ -1112,15 +1135,14 @@ mod tests {
         for _ in 0..4 {
             let c = Arc::clone(&cached);
             let r = repo.clone();
-            handles.push(tokio::spawn(async move {
-                c.get_default_branch(&r).await.unwrap()
-            }));
+            handles.push(tokio::spawn(async move { c.get_default_branch(&r).await }));
         }
         for h in handles {
-            h.await.unwrap();
+            h.await??;
         }
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     /// Regression: when the singleflight leader future is cancelled
@@ -1128,7 +1150,7 @@ mod tests {
     /// cancellation), the flight slot must be cleaned up so subsequent
     /// callers don't deadlock waiting on a never-closed semaphore.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_leader_cancellation_does_not_deadlock_subsequent_callers() {
+    async fn test_leader_cancellation_does_not_deadlock_subsequent_callers() -> TestResult {
         /// Provider where the first call hangs forever, the second succeeds.
         /// This lets us distinguish "deadlocked on leaked flight" (timeout
         /// fires) from "fresh leader proceeded" (success).
@@ -1159,7 +1181,13 @@ mod tests {
                 _: &ActionRepoId,
                 _: &str,
             ) -> BoxFuture<'_, Result<Sha40>> {
-                Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+                Box::pin(async {
+                    Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                        context: "test".into(),
+                        message: "sha".into(),
+                        source: None,
+                    })
+                })
             }
             fn get_default_branch(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
                 Box::pin(async { Ok("main".into()) })
@@ -1222,19 +1250,20 @@ mod tests {
             result.is_ok(),
             "subsequent caller deadlocked — leader cancellation leaked the flight slot"
         );
-        let inner = result.unwrap();
+        let inner = result?;
         assert!(
             inner.is_ok(),
             "subsequent caller should have succeeded as fresh leader: {:?}",
             inner.err()
         );
+        Ok(())
     }
 
     /// Regression: when the singleflight leader errors, a follower's
     /// fallback fetch must populate the cache on success — otherwise every
     /// subsequent caller re-fetches forever after a transient failure.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_follower_fallback_populates_cache_on_success() {
+    async fn test_follower_fallback_populates_cache_on_success() -> TestResult {
         use crate::error::Error;
 
         /// Provider whose first `get_versions` call fails; later calls succeed.
@@ -1273,7 +1302,13 @@ mod tests {
                 _: &ActionRepoId,
                 _: &str,
             ) -> BoxFuture<'_, Result<Sha40>> {
-                Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+                Box::pin(async {
+                    Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                        context: "test".into(),
+                        message: "sha".into(),
+                        source: None,
+                    })
+                })
             }
             fn get_default_branch(&self, _: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
                 Box::pin(async { Ok("main".into()) })
@@ -1310,7 +1345,7 @@ mod tests {
         let mut ok_count = 0usize;
         let mut err_count = 0usize;
         for h in handles {
-            match h.await.unwrap() {
+            match h.await? {
                 Ok(_) => ok_count += 1,
                 Err(_) => err_count += 1,
             }
@@ -1327,12 +1362,13 @@ mod tests {
 
         // Crucial assertion: the successful follower(s) populated the cache,
         // so a subsequent call must NOT trigger another inner fetch.
-        cached.get_versions(&repo).await.unwrap();
+        cached.get_versions(&repo).await?;
         assert_eq!(
             calls.load(Ordering::SeqCst),
             calls_after_burst,
             "follower-fallback success must populate cache; subsequent call re-fetched"
         );
+        Ok(())
     }
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;

@@ -870,11 +870,12 @@ impl Set {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     // Version::parse tests
 
@@ -1434,7 +1435,7 @@ mod tests {
     }
 
     #[test]
-    fn test_find_latest_for_major_allowed() {
+    fn test_find_latest_for_major_allowed() -> TestResult {
         let v3 = Arc::new(Info::new(Version::parse("v3.0.0"), "aaa"));
         let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
@@ -1458,11 +1459,15 @@ mod tests {
         let current = Version::parse("v3.0.0");
         let result = vs.find_latest_for(&current, policy::Update::Major, false);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().version.to_string(), "v4.0.0");
+        assert_eq!(
+            result.ok_or("`result` is None")?.version.to_string(),
+            "v4.0.0"
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_find_latest_for_major_not_allowed() {
+    fn test_find_latest_for_major_not_allowed() -> TestResult {
         let v3_1 = Arc::new(Info::new(Version::parse("v3.1.0"), "aaa"));
         let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
@@ -1486,7 +1491,11 @@ mod tests {
         let current = Version::parse("v3.0.0");
         let result = vs.find_latest_for(&current, policy::Update::Minor, false);
         assert!(result.is_some());
-        assert_eq!(result.unwrap().version.to_string(), "v3.1.0");
+        assert_eq!(
+            result.ok_or("`result` is None")?.version.to_string(),
+            "v3.1.0"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1712,7 +1721,7 @@ mod tests {
     }
 
     #[test]
-    fn test_set_default_branch() {
+    fn test_set_default_branch() -> TestResult {
         let mut vs = Set::new();
         assert!(vs.default_branch().is_none());
 
@@ -1723,8 +1732,19 @@ mod tests {
         vs.set_default_branch(branch);
 
         assert!(vs.default_branch().is_some());
-        assert_eq!(vs.default_branch().unwrap().name(), "main");
-        assert_eq!(vs.default_branch().unwrap().sha(), "abc123");
+        assert_eq!(
+            vs.default_branch()
+                .ok_or("`vs.default_branch()` is None")?
+                .name(),
+            "main"
+        );
+        assert_eq!(
+            vs.default_branch()
+                .ok_or("`vs.default_branch()` is None")?
+                .sha(),
+            "abc123"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1737,7 +1757,7 @@ mod tests {
     }
 
     #[test]
-    fn test_with_default_branch() {
+    fn test_with_default_branch() -> TestResult {
         let branch = BranchInfo {
             name: "develop".to_string(),
             sha: "def456".to_string(),
@@ -1746,8 +1766,19 @@ mod tests {
         let vs = Set::new().with_default_branch(branch);
 
         assert!(vs.default_branch().is_some());
-        assert_eq!(vs.default_branch().unwrap().name(), "develop");
-        assert_eq!(vs.default_branch().unwrap().sha(), "def456");
+        assert_eq!(
+            vs.default_branch()
+                .ok_or("`vs.default_branch()` is None")?
+                .name(),
+            "develop"
+        );
+        assert_eq!(
+            vs.default_branch()
+                .ok_or("`vs.default_branch()` is None")?
+                .sha(),
+            "def456"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1767,7 +1798,7 @@ mod tests {
     }
 
     #[test]
-    fn test_version_set_serde_round_trip() {
+    fn test_version_set_serde_round_trip() -> TestResult {
         let v1 = Arc::new(Info::new(Version::parse("v1.0.0"), "aaa"));
         let v2 = Arc::new(Info::new(Version::parse("v2.0.0"), "bbb"));
         let mut latest_per_major = std::collections::HashMap::new();
@@ -1786,8 +1817,8 @@ mod tests {
         )
         .with_default_branch(branch);
 
-        let json = serde_json::to_string(&set).unwrap();
-        let deserialized: Set = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&set)?;
+        let deserialized: Set = serde_json::from_str(&json)?;
 
         // Data fields round-trip
         assert_eq!(deserialized.semver_tags().len(), 2);
@@ -1801,18 +1832,20 @@ mod tests {
             deserialized.fetched_at().is_none(),
             "fetched_at should be None after deserialization (serde skip)"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_version_info_serde_round_trip() {
+    fn test_version_info_serde_round_trip() -> TestResult {
         let info = Info::new(Version::parse("v1.2.3"), "abc123");
-        let json = serde_json::to_string(&info).unwrap();
-        let deserialized: Info = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&info)?;
+        let deserialized: Info = serde_json::from_str(&json)?;
         assert_eq!(info, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_version_serde_round_trip_all_variants() {
+    fn test_version_serde_round_trip_all_variants() -> TestResult {
         let versions = [
             Version::parse("v1.2.3"),
             Version::parse("v1"),
@@ -1823,22 +1856,24 @@ mod tests {
             Version::parse("nightly"),
         ];
         for version in &versions {
-            let json = serde_json::to_string(version).unwrap();
-            let deserialized: Version = serde_json::from_str(&json).unwrap();
+            let json = serde_json::to_string(version)?;
+            let deserialized: Version = serde_json::from_str(&json)?;
             assert_eq!(
                 version.to_string(),
                 deserialized.to_string(),
                 "round-trip failed for {version}"
             );
         }
+        Ok(())
     }
 
     #[test]
-    fn test_branch_info_serde_round_trip() {
+    fn test_branch_info_serde_round_trip() -> TestResult {
         let branch = BranchInfo::new("develop", "def456");
-        let json = serde_json::to_string(&branch).unwrap();
-        let deserialized: BranchInfo = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&branch)?;
+        let deserialized: BranchInfo = serde_json::from_str(&json)?;
         assert_eq!(branch, deserialized);
+        Ok(())
     }
 
     /// Regression: `Version::Branch` cannot round-trip — wire form is the
@@ -1849,17 +1884,17 @@ mod tests {
     /// (a separate field of [`Set`]) — this test guards the assumption
     /// stated in the [`Version`] doc-comment.
     #[test]
-    fn test_version_branch_roundtrips_as_other() {
+    fn test_version_branch_roundtrips_as_other() -> TestResult {
         let branch = Version::Branch {
             name: "main".to_string(),
         };
 
         // Wire form is the Display string — no structural marker for `Branch`.
-        let json = serde_json::to_string(&branch).unwrap();
+        let json = serde_json::to_string(&branch)?;
         assert_eq!(json, "\"main\"");
 
         // Round-trip lands in `Other`, not `Branch`.
-        let deserialized: Version = serde_json::from_str(&json).unwrap();
+        let deserialized: Version = serde_json::from_str(&json)?;
         assert_eq!(
             deserialized,
             Version::Other {
@@ -1869,5 +1904,6 @@ mod tests {
         assert!(!deserialized.is_branch(), "must NOT round-trip as Branch");
         // Display-equivalence is still preserved (both render as "main").
         assert_eq!(branch.to_string(), deserialized.to_string());
+        Ok(())
     }
 }

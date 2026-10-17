@@ -739,15 +739,17 @@ pub async fn check_action_fetched(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::collections::HashMap;
 
     use super::*;
+
     use crate::{
         policy,
         provider::{ActionYml, Kind, Provider, Sha40},
     };
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[derive(Clone, Copy)]
     enum Resolve {
@@ -802,7 +804,11 @@ mod tests {
         ) -> crate::BoxFuture<'_, crate::Result<Sha40>> {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let result = match self.lookup {
-                Resolve::Found => Ok(Sha40::new("a".repeat(40)).unwrap()),
+                Resolve::Found => Sha40::new("a".repeat(40)).ok_or_else(|| Error::Internal {
+                    context: "mock resolve".to_string(),
+                    message: "invalid SHA".to_string(),
+                    source: None,
+                }),
                 Resolve::To(sha) => Sha40::new(sha).ok_or_else(|| Error::Internal {
                     context: "mock resolve".to_string(),
                     message: format!("invalid SHA {sha}"),
@@ -3098,18 +3104,19 @@ mod tests {
     }
 
     #[test]
-    fn test_check_result_serde_round_trip_up_to_date() {
+    fn test_check_result_serde_round_trip_up_to_date() -> TestResult {
         let result = CheckResult::new(
             make_action_ref("actions", "checkout", "v4.2.0"),
             CheckStatus::UpToDate,
         );
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&result)?;
+        let deserialized: CheckResult = serde_json::from_str(&json)?;
         assert_eq!(result, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_check_result_serde_round_trip_outdated() {
+    fn test_check_result_serde_round_trip_outdated() -> TestResult {
         let target = Arc::new(make_version_info("v4.2.0", "abc123"));
         let result = CheckResult::new(
             make_action_ref("actions", "checkout", "v4.0.0"),
@@ -3118,13 +3125,14 @@ mod tests {
                 target,
             },
         );
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&result)?;
+        let deserialized: CheckResult = serde_json::from_str(&json)?;
         assert_eq!(result, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_check_result_serde_round_trip_pinned() {
+    fn test_check_result_serde_round_trip_pinned() -> TestResult {
         let result = CheckResult::new(
             make_action_ref("actions", "checkout", "abc123"),
             CheckStatus::Pinned {
@@ -3132,13 +3140,14 @@ mod tests {
                 tag: Some("v4.0.0".to_string()),
             },
         );
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&result)?;
+        let deserialized: CheckResult = serde_json::from_str(&json)?;
         assert_eq!(result, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_check_result_serde_round_trip_unresolvable() {
+    fn test_check_result_serde_round_trip_unresolvable() -> TestResult {
         let result = CheckResult::new(
             make_action_ref("actions", "checkout", "nonexistent"),
             CheckStatus::Unresolvable {
@@ -3146,20 +3155,22 @@ mod tests {
                 is_environment_error: false,
             },
         );
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&result)?;
+        let deserialized: CheckResult = serde_json::from_str(&json)?;
         assert_eq!(result, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_check_result_serde_round_trip_ignored() {
+    fn test_check_result_serde_round_trip_ignored() -> TestResult {
         let result = CheckResult::new(
             make_action_ref("ignored", "action", "v1"),
             CheckStatus::Ignored,
         );
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&result)?;
+        let deserialized: CheckResult = serde_json::from_str(&json)?;
         assert_eq!(result, deserialized);
+        Ok(())
     }
 
     #[test]

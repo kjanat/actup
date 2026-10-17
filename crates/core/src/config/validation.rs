@@ -158,12 +158,13 @@ fn invalid_config(context: &str, reason: &str) -> Error {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use std::num::NonZeroU8;
 
     use super::*;
+
     use crate::config::{ApiMode, HostKind};
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn hostname_valid_simple() {
@@ -186,76 +187,112 @@ mod tests {
     }
 
     #[test]
-    fn hostname_rejects_empty() {
-        let err = validate_hostname("", "hosts").unwrap_err();
+    fn hostname_rejects_empty() -> TestResult {
+        let err = validate_hostname("", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("empty"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_uppercase() {
-        let err = validate_hostname("GitHub.com", "hosts").unwrap_err();
+    fn hostname_rejects_uppercase() -> TestResult {
+        let err = validate_hostname("GitHub.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("lowercase"), "{err}");
         assert!(err.to_string().contains("github.com"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_all_caps() {
-        let err = validate_hostname("GITHUB.COM", "hosts").unwrap_err();
+    fn hostname_rejects_all_caps() -> TestResult {
+        let err = validate_hostname("GITHUB.COM", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("lowercase"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_https_scheme() {
-        let err = validate_hostname("https://github.com", "hosts").unwrap_err();
+    fn hostname_rejects_https_scheme() -> TestResult {
+        let err = validate_hostname("https://github.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_http_scheme() {
-        let err = validate_hostname("http://github.com", "hosts").unwrap_err();
+    fn hostname_rejects_http_scheme() -> TestResult {
+        let err = validate_hostname("http://github.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_path() {
-        let err = validate_hostname("github.com/api/v3", "hosts").unwrap_err();
+    fn hostname_rejects_path() -> TestResult {
+        let err = validate_hostname("github.com/api/v3", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("path"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_port() {
-        let err = validate_hostname("ghe.corp.com:8443", "hosts").unwrap_err();
+    fn hostname_rejects_port() -> TestResult {
+        let err = validate_hostname("ghe.corp.com:8443", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("port"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_leading_whitespace() {
-        let err = validate_hostname(" github.com", "hosts").unwrap_err();
+    fn hostname_rejects_leading_whitespace() -> TestResult {
+        let err = validate_hostname(" github.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("whitespace"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_trailing_whitespace() {
-        let err = validate_hostname("github.com ", "hosts").unwrap_err();
+    fn hostname_rejects_trailing_whitespace() -> TestResult {
+        let err = validate_hostname("github.com ", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("whitespace"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_internal_whitespace() {
-        let err = validate_hostname("git hub.com", "hosts").unwrap_err();
+    fn hostname_rejects_internal_whitespace() -> TestResult {
+        let err = validate_hostname("git hub.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("whitespace"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_tab() {
-        let err = validate_hostname("github\t.com", "hosts").unwrap_err();
+    fn hostname_rejects_tab() -> TestResult {
+        let err = validate_hostname("github\t.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("whitespace"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_newline() {
-        let err = validate_hostname("github\n.com", "hosts").unwrap_err();
+    fn hostname_rejects_newline() -> TestResult {
+        let err = validate_hostname("github\n.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("whitespace"), "{err}");
+        Ok(())
     }
 
     #[test]
@@ -269,161 +306,216 @@ mod tests {
     }
 
     #[test]
-    fn hostname_uppercase_suggestion_in_error() {
-        let err = validate_hostname("GitHub.COM", "hosts").unwrap_err();
+    fn hostname_uppercase_suggestion_in_error() -> TestResult {
+        let err = validate_hostname("GitHub.COM", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         let msg = err.to_string();
         // Error should suggest the lowercase version
         assert!(
             msg.contains("github.com"),
             "should suggest lowercase fix: {msg}"
         );
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_scheme_without_slashes() {
+    fn hostname_rejects_scheme_without_slashes() -> TestResult {
         // "https:host" contains `:` → rejected as port
-        let err = validate_hostname("https:github.com", "hosts").unwrap_err();
+        let err = validate_hostname("https:github.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("port"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_context_in_error() {
-        let err = validate_hostname("Bad.Host", "default_host").unwrap_err();
+    fn hostname_context_in_error() -> TestResult {
+        let err = validate_hostname("Bad.Host", "default_host")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("default_host"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_hosts_context_in_error() {
-        let err = validate_hostname("BAD", "hosts").unwrap_err();
+    fn hostname_hosts_context_in_error() -> TestResult {
+        let err = validate_hostname("BAD", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         assert!(err.to_string().contains("hosts"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn hostname_rejects_scheme_check_before_case() {
+    fn hostname_rejects_scheme_check_before_case() -> TestResult {
         // "https://GitHub.com" has scheme — scheme error takes priority
-        let err = validate_hostname("https://GitHub.com", "hosts").unwrap_err();
+        let err = validate_hostname("https://GitHub.com", "hosts")
+            .err()
+            .ok_or("`validate_hostname(..)` did not fail")?;
         // Uppercase check runs first (before scheme), so this is a lowercase error
         assert!(err.to_string().contains("lowercase"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_https() {
-        let result = validate_api_base("https://api.github.com", "test").unwrap();
+    fn api_base_valid_https() -> TestResult {
+        let result = validate_api_base("https://api.github.com", "test")?;
         assert_eq!(result, "https://api.github.com");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_http() {
-        let result = validate_api_base("http://ghe.local/api/v3", "test").unwrap();
+    fn api_base_valid_http() -> TestResult {
+        let result = validate_api_base("http://ghe.local/api/v3", "test")?;
         assert_eq!(result, "http://ghe.local/api/v3");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_with_path() {
-        let result = validate_api_base("https://ghe.corp.com/api/v3", "test").unwrap();
+    fn api_base_valid_with_path() -> TestResult {
+        let result = validate_api_base("https://ghe.corp.com/api/v3", "test")?;
         assert_eq!(result, "https://ghe.corp.com/api/v3");
+        Ok(())
     }
 
     #[test]
-    fn api_base_strips_trailing_slash() {
-        let result = validate_api_base("https://api.github.com/", "test").unwrap();
+    fn api_base_strips_trailing_slash() -> TestResult {
+        let result = validate_api_base("https://api.github.com/", "test")?;
         assert_eq!(result, "https://api.github.com");
+        Ok(())
     }
 
     #[test]
-    fn api_base_strips_multiple_trailing_slashes() {
-        let result = validate_api_base("https://api.github.com///", "test").unwrap();
+    fn api_base_strips_multiple_trailing_slashes() -> TestResult {
+        let result = validate_api_base("https://api.github.com///", "test")?;
         assert_eq!(result, "https://api.github.com");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_empty() {
-        let err = validate_api_base("", "test").unwrap_err();
+    fn api_base_rejects_empty() -> TestResult {
+        let err = validate_api_base("", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("empty"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_no_scheme() {
-        let err = validate_api_base("api.github.com", "test").unwrap_err();
+    fn api_base_rejects_no_scheme() -> TestResult {
+        let err = validate_api_base("api.github.com", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_ftp_scheme() {
-        let err = validate_api_base("ftp://api.github.com", "test").unwrap_err();
+    fn api_base_rejects_ftp_scheme() -> TestResult {
+        let err = validate_api_base("ftp://api.github.com", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_query_string() {
-        let err = validate_api_base("https://api.github.com?token=abc", "test").unwrap_err();
+    fn api_base_rejects_query_string() -> TestResult {
+        let err = validate_api_base("https://api.github.com?token=abc", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("query"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_fragment() {
-        let err = validate_api_base("https://api.github.com#section", "test").unwrap_err();
+    fn api_base_rejects_fragment() -> TestResult {
+        let err = validate_api_base("https://api.github.com#section", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("fragment"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_ssh_scheme() {
-        let err = validate_api_base("ssh://git@github.com", "test").unwrap_err();
+    fn api_base_rejects_ssh_scheme() -> TestResult {
+        let err = validate_api_base("ssh://git@github.com", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_with_port() {
-        let result = validate_api_base("https://ghe.local:8443/api/v3", "test").unwrap();
+    fn api_base_valid_with_port() -> TestResult {
+        let result = validate_api_base("https://ghe.local:8443/api/v3", "test")?;
         assert_eq!(result, "https://ghe.local:8443/api/v3");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_http_localhost() {
-        let result = validate_api_base("http://localhost:3000", "test").unwrap();
+    fn api_base_valid_http_localhost() -> TestResult {
+        let result = validate_api_base("http://localhost:3000", "test")?;
         assert_eq!(result, "http://localhost:3000");
+        Ok(())
     }
 
     #[test]
-    fn api_base_preserves_path_with_trailing_slash_stripped() {
-        let result = validate_api_base("https://ghe.corp.com/api/v3/", "test").unwrap();
+    fn api_base_preserves_path_with_trailing_slash_stripped() -> TestResult {
+        let result = validate_api_base("https://ghe.corp.com/api/v3/", "test")?;
         assert_eq!(result, "https://ghe.corp.com/api/v3");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_gitlab_path() {
-        let result = validate_api_base("https://gitlab.com/api/v4", "test").unwrap();
+    fn api_base_valid_gitlab_path() -> TestResult {
+        let result = validate_api_base("https://gitlab.com/api/v4", "test")?;
         assert_eq!(result, "https://gitlab.com/api/v4");
+        Ok(())
     }
 
     #[test]
-    fn api_base_valid_gitea_path() {
-        let result = validate_api_base("https://gitea.example.com/api/v1", "test").unwrap();
+    fn api_base_valid_gitea_path() -> TestResult {
+        let result = validate_api_base("https://gitea.example.com/api/v1", "test")?;
         assert_eq!(result, "https://gitea.example.com/api/v1");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_query_with_path() {
-        let err = validate_api_base("https://ghe.corp.com/api/v3?version=2", "test").unwrap_err();
+    fn api_base_rejects_query_with_path() -> TestResult {
+        let err = validate_api_base("https://ghe.corp.com/api/v3?version=2", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("query"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_fragment_with_path() {
-        let err = validate_api_base("https://ghe.corp.com/api/v3#section", "test").unwrap_err();
+    fn api_base_rejects_fragment_with_path() -> TestResult {
+        let err = validate_api_base("https://ghe.corp.com/api/v3#section", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("fragment"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_rejects_bare_hostname() {
-        let err = validate_api_base("github.com/api/v3", "test").unwrap_err();
+    fn api_base_rejects_bare_hostname() -> TestResult {
+        let err = validate_api_base("github.com/api/v3", "test")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn api_base_context_in_error() {
-        let err = validate_api_base("bad-url", "host \"ghe.corp.com\"").unwrap_err();
+    fn api_base_context_in_error() -> TestResult {
+        let err = validate_api_base("bad-url", "host \"ghe.corp.com\"")
+            .err()
+            .ok_or("`validate_api_base(..)` did not fail")?;
         assert!(err.to_string().contains("ghe.corp.com"), "{err}");
+        Ok(())
     }
 
     fn valid_provider_config() -> ProviderConfig {
@@ -433,7 +525,7 @@ mod tests {
             api_base: "https://api.github.com".into(),
             token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: crate::config::DEFAULT_MAX_TAGS_PER_REPO,
         }
     }
 
@@ -443,93 +535,114 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_valid_ghe() {
+    fn provider_config_valid_ghe() -> TestResult {
         let config = ProviderConfig {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: Some("GHE_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(50).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(50).ok_or("zero")?,
         };
         assert!(validate_provider_config(&config).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn provider_config_rejects_empty_api_base() {
+    fn provider_config_rejects_empty_api_base() -> TestResult {
         let mut config = valid_provider_config();
         config.api_base = String::new();
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("api_base"), "{err}");
         assert!(err.to_string().contains("github.com"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_rejects_invalid_api_base() {
+    fn provider_config_rejects_invalid_api_base() -> TestResult {
         let mut config = valid_provider_config();
         config.api_base = "no-scheme.example.com".into();
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_rejects_empty_token_env() {
+    fn provider_config_rejects_empty_token_env() -> TestResult {
         let mut config = valid_provider_config();
         config.token_env = Some(String::new());
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("token_env"), "{err}");
         assert!(err.to_string().contains("github.com"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_error_mentions_host() {
+    fn provider_config_error_mentions_host() -> TestResult {
         let mut config = valid_provider_config();
         config.host = "custom.host.com".into();
         config.token_env = Some(String::new());
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("custom.host.com"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_api_base_query_rejected() {
+    fn provider_config_api_base_query_rejected() -> TestResult {
         let mut config = valid_provider_config();
         config.api_base = "https://api.github.com?foo=bar".into();
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("query"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_api_base_fragment_rejected() {
+    fn provider_config_api_base_fragment_rejected() -> TestResult {
         let mut config = valid_provider_config();
         config.api_base = "https://api.github.com#frag".into();
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("fragment"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_valid_gitlab() {
+    fn provider_config_valid_gitlab() -> TestResult {
         let config = ProviderConfig {
             host: "gitlab.com".into(),
             kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
             token_env: Some("GITLAB_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(20).ok_or("zero")?,
         };
         assert!(validate_provider_config(&config).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn provider_config_valid_gitea() {
+    fn provider_config_valid_gitea() -> TestResult {
         let config = ProviderConfig {
             host: "gitea.example.com".into(),
             kind: HostKind::Gitea,
             api_base: "https://gitea.example.com/api/v1".into(),
             token_env: Some("GITEA_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(5).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(5).ok_or("zero")?,
         };
         assert!(validate_provider_config(&config).is_ok());
+        Ok(())
     }
 
     #[test]
@@ -544,66 +657,80 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_empty_api_base_checked_before_url_shape() {
+    fn provider_config_empty_api_base_checked_before_url_shape() -> TestResult {
         // Empty api_base should fail with "required" message, not "scheme" message
         let mut config = valid_provider_config();
         config.api_base = String::new();
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("required"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_empty_token_env_checked_after_api_base() {
+    fn provider_config_empty_token_env_checked_after_api_base() -> TestResult {
         // If api_base is valid but token_env is empty, error should be about token_env
         let mut config = valid_provider_config();
         config.token_env = Some(String::new());
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("token_env"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_both_empty_api_base_wins() {
+    fn provider_config_both_empty_api_base_wins() -> TestResult {
         // If both api_base and token_env are empty, api_base error comes first
         let mut config = valid_provider_config();
         config.api_base = String::new();
         config.token_env = Some(String::new());
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("api_base"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_error_format_includes_host_prefix() {
+    fn provider_config_error_format_includes_host_prefix() -> TestResult {
         // Error context should be formatted as 'host "hostname"'
         let mut config = valid_provider_config();
         config.host = "my-ghe.internal".into();
         config.api_base = String::new();
-        let err = validate_provider_config(&config).unwrap_err();
+        let err = validate_provider_config(&config)
+            .err()
+            .ok_or("`validate_provider_config(..)` did not fail")?;
         assert!(err.to_string().contains("my-ghe.internal"), "{err}");
+        Ok(())
     }
 
     #[test]
-    fn provider_config_max_tags_boundary() {
+    fn provider_config_max_tags_boundary() -> TestResult {
         let config = ProviderConfig {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(255).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(255).ok_or("zero")?,
         };
         assert!(validate_provider_config(&config).is_ok());
+        Ok(())
     }
 
     #[test]
-    fn provider_config_min_tags_boundary() {
+    fn provider_config_min_tags_boundary() -> TestResult {
         let config = ProviderConfig {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(1).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(1).ok_or("zero")?,
         };
         assert!(validate_provider_config(&config).is_ok());
+        Ok(())
     }
 }

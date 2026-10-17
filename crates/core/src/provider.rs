@@ -1016,9 +1016,10 @@ impl fmt::Debug for Registry {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     /// Mock provider for testing
     struct MockProvider {
@@ -1070,7 +1071,13 @@ mod tests {
             _repo: &ActionRepoId,
             _ref_name: &str,
         ) -> BoxFuture<'_, Result<Sha40>> {
-            Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap()) })
+            Box::pin(async {
+                Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                    context: "test".into(),
+                    message: "sha".into(),
+                    source: None,
+                })
+            })
         }
 
         fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
@@ -1117,23 +1124,25 @@ mod tests {
     // Sha40 tests
 
     #[test]
-    fn test_sha40_valid() {
+    fn test_sha40_valid() -> TestResult {
         let sha = Sha40::new("abc123def456abc123def456abc123def456abc1");
         assert!(sha.is_some());
         assert_eq!(
-            sha.unwrap().as_str(),
+            sha.ok_or("`sha` is None")?.as_str(),
             "abc123def456abc123def456abc123def456abc1"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_sha40_normalizes_to_lowercase() {
+    fn test_sha40_normalizes_to_lowercase() -> TestResult {
         let sha = Sha40::new("ABC123DEF456ABC123DEF456ABC123DEF456ABC1");
         assert!(sha.is_some());
         assert_eq!(
-            sha.unwrap().as_str(),
+            sha.ok_or("`sha` is None")?.as_str(),
             "abc123def456abc123def456abc123def456abc1"
         );
+        Ok(())
     }
 
     #[test]
@@ -1149,9 +1158,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sha40_display() {
-        let sha = Sha40::new("abc123def456abc123def456abc123def456abc1").unwrap();
+    fn test_sha40_display() -> TestResult {
+        let sha = Sha40::new("abc123def456abc123def456abc123def456abc1")
+            .ok_or("`Sha40::new(..)` is None")?;
         assert_eq!(format!("{sha}"), "abc123def456abc123def456abc123def456abc1");
+        Ok(())
     }
 
     // Registry tests
@@ -1171,7 +1182,7 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_register_and_find() {
+    fn test_registry_register_and_find() -> TestResult {
         let mut registry = Registry::new();
         registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
         registry.register(Box::new(MockProvider::new(Kind::GitLab, "gitlab.com")));
@@ -1180,15 +1191,16 @@ mod tests {
 
         let github = registry.find(Some("github.com"));
         assert!(github.is_some());
-        assert_eq!(github.unwrap().host(), "github.com");
+        assert_eq!(github.ok_or("`github` is None")?.host(), "github.com");
 
         let gitlab = registry.find(Some("gitlab.com"));
         assert!(gitlab.is_some());
-        assert_eq!(gitlab.unwrap().host(), "gitlab.com");
+        assert_eq!(gitlab.ok_or("`gitlab` is None")?.host(), "gitlab.com");
+        Ok(())
     }
 
     #[test]
-    fn test_registry_find_uses_default() {
+    fn test_registry_find_uses_default() -> TestResult {
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
@@ -1196,7 +1208,8 @@ mod tests {
         // host=None should use default
         let provider = registry.find(None);
         assert!(provider.is_some());
-        assert_eq!(provider.unwrap().host(), "github.com");
+        assert_eq!(provider.ok_or("`provider` is None")?.host(), "github.com");
+        Ok(())
     }
 
     #[test]
@@ -1208,7 +1221,7 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_find_for_repo() {
+    fn test_registry_find_for_repo() -> TestResult {
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
@@ -1217,11 +1230,12 @@ mod tests {
 
         let provider = registry.find_for_repo(&repo);
         assert!(provider.is_some());
-        assert_eq!(provider.unwrap().host(), "github.com");
+        assert_eq!(provider.ok_or("`provider` is None")?.host(), "github.com");
+        Ok(())
     }
 
     #[test]
-    fn test_registry_find_by_kind() {
+    fn test_registry_find_by_kind() -> TestResult {
         let mut registry = Registry::new();
         registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
         registry.register(Box::new(MockProvider::new(Kind::GitHub, "ghe.corp.com")));
@@ -1230,14 +1244,15 @@ mod tests {
         // find_by_kind returns first match
         let github = registry.find_by_kind(Kind::GitHub);
         assert!(github.is_some());
-        assert_eq!(github.unwrap().host(), "github.com");
+        assert_eq!(github.ok_or("`github` is None")?.host(), "github.com");
 
         let gitlab = registry.find_by_kind(Kind::GitLab);
         assert!(gitlab.is_some());
-        assert_eq!(gitlab.unwrap().host(), "gitlab.com");
+        assert_eq!(gitlab.ok_or("`gitlab` is None")?.host(), "gitlab.com");
 
         let gitea = registry.find_by_kind(Kind::Gitea);
         assert!(gitea.is_none());
+        Ok(())
     }
 
     #[test]
@@ -1272,7 +1287,7 @@ mod tests {
     }
 
     #[test]
-    fn test_kind_serde_round_trip() {
+    fn test_kind_serde_round_trip() -> TestResult {
         for kind in [
             Kind::GitHub,
             Kind::GitLab,
@@ -1280,39 +1295,55 @@ mod tests {
             Kind::Bitbucket,
             Kind::Local,
         ] {
-            let json = serde_json::to_string(&kind).unwrap();
-            let deserialized: Kind = serde_json::from_str(&json).unwrap();
+            let json = serde_json::to_string(&kind)?;
+            let deserialized: Kind = serde_json::from_str(&json)?;
             assert_eq!(kind, deserialized);
         }
+        Ok(())
     }
 
     #[test]
-    fn test_sha40_serde_round_trip() {
-        let sha = Sha40::new("abc123def456abc123def456abc123def456abcd").unwrap();
-        let json = serde_json::to_string(&sha).unwrap();
-        let deserialized: Sha40 = serde_json::from_str(&json).unwrap();
+    fn test_sha40_serde_round_trip() -> TestResult {
+        let sha = Sha40::new("abc123def456abc123def456abc123def456abcd")
+            .ok_or("`Sha40::new(..)` is None")?;
+        let json = serde_json::to_string(&sha)?;
+        let deserialized: Sha40 = serde_json::from_str(&json)?;
         assert_eq!(sha, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_action_yml_serde_round_trip() {
+    fn test_action_yml_serde_round_trip() -> TestResult {
         let yml = ActionYml::new("raw: content")
             .with_name("My Action")
             .with_description("Does things")
             .with_author("test")
             .with_runs(ActionRuns::new("node20").with_main("index.js"));
-        let json = serde_json::to_string(&yml).unwrap();
-        let deserialized: ActionYml = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&yml)?;
+        let deserialized: ActionYml = serde_json::from_str(&json)?;
         assert_eq!(deserialized.name(), Some("My Action"));
         assert_eq!(deserialized.description(), Some("Does things"));
         assert_eq!(deserialized.author(), Some("test"));
         assert_eq!(deserialized.raw(), "raw: content");
-        assert_eq!(deserialized.runs().unwrap().using(), "node20");
-        assert_eq!(deserialized.runs().unwrap().main(), Some("index.js"));
+        assert_eq!(
+            deserialized
+                .runs()
+                .ok_or("`deserialized.runs()` is None")?
+                .using(),
+            "node20"
+        );
+        assert_eq!(
+            deserialized
+                .runs()
+                .ok_or("`deserialized.runs()` is None")?
+                .main(),
+            Some("index.js")
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_action_yml_with_inputs_outputs_serde_round_trip() {
+    fn test_action_yml_with_inputs_outputs_serde_round_trip() -> TestResult {
         let mut inputs = std::collections::HashMap::new();
         inputs.insert(
             "token".to_string(),
@@ -1331,11 +1362,12 @@ mod tests {
         let yml = ActionYml::new("raw")
             .with_inputs(inputs)
             .with_outputs(outputs);
-        let json = serde_json::to_string(&yml).unwrap();
-        let deserialized: ActionYml = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&yml)?;
+        let deserialized: ActionYml = serde_json::from_str(&json)?;
         assert_eq!(deserialized.inputs().len(), 1);
         assert!(deserialized.inputs()["token"].required());
         assert_eq!(deserialized.outputs().len(), 1);
+        Ok(())
     }
 
     fn create_mock(config: &crate::ProviderConfig) -> Result<Box<dyn Provider>> {

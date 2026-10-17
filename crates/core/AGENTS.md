@@ -82,5 +82,6 @@ configs.
 - `Error::Network`/`RateLimited`/`Auth` = environment error (actionable)
 - A foreign error goes in the variant's `source`; show errors with
   `error::chain`, which appends every cause
-- Tests use `#[allow(clippy::unwrap_used)]` in `#[cfg(test)]` blocks
+- Tests return `Result<(), Box<dyn std::error::Error>>` and use `?`; never
+  suppress `unwrap_used` or `expect_used`
 - `#![forbid(unsafe_code)]`

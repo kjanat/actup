@@ -686,9 +686,10 @@ impl UsesLocation {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn validate_edit_accepts_a_ref_change() {
@@ -733,13 +734,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_simple() {
-        let result = parse_uses("actions/checkout@v4").unwrap().unwrap();
+    fn test_parse_simple() -> TestResult {
+        let result = parse_uses("actions/checkout@v4")?.ok_or("`parse_uses(..)?` is None")?;
         assert_eq!(result.owner(), "actions");
         assert_eq!(result.repo(), "checkout");
         assert_eq!(result.ref_str(), "v4");
         assert!(result.host().is_none());
         assert!(result.subpath().is_none());
+        Ok(())
     }
 
     #[test]
@@ -768,44 +770,48 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_with_subpath() {
-        let result = parse_uses("org/repo/.github/workflows/ci.yml@main")
-            .unwrap()
-            .unwrap();
+    fn test_parse_with_subpath() -> TestResult {
+        let result = parse_uses("org/repo/.github/workflows/ci.yml@main")?
+            .ok_or("`parse_uses(..)?` is None")?;
         assert_eq!(result.owner(), "org");
         assert_eq!(result.repo(), "repo");
         assert_eq!(result.subpath(), Some(".github/workflows/ci.yml"));
         assert_eq!(result.ref_str(), "main");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_with_host() {
-        let result = parse_uses("ghe.corp.com/org/action@v1").unwrap().unwrap();
+    fn test_parse_with_host() -> TestResult {
+        let result =
+            parse_uses("ghe.corp.com/org/action@v1")?.ok_or("`parse_uses(..)?` is None")?;
         assert_eq!(result.host(), Some("ghe.corp.com"));
         assert_eq!(result.owner(), "org");
         assert_eq!(result.repo(), "action");
         assert_eq!(result.ref_str(), "v1");
+        Ok(())
     }
 
     #[test]
-    fn test_parse_sha() {
+    fn test_parse_sha() -> TestResult {
         let sha = "a".repeat(40);
-        let result = parse_uses(&format!("actions/checkout@{sha}"))
-            .unwrap()
-            .unwrap();
+        let result =
+            parse_uses(&format!("actions/checkout@{sha}"))?.ok_or("`parse_uses(..)?` is None")?;
         assert_eq!(result.ref_str(), &sha);
         assert!(result.is_sha());
+        Ok(())
     }
 
     #[test]
-    fn test_parse_local() {
-        assert!(parse_uses("./local/action").unwrap().is_none());
-        assert!(parse_uses("../parent/action").unwrap().is_none());
+    fn test_parse_local() -> TestResult {
+        assert!(parse_uses("./local/action")?.is_none());
+        assert!(parse_uses("../parent/action")?.is_none());
+        Ok(())
     }
 
     #[test]
-    fn test_parse_docker() {
-        assert!(parse_uses("docker://alpine:3.8").unwrap().is_none());
+    fn test_parse_docker() -> TestResult {
+        assert!(parse_uses("docker://alpine:3.8")?.is_none());
+        Ok(())
     }
 
     #[test]
@@ -1081,14 +1087,15 @@ jobs:
     }
 
     #[test]
-    fn test_extract_quoted_ref_range_is_correct() {
+    fn test_extract_quoted_ref_range_is_correct() -> TestResult {
         // Quoted value: ref_range must land on the ref content, skipping the quote.
         let yaml = "steps:\n  - uses: \"actions/checkout@v4\"\n";
         let locations = extract_uses_from_yaml(yaml);
         assert_eq!(locations.len(), 1);
         let loc = &locations[0];
-        let range = loc.ref_range().unwrap();
+        let range = loc.ref_range().ok_or("`loc.ref_range()` is None")?;
         assert_eq!(&loc.raw_line[range], "v4");
+        Ok(())
     }
 
     fn assert_exact_ranges(yaml: &str, expected: &[(usize, &str, &str)]) {
@@ -1404,15 +1411,16 @@ jobs:
     }
 
     #[test]
-    fn test_uses_location_serde_round_trip() {
+    fn test_uses_location_serde_round_trip() -> TestResult {
         let loc = UsesLocation::new(
             10,
             15,
             "actions/checkout@v4".to_string(),
             "      uses: actions/checkout@v4".to_string(),
         );
-        let json = serde_json::to_string(&loc).unwrap();
-        let deserialized: UsesLocation = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&loc)?;
+        let deserialized: UsesLocation = serde_json::from_str(&json)?;
         assert_eq!(loc, deserialized);
+        Ok(())
     }
 }

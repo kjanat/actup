@@ -265,9 +265,10 @@ impl fmt::Display for ActionRepoId {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     // ActionRef construction tests
 
@@ -487,7 +488,7 @@ mod tests {
     }
 
     #[test]
-    fn test_action_ref_serde_round_trip() {
+    fn test_action_ref_serde_round_trip() -> TestResult {
         let action = ActionRef::new(
             Some("github.com".to_string()),
             "actions",
@@ -495,29 +496,32 @@ mod tests {
             Some(".github/workflows/ci.yml".to_string()),
             "v4.1.0",
         );
-        let json = serde_json::to_string(&action).unwrap();
-        let deserialized: ActionRef = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&action)?;
+        let deserialized: ActionRef = serde_json::from_str(&json)?;
         assert_eq!(action, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_action_ref_serde_round_trip_minimal() {
+    fn test_action_ref_serde_round_trip_minimal() -> TestResult {
         let action = ActionRef::new(None, "owner", "repo", None, "main");
-        let json = serde_json::to_string(&action).unwrap();
-        let deserialized: ActionRef = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&action)?;
+        let deserialized: ActionRef = serde_json::from_str(&json)?;
         assert_eq!(action, deserialized);
+        Ok(())
     }
 
     #[test]
-    fn test_action_repo_id_serde_round_trip() {
+    fn test_action_repo_id_serde_round_trip() -> TestResult {
         let id = ActionRepoId::new(
             Some("ghe.corp.com".to_string()),
             "org",
             "action",
             Some("sub/path".to_string()),
         );
-        let json = serde_json::to_string(&id).unwrap();
-        let deserialized: ActionRepoId = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&id)?;
+        let deserialized: ActionRepoId = serde_json::from_str(&json)?;
         assert_eq!(id, deserialized);
+        Ok(())
     }
 }

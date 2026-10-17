@@ -132,9 +132,9 @@ pub fn validate_no_duplicate_presets(registrations: &[&Registration]) {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn preset_construction() {
@@ -179,14 +179,14 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_construction() {
+    fn provider_config_construction() -> TestResult {
         let pc = ProviderConfig {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: Some("GHE_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(50).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(50).ok_or("zero")?,
         };
         assert_eq!(pc.host, "ghe.corp.com");
         assert_eq!(pc.kind, HostKind::GitHub);
@@ -194,6 +194,7 @@ mod tests {
         assert_eq!(pc.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(pc.api_mode, ApiMode::Rest);
         assert_eq!(pc.max_tags_per_repo.get(), 50);
+        Ok(())
     }
 
     #[test]
@@ -279,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn registration_create_returns_error() {
+    fn registration_create_returns_error() -> TestResult {
         let reg = Registration {
             kind: HostKind::GitLab,
             presets: &[],
@@ -298,11 +299,12 @@ mod tests {
             api_base: "https://gitlab.com/api/v4".into(),
             token_env: Some("GITLAB_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(10).ok_or("zero")?,
         };
 
         let result = (reg.create)(&config);
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]
@@ -386,14 +388,13 @@ mod tests {
     }
 
     #[test]
-    fn preset_clone_eq() {
+    fn preset_copy_eq() {
         let p = Preset {
             host: "gitlab.com",
             api_base: "https://gitlab.com/api/v4",
             token_env: "GITLAB_TOKEN",
         };
-        #[allow(clippy::clone_on_copy)]
-        let p2 = p.clone();
+        let p2 = p;
         assert_eq!(p.host, p2.host);
         assert_eq!(p.api_base, p2.api_base);
         assert_eq!(p.token_env, p2.token_env);
@@ -469,14 +470,14 @@ mod tests {
     }
 
     #[test]
-    fn provider_config_clone() {
+    fn provider_config_clone() -> TestResult {
         let pc = ProviderConfig {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: Some("GHE_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(25).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(25).ok_or("zero")?,
         };
         let pc2 = pc.clone();
         assert_eq!(pc.host, pc2.host);
@@ -485,63 +486,68 @@ mod tests {
         assert_eq!(pc.token_env, pc2.token_env);
         assert_eq!(pc.api_mode, pc2.api_mode);
         assert_eq!(pc.max_tags_per_repo, pc2.max_tags_per_repo);
+        Ok(())
     }
 
     #[test]
-    fn provider_config_debug_output() {
+    fn provider_config_debug_output() -> TestResult {
         let pc = ProviderConfig {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(10).ok_or("zero")?,
         };
         let debug = format!("{pc:?}");
         assert!(debug.contains("ProviderConfig"));
         assert!(debug.contains("github.com"));
         assert!(debug.contains("GITHUB_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn provider_config_gitlab() {
+    fn provider_config_gitlab() -> TestResult {
         let pc = ProviderConfig {
             host: "gitlab.com".into(),
             kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
             token_env: Some("GITLAB_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(20).ok_or("zero")?,
         };
         assert_eq!(pc.kind, HostKind::GitLab);
         assert_eq!(pc.api_mode, ApiMode::Rest);
+        Ok(())
     }
 
     #[test]
-    fn provider_config_gitea() {
+    fn provider_config_gitea() -> TestResult {
         let pc = ProviderConfig {
             host: "gitea.example.com".into(),
             kind: HostKind::Gitea,
             api_base: "https://gitea.example.com/api/v1".into(),
             token_env: Some("GITEA_TOKEN".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(5).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(5).ok_or("zero")?,
         };
         assert_eq!(pc.kind, HostKind::Gitea);
         assert_eq!(pc.max_tags_per_repo.get(), 5);
+        Ok(())
     }
 
     #[test]
-    fn provider_config_max_tags_boundary() {
+    fn provider_config_max_tags_boundary() -> TestResult {
         let pc = ProviderConfig {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(255).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(255).ok_or("zero")?,
         };
         assert_eq!(pc.max_tags_per_repo.get(), 255);
+        Ok(())
     }
 
     #[test]
@@ -611,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn registration_create_receives_correct_config() {
+    fn registration_create_receives_correct_config() -> TestResult {
         fn capturing_create(config: &ProviderConfig) -> crate::Result<Box<dyn Provider>> {
             // Verify the config fields are passed through correctly
             assert_eq!(config.host, "github.com");
@@ -641,12 +647,13 @@ mod tests {
             api_base: "https://api.github.com".into(),
             token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(10).ok_or("zero")?,
         };
 
         // create fn receives the full ProviderConfig
         let result = (reg.create)(&config);
         assert!(result.is_err());
+        Ok(())
     }
 
     #[test]

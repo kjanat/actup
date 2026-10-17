@@ -71,18 +71,20 @@ impl Clock for ManualClock {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::time::Duration;
 
     use super::*;
 
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn system_clock_returns_recent_time() {
+    fn system_clock_returns_recent_time() -> TestResult {
         let clock = System;
         let now = clock.now();
-        let elapsed = now.elapsed().unwrap();
+        let elapsed = now.elapsed()?;
         assert!(elapsed < Duration::from_secs(1));
+        Ok(())
     }
 
     /// Mock clock for testing — returns a fixed point in time.

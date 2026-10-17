@@ -282,13 +282,14 @@ impl Cache for FileCache {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use actup_test_support::logged;
     use tempfile::TempDir;
 
     use super::*;
     use crate::version;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     struct Answering {
         calls: std::sync::atomic::AtomicUsize,
@@ -377,7 +378,7 @@ mod tests {
 
     #[tokio::test]
     async fn versions_never_write_a_stale_set_back() -> Result<(), Box<dyn std::error::Error>> {
-        let (cache, _temp) = make_test_cache(3600);
+        let (cache, _temp) = make_test_cache(3600)?;
         let repo = ActionRepoId::simple("actions", "checkout");
         let key = repo.cache_key("github", "github.com");
         let stale = Answering::new(true);
@@ -402,7 +403,7 @@ mod tests {
     #[tokio::test]
     async fn versions_keep_the_expired_entry_under_a_stale_answer()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (cache, _temp) = make_test_cache(0);
+        let (cache, _temp) = make_test_cache(0)?;
         let repo = ActionRepoId::simple("actions", "checkout");
         let key = repo.cache_key("github", "github.com");
         let stored = cache::Entry::new(version::Set::default());
@@ -416,47 +417,50 @@ mod tests {
         Ok(())
     }
 
-    fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
-        let temp = TempDir::new().unwrap();
+    fn make_test_cache(ttl_secs: u64) -> std::io::Result<(FileCache, TempDir)> {
+        let temp = TempDir::new()?;
         let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_secs(ttl_secs));
-        (cache, temp)
+        Ok((cache, temp))
     }
 
     #[tokio::test]
-    async fn test_set_and_get() {
-        let (cache, _temp) = make_test_cache(3600);
+    async fn test_set_and_get() -> TestResult {
+        let (cache, _temp) = make_test_cache(3600)?;
 
         let entry = cache::Entry::new(version::Set::default());
-        cache.set("test_key", entry.clone()).await.unwrap();
+        cache.set("test_key", entry.clone()).await?;
 
-        let retrieved = cache.get("test_key").await.unwrap();
+        let retrieved = cache.get("test_key").await?;
         assert_eq!(retrieved.versions().semver_tags(), []);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_get_not_found() {
-        let (cache, _temp) = make_test_cache(3600);
+    async fn test_get_not_found() -> TestResult {
+        let (cache, _temp) = make_test_cache(3600)?;
 
         let result = cache.get("nonexistent").await;
         assert!(matches!(result, Err(cache::Error::NotFound)));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_expired_entry_returns_not_found() {
-        let (cache, _temp) = make_test_cache(0); // 0 TTL = immediately expired
+    async fn test_expired_entry_returns_not_found() -> TestResult {
+        let (cache, _temp) = make_test_cache(0)?; // 0 TTL = immediately expired
 
         let entry = cache::Entry::new(version::Set::default());
-        cache.set("test_key", entry).await.unwrap();
+        cache.set("test_key", entry).await?;
 
         // Should be expired immediately
         let result = cache.get("test_key").await;
         assert!(matches!(result, Err(cache::Error::NotFound)));
+        Ok(())
     }
 
     #[tokio::test]
     async fn expired_entry_stays_readable_through_lookup() -> Result<(), Box<dyn std::error::Error>>
     {
-        let (cache, _temp) = make_test_cache(0);
+        let (cache, _temp) = make_test_cache(0)?;
         cache
             .set("key", cache::Entry::new(version::Set::default()))
             .await?;
@@ -467,7 +471,7 @@ mod tests {
             cache::Lookup::Expired(_)
         ));
 
-        let (fresh, _temp) = make_test_cache(3600);
+        let (fresh, _temp) = make_test_cache(3600)?;
         fresh
             .set("key", cache::Entry::new(version::Set::default()))
             .await?;
@@ -480,7 +484,7 @@ mod tests {
 
     #[tokio::test]
     async fn expired_entry_stays_on_disk_for_lookup() -> Result<(), Box<dyn std::error::Error>> {
-        let (cache, _temp) = make_test_cache(0);
+        let (cache, _temp) = make_test_cache(0)?;
         let entry = cache::Entry::new(version::Set::default());
         cache.set("expire_test", entry).await?;
 
@@ -496,43 +500,45 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remove() {
-        let (cache, _temp) = make_test_cache(3600);
+    async fn test_remove() -> TestResult {
+        let (cache, _temp) = make_test_cache(3600)?;
 
         let entry = cache::Entry::new(version::Set::default());
-        cache.set("test_key", entry).await.unwrap();
+        cache.set("test_key", entry).await?;
 
         // Verify it exists
         assert!(cache.get("test_key").await.is_ok());
 
         // Remove it
-        cache.remove("test_key").await.unwrap();
+        cache.remove("test_key").await?;
 
         // Verify it's gone
         assert!(matches!(
             cache.get("test_key").await,
             Err(cache::Error::NotFound)
         ));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_clear() {
-        let (cache, _temp) = make_test_cache(3600);
+    async fn test_clear() -> TestResult {
+        let (cache, _temp) = make_test_cache(3600)?;
 
         // Add multiple entries
         for i in 0..5 {
             let entry = cache::Entry::new(version::Set::default());
-            cache.set(&format!("key_{i}"), entry).await.unwrap();
+            cache.set(&format!("key_{i}"), entry).await?;
         }
 
         // Clear all
-        cache.clear().await.unwrap();
+        cache.clear().await?;
 
         // Verify all gone
         for i in 0..5 {
             let result = cache.get(&format!("key_{i}")).await;
             assert!(matches!(result, Err(cache::Error::NotFound)));
         }
+        Ok(())
     }
 
     #[tokio::test]
@@ -709,7 +715,7 @@ mod tests {
     #[tokio::test]
     async fn remove_and_clear_tolerate_missing_files_and_a_disabled_cache()
     -> Result<(), Box<dyn std::error::Error>> {
-        let (cache, temp) = make_test_cache(3600);
+        let (cache, temp) = make_test_cache(3600)?;
         cache.remove("never_existed").await?;
         cache.clear().await?;
         let missing = FileCache::with_path(temp.path().join("absent"), Duration::from_hours(1));

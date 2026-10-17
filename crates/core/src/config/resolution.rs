@@ -389,15 +389,16 @@ fn capability_list(caps: super::registration::Capabilities) -> String {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use std::num::NonZeroU8;
 
     use super::*;
+
     use crate::config::{
         Host,
         registration::{Capabilities, Preset, Registration},
     };
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     fn mock_create(_config: &ProviderConfig) -> crate::Result<Box<dyn crate::provider::Provider>> {
         Err(crate::Error::ProviderNotFound {
@@ -466,22 +467,23 @@ mod tests {
     }
 
     #[test]
-    fn preset_only_github_com() {
+    fn preset_only_github_com() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.host, "github.com");
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
         assert_eq!(result.api_mode, ApiMode::Graphql);
         assert_eq!(result.max_tags_per_repo.get(), 10);
+        Ok(())
     }
 
     #[test]
-    fn preset_only_gitlab_com() {
+    fn preset_only_gitlab_com() -> TestResult {
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
         let config = Config::default();
@@ -493,14 +495,15 @@ mod tests {
             ..Default::default()
         };
 
-        let result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("gitlab.com", &config, &regs, &fetch)?;
         assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab.com/api/v4");
         assert_eq!(result.token_env.as_deref(), Some("GITLAB_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn user_overrides_preset_token_env() {
+    fn user_overrides_preset_token_env() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -515,15 +518,16 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.token_env.as_deref(), Some("MY_CUSTOM_TOKEN"));
         // Other preset values unchanged
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.kind, HostKind::GitHub);
+        Ok(())
     }
 
     #[test]
-    fn user_overrides_preset_api_base() {
+    fn user_overrides_preset_api_base() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -538,12 +542,13 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_base, "https://proxy.corp.com/github");
+        Ok(())
     }
 
     #[test]
-    fn user_overrides_preset_api_mode() {
+    fn user_overrides_preset_api_mode() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -558,12 +563,13 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_mode, ApiMode::Rest);
+        Ok(())
     }
 
     #[test]
-    fn user_overrides_preset_max_tags() {
+    fn user_overrides_preset_max_tags() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -578,12 +584,13 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.max_tags_per_repo.get(), 50);
+        Ok(())
     }
 
     #[test]
-    fn non_preset_ghe_with_kind_and_full_config() {
+    fn non_preset_ghe_with_kind_and_full_config() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -598,17 +605,18 @@ mod tests {
             },
         );
 
-        let result = effective_host("ghe.corp.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("ghe.corp.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.host, "ghe.corp.com");
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://ghe.corp.com/api/v3");
         assert_eq!(result.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(result.api_mode, ApiMode::Rest);
         assert_eq!(result.max_tags_per_repo.get(), 25);
+        Ok(())
     }
 
     #[test]
-    fn non_preset_ghe_with_inference() {
+    fn non_preset_ghe_with_inference() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -623,13 +631,14 @@ mod tests {
             },
         );
 
-        let result = effective_host("ghe.corp.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("ghe.corp.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_base, "https://ghe.corp.com/api/v3");
         assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn error_missing_kind_non_preset() {
+    fn error_missing_kind_non_preset() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -644,14 +653,17 @@ mod tests {
             },
         );
 
-        let err = effective_host("custom.host.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("custom.host.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("kind required"), "{msg}");
         assert!(msg.contains("custom.host.com"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_kind_not_compiled_in() {
+    fn error_kind_not_compiled_in() -> TestResult {
         // Only GitHub registration available, but user specifies Gitlab kind
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
@@ -667,15 +679,18 @@ mod tests {
             },
         );
 
-        let err = effective_host("gitlab.internal", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("gitlab.internal", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("not compiled in"), "{msg}");
         assert!(msg.contains("available:"), "{msg}");
         assert!(msg.contains("github"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_missing_api_base_no_inference() {
+    fn error_missing_api_base_no_inference() -> TestResult {
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
         let mut config = Config::default();
@@ -695,13 +710,16 @@ mod tests {
             ..Default::default()
         };
 
-        let err = effective_host("gitlab.internal", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("gitlab.internal", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("api_base required"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_missing_token_env() {
+    fn error_missing_token_env() -> TestResult {
         // Gitea has no presets and no default_token_env
         let gitea = gitea_registration();
         let regs: Vec<&Registration> = vec![&gitea];
@@ -722,13 +740,16 @@ mod tests {
             ..Default::default()
         };
 
-        let err = effective_host("gitea.local", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("gitea.local", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("token_env required"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_invalid_api_mode_graphql_on_rest_only() {
+    fn error_invalid_api_mode_graphql_on_rest_only() -> TestResult {
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
         let mut config = Config::default();
@@ -743,50 +764,59 @@ mod tests {
             },
         );
 
-        let err = effective_host("gitlab.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("gitlab.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("graphql"), "{msg}");
         assert!(msg.contains("not supported"), "{msg}");
         assert!(msg.contains("rest"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn global_graphql_is_a_preference_a_rest_only_provider_skips() {
+    fn global_graphql_is_a_preference_a_rest_only_provider_skips() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gh, &gl];
         let config = Config::default();
 
-        let gitlab = effective_host("gitlab.com", &config, &regs, &default_fetch()).unwrap();
-        let github = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let gitlab = effective_host("gitlab.com", &config, &regs, &default_fetch())?;
+        let github = effective_host("github.com", &config, &regs, &default_fetch())?;
 
         assert_eq!(gitlab.api_mode, ApiMode::Rest);
         assert_eq!(github.api_mode, ApiMode::Graphql);
+        Ok(())
     }
 
     #[test]
-    fn error_invalid_hostname() {
+    fn error_invalid_hostname() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err =
-            effective_host("https://github.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("https://github.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         assert!(err.to_string().contains("scheme"), "{}", err);
+        Ok(())
     }
 
     #[test]
-    fn error_uppercase_hostname() {
+    fn error_uppercase_hostname() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err = effective_host("GitHub.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("GitHub.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         assert!(err.to_string().contains("lowercase"), "{}", err);
+        Ok(())
     }
 
     #[test]
-    fn fetch_api_mode_used_when_no_host_override() {
+    fn fetch_api_mode_used_when_no_host_override() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
@@ -795,12 +825,13 @@ mod tests {
             ..Default::default()
         };
 
-        let result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("github.com", &config, &regs, &fetch)?;
         assert_eq!(result.api_mode, ApiMode::Rest);
+        Ok(())
     }
 
     #[test]
-    fn host_override_beats_fetch_api_mode() {
+    fn host_override_beats_fetch_api_mode() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -816,26 +847,28 @@ mod tests {
         );
 
         // Global fetch says graphql, but host override says rest
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_mode, ApiMode::Rest);
+        Ok(())
     }
 
     #[test]
-    fn fetch_max_tags_used_when_no_host_override() {
+    fn fetch_max_tags_used_when_no_host_override() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
         let fetch = FetchSettings {
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(42).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(42).ok_or("zero")?,
         };
 
-        let result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("github.com", &config, &regs, &fetch)?;
         assert_eq!(result.max_tags_per_repo.get(), 42);
+        Ok(())
     }
 
     #[test]
-    fn gitea_api_base_inferred() {
+    fn gitea_api_base_inferred() -> TestResult {
         let gitea = gitea_registration();
         let regs: Vec<&Registration> = vec![&gitea];
         let mut config = Config::default();
@@ -855,13 +888,14 @@ mod tests {
             ..Default::default()
         };
 
-        let result = effective_host("code.internal.org", &config, &regs, &fetch).unwrap();
+        let result = effective_host("code.internal.org", &config, &regs, &fetch)?;
         assert_eq!(result.api_base, "https://code.internal.org/api/v1");
         assert_eq!(result.kind, HostKind::Gitea);
+        Ok(())
     }
 
     #[test]
-    fn api_base_trailing_slash_stripped() {
+    fn api_base_trailing_slash_stripped() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -876,23 +910,27 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_base, "https://api.github.com");
+        Ok(())
     }
 
     #[test]
-    fn error_unknown_host_no_config() {
+    fn error_unknown_host_no_config() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err = effective_host("unknown.host.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("unknown.host.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("kind required"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn default_host_from_config() {
+    fn default_host_from_config() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config {
@@ -900,34 +938,39 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_default_host(&config, &regs).unwrap();
+        let result = resolve_default_host(&config, &regs)?;
         assert_eq!(result, "github.com");
+        Ok(())
     }
 
     #[test]
-    fn default_host_falls_back_to_github_preset() {
+    fn default_host_falls_back_to_github_preset() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default(); // no explicit default_host
 
-        let result = resolve_default_host(&config, &regs).unwrap();
+        let result = resolve_default_host(&config, &regs)?;
         assert_eq!(result, "github.com");
+        Ok(())
     }
 
     #[test]
-    fn default_host_errors_when_no_preset_and_no_config() {
+    fn default_host_errors_when_no_preset_and_no_config() -> TestResult {
         let gitea = gitea_registration();
         let regs: Vec<&Registration> = vec![&gitea]; // no github preset
         let config = Config::default();
 
-        let err = resolve_default_host(&config, &regs).unwrap_err();
+        let err = resolve_default_host(&config, &regs)
+            .err()
+            .ok_or("`resolve_default_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("no default_host set"), "{msg}");
         assert!(msg.contains("github.com"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn default_host_validates_hostname() {
+    fn default_host_validates_hostname() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config {
@@ -935,12 +978,15 @@ mod tests {
             ..Default::default()
         };
 
-        let err = resolve_default_host(&config, &regs).unwrap_err();
+        let err = resolve_default_host(&config, &regs)
+            .err()
+            .ok_or("`resolve_default_host(..)` did not fail")?;
         assert!(err.to_string().contains("lowercase"), "{}", err);
+        Ok(())
     }
 
     #[test]
-    fn default_host_requires_resolvable() {
+    fn default_host_requires_resolvable() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config {
@@ -948,14 +994,17 @@ mod tests {
             ..Default::default()
         };
 
-        let err = resolve_default_host(&config, &regs).unwrap_err();
+        let err = resolve_default_host(&config, &regs)
+            .err()
+            .ok_or("`resolve_default_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("not a preset"), "{msg}");
         assert!(msg.contains("nonexistent.host.com"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn default_host_accepts_hosts_entry() {
+    fn default_host_accepts_hosts_entry() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config {
@@ -973,8 +1022,9 @@ mod tests {
             },
         );
 
-        let result = resolve_default_host(&config, &regs).unwrap();
+        let result = resolve_default_host(&config, &regs)?;
         assert_eq!(result, "ghe.corp.com");
+        Ok(())
     }
 
     #[test]
@@ -996,12 +1046,13 @@ mod tests {
     }
 
     #[test]
-    fn find_registration_found() {
+    fn find_registration_found() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let found = find_registration_by_kind(&regs, HostKind::GitHub);
         assert!(found.is_some());
-        assert_eq!(found.unwrap().kind, HostKind::GitHub);
+        assert_eq!(found.ok_or("`found` is None")?.kind, HostKind::GitHub);
+        Ok(())
     }
 
     #[test]
@@ -1041,7 +1092,7 @@ mod tests {
     }
 
     #[test]
-    fn multiple_registrations_correct_dispatch() {
+    fn multiple_registrations_correct_dispatch() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gh, &gl];
@@ -1052,16 +1103,17 @@ mod tests {
         };
 
         // GitHub preset resolves correctly
-        let github_result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let github_result = effective_host("github.com", &config, &regs, &fetch)?;
         assert_eq!(github_result.kind, HostKind::GitHub);
 
         // GitLab preset resolves correctly
-        let gitlab_result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
+        let gitlab_result = effective_host("gitlab.com", &config, &regs, &fetch)?;
         assert_eq!(gitlab_result.kind, HostKind::GitLab);
+        Ok(())
     }
 
     #[test]
-    fn user_kind_override_on_preset_host() {
+    fn user_kind_override_on_preset_host() -> TestResult {
         // User overrides github.com preset to use Gitlab kind (unusual but valid if
         // a Gitlab registration exists)
         let gh = github_registration();
@@ -1079,14 +1131,15 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         // Kind should be overridden to Gitlab
         assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab-proxy.corp.com/api/v4");
+        Ok(())
     }
 
     #[test]
-    fn user_kind_override_clears_preset_derived_fields() {
+    fn user_kind_override_clears_preset_derived_fields() -> TestResult {
         // When user overrides kind on a preset host WITHOUT providing api_base/token_env,
         // the preset-derived values must be cleared so inference runs for the new provider.
         // Since gitlab's infer_api_base returns None for "github.com", this should error
@@ -1106,7 +1159,9 @@ mod tests {
             },
         );
 
-        let err = effective_host("github.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         // Should error asking for api_base, NOT silently use github's preset
         let msg = err.to_string();
         assert!(
@@ -1118,10 +1173,11 @@ mod tests {
             !msg.contains("api.github.com"),
             "preset api_base leaked: {msg}"
         );
+        Ok(())
     }
 
     #[test]
-    fn user_kind_override_with_api_base_but_no_token_env() {
+    fn user_kind_override_with_api_base_but_no_token_env() -> TestResult {
         // User overrides kind on preset host, provides api_base but NOT token_env.
         // token_env should NOT leak from the preset (GITHUB_TOKEN).
         let gh = github_registration();
@@ -1145,7 +1201,7 @@ mod tests {
             ..Default::default()
         };
         // GitLab registration has default_token_env = Some("GITLAB_TOKEN")
-        let result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("github.com", &config, &regs, &fetch)?;
         // Should use GitLab's default_token_env, NOT GitHub's preset
         assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab-proxy.corp.com/api/v4");
@@ -1154,10 +1210,11 @@ mod tests {
             Some("GITLAB_TOKEN"),
             "should use GitLab default, not GitHub preset"
         );
+        Ok(())
     }
 
     #[test]
-    fn user_kind_override_with_token_env_but_no_api_base() {
+    fn user_kind_override_with_token_env_but_no_api_base() -> TestResult {
         // User overrides kind on preset host, provides token_env but NOT api_base.
         // api_base should NOT leak from the preset (api.github.com).
         let gh = github_registration();
@@ -1176,7 +1233,9 @@ mod tests {
         );
 
         // GitLab's infer_api_base returns None for "github.com", so this should error
-        let err = effective_host("github.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(
             msg.contains("api_base required"),
@@ -1187,27 +1246,29 @@ mod tests {
             !msg.contains("api.github.com"),
             "preset api_base leaked: {msg}"
         );
+        Ok(())
     }
 
     // Step 1: preset lookup (additional coverage)
 
     #[test]
-    fn preset_populates_all_fields_from_registration() {
+    fn preset_populates_all_fields_from_registration() -> TestResult {
         // Verify step 1 fills kind, api_base, AND token_env from preset
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         // All three fields come from the single preset
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
         assert_eq!(result.host, "github.com");
+        Ok(())
     }
 
     #[test]
-    fn non_preset_host_starts_empty() {
+    fn non_preset_host_starts_empty() -> TestResult {
         // Step 1: non-preset host starts with (None, None, None) — needs all from user
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
@@ -1223,14 +1284,15 @@ mod tests {
             },
         );
 
-        let result = effective_host("custom.host.io", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("custom.host.io", &config, &regs, &default_fetch())?;
         assert_eq!(result.host, "custom.host.io");
         assert_eq!(result.api_base, "https://custom.host.io/api/v3");
         assert_eq!(result.token_env.as_deref(), Some("CUSTOM_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn user_overrides_all_preset_fields_simultaneously() {
+    fn user_overrides_all_preset_fields_simultaneously() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1245,16 +1307,17 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://proxy.corp.com/gh");
         assert_eq!(result.token_env.as_deref(), Some("CORP_GH_TOKEN"));
         assert_eq!(result.api_mode, ApiMode::Rest);
         assert_eq!(result.max_tags_per_repo.get(), 99);
+        Ok(())
     }
 
     #[test]
-    fn user_none_fields_preserve_preset_values() {
+    fn user_none_fields_preserve_preset_values() -> TestResult {
         // Step 2: all-None Host should change nothing from preset
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
@@ -1270,14 +1333,15 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn error_kind_required_message_includes_hostname() {
+    fn error_kind_required_message_includes_hostname() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1292,15 +1356,18 @@ mod tests {
             },
         );
 
-        let err = effective_host("my.special.host", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("my.special.host", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("my.special.host"), "{msg}");
         assert!(msg.contains("kind required"), "{msg}");
         assert!(msg.contains("not a preset host"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_no_registrations_at_all() {
+    fn error_no_registrations_at_all() -> TestResult {
         let regs: Vec<&Registration> = vec![];
         let mut config = Config::default();
         config.hosts.insert(
@@ -1314,14 +1381,17 @@ mod tests {
             },
         );
 
-        let err = effective_host("some.host", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("some.host", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("not compiled in"), "{msg}");
         assert!(msg.contains("available: none"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_kind_not_compiled_lists_all_available() {
+    fn error_kind_not_compiled_lists_all_available() -> TestResult {
         // Multiple registrations available but not the requested one
         let gh = github_registration();
         let gitea = gitea_registration();
@@ -1342,14 +1412,17 @@ mod tests {
             api_mode: ApiMode::Rest,
             ..Default::default()
         };
-        let err = effective_host("gl.corp.com", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("gl.corp.com", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("github"), "{msg}");
         assert!(msg.contains("gitea"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn default_token_env_used_when_not_in_preset_or_user() {
+    fn default_token_env_used_when_not_in_preset_or_user() -> TestResult {
         // Non-preset GHE host: no user token_env, no preset token_env —
         // but registration.default_token_env fills it
         let gh = github_registration();
@@ -1366,8 +1439,9 @@ mod tests {
             },
         );
 
-        let result = effective_host("ghe.internal", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("ghe.internal", &config, &regs, &default_fetch())?;
         assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
+        Ok(())
     }
 
     #[test]
@@ -1404,7 +1478,7 @@ mod tests {
     }
 
     #[test]
-    fn user_token_env_overrides_default_token_env() {
+    fn user_token_env_overrides_default_token_env() -> TestResult {
         // User specifies token_env → default_token_env NOT used
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
@@ -1420,12 +1494,13 @@ mod tests {
             },
         );
 
-        let result = effective_host("ghe.internal", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("ghe.internal", &config, &regs, &default_fetch())?;
         assert_eq!(result.token_env.as_deref(), Some("MY_GHE_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn infer_api_base_called_when_not_preset_and_not_user() {
+    fn infer_api_base_called_when_not_preset_and_not_user() -> TestResult {
         // GHE host with no preset and no user api_base → infer_api_base called
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
@@ -1441,12 +1516,13 @@ mod tests {
             },
         );
 
-        let result = effective_host("ghe.example.org", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("ghe.example.org", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_base, "https://ghe.example.org/api/v3");
+        Ok(())
     }
 
     #[test]
-    fn user_api_base_overrides_inference() {
+    fn user_api_base_overrides_inference() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1461,13 +1537,14 @@ mod tests {
             },
         );
 
-        let result = effective_host("ghe.example.org", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("ghe.example.org", &config, &regs, &default_fetch())?;
         // User api_base wins over inference
         assert_eq!(result.api_base, "https://proxy.corp.com/ghe");
+        Ok(())
     }
 
     #[test]
-    fn inference_returns_none_and_no_user_api_base_errors() {
+    fn inference_returns_none_and_no_user_api_base_errors() -> TestResult {
         // GitLab infer_api_base returns None for unknown hosts
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
@@ -1487,14 +1564,17 @@ mod tests {
             api_mode: ApiMode::Rest,
             ..Default::default()
         };
-        let err = effective_host("gl.internal.io", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("gl.internal.io", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("api_base required"), "{msg}");
         assert!(msg.contains("gl.internal.io"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_invalid_api_base_shape_via_user_override() {
+    fn error_invalid_api_base_shape_via_user_override() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1509,13 +1589,16 @@ mod tests {
             },
         );
 
-        let err = effective_host("github.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("http://") || msg.contains("https://"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_api_base_with_query_string() {
+    fn error_api_base_with_query_string() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1530,13 +1613,16 @@ mod tests {
             },
         );
 
-        let err = effective_host("github.com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github.com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("query") || msg.contains('?'), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn graphql_only_provider_rejects_rest() {
+    fn graphql_only_provider_rejects_rest() -> TestResult {
         // Hypothetical graphql-only provider
         let graphql_only = Registration {
             kind: HostKind::GitHub,
@@ -1559,7 +1645,7 @@ mod tests {
             api_mode: ApiMode::Rest,
             ..Default::default()
         };
-        let preferred = effective_host("graphql-only.example.com", &config, &regs, &fetch).unwrap();
+        let preferred = effective_host("graphql-only.example.com", &config, &regs, &fetch)?;
         assert_eq!(preferred.api_mode, ApiMode::Graphql);
 
         config.hosts.insert(
@@ -1572,15 +1658,18 @@ mod tests {
                 max_tags_per_repo: None,
             },
         );
-        let err = effective_host("graphql-only.example.com", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("graphql-only.example.com", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("rest"), "{msg}");
         assert!(msg.contains("not supported"), "{msg}");
         assert!(msg.contains("graphql"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn rest_only_provider_succeeds_with_rest_mode() {
+    fn rest_only_provider_succeeds_with_rest_mode() -> TestResult {
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
         let config = Config::default();
@@ -1589,22 +1678,24 @@ mod tests {
             ..Default::default()
         };
 
-        let result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("gitlab.com", &config, &regs, &fetch)?;
         assert_eq!(result.api_mode, ApiMode::Rest);
+        Ok(())
     }
 
     #[test]
-    fn both_modes_supported_allows_graphql() {
+    fn both_modes_supported_allows_graphql() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_mode, ApiMode::Graphql);
+        Ok(())
     }
 
     #[test]
-    fn both_modes_supported_allows_rest() {
+    fn both_modes_supported_allows_rest() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
@@ -1613,12 +1704,13 @@ mod tests {
             ..Default::default()
         };
 
-        let result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("github.com", &config, &regs, &fetch)?;
         assert_eq!(result.api_mode, ApiMode::Rest);
+        Ok(())
     }
 
     #[test]
-    fn host_api_mode_override_checked_against_capability() {
+    fn host_api_mode_override_checked_against_capability() -> TestResult {
         // Host overrides api_mode to graphql on REST-only provider → error
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
@@ -1638,14 +1730,17 @@ mod tests {
             api_mode: ApiMode::Rest,
             ..Default::default()
         };
-        let err = effective_host("gitlab.com", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("gitlab.com", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("graphql"), "{msg}");
         assert!(msg.contains("not supported"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn host_max_tags_overrides_fetch() {
+    fn host_max_tags_overrides_fetch() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1662,16 +1757,17 @@ mod tests {
 
         let fetch = FetchSettings {
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(42).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(42).ok_or("zero")?,
         };
 
-        let result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let result = effective_host("github.com", &config, &regs, &fetch)?;
         // Host override (77) beats fetch (42)
         assert_eq!(result.max_tags_per_repo.get(), 77);
+        Ok(())
     }
 
     #[test]
-    fn max_tags_boundary_255() {
+    fn max_tags_boundary_255() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1686,12 +1782,13 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.max_tags_per_repo.get(), 255);
+        Ok(())
     }
 
     #[test]
-    fn max_tags_boundary_1() {
+    fn max_tags_boundary_1() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1706,57 +1803,69 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.max_tags_per_repo.get(), 1);
+        Ok(())
     }
 
     #[test]
-    fn error_empty_hostname() {
+    fn error_empty_hostname() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err = effective_host("", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("empty"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_hostname_with_whitespace() {
+    fn error_hostname_with_whitespace() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err = effective_host("github .com", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github .com", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("whitespace"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_hostname_with_path() {
+    fn error_hostname_with_path() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err =
-            effective_host("github.com/api/v3", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github.com/api/v3", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("path") || msg.contains('/'), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn error_hostname_with_port() {
+    fn error_hostname_with_port() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err = effective_host("github.com:8443", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("github.com:8443", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("port") || msg.contains(':'), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn three_registrations_all_resolve_own_presets() {
+    fn three_registrations_all_resolve_own_presets() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let gitea = gitea_registration();
@@ -1767,19 +1876,22 @@ mod tests {
             ..Default::default()
         };
 
-        let gh_result = effective_host("github.com", &config, &regs, &fetch).unwrap();
+        let gh_result = effective_host("github.com", &config, &regs, &fetch)?;
         assert_eq!(gh_result.kind, HostKind::GitHub);
 
-        let gitlab_result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
+        let gitlab_result = effective_host("gitlab.com", &config, &regs, &fetch)?;
         assert_eq!(gitlab_result.kind, HostKind::GitLab);
 
         // Gitea has no presets — can't resolve without hosts entry
-        let err = effective_host("gitea.example.com", &config, &regs, &fetch).unwrap_err();
+        let err = effective_host("gitea.example.com", &config, &regs, &fetch)
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         assert!(err.to_string().contains("kind required"));
+        Ok(())
     }
 
     #[test]
-    fn non_preset_gitea_with_all_three_registrations() {
+    fn non_preset_gitea_with_all_three_registrations() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let gitea = gitea_registration();
@@ -1801,25 +1913,27 @@ mod tests {
             ..Default::default()
         };
 
-        let result = effective_host("code.corp.io", &config, &regs, &fetch).unwrap();
+        let result = effective_host("code.corp.io", &config, &regs, &fetch)?;
         assert_eq!(result.kind, HostKind::Gitea);
         assert_eq!(result.api_base, "https://code.corp.io/api/v1");
         assert_eq!(result.token_env.as_deref(), Some("GITEA_TOKEN"));
+        Ok(())
     }
 
     #[test]
-    fn resolve_default_host_with_multiple_registrations() {
+    fn resolve_default_host_with_multiple_registrations() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gh, &gl];
         let config = Config::default();
 
-        let result = resolve_default_host(&config, &regs).unwrap();
+        let result = resolve_default_host(&config, &regs)?;
         assert_eq!(result, "github.com");
+        Ok(())
     }
 
     #[test]
-    fn resolve_default_host_explicit_gitlab() {
+    fn resolve_default_host_explicit_gitlab() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gh, &gl];
@@ -1833,22 +1947,26 @@ mod tests {
             ..Default::default()
         };
 
-        let result = resolve_default_host(&config, &regs).unwrap();
+        let result = resolve_default_host(&config, &regs)?;
         assert_eq!(result, "gitlab.com");
+        Ok(())
     }
 
     #[test]
-    fn resolve_default_host_empty_registrations_no_default() {
+    fn resolve_default_host_empty_registrations_no_default() -> TestResult {
         let regs: Vec<&Registration> = vec![];
         let config = Config::default();
 
-        let err = resolve_default_host(&config, &regs).unwrap_err();
+        let err = resolve_default_host(&config, &regs)
+            .err()
+            .ok_or("`resolve_default_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("no default_host set"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn resolve_default_host_explicit_but_invalid_hostname() {
+    fn resolve_default_host_explicit_but_invalid_hostname() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config {
@@ -1856,26 +1974,30 @@ mod tests {
             ..Default::default()
         };
 
-        let err = resolve_default_host(&config, &regs).unwrap_err();
+        let err = resolve_default_host(&config, &regs)
+            .err()
+            .ok_or("`resolve_default_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("scheme"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn effective_host_idempotent() {
+    fn effective_host_idempotent() -> TestResult {
         // Calling twice with same inputs yields same result
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let r1 = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
-        let r2 = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let r1 = effective_host("github.com", &config, &regs, &default_fetch())?;
+        let r2 = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(r1.host, r2.host);
         assert_eq!(r1.kind, r2.kind);
         assert_eq!(r1.api_base, r2.api_base);
         assert_eq!(r1.token_env, r2.token_env);
         assert_eq!(r1.api_mode, r2.api_mode);
         assert_eq!(r1.max_tags_per_repo, r2.max_tags_per_repo);
+        Ok(())
     }
 
     #[test]
@@ -1888,7 +2010,7 @@ mod tests {
     }
 
     #[test]
-    fn preset_token_env_preserved_when_user_sets_other_fields() {
+    fn preset_token_env_preserved_when_user_sets_other_fields() -> TestResult {
         // User overrides api_base on preset host but NOT token_env
         // → token_env should still come from preset
         let gh = github_registration();
@@ -1905,27 +2027,30 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN")); // from preset
         assert_eq!(result.api_base, "https://proxy.github.com"); // from user
+        Ok(())
     }
 
     #[test]
-    fn non_preset_no_hosts_entry_errors_kind_required() {
+    fn non_preset_no_hosts_entry_errors_kind_required() -> TestResult {
         // Host not in presets AND not in config.hosts → step 3 errors
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let config = Config::default();
 
-        let err =
-            effective_host("totally.unknown.host", &config, &regs, &default_fetch()).unwrap_err();
+        let err = effective_host("totally.unknown.host", &config, &regs, &default_fetch())
+            .err()
+            .ok_or("`effective_host(..)` did not fail")?;
         let msg = err.to_string();
         assert!(msg.contains("kind required"), "{msg}");
         assert!(msg.contains("totally.unknown.host"), "{msg}");
+        Ok(())
     }
 
     #[test]
-    fn multiple_trailing_slashes_stripped() {
+    fn multiple_trailing_slashes_stripped() -> TestResult {
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
@@ -1940,8 +2065,9 @@ mod tests {
             },
         );
 
-        let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+        let result = effective_host("github.com", &config, &regs, &default_fetch())?;
         assert_eq!(result.api_base, "https://api.github.com");
+        Ok(())
     }
 
     #[test]
@@ -1955,7 +2081,7 @@ mod tests {
     }
 
     #[test]
-    fn find_registration_returns_first_match() {
+    fn find_registration_returns_first_match() -> TestResult {
         let gh = github_registration();
         let gl = gitlab_rest_only_registration();
         let gitea = gitea_registration();
@@ -1963,16 +2089,17 @@ mod tests {
 
         assert_eq!(
             find_registration_by_kind(&regs, HostKind::GitLab)
-                .unwrap()
+                .ok_or("`find_registration_by_kind(..)` is None")?
                 .kind,
             HostKind::GitLab
         );
         assert_eq!(
             find_registration_by_kind(&regs, HostKind::Gitea)
-                .unwrap()
+                .ok_or("`find_registration_by_kind(..)` is None")?
                 .kind,
             HostKind::Gitea
         );
+        Ok(())
     }
 
     #[test]
