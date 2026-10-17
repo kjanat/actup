@@ -423,8 +423,14 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
         .ref_kind()
         .map(|k| format!("{k} "))
         .unwrap_or_default();
+    let current = version::Version::parse(finding.action_ref().ref_str());
+    let lead = if target.version().is_more_specific_than(&current) {
+        "pin available, "
+    } else {
+        ""
+    };
     Some(format!(
-        "pin available, same commit: {kind}{} = {} ({})",
+        "{lead}same commit: {kind}{} = {} ({})",
         finding.action_ref().ref_str(),
         target.version(),
         target.sha().get(..7).unwrap_or_else(|| target.sha()),
@@ -672,6 +678,25 @@ mod tests {
         );
         assert_eq!(same_commit_label(&bump_finding()), None);
         assert_eq!(kind_note(&bump_finding()), " (tag)");
+    }
+
+    #[test]
+    fn same_commit_label_on_a_less_specific_target_offers_no_pin() {
+        let finding = make_finding(
+            "ci.yml",
+            3,
+            make_action_ref("rust-lang", "crates-io-auth-action", "v1.0.5"),
+            FindingStatus::Outdated {
+                current: "v1.0.5".to_string(),
+                latest: make_version_info("v1", REPRO_SHA),
+                exact_version: None,
+            },
+        )
+        .with_ref(Some(RefKind::Tag), Some(make_version_info("v1", REPRO_SHA)));
+        assert_eq!(
+            same_commit_label(&finding).as_deref(),
+            Some("same commit: tag v1.0.5 = v1 (c6f97d4)")
+        );
     }
 
     #[test]

@@ -518,11 +518,16 @@ fn same_commit_diagnostic(diag: Diagnostic, result: &CheckResult, uses_value: &s
         .ref_kind()
         .map(|k| format!("{k} "))
         .unwrap_or_default();
+    let lead = if result.same_commit_pins() {
+        "pin available, "
+    } else {
+        ""
+    };
     Diagnostic {
         severity: Some(DiagnosticSeverity::INFORMATION),
         code: Some(NumberOrString::String("same-commit".into())),
         message: format!(
-            "{uses_value}: pin available, same commit: {kind}{} = {} ({})",
+            "{uses_value}: {lead}same commit: {kind}{} = {} ({})",
             result.action_ref().ref_str(),
             target.version(),
             target.sha().get(..7).unwrap_or_else(|| target.sha()),
@@ -1265,6 +1270,41 @@ jobs:
         };
         assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(diag.code, Some(NumberOrString::String("pin-branch".into())));
+        Ok(())
+    }
+
+    fn v1_alias_versions() -> version::Set {
+        let major = test_utils::make_version_info("v1", DUMMY_SHA);
+        version::Set::build(
+            vec![
+                Arc::clone(&major),
+                test_utils::make_version_info("v1.0.5", DUMMY_SHA),
+            ],
+            std::collections::HashMap::new(),
+            std::collections::HashMap::from([(1, major)]),
+            None,
+        )
+    }
+
+    #[tokio::test]
+    async fn less_specific_target_on_the_same_commit_offers_no_pin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let policy = actup_core::config::Policy {
+            track: actup_core::policy::Track::Major,
+            ..Default::default()
+        };
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@v1.0.5\n";
+        let diags = diagnostics_under(yaml, v1_alias_versions(), policy).await?;
+        let [diag] = diags.as_slice() else {
+            return Err(format!("expected one diagnostic, got {diags:?}").into());
+        };
+        assert_eq!(
+            diag.message,
+            format!(
+                "rust-lang/crates-io-auth-action@v1.0.5: same commit: tag v1.0.5 = v1 ({})",
+                &DUMMY_SHA[..7]
+            )
+        );
         Ok(())
     }
 

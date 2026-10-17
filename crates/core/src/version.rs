@@ -201,6 +201,19 @@ impl Version {
         }
     }
 
+    /// Whether this version names more of minor and patch than `other`.
+    #[must_use]
+    pub const fn is_more_specific_than(&self, other: &Self) -> bool {
+        const fn parts(v: &Version) -> u8 {
+            match (v.minor(), v.patch()) {
+                (None, None) => 0,
+                (Some(_), None) | (None, Some(_)) => 1,
+                (Some(_), Some(_)) => 2,
+            }
+        }
+        parts(self) > parts(other)
+    }
+
     fn release(&self) -> Option<(u32, u32, u32)> {
         match self {
             Self::Semver {
@@ -1224,6 +1237,16 @@ mod tests {
         let restored: Set = serde_json::from_str(old)?;
         assert_eq!(restored.listing(), Listing::Partial);
         Ok(())
+    }
+
+    #[test]
+    fn more_specific_counts_minor_and_patch() {
+        let parse = Version::parse;
+        assert!(parse("v1.0.5").is_more_specific_than(&parse("v1")));
+        assert!(parse("v1.2").is_more_specific_than(&parse("main")));
+        assert!(!parse("v1").is_more_specific_than(&parse("v1.0.5")));
+        assert!(!parse("v1").is_more_specific_than(&parse("main")));
+        assert!(!parse("v1.0.5").is_more_specific_than(&parse("v1.0.4")));
     }
 
     #[test]

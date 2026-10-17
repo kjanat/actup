@@ -265,8 +265,13 @@ fn format_check_result(result: &CheckResult) -> String {
         .ref_kind()
         .map(|k| format!("{k} "))
         .unwrap_or_default();
+    let lead = if result.same_commit_pins() {
+        "**Pin available**, same commit"
+    } else {
+        "**Same commit**"
+    };
     format!(
-        "**Pin available**, same commit: {kind}`{}` = {} (`{}`)",
+        "{lead}: {kind}`{}` = {} (`{}`)",
         result.action_ref().ref_str(),
         target.version(),
         target.sha().get(..7).unwrap_or_else(|| target.sha()),
@@ -776,6 +781,38 @@ mod tests {
 
         assert!(
             content.contains("**Pin available**, same commit: branch `v1` = v1.0.5 (`abc1234`)"),
+            "{content}"
+        );
+    }
+
+    #[test]
+    fn build_hover_content_same_commit_alias() {
+        use crate::test_utils::DUMMY_SHA;
+
+        let action_ref = ActionRef::simple("rust-lang", "crates-io-auth-action", "v1.0.5");
+        let major = crate::test_utils::make_version_info("v1", DUMMY_SHA);
+        let versions = version::Set::build(
+            vec![
+                std::sync::Arc::clone(&major),
+                crate::test_utils::make_version_info("v1.0.5", DUMMY_SHA),
+            ],
+            std::collections::HashMap::new(),
+            std::collections::HashMap::from([(1, major)]),
+            None,
+        );
+        let config = actup_core::Config {
+            policy: actup_core::config::Policy {
+                track: actup_core::policy::Track::Major,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = actup_core::check_action(&action_ref, &versions, &config);
+
+        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+
+        assert!(
+            content.contains("**Same commit**: tag `v1.0.5` = v1 (`abc1234`)"),
             "{content}"
         );
     }

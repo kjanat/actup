@@ -118,6 +118,16 @@ impl CheckResult {
         self.same_commit.as_ref()
     }
 
+    /// Whether the same-commit target names more version components than the ref.
+    #[must_use]
+    pub fn same_commit_pins(&self) -> bool {
+        self.same_commit.as_ref().is_some_and(|target| {
+            target
+                .version()
+                .is_more_specific_than(&version::Version::parse(self.action_ref.ref_str()))
+        })
+    }
+
     /// Get the action reference
     #[must_use]
     pub const fn action_ref(&self) -> &ActionRef {
@@ -2821,7 +2831,29 @@ mod tests {
                 want,
                 "{head}"
             );
+            assert_eq!(result.same_commit_pins(), want.is_some(), "{head}");
         }
+    }
+
+    #[test]
+    fn test_same_commit_on_a_less_specific_target_is_no_pin() {
+        let sha = "5".repeat(40);
+        let versions = versions_in_order(&[("v1", sha.as_str()), ("v1.0.5", sha.as_str())]);
+        let result = check_action(
+            &make_action_ref("actions", "checkout", "v1.0.5"),
+            &versions,
+            &track_config(policy::Track::Major),
+        );
+        assert!(
+            matches!(result.status(), CheckStatus::Outdated { target, .. } if target.version().as_str() == "v1"),
+            "{:?}",
+            result.status()
+        );
+        assert_eq!(
+            result.same_commit().map(|t| t.version().as_str()),
+            Some("v1")
+        );
+        assert!(!result.same_commit_pins());
     }
 
     #[test]
@@ -2852,6 +2884,7 @@ mod tests {
             exact.same_commit().map(|t| t.version().as_str()),
             Some("v1.0.5")
         );
+        assert!(exact.same_commit_pins());
 
         let keep = result_for("v1", policy::Track::Keep);
         assert_eq!(keep.status(), &CheckStatus::UpToDate);
