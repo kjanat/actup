@@ -1985,6 +1985,34 @@ mod tests {
     }
 
     #[test]
+    fn test_from_repo_and_explicit_drops_a_candidate_default_host() -> Result<(), Error> {
+        let config = Config::from_repo_and_explicit(
+            Some((
+                Path::new("actup.toml"),
+                "default_host = \"ghe.corp.example\"\n",
+            )),
+            Some((Path::new("ci/actup.toml"), "[policy]\npin = \"sha\"\n")),
+            EnvOverrides::default(),
+        )?;
+
+        assert_eq!(config.default_host, None);
+        assert_eq!(config.policy.pin, crate::policy::Style::Sha);
+        assert_eq!(
+            config.sources,
+            [
+                Source::Repo {
+                    path: PathBuf::from("actup.toml"),
+                    ignored: vec!["default_host".to_string()],
+                },
+                Source::Explicit {
+                    path: PathBuf::from("ci/actup.toml"),
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_from_explicit_contents_rejects_a_renamed_key_naming_the_file() {
         let Err(err) = Config::from_explicit_contents(
             Path::new("ci/actup.toml"),

@@ -20,6 +20,7 @@ import type {
 	ActionRef,
 	ActionRepoId,
 	ActupConfig,
+	ConfigFile,
 	LocatedCheckResult,
 	RepoConfig,
 	UpdateEdit,
@@ -45,6 +46,7 @@ export type {
 	BranchInfo,
 	CheckResult,
 	CheckStatus,
+	ConfigFile,
 	Info as VersionInfo,
 	LocatedCheckResult,
 	Policy as ActupPolicy,
@@ -229,6 +231,25 @@ export function parseConfig(path: string, contents: string): RepoConfig {
 export function parseExplicitConfig(path: string, contents: string): RepoConfig {
 	const w = requireInit();
 	return w.parseExplicitConfig(path, contents);
+}
+
+/**
+ * Parse the repo config file that discovery found, then the config file the
+ * user named over it, as the CLI layers a `--config` file over the repo
+ * config.
+ *
+ * Pure, synchronous. Every key of `explicit` applies, and `explicit` wins
+ * over `repo`. Either file may be absent. No user config and no `ACTUP_`
+ * variables apply.
+ *
+ * @param repo - The discovered file, for example `actup.toml`.
+ * @param explicit - The named file, for example `ci/actup.toml`.
+ * @returns Every table of the config, to pass to `checkRefs` and `planUpdates`.
+ * @throws For an invalid config, naming the file.
+ */
+export function parseRepoAndExplicitConfig(repo?: ConfigFile, explicit?: ConfigFile): RepoConfig {
+	const w = requireInit();
+	return w.parseRepoAndExplicitConfig(repo, explicit);
 }
 
 /**

@@ -53,7 +53,7 @@ describe("loadFolderConfig", () => {
 		expect(config.kind === "invalid" ? config.message : "").toMatch(/actup\.toml.*tracking/s);
 	});
 
-	test("reads an explicit path, relative or absolute, before every candidate", async () => {
+	test("applies an explicit path, relative or absolute, over the first candidate", async () => {
 		file("actup.toml", "[policy]\nbump = \"minor\"\n");
 		file("ci/actup.json", "{ \"default_host\": \"ghe.corp.example\", \"policy\": { \"bump\": \"patch\" } }");
 
@@ -74,6 +74,43 @@ describe("loadFolderConfig", () => {
 
 		expect(discovered.kind === "loaded" ? discovered.config.default_host : "unloaded").toBeNull();
 		expect(explicit.kind === "loaded" ? explicit.config.default_host : "unloaded").toBe("ghe.corp.example");
+	});
+
+	test("keeps the candidate's overrides under the explicit file", async () => {
+		file("actup.toml", "[policy]\nbump = \"minor\"\n\n[[overrides]]\npattern = \"actions/*\"\npolicy = { pin = \"sha\" }\n");
+		file("ci/actup.toml", "default_host = \"ghe.corp.example\"\n");
+
+		const config = await loadFolderConfig(folder, "ci/actup.toml");
+
+		expect(kindOf(config)).toBe("loaded ci/actup.toml");
+		const loaded = config.kind === "loaded" ? config.config : undefined;
+		expect(loaded?.default_host).toBe("ghe.corp.example");
+		expect(loaded?.policy?.bump).toBe("minor");
+		expect(loaded?.["overrides"]).toMatchObject([{ pattern: "actions/*", policy: { pin: "sha" } }]);
+		expect(mockWorkspace.fs.reads).toEqual(["file:///repo/actup.toml", "file:///repo/ci/actup.toml"]);
+	});
+
+	test("reads the candidate once when the explicit path names it", async () => {
+		file("actup.toml", "default_host = \"ghe.corp.example\"\n");
+
+		for (const configPath of ["actup.toml", "./actup.toml", "ci/../actup.toml", "/repo/actup.toml"]) {
+			mockWorkspace.fs.reads.splice(0);
+			const config = await loadFolderConfig(folder, configPath);
+
+			expect(kindOf(config)).toBe(`loaded ${configPath}`);
+			expect(config.kind === "loaded" ? config.config.default_host : undefined).toBe("ghe.corp.example");
+			expect(mockWorkspace.fs.reads).toEqual(["file:///repo/actup.toml"]);
+		}
+	});
+
+	test("reports an invalid candidate under the explicit file", async () => {
+		file("actup.toml", "[policy]\ntracking = 1\n");
+		file("ci/actup.toml", "default_host = \"ghe.corp.example\"\n");
+
+		const config = await loadFolderConfig(folder, "ci/actup.toml");
+
+		expect(kindOf(config)).toBe("invalid ci/actup.toml");
+		expect(config.kind === "invalid" ? config.message : "").toMatch(/actup\.toml.*tracking/s);
 	});
 
 	test("reports a missing explicit path as invalid", async () => {

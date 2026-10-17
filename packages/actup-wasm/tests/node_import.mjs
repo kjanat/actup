@@ -22,6 +22,7 @@ const {
 	parseActionPath,
 	parseConfig,
 	parseExplicitConfig,
+	parseRepoAndExplicitConfig,
 	parseUses,
 	parseUsesRefs,
 	planUpdates,
@@ -767,5 +768,30 @@ await assert.rejects(checkRefs(outdatedYaml, hostProvider, { nope: true }), /nop
 assert.throws(() => parseExplicitConfig("ci/actup.toml", "nope = true\n"), /ci\/actup\.toml.*nope/s);
 
 console.log("PASS: a caller's config and an explicit file keep every key");
+
+const repoFile = {
+	path: "actup.toml",
+	contents: "[policy]\nbump = \"minor\"\n\n[[overrides]]\npattern = \"actions/*\"\npolicy = { pin = \"sha\" }\n",
+};
+const namedFile = { path: "ci/actup.toml", contents: "default_host = \"ghe.other.example\"\n\n[policy]\nbump = \"patch\"\n" };
+const layered = parseRepoAndExplicitConfig(repoFile, namedFile);
+assert.equal(layered.default_host, "ghe.other.example", "the named file keeps default_host");
+assert.equal(layered.policy.bump, "patch", "the named file wins over the repo file");
+assert.equal(layered.overrides.length, 1, "the repo file's overrides survive under the named file");
+assert.equal(layered.overrides[0].policy.pin, "sha", "the override keeps its policy");
+assert.equal(parseRepoAndExplicitConfig(repoFile).policy.bump, "minor", "the repo file parses without a named file");
+assert.equal(parseRepoAndExplicitConfig(undefined, namedFile).default_host, "ghe.other.example");
+assert.deepEqual(
+	parseRepoAndExplicitConfig(null, null).policy,
+	parseConfig("actup.toml", "").policy,
+	"without files the defaults apply",
+);
+assert.throws(
+	() => parseRepoAndExplicitConfig({ path: "actup.toml", contents: "[policy]\ntracking = 1\n" }, namedFile),
+	/actup\.toml.*tracking/s,
+);
+assert.throws(() => parseRepoAndExplicitConfig({ path: "actup.toml" }), /invalid config file/);
+
+console.log("PASS: parseRepoAndExplicitConfig layers the named file over the repo file");
 
 console.log("\nAll npm package integration tests PASSED");

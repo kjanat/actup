@@ -123,10 +123,11 @@ Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `"minor"` | `"major"` | `"latest"`, `pin` is `"preserve"` | `"tag"` | `"sha"`,
 `track` is `"keep"` | `"major"` | `"exact"`, `branch` is `"ignore"` | `"warn"` |
 `"update"`, and `prerelease` is a boolean. `config` also takes a whole
-`RepoConfig` from `parseConfig` or `parseExplicitConfig`, with `scan.ignore` and
-`[[overrides]]`. `checkRefs` and `planUpdates` treat `config` as an explicit
-config: every key applies, including `default_host`. An unknown key, at the top
-level or in a table, and a renamed key reject the call.
+`RepoConfig` from `parseConfig`, `parseExplicitConfig` or
+`parseRepoAndExplicitConfig`, with `scan.ignore` and `[[overrides]]`.
+`checkRefs` and `planUpdates` treat `config` as an explicit config: every key
+applies, including `default_host`. An unknown key, at the top level or in a
+table, and a renamed key reject the call.
 
 ### `planUpdates(results, config?)`
 
@@ -168,6 +169,15 @@ config with a message that names `path`.
 Parse a config file the user named, as the CLI parses a `--config` file. Pure,
 synchronous. Every key applies, including those a discovered repo config may not
 set. Returns a `RepoConfig` like `parseConfig`.
+
+### `parseRepoAndExplicitConfig(repo?, explicit?)`
+
+Parse the repo config file that discovery found, then the config file the user
+named over it, as the CLI layers a `--config` file over the repo config. Pure,
+synchronous. Each argument is a `ConfigFile` (`{ path, contents }`) or absent.
+Every key of `explicit` applies, and `explicit` wins over `repo`. Returns a
+`RepoConfig` like `parseConfig`, and throws for an invalid file with a message
+that names it.
 
 ### `repoConfigCandidates()`
 

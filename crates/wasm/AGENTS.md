@@ -6,27 +6,28 @@ native builds see an empty crate.
 
 ## Module Map
 
-| Module        | Purpose                                     | Key Types                                                                                                                                                                     |
-| ------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lib.rs`      | Conditional compilation gate                | `bridge`, `wasm_api`                                                                                                                                                          |
-| `wasm_api.rs` | WASM API                                    | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment`, `parseConfig`, `parseExplicitConfig`, `repoConfigCandidates` |
-| `bridge.rs`   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                                                                                             |
-| `clock.rs`    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                                                                                     |
+| Module        | Purpose                                     | Key Types                                                                                                                                                                                                   |
+| ------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib.rs`      | Conditional compilation gate                | `bridge`, `wasm_api`                                                                                                                                                                                        |
+| `wasm_api.rs` | WASM API                                    | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment`, `parseConfig`, `parseExplicitConfig`, `parseRepoAndExplicitConfig`, `repoConfigCandidates` |
+| `bridge.rs`   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                                                                                                                           |
+| `clock.rs`    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                                                                                                                   |
 
 ## WASM API (10 exports)
 
-| Export                 | Sync/Async | Purpose                                            |
-| ---------------------- | ---------- | -------------------------------------------------- |
-| `parseUsesRefs`        | sync       | Extract `uses:` locations from YAML                |
-| `checkRefs`            | async      | Check refs via JS-provided `ActupProvider`         |
-| `planUpdates`          | sync       | Compute text edits from `LocatedCheckResult` array |
-| `sortVersionTags`      | sync       | Sort `VersionTag[]` newest first                   |
-| `parseUses`            | sync       | Parse one `uses:` value into an `ActionRef`        |
-| `parseActionPath`      | sync       | Parse `[host/]owner/repo[/subpath]`                |
-| `isHostSegment`        | sync       | Apply core's host rule to a first path segment     |
-| `parseConfig`          | sync       | Parse a repo config file into a `RepoConfig`       |
-| `parseExplicitConfig`  | sync       | Parse a named config file, every key applying      |
-| `repoConfigCandidates` | sync       | Repo config paths of one directory, by priority    |
+| Export                       | Sync/Async | Purpose                                             |
+| ---------------------------- | ---------- | --------------------------------------------------- |
+| `parseUsesRefs`              | sync       | Extract `uses:` locations from YAML                 |
+| `checkRefs`                  | async      | Check refs via JS-provided `ActupProvider`          |
+| `planUpdates`                | sync       | Compute text edits from `LocatedCheckResult` array  |
+| `sortVersionTags`            | sync       | Sort `VersionTag[]` newest first                    |
+| `parseUses`                  | sync       | Parse one `uses:` value into an `ActionRef`         |
+| `parseActionPath`            | sync       | Parse `[host/]owner/repo[/subpath]`                 |
+| `isHostSegment`              | sync       | Apply core's host rule to a first path segment      |
+| `parseConfig`                | sync       | Parse a repo config file into a `RepoConfig`        |
+| `parseExplicitConfig`        | sync       | Parse a named config file, every key applying       |
+| `parseRepoAndExplicitConfig` | sync       | Layer a named config file over the repo config file |
+| `repoConfigCandidates`       | sync       | Repo config paths of one directory, by priority     |
 
 ## Where to Look
 

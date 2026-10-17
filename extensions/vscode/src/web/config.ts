@@ -1,4 +1,4 @@
-import { parseConfig, parseExplicitConfig, type RepoConfig, repoConfigCandidates } from "actup-wasm";
+import { type ConfigFile, parseConfig, parseRepoAndExplicitConfig, type RepoConfig, repoConfigCandidates } from "actup-wasm";
 import * as vscode from "vscode";
 import { CONFIG_PATH_SETTING, configPathSetting } from "../settings.ts";
 
@@ -18,9 +18,9 @@ async function readText(uri: vscode.Uri): Promise<string> {
 	return new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
 }
 
-function parsed(path: string, contents: string, parse: typeof parseConfig): FolderConfig {
+function parsed(path: string, parse: () => RepoConfig): FolderConfig {
 	try {
-		return { kind: "loaded", path, config: parse(path, contents) };
+		return { kind: "loaded", path, config: parse() };
 	} catch (err) {
 		return { kind: "invalid", path, message: err instanceof Error ? err.message : String(err) };
 	}
@@ -28,36 +28,54 @@ function parsed(path: string, contents: string, parse: typeof parseConfig): Fold
 
 /** The file that `configPath` names for `folder`: absolute, or relative to `folder`. */
 export function resolveConfigPath(folder: vscode.Uri, configPath: string): vscode.Uri {
-	return configPath.startsWith("/") ? folder.with({ path: configPath }) : vscode.Uri.joinPath(folder, configPath);
+	return vscode.Uri.joinPath(configPath.startsWith("/") ? folder.with({ path: "/" }) : folder, configPath);
+}
+
+interface Candidate extends ConfigFile {
+	readonly uri: vscode.Uri;
+}
+
+async function firstCandidate(folder: vscode.Uri): Promise<Candidate | undefined> {
+	for (const path of repoConfigCandidates()) {
+		const uri = vscode.Uri.joinPath(folder, path);
+		try {
+			return { path, contents: await readText(uri), uri };
+		} catch {
+			continue;
+		}
+	}
+	return undefined;
 }
 
 /**
  * Load the repo config of `folder`.
  *
- * An explicit `configPath`, relative to `folder` or absolute, must exist.
- * Without one, the first of core's repo config candidates in `folder` wins.
+ * The first of core's repo config candidates in `folder` applies. An explicit
+ * `configPath`, relative to `folder` or absolute, must exist, and every key
+ * of it applies over the candidate.
  */
 export async function loadFolderConfig(folder: vscode.Uri, configPath: string | undefined): Promise<FolderConfig> {
-	if (configPath !== undefined) {
-		let contents: string;
+	const candidate = await firstCandidate(folder);
+	if (configPath === undefined) {
+		return candidate === undefined
+			? { kind: "none" }
+			: parsed(candidate.path, () => parseConfig(candidate.path, candidate.contents));
+	}
+	const target = resolveConfigPath(folder, configPath);
+	const repo = candidate?.uri.toString() === target.toString() ? undefined : candidate;
+	let contents: string;
+	if (candidate !== undefined && repo === undefined) {
+		contents = candidate.contents;
+	} else {
 		try {
-			contents = await readText(resolveConfigPath(folder, configPath));
+			contents = await readText(target);
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
 			return { kind: "invalid", path: configPath, message: `cannot read ${configPath}: ${reason}` };
 		}
-		return parsed(configPath, contents, parseExplicitConfig);
 	}
-	for (const candidate of repoConfigCandidates()) {
-		let contents: string;
-		try {
-			contents = await readText(vscode.Uri.joinPath(folder, candidate));
-		} catch {
-			continue;
-		}
-		return parsed(candidate, contents, parseConfig);
-	}
-	return { kind: "none" };
+	const repoFile = repo === undefined ? undefined : { path: repo.path, contents: repo.contents };
+	return parsed(configPath, () => parseRepoAndExplicitConfig(repoFile, { path: configPath, contents }));
 }
 
 /** Caches the repo config of each workspace folder until a reload. */

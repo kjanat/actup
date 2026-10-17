@@ -79,8 +79,9 @@ Extra arguments passed to `actup-lsp`. Default: `[]`.
 Config file for actup, absolute or relative to the workspace folder. It takes
 precedence over the repo config files. The desktop extension passes it to
 `actup-lsp` as the `configPath` initialization option and restarts the server
-when it changes. The web extension loads it and skips the repo config files, and
-a missing file is an error. Default: `null`.
+when it changes. The web extension reads the first repo config file of the
+folder and applies the named file over it, and a missing file is an error.
+Default: `null`.
 
 ### `actup-lsp.trace.server`
 

@@ -36,6 +36,12 @@ export interface ActupConfig {
 
 /** Every table of a repo config, as `parseConfig` returns it. */
 export type RepoConfig = ActupConfig & { readonly [table: string]: unknown };
+
+/** A config file's path and text. The extension of `path` picks the format. */
+export interface ConfigFile {
+    path: string;
+    contents: string;
+}
 "#;
 
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
@@ -88,6 +94,58 @@ pub fn parse_config(path: &str, contents: &str) -> Result<JsValue, JsValue> {
 pub fn parse_explicit_config(path: &str, contents: &str) -> Result<JsValue, JsValue> {
     let config = Config::from_explicit_contents(Path::new(path), contents, EnvOverrides::default())
         .map_err(|e| JsValue::from_str(&chain(&e)))?;
+    to_js(&config)
+}
+
+#[derive(Deserialize)]
+struct ConfigFile {
+    path: String,
+    contents: String,
+}
+
+impl ConfigFile {
+    fn from_js(value: Option<JsValue>) -> Result<Option<Self>, JsValue> {
+        value
+            .map(|value| {
+                serde_wasm_bindgen::from_value(value)
+                    .map_err(|e| JsValue::from_str(&format!("invalid config file: {e}")))
+            })
+            .transpose()
+    }
+
+    fn parts(&self) -> (&Path, &str) {
+        (Path::new(&self.path), &self.contents)
+    }
+}
+
+/// Parse the repo config file that discovery found, then the config file
+/// that the user named over it, as the CLI layers a `--config` file over the
+/// repo config.
+///
+/// Every key of `explicit` applies, and `explicit` wins over `repo`. Either
+/// file may be absent. No user config and no `ACTUP_` variables apply.
+///
+/// # Errors
+///
+/// Returns `JsValue` error for an invalid config, naming the file.
+#[wasm_bindgen(
+    js_name = "parseRepoAndExplicitConfig",
+    unchecked_return_type = "RepoConfig"
+)]
+pub fn parse_repo_and_explicit_config(
+    #[wasm_bindgen(unchecked_param_type = "ConfigFile | null | undefined")] repo: Option<JsValue>,
+    #[wasm_bindgen(unchecked_param_type = "ConfigFile | null | undefined")] explicit: Option<
+        JsValue,
+    >,
+) -> Result<JsValue, JsValue> {
+    let repo = ConfigFile::from_js(repo)?;
+    let explicit = ConfigFile::from_js(explicit)?;
+    let config = Config::from_repo_and_explicit(
+        repo.as_ref().map(ConfigFile::parts),
+        explicit.as_ref().map(ConfigFile::parts),
+        EnvOverrides::default(),
+    )
+    .map_err(|e| JsValue::from_str(&chain(&e)))?;
     to_js(&config)
 }
 
