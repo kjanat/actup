@@ -8454,21 +8454,13 @@
           "type": "FIELD",
           "name": "arguments",
           "content": {
-            "type": "CHOICE",
-            "members": [
-              {
-                "type": "ALIAS",
-                "content": {
-                  "type": "SYMBOL",
-                  "name": "_format_arguments"
-                },
-                "named": true,
-                "value": "arguments"
-              },
-              {
-                "type": "BLANK"
-              }
-            ]
+            "type": "ALIAS",
+            "content": {
+              "type": "SYMBOL",
+              "name": "_format_arguments"
+            },
+            "named": true,
+            "value": "arguments"
           }
         },
         {

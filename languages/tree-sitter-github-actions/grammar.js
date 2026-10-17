@@ -897,7 +897,7 @@ const base = grammar({
 				field("function", alias("format", $.identifier)),
 				"(",
 				optional($._expr_ws),
-				field("arguments", optional(alias($._format_arguments, $.arguments))),
+				field("arguments", alias($._format_arguments, $.arguments)),
 				optional($._expr_ws),
 				")",
 			),
