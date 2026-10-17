@@ -2,7 +2,7 @@
 resolver        = "3"
 members         = ["crates/*", "extensions/*", "languages/*"]
 exclude         = ["extensions/vscode", "languages/node_modules"]
-# actup-wasm and zed-actup are wasm32-only; exclude from default native builds
+# actup-wasm is wasm32-only; exclude it from default native builds
 default-members = [
   "crates/actup",
   "crates/core",

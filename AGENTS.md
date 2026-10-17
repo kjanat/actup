@@ -49,7 +49,7 @@ crates/
   test-support/       # actup-test-support — unpublished test helpers (`tracing` log capture)
 extensions/
   vscode/             # VSCode extension — TypeScript, bun-based, wraps actup-lsp
-  zed/                # Zed extension   — Rust WASM cdylib, slash command, tree-sitter grammar (separate workspace)
+  zed/                # Zed extension   — Rust WASM cdylib, slash command, tree-sitter grammar (workspace member)
 packages/
   actup-wasm/         # npm package      — TypeScript wrapper around crates/wasm WASM output
 schemas/              # JSON Schema for config
