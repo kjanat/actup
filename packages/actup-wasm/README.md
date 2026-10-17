@@ -123,8 +123,10 @@ Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `"minor"` | `"major"` | `"latest"`, `pin` is `"preserve"` | `"tag"` | `"sha"`,
 `track` is `"keep"` | `"major"` | `"exact"`, `branch` is `"ignore"` | `"warn"` |
 `"update"`, and `prerelease` is a boolean. `config` also takes a whole
-`RepoConfig` from `parseConfig`, with `scan.ignore` and `[[overrides]]`. An
-unknown `[policy]` key or a renamed key rejects the call.
+`RepoConfig` from `parseConfig` or `parseExplicitConfig`, with `scan.ignore` and
+`[[overrides]]`. `checkRefs` and `planUpdates` treat `config` as an explicit
+config: every key applies, including `default_host`. An unknown key, at the top
+level or in a table, and a renamed key reject the call.
 
 ### `planUpdates(results, config?)`
 

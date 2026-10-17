@@ -724,7 +724,7 @@ impl Config {
 
     /// Parse one explicit config file, given as path and contents, over the defaults and apply `env`.
     ///
-    /// The caller named the file, as with `--config`, so every key applies.
+    /// Every key applies, as for a `--config` file.
     ///
     /// # Errors
     /// Returns [`Error::InvalidConfig`] for an invalid value.
