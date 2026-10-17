@@ -50,10 +50,10 @@ untouched. `resolved_sha` applies uniformly regardless of status.
 
 **Population strategy:**
 
-| Path                          | Source                                                                                     | Coverage                                  |
-| ----------------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
-| `check_action` (sync)         | Look up `action_ref.ref_str()` in `version::Set` (semver_tags, major_tags, default_branch) | Tags + default branch                     |
-| `check_action_remote` (async) | Use `resolve_ref_to_sha()` return value (currently discarded)                              | Everything including non-default branches |
+| Path                           | Source                                                                                     | Coverage                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------ | ----------------------------------------- |
+| `check_action` (sync)          | Look up `action_ref.ref_str()` in `version::Set` (semver_tags, major_tags, default_branch) | Tags + default branch                     |
+| `check_action_fetched` (async) | Use `resolve_ref_to_sha()` return value (currently discarded)                              | Everything including non-default branches |
 
 **Rejected alternative:** Adding `current_sha` to `CheckStatus::Outdated` —
 would only cover Outdated, not UpToDate/branch refs.
@@ -179,7 +179,7 @@ fn resolve_current_sha(ref_str: &str, versions: &version::Set) -> Option<String>
 ```
 
 Returns `None` for non-default branches, unusual tag formats, etc. The async
-path (`check_action_remote`) fills in the gap via `resolve_ref_to_sha()`.
+path (`check_action_fetched`) fills in the gap via `resolve_ref_to_sha()`.
 
 ## LSP Document State Extension
 
@@ -285,17 +285,17 @@ This reuses the existing `resolve_sha` logic from the `pin` command.
 
 ## Deliverables
 
-| #  | Deliverable                                                                                            | Effort | Depends on |
-| -- | ------------------------------------------------------------------------------------------------------ | ------ | ---------- |
-| D1 | Add `resolved_sha: Option<String>` to `CheckResult` + populate in `check_action`/`check_action_remote` | S      | —          |
-| D2 | Add `target_sha` to `DiagnosticData::Outdated` + populate in `status_to_diagnostic`                    | S      | D1         |
-| D3 | Add `ActionCheckEntry` vec to `DocumentState` + populate during `compute_diagnostics`                  | S      | D1         |
-| D4 | "Pin to SHA" cursor-based code action (UpToDate + branch refs)                                         | M      | D3         |
-| D5 | "Update & pin to SHA" diagnostic-based code action (Outdated refs)                                     | S      | D2         |
-| D6 | "Pin current to SHA" diagnostic-based code action (Outdated refs)                                      | S      | D2, D3     |
-| D7 | Config key `[pin] comment = true` + wire into code actions and CLI pin                                 | S      | —          |
-| D8 | CLI `update` honors `policy.pin = "sha"`                                                               | M      | D1, D7     |
-| D9 | Tests: snapshot edits, code action generation, config interaction                                      | M      | D4-D8      |
+| #  | Deliverable                                                                                             | Effort | Depends on |
+| -- | ------------------------------------------------------------------------------------------------------- | ------ | ---------- |
+| D1 | Add `resolved_sha: Option<String>` to `CheckResult` + populate in `check_action`/`check_action_fetched` | S      | —          |
+| D2 | Add `target_sha` to `DiagnosticData::Outdated` + populate in `status_to_diagnostic`                     | S      | D1         |
+| D3 | Add `ActionCheckEntry` vec to `DocumentState` + populate during `compute_diagnostics`                   | S      | D1         |
+| D4 | "Pin to SHA" cursor-based code action (UpToDate + branch refs)                                          | M      | D3         |
+| D5 | "Update & pin to SHA" diagnostic-based code action (Outdated refs)                                      | S      | D2         |
+| D6 | "Pin current to SHA" diagnostic-based code action (Outdated refs)                                       | S      | D2, D3     |
+| D7 | Config key `[pin] comment = true` + wire into code actions and CLI pin                                  | S      | —          |
+| D8 | CLI `update` honors `policy.pin = "sha"`                                                                | M      | D1, D7     |
+| D9 | Tests: snapshot edits, code action generation, config interaction                                       | M      | D4-D8      |
 
 **Total effort: L** (1-2 days, cross-cutting across core + LSP + CLI)
 
