@@ -21,6 +21,5 @@
 		"composite": true
 	},
 	"include": ["src/**/*.ts"],
-	"exclude": ["node_modules", ".vscode-test", "src/web"],
-	"references": [{ "path": "./tsconfig.web.json" }]
+	"exclude": ["node_modules", ".vscode-test", "src/web"]
 }

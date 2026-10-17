@@ -5,7 +5,7 @@
 		"moduleResolution": "bundler",
 		"lib": ["ES2022", "WebWorker"],
 		"outDir": "dist/web",
-		"rootDir": "src/web",
+		"rootDir": "src",
 		"strict": true,
 		"exactOptionalPropertyTypes": true,
 		"sourceMap": true,
@@ -20,6 +20,6 @@
 		"allowImportingTsExtensions": true,
 		"emitDeclarationOnly": true
 	},
-	"include": ["./src/web/**/*.ts"],
+	"include": ["./src/web/**/*.ts", "./src/settings.ts"],
 	"exclude": ["./src/web/test/**"]
 }

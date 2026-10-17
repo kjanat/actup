@@ -1,8 +1,6 @@
 import { parseConfig, type RepoConfig, repoConfigCandidates } from "actup-wasm";
 import * as vscode from "vscode";
-
-/** The setting that names an explicit config file. */
-export const CONFIG_PATH_SETTING = "actup.configPath";
+import { CONFIG_PATH_SETTING, configPathSetting } from "../settings.ts";
 
 /** The repo config of a workspace folder. */
 export type FolderConfig =
@@ -15,12 +13,6 @@ export type ConfigLookup = (uri: vscode.Uri) => Promise<FolderConfig>;
 
 /** A lookup for documents outside any configured folder. */
 export const noConfig: ConfigLookup = () => Promise.resolve({ kind: "none" });
-
-/** The `actup.configPath` setting, or `undefined` when it is unset or blank. */
-export function configPathSetting(): string | undefined {
-	const value = vscode.workspace.getConfiguration("actup").get<string | null>("configPath", null);
-	return value === null || value.trim() === "" ? undefined : value;
-}
 
 async function readText(uri: vscode.Uri): Promise<string> {
 	return new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
