@@ -542,6 +542,43 @@ pub struct WorkflowScanner<'a> {
     format: OutputFormat,
 }
 
+/// `value / divisor` in tenths, rounded half to even.
+fn tenths(value: u64, divisor: u64) -> u128 {
+    let (scaled, divisor) = (u128::from(value) * 10, u128::from(divisor));
+    let (quotient, remainder) = (scaled / divisor, scaled % divisor);
+    match (remainder * 2).cmp(&divisor) {
+        std::cmp::Ordering::Greater => quotient + 1,
+        std::cmp::Ordering::Equal => quotient + quotient % 2,
+        std::cmp::Ordering::Less => quotient,
+    }
+}
+
+/// Format `value` to one decimal in the first of `smaller` (divisor, name) units whose rounded
+/// value stays below one of the next unit, or else in `largest`.
+pub fn in_unit(value: u64, smaller: &[(u64, &str)], largest: (u64, &str)) -> String {
+    let next = smaller
+        .iter()
+        .skip(1)
+        .map(|&(divisor, _)| divisor)
+        .chain([largest.0]);
+    let (t, name) = smaller
+        .iter()
+        .zip(next)
+        .map(|(&(divisor, name), next)| {
+            (
+                tenths(value, divisor),
+                name,
+                u128::from(next / divisor) * 10,
+            )
+        })
+        .find(|&(t, _, limit)| t < limit)
+        .map_or_else(
+            || (tenths(value, largest.0), largest.1),
+            |(t, name, _)| (t, name),
+        );
+    format!("{}.{} {name}", t / 10, t % 10)
+}
+
 /// Read a file's content, tracking errors in tally; an unreadable file yields its `path: error` message.
 pub fn read_file(file: &DiscoveredFile, errors: &mut ErrorTally) -> Result<String, String> {
     match fs::read_to_string(file.path()) {

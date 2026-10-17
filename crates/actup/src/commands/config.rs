@@ -10,7 +10,10 @@ use actup_core::{
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CliExitCode, OutputFormat};
+use crate::{
+    cli::{CliExitCode, OutputFormat},
+    common::in_unit,
+};
 
 #[derive(Serialize)]
 struct Report<'a> {
@@ -77,18 +80,7 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     println!();
 
     println!("{}:", "Cache".bold());
-    let ttl_secs = config.cache.ttl.as_secs();
-    if ttl_secs < 3600 {
-        println!(
-            "  ttl:      {ttl_secs} seconds ({:.1} minutes)",
-            config.cache.ttl.as_secs_f64() / 60.0
-        );
-    } else {
-        println!(
-            "  ttl:      {ttl_secs} seconds ({:.1} hours)",
-            config.cache.ttl.as_secs_f64() / 3600.0
-        );
-    }
+    println!("  ttl:      {}", ttl_text(config.cache.ttl));
     println!("  enabled:  {}", config.cache.enabled);
     if let Some(path) = &config.cache.path {
         println!("  path:     {}", sanitize_line(&path.display().to_string()));
@@ -302,5 +294,32 @@ fn source_label(is_preset: bool, has_user_override: bool) -> String {
         "(preset)".dimmed().to_string()
     } else {
         "(default)".dimmed().to_string()
+    }
+}
+
+fn ttl_text(ttl: std::time::Duration) -> String {
+    let secs = ttl.as_secs();
+    format!(
+        "{secs} seconds ({})",
+        in_unit(secs, &[(60, "minutes")], (3600, "hours"))
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    #[test]
+    fn ttl_text_picks_the_unit_after_rounding() {
+        let text = |secs| ttl_text(Duration::from_secs(secs));
+        assert_eq!(text(0), "0 seconds (0.0 minutes)");
+        assert_eq!(text(3596), "3596 seconds (59.9 minutes)");
+        assert_eq!(text(3597), "3597 seconds (1.0 hours)");
+        assert_eq!(text(3598), "3598 seconds (1.0 hours)");
+        assert_eq!(text(3599), "3599 seconds (1.0 hours)");
+        assert_eq!(text(3600), "3600 seconds (1.0 hours)");
+        assert_eq!(text(86_400), "86400 seconds (24.0 hours)");
     }
 }

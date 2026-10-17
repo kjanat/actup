@@ -14,7 +14,10 @@ use actup_core::{
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CacheAction, CliExitCode, OutputFormat};
+use crate::{
+    cli::{CacheAction, CliExitCode, OutputFormat},
+    common::in_unit,
+};
 
 /// Cache info for JSON output
 #[derive(Serialize)]
@@ -310,26 +313,11 @@ fn format_duration(d: Duration) -> String {
 
 /// Format size for human display
 fn format_size(bytes: u64) -> String {
-    let tenths = |unit: u64| {
-        let (scaled, unit) = (u128::from(bytes) * 10, u128::from(unit));
-        let (quotient, remainder) = (scaled / unit, scaled % unit);
-        match (remainder * 2).cmp(&unit) {
-            std::cmp::Ordering::Greater => quotient + 1,
-            std::cmp::Ordering::Equal => quotient + quotient % 2,
-            std::cmp::Ordering::Less => quotient,
-        }
-    };
     match bytes {
-        1 => return "1 byte".to_string(),
-        0..1024 => return format!("{bytes} bytes"),
-        _ => {}
+        1 => "1 byte".to_string(),
+        0..1024 => format!("{bytes} bytes"),
+        _ => in_unit(bytes, &[(1 << 10, "KB"), (1 << 20, "MB")], (1 << 30, "GB")),
     }
-    let (t, name) = [(1 << 10, "KB"), (1 << 20, "MB")]
-        .into_iter()
-        .map(|(unit, name)| (tenths(unit), name))
-        .find(|&(t, _)| t < 10240)
-        .unwrap_or_else(|| (tenths(1 << 30), "GB"));
-    format!("{}.{} {name}", t / 10, t % 10)
 }
 
 #[cfg(test)]
