@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, SourceFormat, UsesLocation,
+    ActionRef, SourceFormat, Uses, UsesLocation, classify_uses,
     config::{Config, EnvOverrides, repo_candidates},
     error::chain,
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
@@ -187,7 +187,8 @@ impl LocatedCheckResult {
 ///
 /// Parses the YAML, resolves each non-local `uses:` ref through the
 /// provider, and returns an array of [`LocatedCheckResult`] objects. Each
-/// carries the [`UsesLocation`] of the value it checked.
+/// carries the [`UsesLocation`] of the value it checked. A value that is not
+/// a valid reference reaches no provider and is unresolvable as a user error.
 ///
 /// # Arguments
 ///
@@ -233,8 +234,24 @@ pub fn check_refs(
         let mut results: Vec<LocatedCheckResult> = Vec::with_capacity(locations.len());
 
         for loc in &locations {
-            let Ok(Some(parsed)) = parse_uses(loc.value()) else {
-                continue;
+            let parsed = match classify_uses(loc.value()) {
+                Uses::Local => continue,
+                Uses::Action(parsed) => parsed,
+                Uses::Invalid { action, error } => {
+                    let result = CheckResult::new(
+                        action,
+                        CheckStatus::Unresolvable {
+                            reason: error.to_string(),
+                            is_environment_error: false,
+                        },
+                    );
+                    results.push(LocatedCheckResult::new(
+                        loc,
+                        &result,
+                        comment_lines.contains(&loc.line()),
+                    ));
+                    continue;
+                }
             };
 
             let result = match check_action_remote(&parsed, &config, &registry).await {

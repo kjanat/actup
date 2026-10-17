@@ -10,7 +10,7 @@ use itertools::Itertools;
 use tracing::debug;
 
 use crate::{
-    common::{ErrorTally, WorkflowScanner},
+    common::{ErrorTally, InvalidUses, Remote, WorkflowScanner},
     file_cache::FileCache,
     progress::Spinner,
 };
@@ -42,12 +42,24 @@ pub struct ScannedRef {
     pub repo_id: ActionRepoId,
 }
 
+/// A remote `uses:` value in a [`ScannedFile`] that fails to parse.
+pub struct InvalidRef {
+    /// Index of the file in [`Scan::files`].
+    pub file: usize,
+    /// Where the value sits.
+    pub loc: UsesLocation,
+    /// The value as written and its error.
+    pub invalid: InvalidUses,
+}
+
 /// Every readable discovered file and the remote references in it.
 pub struct Scan {
     /// Files in discovery order.
     pub files: Vec<ScannedFile>,
     /// References in file and line order.
     pub refs: Vec<ScannedRef>,
+    /// Values that fail to parse, in file and line order.
+    pub invalid: Vec<InvalidRef>,
     /// A `path: error` message for each discovered file that could not be read.
     pub unreadable: Vec<String>,
 }
@@ -61,6 +73,7 @@ impl Scan {
     ) -> Self {
         let mut files = Vec::new();
         let mut refs = Vec::new();
+        let mut invalid = Vec::new();
         let mut unreadable = Vec::new();
         for file in discovered {
             let content = match scanner.read_file(file, errors) {
@@ -72,14 +85,21 @@ impl Scan {
             };
             let index = files.len();
             let format = file.format();
-            refs.extend(WorkflowScanner::extract_actions(&content, format).map(
-                |(loc, action_ref)| ScannedRef {
-                    file: index,
-                    loc,
-                    repo_id: action_ref.to_repo_id().without_subpath(),
-                    action_ref,
-                },
-            ));
+            for (loc, remote) in WorkflowScanner::extract_remote(&content, format) {
+                match remote {
+                    Remote::Valid(action_ref) => refs.push(ScannedRef {
+                        file: index,
+                        loc,
+                        repo_id: action_ref.to_repo_id().without_subpath(),
+                        action_ref,
+                    }),
+                    Remote::Invalid(uses) => invalid.push(InvalidRef {
+                        file: index,
+                        loc,
+                        invalid: uses,
+                    }),
+                }
+            }
             files.push(ScannedFile {
                 path: file.path().to_path_buf(),
                 relative: scanner.relative_path(file),
@@ -90,6 +110,7 @@ impl Scan {
         Self {
             files,
             refs,
+            invalid,
             unreadable,
         }
     }
@@ -97,6 +118,11 @@ impl Scan {
     /// The references in file `index`.
     pub fn refs_in(&self, index: usize) -> impl Iterator<Item = &ScannedRef> {
         self.refs.iter().filter(move |r| r.file == index)
+    }
+
+    /// The values in file `index` that fail to parse.
+    pub fn invalid_in(&self, index: usize) -> impl Iterator<Item = &InvalidRef> {
+        self.invalid.iter().filter(move |r| r.file == index)
     }
 
     /// Fetch versions in one batch for every repo that a served, unignored reference accepted by `wanted` names.
@@ -319,6 +345,7 @@ mod tests {
         let scan = Scan {
             files: Vec::new(),
             refs: Vec::new(),
+            invalid: Vec::new(),
             unreadable: Vec::new(),
         };
         assert!(

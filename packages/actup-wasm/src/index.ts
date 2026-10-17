@@ -232,7 +232,8 @@ export function repoConfigCandidates(): string[] {
  * Parses the YAML, resolves each non-local `uses:` ref through the provider,
  * and returns an array of check results with status (up-to-date, outdated,
  * unresolvable). Each result carries the `location` of the `uses:` value it
- * checked.
+ * checked. A value that is not a valid reference reaches no provider and is
+ * unresolvable as a user error.
  *
  * @param yaml - Raw YAML content.
  * @param provider - Object implementing the `ActupProvider` interface.

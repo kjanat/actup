@@ -111,6 +111,9 @@ value it checked, the parsed `action_ref`, a status (`"UpToDate"`,
 `null` when the version list lacks it). `same_commit` holds the target
 (`{ version, sha }`) when the suggested update sits on the commit the ref
 already names, and `null` otherwise.
+A value that is not a valid reference reaches no provider: its result is
+`Unresolvable` with `is_environment_error: false`, and its `action_ref` holds
+the parts as written.
 
 Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `[policy]` table of `actup.toml` with the same defaults: `bump` is `"patch"` |

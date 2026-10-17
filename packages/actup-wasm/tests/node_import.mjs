@@ -710,10 +710,28 @@ const recordingProvider = {
 		return "a".repeat(40);
 	},
 };
-const dottedYaml = `jobs:\n  build:\n    steps:\n      - uses: o/r@../../x/y\n      - uses: o/r@./x\n      - uses: o/r@a/.b\n`;
-assert.deepEqual(await checkRefs(dottedYaml, recordingProvider), [], "no results for invalid refs");
+const dottedYaml =
+	`jobs:\n  build:\n    steps:\n      - uses: o/r@../../x/y\n      - uses: o/r@./x\n      - uses: o/r@a/.b\n      - uses: o/r@a~1\n      - uses: o/r\n      - uses: o/r@\n`;
+const invalidResults = await checkRefs(dottedYaml, recordingProvider);
+assert.deepEqual(
+	invalidResults.map((r) => [r.location.line, r.action_ref.owner, r.action_ref.repo, r.action_ref.ref_str]),
+	[
+		[4, "o", "r", "../../x/y"],
+		[5, "o", "r", "./x"],
+		[6, "o", "r", "a/.b"],
+		[7, "o", "r", "a~1"],
+		[8, "o", "r", ""],
+		[9, "o", "r", ""],
+	],
+	"one result for each invalid ref",
+);
+for (const r of invalidResults) {
+	assert.equal(statusName(r.status), "Unresolvable", JSON.stringify(r.status));
+	assert.equal(r.status.Unresolvable.is_environment_error, false, "an invalid ref is a user error");
+	assert.match(r.status.Unresolvable.reason, /^invalid action reference/);
+}
 assert.deepEqual(calls, [], "no provider call for invalid refs");
 
-console.log("PASS: invalid git refs reach no provider");
+console.log("PASS: invalid git refs are unresolvable and reach no provider");
 
 console.log("\nAll npm package integration tests PASSED");

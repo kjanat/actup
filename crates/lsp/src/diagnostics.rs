@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use actup_core::{
-    ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat,
-    check_action_with_provider, parse_uses, provider,
+    ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
+    check_action_with_provider, classify_uses, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     rewrite::{Rewrite, Trailing, after_value, closer},
 };
@@ -186,6 +186,20 @@ pub fn locate_action_at(
 }
 
 impl LocatedAction {
+    /// The range of the ref, or of the line when the line does not hold the ref verbatim.
+    const fn range(&self) -> Range {
+        Range {
+            start: Position {
+                line: self.line,
+                character: self.col_start,
+            },
+            end: Position {
+                line: self.line,
+                character: self.col_end,
+            },
+        }
+    }
+
     /// The text after the ref on its line.
     pub fn line_end(&self) -> LineEnd<'_> {
         LineEnd {
@@ -195,88 +209,124 @@ impl LocatedAction {
     }
 }
 
+/// The `uses:` values of a document: valid references, and diagnostics for invalid ones.
+struct LocatedUses {
+    actions: Vec<LocatedAction>,
+    invalid: Vec<Diagnostic>,
+}
+
 /// Extract and parse all `uses:` references from document text read as `format`.
 ///
-/// Skips local (`./`) and docker (`docker://`) references, and logs
-/// parse errors without propagating them (a malformed ref in one line
-/// should not block diagnostics for other lines).
+/// Skips local (`./`) and docker (`docker://`) references. A value that fails
+/// to parse becomes an error diagnostic on its ref, or on its line when the
+/// line does not hold the ref verbatim.
 ///
 /// Column positions are converted from byte offsets to the negotiated
 /// LSP position encoding. A ref on a line outside
 /// [`SourceFormat::comment_lines`] gets [`Trailing::Foreign`], an empty
 /// closer and an empty tail, so no edit appends, rewrites or reads a comment
 /// there.
+fn locate_uses(
+    text: &str,
+    format: SourceFormat,
+    encoding: crate::position::PositionEncoding,
+) -> LocatedUses {
+    let locations = format.extract_uses(text);
+    let commentable = format.comment_lines(text);
+    let mut located = LocatedUses {
+        actions: Vec::with_capacity(locations.len()),
+        invalid: Vec::new(),
+    };
+
+    for loc in locations {
+        let Some(line) = loc
+            .line()
+            .checked_sub(1)
+            .and_then(|line| u32::try_from(line).ok())
+        else {
+            continue;
+        };
+        // Convert byte offsets to the negotiated LSP encoding.
+        let raw_line = loc.raw_line();
+        let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
+        let ref_cols = loc.ref_range().map(|r| {
+            (
+                crate::position::byte_to_col(raw_line, r.start, encoding),
+                crate::position::byte_to_col(raw_line, r.end, encoding),
+            )
+        });
+        let action_ref = match classify_uses(loc.value()) {
+            Uses::Local => continue,
+            Uses::Action(action_ref) => action_ref,
+            Uses::Invalid { error, .. } => {
+                let (col_start, col_end) = ref_cols.unwrap_or((0, line_end_col));
+                let reason = match &error {
+                    CoreError::InvalidRef { reason, .. } => reason.clone(),
+                    other => other.to_string(),
+                };
+                located.invalid.push(unresolvable_diagnostic(
+                    Range {
+                        start: Position {
+                            line,
+                            character: col_start,
+                        },
+                        end: Position {
+                            line,
+                            character: col_end,
+                        },
+                    },
+                    loc.value(),
+                    &reason,
+                    false,
+                ));
+                continue;
+            }
+        };
+        let (col_start, col_end, editable, takes_comment, closing, tail) =
+            loc.ref_range()
+                .map_or((0, line_end_col, false, true, "", ""), |r| {
+                    let takes_comment = commentable.contains(&loc.line());
+                    let (col_start, col_end) = ref_cols.unwrap_or((0, line_end_col));
+                    (
+                        col_start,
+                        col_end,
+                        true,
+                        takes_comment,
+                        if takes_comment {
+                            closer(raw_line, r.end)
+                        } else {
+                            ""
+                        },
+                        if takes_comment {
+                            after_value(raw_line, r.end)
+                        } else {
+                            ""
+                        },
+                    )
+                });
+        located.actions.push(LocatedAction {
+            action_ref,
+            line,
+            col_start,
+            col_end,
+            editable,
+            uses_value: loc.value().to_string(),
+            closer: closing.to_string(),
+            tail: tail.to_string(),
+            takes_comment,
+            line_end_col,
+        });
+    }
+
+    located
+}
+
 fn extract_located_actions(
     text: &str,
     format: SourceFormat,
     encoding: crate::position::PositionEncoding,
 ) -> Vec<LocatedAction> {
-    let locations = format.extract_uses(text);
-    let commentable = format.comment_lines(text);
-    let mut actions = Vec::with_capacity(locations.len());
-
-    for loc in locations {
-        match parse_uses(loc.value()) {
-            Ok(Some(action_ref)) => {
-                // Convert byte offsets to the negotiated LSP encoding.
-                let raw_line = loc.raw_line();
-                let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
-                let (col_start, col_end, editable, takes_comment, closing, tail) = loc
-                    .ref_range()
-                    .map_or((0, line_end_col, false, true, "", ""), |r| {
-                        let takes_comment = commentable.contains(&loc.line());
-                        (
-                            crate::position::byte_to_col(raw_line, r.start, encoding),
-                            crate::position::byte_to_col(raw_line, r.end, encoding),
-                            true,
-                            takes_comment,
-                            if takes_comment {
-                                closer(raw_line, r.end)
-                            } else {
-                                ""
-                            },
-                            if takes_comment {
-                                after_value(raw_line, r.end)
-                            } else {
-                                ""
-                            },
-                        )
-                    });
-
-                let Some(line) = loc
-                    .line()
-                    .checked_sub(1)
-                    .and_then(|line| u32::try_from(line).ok())
-                else {
-                    continue;
-                };
-                actions.push(LocatedAction {
-                    action_ref,
-                    line,
-                    col_start,
-                    col_end,
-                    editable,
-                    uses_value: loc.value().to_string(),
-                    closer: closing.to_string(),
-                    tail: tail.to_string(),
-                    takes_comment,
-                    line_end_col,
-                });
-            }
-            Ok(None) => {
-                // Local or docker ref — not our concern.
-            }
-            Err(e) => {
-                tracing::debug!(
-                    value = loc.value(),
-                    error = %e,
-                    "skipping unparseable uses: value"
-                );
-            }
-        }
-    }
-
-    actions
+    locate_uses(text, format, encoding).actions
 }
 
 fn unique_repo_ids(actions: &[LocatedAction]) -> Vec<ActionRepoId> {
@@ -319,25 +369,18 @@ pub async fn batch_fetch_versions(
 }
 
 async fn compute_diagnostics_for_actions(
-    actions: Vec<LocatedAction>,
+    located: LocatedUses,
     config: &Config,
     registry: &provider::Registry,
     versions_map: &HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>>,
 ) -> DiagnosticResult {
-    let mut diagnostics = Vec::with_capacity(actions.len());
+    let LocatedUses { actions, invalid } = located;
+    let refs_checked = actions.len() + invalid.len();
+    let mut diagnostics = Vec::with_capacity(refs_checked);
     let mut errors = DiagnosticErrors::default();
 
     for action in &actions {
-        let range = Range {
-            start: Position {
-                line: action.line,
-                character: action.col_start,
-            },
-            end: Position {
-                line: action.line,
-                character: action.col_end,
-            },
-        };
+        let range = action.range();
 
         let repo_id = action.action_ref.to_repo_id().without_subpath();
         let versions = versions_map.get(&repo_id).and_then(|r| r.as_ref().ok());
@@ -421,9 +464,11 @@ async fn compute_diagnostics_for_actions(
 
     diagnostics.extend(archived_diagnostics(&actions, config, registry).await);
 
+    diagnostics.extend(invalid);
+    diagnostics.sort_by_key(|d| (d.range.start.line, d.range.start.character));
     DiagnosticResult {
         diagnostics,
-        refs_checked: actions.len(),
+        refs_checked,
         errors,
         version_sets: successful_version_sets(versions_map),
     }
@@ -533,17 +578,8 @@ pub async fn compute_diagnostics_with_versions(
     versions_map: &HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>>,
     encoding: crate::position::PositionEncoding,
 ) -> DiagnosticResult {
-    let actions = extract_located_actions(text, format, encoding);
-    if actions.is_empty() {
-        return DiagnosticResult {
-            diagnostics: Vec::new(),
-            refs_checked: 0,
-            errors: DiagnosticErrors::default(),
-            version_sets: HashMap::new(),
-        };
-    }
-
-    compute_diagnostics_for_actions(actions, config, registry, versions_map).await
+    let located = locate_uses(text, format, encoding);
+    compute_diagnostics_for_actions(located, config, registry, versions_map).await
 }
 
 /// Map a [`CheckStatus`] to an LSP [`Diagnostic`].
@@ -793,21 +829,15 @@ pub async fn compute_diagnostics(
     file_cache: &FileCache,
     encoding: crate::position::PositionEncoding,
 ) -> DiagnosticResult {
-    let actions = extract_located_actions(text, uri_format(uri), encoding);
-    if actions.is_empty() {
-        return DiagnosticResult {
-            diagnostics: Vec::new(),
-            refs_checked: 0,
-            errors: DiagnosticErrors::default(),
-            version_sets: HashMap::new(),
-        };
-    }
+    let located = locate_uses(text, uri_format(uri), encoding);
+    let unique_repos = unique_repo_ids(&located.actions);
+    let versions_map = if unique_repos.is_empty() {
+        HashMap::new()
+    } else {
+        batch_fetch_versions(&unique_repos, config, registry, file_cache).await
+    };
 
-    let unique_repos = unique_repo_ids(&actions);
-
-    let versions_map = batch_fetch_versions(&unique_repos, config, registry, file_cache).await;
-
-    compute_diagnostics_for_actions(actions, config, registry, &versions_map).await
+    compute_diagnostics_for_actions(located, config, registry, &versions_map).await
 }
 
 #[cfg(test)]
@@ -1311,8 +1341,29 @@ jobs:
         assert_eq!(actions[0].action_ref.repo(), "checkout");
     }
 
+    fn invalid_ref_errors(yaml: &str) -> Vec<(u32, u32, u32, String)> {
+        locate_uses(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .invalid
+        .into_iter()
+        .map(|d| {
+            assert_eq!(d.severity, Some(DiagnosticSeverity::ERROR));
+            assert_eq!(d.code, Some(NumberOrString::String("unresolvable".into())));
+            (
+                d.range.start.line,
+                d.range.start.character,
+                d.range.end.character,
+                d.message,
+            )
+        })
+        .collect()
+    }
+
     #[test]
-    fn a_plain_scalar_over_two_lines_holds_no_valid_ref() {
+    fn a_plain_scalar_over_two_lines_is_an_invalid_ref() {
         let yaml = "steps:\n  - uses: a/b@v4\n      more\n";
         assert!(
             extract_located_actions(
@@ -1321,6 +1372,15 @@ jobs:
                 crate::position::PositionEncoding::Utf16
             )
             .is_empty()
+        );
+        assert_eq!(
+            invalid_ref_errors(yaml),
+            [(
+                1,
+                0,
+                16,
+                "a/b@v4 more: ref `v4 more` holds the character ' '".to_string()
+            )]
         );
     }
 
@@ -1333,6 +1393,75 @@ jobs:
             crate::position::PositionEncoding::Utf16,
         );
         assert_eq!(repos, [ActionRepoId::simple("o", "s")]);
+        let lines: Vec<(u32, u32, u32)> = invalid_ref_errors(yaml)
+            .into_iter()
+            .map(|(line, start, end, _)| (line, start, end))
+            .collect();
+        assert_eq!(lines, [(1, 14, 23), (2, 14, 17), (3, 14, 18)]);
+    }
+
+    #[tokio::test]
+    async fn invalid_refs_are_error_diagnostics() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let yaml = "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n";
+        let result = compute_diagnostics(
+            yaml,
+            &Uri::from_file_path("/test/ci.yml").unwrap(),
+            &Config::default(),
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        let found: Vec<(u32, u32, u32, Option<DiagnosticSeverity>, &str)> = result
+            .diagnostics
+            .iter()
+            .map(|d| {
+                (
+                    d.range.start.line,
+                    d.range.start.character,
+                    d.range.end.character,
+                    d.severity,
+                    d.message.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            found,
+            [
+                (
+                    1,
+                    14,
+                    17,
+                    Some(DiagnosticSeverity::ERROR),
+                    "o/r@a~1: ref `a~1` holds the character '~'"
+                ),
+                (
+                    2,
+                    14,
+                    21,
+                    Some(DiagnosticSeverity::ERROR),
+                    "o/r@v1.lock: ref component `v1.lock` starts with `.` or ends with `.lock`"
+                ),
+                (
+                    3,
+                    0,
+                    13,
+                    Some(DiagnosticSeverity::ERROR),
+                    "o/r: missing '@' separator for version reference"
+                ),
+                (
+                    4,
+                    14,
+                    14,
+                    Some(DiagnosticSeverity::ERROR),
+                    "o/r@: empty version reference after '@'"
+                ),
+            ]
+        );
+        assert_eq!(result.refs_checked, 4);
+        assert!(!result.errors.has_errors());
     }
 
     #[test]

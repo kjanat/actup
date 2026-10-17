@@ -11,7 +11,7 @@ use anstream::eprintln;
 
 use crate::{
     cli::{CheckFormat, FailOn, OutputFormat},
-    common::{ErrorTally, WorkflowScanner},
+    common::{ErrorTally, InvalidUses, WorkflowScanner},
     file_cache::FileCache,
     output::{Finding, FindingStatus, Span, determine_exit_code, print_findings, print_summary},
     sarif,
@@ -190,6 +190,23 @@ fn collect_actions(
     findings: &mut Vec<Finding>,
 ) -> Vec<CollectedAction> {
     let mut collected = Vec::new();
+    for bad in &scan.invalid {
+        let InvalidUses { action, error } = &bad.invalid;
+        findings.push(
+            Finding::new(
+                scan.files[bad.file].relative.clone(),
+                bad.loc.line(),
+                action.clone(),
+                FindingStatus::Unresolvable {
+                    reason: error.to_string(),
+                    is_environment_error: false,
+                },
+                "unknown".to_string(),
+                scanner.host_for(action),
+            )
+            .with_span(Span::of(&bad.loc)),
+        );
+    }
     for scanned in &scan.refs {
         let relative = &scan.files[scanned.file].relative;
         let action_ref = &scanned.action_ref;
@@ -1255,6 +1272,71 @@ mod tests {
             ]
         );
         assert_eq!(findings.len(), 0);
+        Ok(())
+    }
+
+    const INVALID_REFS: &str = "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: a/b@v4\n      more\n  - uses: ./local\n";
+
+    #[tokio::test]
+    async fn test_check_reports_invalid_refs_as_user_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        std::fs::write(workflows.join("ci.yml"), INVALID_REFS)?;
+        let config = Config::default();
+        let registry = test_registry();
+        let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
+        let mut io_errors = ErrorTally::default();
+        let scan = Scan::collect(&scanner, &scanner.discover(), &mut io_errors);
+        let mut findings = Vec::new();
+
+        let collected = collect_actions(&scanner, &scan, &config, &mut findings);
+
+        assert!(collected.is_empty());
+        let reported: Vec<(usize, String, &str, &str)> = findings
+            .iter()
+            .map(|f| (f.line(), f.action_ref().to_string(), f.provider(), f.host()))
+            .collect();
+        assert_eq!(
+            reported,
+            [
+                (2, "o/r@a~1".to_string(), "unknown", "github.com"),
+                (3, "o/r@v1.lock".to_string(), "unknown", "github.com"),
+                (4, "o/r@".to_string(), "unknown", "github.com"),
+                (5, "o/r@".to_string(), "unknown", "github.com"),
+                (6, "a/b@v4 more".to_string(), "unknown", "github.com"),
+            ]
+        );
+        for finding in &findings {
+            assert!(
+                matches!(
+                    finding.status(),
+                    FindingStatus::Unresolvable {
+                        reason,
+                        is_environment_error: false,
+                    } if reason.starts_with("invalid action reference")
+                ),
+                "{:?}",
+                finding.status()
+            );
+        }
+        assert_eq!(determine_exit_code(&findings, &[]), 2);
+        for format in [CheckFormat::Human, CheckFormat::Json, CheckFormat::Toml] {
+            assert_eq!(
+                run(
+                    dir.path(),
+                    &[],
+                    format,
+                    false,
+                    &config,
+                    &registry,
+                    &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
+                )
+                .await,
+                2
+            );
+        }
         Ok(())
     }
 

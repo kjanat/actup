@@ -7,8 +7,8 @@ mod provider;
 use std::{collections::HashMap, env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
-    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, ConfigSource, RefKind,
-    UsesLocation,
+    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, ConfigSource, RefKind, Uses,
+    UsesLocation, classify_uses,
     config::{EnvOverrides, repo_candidates},
     extract_uses_from_yaml,
 };
@@ -227,19 +227,12 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         return Ok(no_files_output(&config));
     }
 
-    // Collect all uses refs across all files
-    let mut all_refs: Vec<(String, UsesLocation, ActionRef)> = Vec::new();
-    for (path, content) in &files {
-        let uses = extract_uses_from_yaml(content);
-        for u in uses {
-            // parse_uses returns Ok(None) for local refs (./path, docker://)
-            if let Ok(Some(parsed)) = actup_core::parse_uses(u.value()) {
-                all_refs.push((path.clone(), u, parsed));
-            }
-        }
-    }
-
-    if all_refs.is_empty() {
+    let Collected {
+        refs: all_refs,
+        mut results,
+    } = collect_refs(&files);
+    let ref_count = all_refs.len() + results.len();
+    if ref_count == 0 {
         return Ok(no_refs_output(&config, files.len()));
     }
 
@@ -270,7 +263,7 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
 
     let mut providers: HashMap<String, CachingProvider<provider::RestProvider<provider::ZedHttp>>> =
         HashMap::new();
-    let (results, fetch_errors) = collect_results(&all_refs, &fetched, |action_ref, versions| {
+    let (checked, fetch_errors) = collect_results(&all_refs, &fetched, |action_ref, versions| {
         let host = repo_key(action_ref).0;
         let lookup = providers.entry(host.clone()).or_insert_with(|| {
             CachingProvider::new(provider::RestProvider::new(
@@ -281,15 +274,10 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         });
         provider::check(action_ref, versions, &config, lookup)
     });
+    results.extend(checked);
 
     // Format output
-    let text = format_check_output(
-        &config,
-        &results,
-        &fetch_errors,
-        files.len(),
-        all_refs.len(),
-    );
+    let text = format_check_output(&config, &results, &fetch_errors, files.len(), ref_count);
     Ok(slash_output(text, "actup: Check Results"))
 }
 
@@ -329,6 +317,37 @@ fn collect_results(
         .collect();
     fetch_errors.sort();
     (results, fetch_errors)
+}
+
+struct Collected {
+    refs: Vec<(String, UsesLocation, ActionRef)>,
+    results: Vec<(String, UsesLocation, CheckResult)>,
+}
+
+fn collect_refs(files: &[(String, String)]) -> Collected {
+    let mut collected = Collected {
+        refs: Vec::new(),
+        results: Vec::new(),
+    };
+    for (path, content) in files {
+        for loc in extract_uses_from_yaml(content) {
+            match classify_uses(loc.value()) {
+                Uses::Local => {}
+                Uses::Action(parsed) => collected.refs.push((path.clone(), loc, parsed)),
+                Uses::Invalid { action, error } => {
+                    let result = CheckResult::new(
+                        action,
+                        CheckStatus::Unresolvable {
+                            reason: error.to_string(),
+                            is_environment_error: false,
+                        },
+                    );
+                    collected.results.push((path.clone(), loc, result));
+                }
+            }
+        }
+    }
+    collected
 }
 
 struct RepoFetch {
@@ -1067,6 +1086,49 @@ mod tests {
 
     fn empty_versions() -> actup_core::version::Set {
         actup_core::version::Set::build(Vec::new(), HashMap::new(), HashMap::new(), None)
+    }
+
+    #[test]
+    fn invalid_refs_are_unresolvable_user_errors() {
+        let files = [(
+            ".github/workflows/ci.yml".to_string(),
+            "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n  - uses: o/s@v1\n".to_string(),
+        )];
+        let Collected { refs, results } = collect_refs(&files);
+        let valid: Vec<(usize, String)> = refs
+            .iter()
+            .map(|(_, loc, action)| (loc.line(), action.to_string()))
+            .collect();
+        assert_eq!(valid, [(7, "o/s@v1".to_string())]);
+        let invalid: Vec<(usize, &str, bool)> = results
+            .iter()
+            .map(|(_, loc, result)| match result.status() {
+                CheckStatus::Unresolvable {
+                    reason,
+                    is_environment_error,
+                } => (
+                    loc.line(),
+                    loc.value(),
+                    !*is_environment_error && reason.starts_with("invalid action reference"),
+                ),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            invalid,
+            [
+                (2, "o/r@a~1", true),
+                (3, "o/r@v1.lock", true),
+                (4, "o/r", true),
+                (5, "o/r@", true),
+            ]
+        );
+        let text = format_check_output(&Config::default(), &results, &[], 1, 5);
+        assert!(text.contains(" 1 unknown, 4 unresolvable\n"), "{text}");
+        assert!(
+            text.contains("- `.github/workflows/ci.yml` line 2: `o/r@a~1` — invalid action reference 'o/r@a~1': ref `a~1` holds the character '~'\n"),
+            "{text}"
+        );
     }
 
     #[test]

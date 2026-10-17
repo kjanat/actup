@@ -37,7 +37,6 @@ serde           = { workspace = true }
 serde_json      = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
-urlencoding     = { workspace = true }
 
 [lints]
 workspace = true
@@ -146,8 +145,8 @@ impl YourClient {
         let url = format!(
             "{}/repos/{}/{}/tags?limit={max_tags}",
             self.api_base,
-            urlencoding::encode(owner),
-            urlencoding::encode(repo)
+            actup_core::encode_path(owner)?,
+            actup_core::encode_path(repo)?
         );
         let response = self.get(&url).await?;
         let tags: Vec<YourTag> = self.handle_response(response, owner, repo).await?;
@@ -630,7 +629,8 @@ Box::pin(async move {
 - Auth: `PRIVATE-TOKEN: {token}`
 - `per_page` is `max_tags_per_repo` up to 100; paging stops at
   `max_tags_per_repo` tags or without `x-next-page`
-- **Gotcha**: Project paths must be URL-encoded (use `urlencoding` crate)
+- **Gotcha**: Project paths must be URL-encoded as one segment, `/` included
+  (`actup_core::encode_segment`)
 
 ### Gitea/Forgejo
 

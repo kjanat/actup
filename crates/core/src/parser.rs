@@ -59,6 +59,53 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
     )))
 }
 
+/// What a `uses:` string names.
+#[derive(Debug, Clone)]
+pub enum Uses {
+    /// A local path or a `docker://` image.
+    Local,
+    /// A remote reference that parses.
+    Action(ActionRef),
+    /// A remote reference that fails to parse.
+    Invalid {
+        /// The `[host/]owner/repo[/subpath]@ref` parts of the input, split as written.
+        action: ActionRef,
+        /// The `InvalidRef` error from [`parse_uses`].
+        error: Error,
+    },
+}
+
+/// Sort a `uses:` string into a local, a valid or an invalid reference.
+#[must_use]
+pub fn classify_uses(input: &str) -> Uses {
+    match parse_uses(input) {
+        Ok(None) => Uses::Local,
+        Ok(Some(action)) => Uses::Action(action),
+        Err(error) => Uses::Invalid {
+            action: split_uses(input),
+            error,
+        },
+    }
+}
+
+fn split_uses(input: &str) -> ActionRef {
+    let input = input.trim();
+    let (path, reference) = input.split_once('@').unwrap_or((input, ""));
+    let segments: Vec<&str> = path.split('/').collect();
+    let (host, rest) = match segments.split_first() {
+        Some((first, rest)) if names_host(first, segments.len()) => {
+            (Some(first.to_ascii_lowercase()), rest)
+        }
+        _ => (None, segments.as_slice()),
+    };
+    let part = |i: usize| rest.get(i).copied().unwrap_or_default();
+    let subpath = rest
+        .get(2..)
+        .filter(|tail| !tail.is_empty())
+        .map(|tail| tail.join("/"));
+    ActionRef::new(host, part(0), part(1), subpath, reference)
+}
+
 /// Parse the `[host/]owner/repo[/subpath]` part of a `uses:` string.
 ///
 /// # Errors
@@ -803,6 +850,43 @@ mod tests {
             assert!(
                 matches!(result, Err(Error::InvalidRef { .. })),
                 "{uses}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_uses_keeps_the_parts_of_an_invalid_ref() {
+        assert!(matches!(classify_uses("./local"), Uses::Local));
+        assert!(matches!(
+            classify_uses("o/r@v1"),
+            Uses::Action(action) if action == ActionRef::simple("o", "r", "v1")
+        ));
+        let cases = [
+            ("o/r@a~1", ActionRef::simple("o", "r", "a~1")),
+            ("o/r@v1.lock", ActionRef::simple("o", "r", "v1.lock")),
+            ("o/r", ActionRef::simple("o", "r", "")),
+            ("o/r@", ActionRef::simple("o", "r", "")),
+            ("o", ActionRef::simple("o", "", "")),
+            (
+                "GHE.corp/o/r/sub/x@../y",
+                ActionRef::new(
+                    Some("ghe.corp".into()),
+                    "o",
+                    "r",
+                    Some("sub/x".into()),
+                    "../y",
+                ),
+            ),
+        ];
+        for (uses, expected) in cases {
+            let classified = classify_uses(uses);
+            assert!(
+                matches!(
+                    &classified,
+                    Uses::Invalid { action, error: Error::InvalidRef { input, .. } }
+                        if *action == expected && input == uses
+                ),
+                "{uses}: {classified:?}"
             );
         }
     }

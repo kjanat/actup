@@ -7,7 +7,7 @@
 
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
-use actup_core::{Error, Result, encode_path};
+use actup_core::{Error, Result, encode_path, encode_segment};
 use actup_providers::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE};
 use reqwest::{
     Client, Response, StatusCode,
@@ -226,7 +226,7 @@ impl GiteaClient {
             "{}/contents/{}?ref={}",
             self.repo_url(owner, repo)?,
             encode_path(path)?,
-            urlencoding::encode(ref_name)
+            encode_segment(ref_name)?
         );
         debug!(url = %url, path = %path, ref_name = %ref_name, "fetching file");
 

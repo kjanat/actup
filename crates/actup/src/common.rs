@@ -8,9 +8,9 @@ use std::{fs, path::Path};
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
-    SourceFormat, UsesLocation,
+    SourceFormat, Uses, UsesLocation,
     cache::Staleness,
-    discover_files, parse_uses,
+    classify_uses, discover_files,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
     provider, resolve_within, rewrite_atomic, sanitize_line, version,
 };
@@ -126,6 +126,26 @@ impl RefSite {
             reference: action_ref.ref_str().to_string(),
         }
     }
+
+    /// Describe `action_ref` at `file:line` with provider `unknown` and the host `scanner` resolves.
+    #[must_use]
+    pub fn unserved(
+        scanner: &WorkflowScanner<'_>,
+        file: &str,
+        line: usize,
+        action_ref: &ActionRef,
+    ) -> Self {
+        Self {
+            file: file.to_string(),
+            line,
+            action: action_ref.to_string(),
+            owner: action_ref.owner().to_string(),
+            repo: action_ref.repo().to_string(),
+            host: scanner.host_for(action_ref),
+            provider: "unknown".to_string(),
+            reference: action_ref.ref_str().to_string(),
+        }
+    }
 }
 
 /// Record that no provider serves `action_ref`, with provider `unknown`.
@@ -136,17 +156,8 @@ pub fn report_unserved(
     action_ref: &ActionRef,
     result: &mut EditResult,
 ) {
-    let host = scanner.host_for(action_ref);
-    let site = RefSite {
-        file: file.to_string(),
-        line,
-        action: action_ref.to_string(),
-        owner: action_ref.owner().to_string(),
-        repo: action_ref.repo().to_string(),
-        host: host.clone(),
-        provider: "unknown".to_string(),
-        reference: action_ref.ref_str().to_string(),
-    };
+    let site = RefSite::unserved(scanner, file, line, action_ref);
+    let host = site.host.clone();
     report_error(site, &CoreError::ProviderNotFound { host }, result);
 }
 
@@ -172,6 +183,18 @@ impl From<SkipReason> for SkipCause {
             SkipReason::OutOfBounds => Self::OutOfBounds,
         }
     }
+}
+
+/// Record that the `uses:` value at `file:line` fails to parse, with provider `unknown`.
+pub fn report_invalid(
+    scanner: &WorkflowScanner<'_>,
+    file: &str,
+    line: usize,
+    invalid: &InvalidUses,
+    result: &mut EditResult,
+) {
+    let site = RefSite::unserved(scanner, file, line, &invalid.action);
+    report_error(site, &invalid.error, result);
 }
 
 /// An action reference that `update` or `pin` left unchanged.
@@ -493,6 +516,24 @@ fn write_splices(root: &Path, path: &Path, splices: &Splices) -> Result<(), Writ
 
 // WorkflowScanner - shared file discovery and action extraction
 
+/// A remote `uses:` value as written.
+#[derive(Debug, Clone)]
+pub enum Remote {
+    /// A reference that parses.
+    Valid(ActionRef),
+    /// A reference that fails to parse.
+    Invalid(InvalidUses),
+}
+
+/// A remote `uses:` value that fails to parse.
+#[derive(Debug, Clone)]
+pub struct InvalidUses {
+    /// The parts of the value, split as written.
+    pub action: ActionRef,
+    /// The `InvalidRef` error.
+    pub error: CoreError,
+}
+
 /// Shared infrastructure for scanning workflow files.
 pub struct WorkflowScanner<'a> {
     path: &'a Path,
@@ -580,22 +621,32 @@ impl<'a> WorkflowScanner<'a> {
         }
     }
 
-    /// Extract action references from content, filtering as appropriate.
+    /// Extract the remote `uses:` values from content, valid or not.
     ///
-    /// Yields `(UsesLocation, ActionRef)` pairs for non-local actions.
-    ///
-    /// Note: Ignored actions are NOT filtered here - they flow through to the check
-    /// phase where they're marked with `CheckStatus::Ignored` for visibility.
+    /// Ignored actions stay in: the check phase marks them `CheckStatus::Ignored`.
+    pub fn extract_remote(
+        content: &str,
+        format: SourceFormat,
+    ) -> impl Iterator<Item = (UsesLocation, Remote)> + '_ {
+        format.extract_uses(content).into_iter().filter_map(|loc| {
+            let remote = match classify_uses(loc.value()) {
+                Uses::Local => return None,
+                Uses::Action(action) => Remote::Valid(action),
+                Uses::Invalid { action, error } => Remote::Invalid(InvalidUses { action, error }),
+            };
+            Some((loc, remote))
+        })
+    }
+
+    /// Extract the valid remote action references from content.
+    #[cfg(test)]
     pub fn extract_actions(
         content: &str,
         format: SourceFormat,
     ) -> impl Iterator<Item = (UsesLocation, ActionRef)> + '_ {
-        format.extract_uses(content).into_iter().filter_map(|loc| {
-            let Ok(Some(action_ref)) = parse_uses(loc.value()) else {
-                return None; // Local action or parse error
-            };
-
-            Some((loc, action_ref))
+        Self::extract_remote(content, format).filter_map(|(loc, remote)| match remote {
+            Remote::Valid(action) => Some((loc, action)),
+            Remote::Invalid(_) => None,
         })
     }
 
@@ -1388,7 +1439,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::default();
         let bare = ActionRef::simple("o", "r", "v1");
-        let hosted = parse_uses("ghe.corp.example/o/r@v1")?.ok_or("no action ref")?;
+        let hosted = actup_core::parse_uses("ghe.corp.example/o/r@v1")?.ok_or("no action ref")?;
 
         let mut with_default = provider::Registry::new();
         with_default.set_default_host("git.example.org");

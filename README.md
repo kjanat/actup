@@ -176,9 +176,15 @@ adds `reason`: `ignored` when `scan.ignore` matches the ref, or `unplaceable`,
 `overlap` or `out_of_bounds` when the writer cannot edit it. Only the last three
 make `update` and `pin` exit 1. When two edits of a file overlap, every edit of
 that file is skipped with `overlap` and the file stays unchanged. An `errors`
-entry adds `kind` (such as `not_found`, `rate_limited`, `provider_not_found`,
-`write`, `changed` or `invalid_edit`) and `message`. With no workflow files, the
-report has empty lists and `check` prints no findings.
+entry adds `kind` (such as `invalid_ref`, `not_found`, `rate_limited`,
+`provider_not_found`, `write`, `changed` or `invalid_edit`) and `message`. With
+no workflow files, the report has empty lists and `check` prints no findings.
+
+A remote `uses:` value without `@`, with an empty ref, or with a ref that is not
+a git ref name (such as `o/r@a~1` or `o/r@v1.lock`) reaches no provider. `check`
+reports it as unresolvable, `update` and `pin` report it with kind
+`invalid_ref`, and all three exit 2. The language server marks it with an error
+diagnostic.
 
 An unresolvable ref that names no tag can get a suggested tag. A partial version
 names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). A
@@ -468,12 +474,15 @@ edited lines changed since the scan. `updateAllUsesToVersion` and `updateFile`
 refuse an edited text that is not valid YAML or holds a different number of
 `uses:` values. `updateFile` skips that check with `validateYaml: false`, and
 refuses edits that name actions on more than one host. `updateAllUsesToVersion`
-writes each ref in its `policy.pin` style, as `update` does. `getLatest` adds
-`refKind` (`tag`, `branch` or `sha`) when the version list names `currentRef`,
-and `sameCommit` (the target version) when the target sits on the commit that
-`currentRef` already points at. `getVersions` and `getLatest` add `stale`,
-shaped like the CLI field, when their versions come from an expired cache entry,
-and the server answers the next call afresh.
+writes each ref in its `policy.pin` style, as `update` does. It lists each
+matching `uses:` value that is not a valid reference under `unresolvable` with
+its `error`, leaves it unchanged and reports status `unresolvable`. `updateFile`
+refuses an edit of such a value. `getLatest` adds `refKind` (`tag`, `branch` or
+`sha`) when the version list names `currentRef`, and `sameCommit` (the target
+version) when the target sits on the commit that `currentRef` already points at.
+`getVersions` and `getLatest` add `stale`, shaped like the CLI field, when their
+versions come from an expired cache entry, and the server answers the next call
+afresh.
 
 ## Exit Codes
 

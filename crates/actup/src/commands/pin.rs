@@ -15,8 +15,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, RefSite, Unwritable, WorkflowScanner, commit_file, report_skipped,
-        report_unwritable, writable_versions,
+        Change, EditResult, RefSite, Unwritable, WorkflowScanner, commit_file, report_invalid,
+        report_skipped, report_unwritable, writable_versions,
     },
     file_cache::FileCache,
     scan::{Scan, versions_for},
@@ -263,6 +263,15 @@ async fn edit(
         let relative = &file.relative;
         let mut file_edits = FileEdits::new(file.path.clone(), file.content.clone(), file.format);
 
+        for bad in scan.invalid_in(index) {
+            report_invalid(
+                &scanner,
+                relative,
+                bad.loc.line(),
+                &bad.invalid,
+                &mut result,
+            );
+        }
         for scanned in scan.refs_in(index) {
             let Some((provider, site)) = scanner.editable(file, scanned, &mut result) else {
                 continue;
@@ -765,6 +774,60 @@ mod tests {
             result.exit_code(false),
             i32::from(CliExitCode::EnvironmentError)
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_edit_reports_invalid_refs_as_user_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let content =
+            "steps:\n  - uses: o/h@a~1\n  - uses: o/h@v1.lock\n  - uses: o/h\n  - uses: o/h@\n";
+        let path = workflow(dir.path(), content)?;
+
+        for mode in [Mode::Pin, Mode::Unpin] {
+            let Some(result) = edit(
+                dir.path(),
+                mode,
+                false,
+                OutputFormat::Json,
+                &uncached(),
+                &repo_sha_registry(),
+                &Arc::new(FileCache::from_config(
+                    &uncached(),
+                    crate::file_cache::Access::ReadWrite,
+                )),
+            )
+            .await
+            else {
+                panic!("no workflow found");
+            };
+
+            let errored: Vec<(usize, &str, &str, ErrorKind)> = result
+                .errored
+                .iter()
+                .map(|e| {
+                    (
+                        e.site.line,
+                        e.site.action.as_str(),
+                        e.site.provider.as_str(),
+                        e.kind,
+                    )
+                })
+                .collect();
+            assert_eq!(
+                errored,
+                [
+                    (2, "o/h@a~1", "unknown", ErrorKind::InvalidRef),
+                    (3, "o/h@v1.lock", "unknown", ErrorKind::InvalidRef),
+                    (4, "o/h@", "unknown", ErrorKind::InvalidRef),
+                    (5, "o/h@", "unknown", ErrorKind::InvalidRef),
+                ]
+            );
+            assert_eq!(result.edited, []);
+            assert_eq!(result.exit_code(false), i32::from(CliExitCode::UserError));
+        }
+        assert_eq!(std::fs::read_to_string(path)?, content);
         Ok(())
     }
 

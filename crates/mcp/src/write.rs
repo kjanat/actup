@@ -3,8 +3,8 @@
 use std::{fs, io, ops::Range, path::Path};
 
 use actup_core::{
-    ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, SourceFormat,
-    UsesLocation, discover_files, line_spans, parse_action_path, parse_uses,
+    ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, SourceFormat, Uses,
+    UsesLocation, classify_uses, discover_files, line_spans, parse_action_path,
     patch::{EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retarget_edit},
     policy::Style,
     provider::Registry,
@@ -83,6 +83,13 @@ struct Skipped {
 }
 
 #[derive(Debug, Serialize)]
+struct Unresolved {
+    #[serde(flatten)]
+    site: Site,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
 struct FileError {
     path: String,
     error: String,
@@ -110,6 +117,7 @@ struct Outcome {
     changes: Vec<Change>,
     unchanged: Vec<Unchanged>,
     skipped: Vec<Skipped>,
+    unresolvable: Vec<Unresolved>,
     errors: Vec<FileError>,
     diff: String,
     reversal: Reversal,
@@ -117,7 +125,9 @@ struct Outcome {
 
 impl Outcome {
     const fn status(&self) -> Status {
-        if self.changes.is_empty() {
+        if !self.unresolvable.is_empty() {
+            Status::Unresolvable
+        } else if self.changes.is_empty() {
             Status::UpToDate
         } else {
             Status::Outdated
@@ -364,17 +374,6 @@ fn refused(message: impl std::fmt::Display) -> CallToolError {
     CallToolError::from_message(message.to_string())
 }
 
-fn located_uses(format: SourceFormat, text: &str) -> Vec<(UsesLocation, ActionRef)> {
-    format
-        .extract_uses(text)
-        .into_iter()
-        .filter_map(|loc| {
-            let action = parse_uses(loc.value()).ok().flatten()?;
-            Some((loc, action))
-        })
-        .collect()
-}
-
 fn refuse_skips(skipped: &[Skipped]) -> Result<(), CallToolError> {
     if skipped.is_empty() {
         return Ok(());
@@ -387,6 +386,44 @@ fn refuse_skips(skipped: &[Skipped]) -> Result<(), CallToolError> {
         "{}; nothing was written",
         skips.join("; ")
     )))
+}
+
+#[derive(Default)]
+struct Scanned {
+    valid: Vec<(UsesLocation, ActionRef)>,
+    invalid: Vec<(UsesLocation, ActionRef, actup_core::Error)>,
+}
+
+impl Scanned {
+    fn of(format: SourceFormat, content: &str) -> Self {
+        let mut scanned = Self::default();
+        for loc in format.extract_uses(content) {
+            match classify_uses(loc.value()) {
+                Uses::Local => {}
+                Uses::Action(action) => scanned.valid.push((loc, action)),
+                Uses::Invalid { action, error } => scanned.invalid.push((loc, action, error)),
+            }
+        }
+        scanned
+    }
+
+    fn unmatched(
+        &self,
+        line: usize,
+        (written, named): (&str, &ActionRepoId),
+        matched: usize,
+        default_host: &str,
+    ) -> String {
+        let invalid = self.invalid.iter().find(|(loc, action, _)| {
+            loc.line() == line && same_repo(&action.to_repo_id(), named, default_host)
+        });
+        match invalid {
+            Some((loc, _, error)) if matched == 0 => {
+                format!("line {line}: `{}`: {error}", loc.value())
+            }
+            _ => format!("line {line}: {matched} `uses:` value(s) name `{written}`"),
+        }
+    }
 }
 
 /// `updateFile`: replace the refs of named `uses:` values in one file, all or none.
@@ -411,7 +448,7 @@ pub fn update_file(
     let original = fs::read_to_string(&path).map_err(|e| refused(format!("{shown}: {e}")))?;
     let format = SourceFormat::from_path(&path);
     let default_host = registry.default_host().unwrap_or_default();
-    let locations = located_uses(format, &original);
+    let scanned = Scanned::of(format, &original);
 
     let mut edits = FileEdits::new(path.clone(), original.clone(), format);
     let mut unchanged = Vec::new();
@@ -422,7 +459,8 @@ pub fn update_file(
             .map_err(|e| invalid(format!("action `{}`: {e}", edit.action)))?;
         check_written_ref("ref", &edit.reference).map_err(invalid)?;
         let line = edit.line.get();
-        let matches: Vec<&(UsesLocation, ActionRef)> = locations
+        let matches: Vec<&(UsesLocation, ActionRef)> = scanned
+            .valid
             .iter()
             .filter(|(loc, action)| {
                 let id = action.to_repo_id();
@@ -432,10 +470,11 @@ pub fn update_file(
             })
             .collect();
         let [(loc, action)] = matches.as_slice() else {
-            problems.push(format!(
-                "line {line}: {} `uses:` value(s) name `{}`",
+            problems.push(scanned.unmatched(
+                line,
+                (&edit.action, &named),
                 matches.len(),
-                edit.action
+                default_host,
             ));
             continue;
         };
@@ -536,8 +575,10 @@ impl Job<'_> {
         let format = SourceFormat::from_path(&path);
         let mut edits = FileEdits::new(path.clone(), original.clone(), format);
         for loc in format.extract_uses(&original) {
-            let Ok(Some(action)) = parse_uses(loc.value()) else {
-                continue;
+            let (action, error) = match classify_uses(loc.value()) {
+                Uses::Local => continue,
+                Uses::Action(action) => (action, None),
+                Uses::Invalid { action, error } => (action, Some(error)),
             };
             let id = action.to_repo_id();
             if !same_repo(&id, self.wanted, self.default_host)
@@ -549,6 +590,13 @@ impl Job<'_> {
                 continue;
             }
             let site = site(&shown, &loc, served_for(self.registry, &action));
+            if let Some(error) = error {
+                outcome.unresolvable.push(Unresolved {
+                    site,
+                    error: error.to_string(),
+                });
+                continue;
+            }
             if self.config.should_ignore(&action) {
                 outcome.skipped.push(Skipped {
                     site,
@@ -669,7 +717,7 @@ mod tests {
         let [loc] = found.as_slice() else {
             return Err(format!("expected one `uses:` in {line_body:?}").into());
         };
-        let action = parse_uses(loc.value())?.ok_or("local action")?;
+        let action = actup_core::parse_uses(loc.value())?.ok_or("local action")?;
         Ok((loc.clone(), action))
     }
 

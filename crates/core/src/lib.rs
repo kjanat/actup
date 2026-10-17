@@ -54,8 +54,9 @@ pub use config::{
 pub use discovery::{DiscoveredFile, ExtraPath, FileKind, discover_files};
 pub use error::{Error, Result};
 pub use parser::{
-    EditValidationError, UsesLocation, check_ref_name, extract_uses_from_yaml, is_host_segment,
-    line_spans, lines_ending_in_scalars, parse_action_path, parse_uses, validate_edit,
+    EditValidationError, Uses, UsesLocation, check_ref_name, classify_uses, extract_uses_from_yaml,
+    is_host_segment, line_spans, lines_ending_in_scalars, parse_action_path, parse_uses,
+    validate_edit,
 };
 pub use policy::Update;
 pub use provider::Provider;
@@ -68,5 +69,5 @@ pub use syntax::SourceFormat;
 pub use text::{
     neutralize_workflow_commands, replace_unsafe_characters, sanitize_for_terminal, sanitize_line,
 };
-pub use url_path::encode_path;
+pub use url_path::{encode_path, encode_segment};
 pub use version::{BranchInfo, Info, Version};

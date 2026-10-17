@@ -26,7 +26,8 @@ behind a default feature; the LSP and the MCP server always register it.
 
 ## Conventions
 
-- Uses `urlencoding` for GitLab project path encoding (unlike GitHub)
+- Encodes the project path, refs and file paths as single segments with
+  `actup_core::encode_segment` (unlike GitHub)
 - `#![forbid(unsafe_code)]`
 - `tests/integration.rs`: `wiremock` tests for `REGISTRATION`, versions, ref
   resolution, files and every error status

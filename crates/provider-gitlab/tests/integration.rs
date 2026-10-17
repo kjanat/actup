@@ -577,3 +577,31 @@ async fn the_api_base_is_the_api_root_as_given() -> TestResult {
     assert_eq!(provider.get_default_branch(&repo()).await?, "main");
     Ok(())
 }
+
+#[tokio::test]
+async fn dot_segments_are_refused_before_any_request() -> TestResult {
+    let server = MockServer::start().await;
+    let provider = provider(&server)?;
+
+    for ref_name in ["..", "."] {
+        let result = provider.resolve_ref_to_sha(&repo(), ref_name).await;
+        assert!(
+            matches!(result, Err(Error::InvalidRef { .. })),
+            "{ref_name}: {result:?}"
+        );
+    }
+    let result = provider
+        .get_versions(&ActionRepoId::simple("..", "r"))
+        .await;
+    assert!(
+        matches!(result, Err(Error::InvalidRef { .. })),
+        "{result:?}"
+    );
+    let result = provider.get_action_yml(&repo(), "..").await;
+    assert!(
+        matches!(result, Err(Error::InvalidRef { .. })),
+        "{result:?}"
+    );
+    assert_eq!(server.received_requests().await.map(|r| r.len()), Some(0));
+    Ok(())
+}

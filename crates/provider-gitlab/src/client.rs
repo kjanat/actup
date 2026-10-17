@@ -7,7 +7,7 @@
 
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
-use actup_core::{Error, Result};
+use actup_core::{Error, Result, encode_segment};
 use actup_providers::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE};
 use reqwest::{
     Client, Response, StatusCode,
@@ -124,9 +124,12 @@ impl GitLabClient {
     }
 
     /// URL-encode a project path (owner/repo)
-    fn encode_project_path(owner: &str, repo: &str) -> String {
-        let path = format!("{owner}/{repo}");
-        urlencoding::encode(&path).to_string()
+    fn encode_project_path(owner: &str, repo: &str) -> Result<String> {
+        Ok(format!(
+            "{}%2F{}",
+            encode_segment(owner)?,
+            encode_segment(repo)?
+        ))
     }
 
     /// List the first `max_tags` tags of a project, newest first.
@@ -143,7 +146,7 @@ impl GitLabClient {
         let max_tags = usize::from(max_tags.get());
         let per_page = max_tags.min(usize::from(MAX_PER_PAGE));
 
-        let project_id = Self::encode_project_path(owner, repo);
+        let project_id = Self::encode_project_path(owner, repo)?;
         let mut all_tags = Vec::with_capacity(max_tags);
         let mut page = 1;
 
@@ -184,7 +187,7 @@ impl GitLabClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or project not found.
     pub async fn get_project(&self, owner: &str, repo: &str) -> Result<GitLabProject> {
-        let project_id = Self::encode_project_path(owner, repo);
+        let project_id = Self::encode_project_path(owner, repo)?;
         let url = format!("{}/projects/{project_id}", self.api_base);
         debug!(url = %url, "fetching project info");
 
@@ -198,8 +201,8 @@ impl GitLabClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or branch not found.
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GitLabBranch> {
-        let project_id = Self::encode_project_path(owner, repo);
-        let branch_encoded = urlencoding::encode(branch);
+        let project_id = Self::encode_project_path(owner, repo)?;
+        let branch_encoded = encode_segment(branch)?;
         let url = format!(
             "{}/projects/{project_id}/repository/branches/{branch_encoded}",
             self.api_base
@@ -216,8 +219,8 @@ impl GitLabClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or tag not found.
     pub async fn get_tag(&self, owner: &str, repo: &str, tag: &str) -> Result<GitLabTag> {
-        let project_id = Self::encode_project_path(owner, repo);
-        let tag_encoded = urlencoding::encode(tag);
+        let project_id = Self::encode_project_path(owner, repo)?;
+        let tag_encoded = encode_segment(tag)?;
         let url = format!(
             "{}/projects/{project_id}/repository/tags/{tag_encoded}",
             self.api_base
@@ -240,9 +243,9 @@ impl GitLabClient {
         path: &str,
         ref_name: &str,
     ) -> Result<GitLabFile> {
-        let project_id = Self::encode_project_path(owner, repo);
-        let path_encoded = urlencoding::encode(path);
-        let ref_encoded = urlencoding::encode(ref_name);
+        let project_id = Self::encode_project_path(owner, repo)?;
+        let path_encoded = encode_segment(path)?;
+        let ref_encoded = encode_segment(ref_name)?;
         let url = format!(
             "{}/projects/{project_id}/repository/files/{path_encoded}?ref={ref_encoded}",
             self.api_base
@@ -259,11 +262,11 @@ impl GitLabClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or commit not found.
     pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitLabCommit> {
-        let project_id = Self::encode_project_path(owner, repo);
+        let project_id = Self::encode_project_path(owner, repo)?;
         let url = format!(
             "{}/projects/{project_id}/repository/commits/{}",
             self.api_base,
-            urlencoding::encode(sha)
+            encode_segment(sha)?
         );
         debug!(url = %url, sha = %sha, "fetching commit");
 

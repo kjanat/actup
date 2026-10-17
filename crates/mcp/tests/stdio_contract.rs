@@ -1106,6 +1106,73 @@ fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) ->
     )
 }
 
+fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResult {
+    let bad = "steps:\n  - uses: actions/checkout@a~1\n  - uses: actions/checkout@v1.lock\n  - uses: actions/checkout\n  - uses: actions/checkout@\n  - uses: other/repo@a~1\n";
+    ws.write(".github/workflows/bad.yml", bad)?;
+
+    let all = client.call(
+        "updateAllUsesToVersion",
+        json!({ "workspaceRoot": ".", "match": { "owner": "actions", "repo": "checkout" }, "targetRef": "v4.2.0" }),
+    )?;
+    let a = body(&all);
+    expect(is_error(&all), || {
+        format!("invalid refs must fail the call: {all}")
+    })?;
+    expect_eq(&a["status"], &json!("unresolvable"), "status")?;
+    let unresolvable: Vec<(&Value, &Value, &Value)> = a["unresolvable"]
+        .as_array()
+        .ok_or("unresolvable")?
+        .iter()
+        .map(|u| (&u["path"], &u["line"], &u["action"]))
+        .collect();
+    let path = json!(".github/workflows/bad.yml");
+    expect(
+        unresolvable
+            == [
+                (&path, &json!(2), &json!("actions/checkout@a~1")),
+                (&path, &json!(3), &json!("actions/checkout@v1.lock")),
+                (&path, &json!(4), &json!("actions/checkout")),
+                (&path, &json!(5), &json!("actions/checkout@")),
+            ],
+        || format!("unresolvable: {}", a["unresolvable"]),
+    )?;
+    expect(
+        a["unresolvable"][0]["error"]
+            == json!(
+                "invalid action reference 'actions/checkout@a~1': ref `a~1` holds the character '~'"
+            ),
+        || format!("error: {}", a["unresolvable"][0]["error"]),
+    )?;
+    expect_eq(
+        &a["written"],
+        &json!([".github/workflows/ci.yml"]),
+        "valid refs still written",
+    )?;
+    expect(ws.read(".github/workflows/bad.yml")? == bad, || {
+        "invalid refs were rewritten".into()
+    })?;
+
+    let file = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/bad.yml",
+            "edits": [{ "line": 2, "action": "actions/checkout", "ref": "v4.2.0" }],
+        }),
+    )?;
+    expect(is_error(&file), || {
+        format!("an edit of an invalid ref must fail: {file}")
+    })?;
+    expect(
+        error_text(&file).contains(
+            "line 2: `actions/checkout@a~1`: invalid action reference 'actions/checkout@a~1': ref `a~1` holds the character '~'",
+        ),
+        || error_text(&file),
+    )?;
+    expect(ws.read(".github/workflows/bad.yml")? == bad, || {
+        "a refused call wrote the file".into()
+    })
+}
+
 fn binary(ws: &Workspace) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_actup-mcp"));
     command
@@ -1262,7 +1329,7 @@ const BINARY_CASES: [(&str, BinaryCase); 4] = [
     ),
 ];
 
-const CASES: [(&str, Case); 10] = [
+const CASES: [(&str, Case); 11] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -1303,6 +1370,7 @@ const CASES: [(&str, Case); 10] = [
         "mutators_read_markdown_and_text_files",
         mutators_read_markdown_and_text_files,
     ),
+    ("mutators_report_invalid_refs", mutators_report_invalid_refs),
 ];
 
 fn run(case: Case) -> TestResult {

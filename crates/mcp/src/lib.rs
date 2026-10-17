@@ -60,7 +60,8 @@ and every edit names an action on the same host. \
 Only the text after `@` changes; a trailing comment stays as written.
 - updateAllUsesToVersion: move every reference to one action under workspaceRoot to targetRef. \
 SHA-pinned references stay pinned: the provider resolves targetRef to its current commit on every call \
-and the line keeps a `# <ref>` comment.
+and the line keeps a `# <ref>` comment. \
+A matching `uses:` value that is not a valid reference stays unchanged and is listed under unresolvable with its error.
 
 Every path must resolve inside the server root (its working directory or --root). \
 Paths that escape it, including through symlinks, are refused.
