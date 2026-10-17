@@ -27,7 +27,7 @@ mod integration_tests;
 async fn main() {
     use std::io::IsTerminal;
 
-    use tower_lsp_server::{LspService, Server};
+    use tower_lsp_server::Server;
     use tracing_subscriber::EnvFilter;
 
     let is_tty = std::io::stderr().is_terminal();
@@ -47,6 +47,6 @@ async fn main() {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(backend::LspBackend::new);
+    let (service, socket) = backend::service(backend::LspBackend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
 }

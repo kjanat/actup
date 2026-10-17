@@ -32,8 +32,8 @@ use tower_lsp_server::{
         HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
         InitializedParams, MessageType, OneOf, Registration, RelativePattern, ServerCapabilities,
         ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-        TextDocumentSyncSaveOptions, Unregistration, Uri, WorkDoneProgressOptions,
-        WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
+        TextDocumentSyncSaveOptions, Unregistration, Uri, WorkDoneProgressCancelParams,
+        WorkDoneProgressOptions, WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
     },
 };
 
@@ -198,6 +198,24 @@ fn server_capabilities(encoding: crate::position::PositionEncoding) -> ServerCap
     }
 }
 
+/// Build the LSP service around the backend that `init` creates.
+///
+/// tower-lsp-server 0.23 does not route `window/workDoneProgress/cancel`; this
+/// registers it as a custom method.
+pub fn service(
+    init: impl FnOnce(Client) -> LspBackend,
+) -> (
+    tower_lsp_server::LspService<LspBackend>,
+    tower_lsp_server::ClientSocket,
+) {
+    tower_lsp_server::LspService::build(init)
+        .custom_method(
+            "window/workDoneProgress/cancel",
+            LspBackend::work_done_progress_cancel,
+        )
+        .finish()
+}
+
 /// Core LSP backend for actup.
 ///
 /// Holds the LSP [`Client`] handle for sending notifications (diagnostics,
@@ -264,6 +282,8 @@ pub struct LspBackend {
     position_encoding: OnceLock<crate::position::PositionEncoding>,
     /// Builds the provider registry and file cache from each loaded config.
     providers: provider_setup::Providers,
+    /// Cancellation flags of running workspace commands, keyed by progress token.
+    pub(crate) progress: crate::workspace_commands::ProgressCancels,
 }
 
 impl LspBackend {
@@ -303,7 +323,17 @@ impl LspBackend {
             config_watchers_registered: Mutex::new(false),
             position_encoding: OnceLock::new(),
             providers,
+            progress: crate::workspace_commands::ProgressCancels::default(),
         }
+    }
+
+    /// Handle `window/workDoneProgress/cancel` by cancelling the operation behind its token.
+    pub fn work_done_progress_cancel(
+        &self,
+        WorkDoneProgressCancelParams { token }: WorkDoneProgressCancelParams,
+    ) -> std::future::Ready<()> {
+        self.progress.cancel(&token);
+        std::future::ready(())
     }
 
     /// Schedule background diagnostic computation for a document.
@@ -843,19 +873,23 @@ impl LanguageServer for LspBackend {
 
         let encoding = self.position_encoding.get().copied().unwrap_or_default();
         let supports_doc_changes = self.supports_document_changes().await;
-        let cancelled = crate::workspace_commands::Cancelled::new();
+        let tracked = self.progress.start();
         let ctx = crate::workspace_commands::ScanContext {
             workspace_root: &workspace_root,
             config: &config,
             registry: &registry,
             file_cache: &file_cache,
             documents: &self.documents,
-            cancelled: &cancelled,
+            cancelled: &tracked.cancelled,
             supports_document_changes: supports_doc_changes,
             encoding,
         };
-        let result =
-            crate::workspace_commands::fix_all_in_workspace(self.client.clone(), &ctx).await;
+        let result = crate::workspace_commands::fix_all_in_workspace(
+            self.client.clone(),
+            tracked.token.clone(),
+            &ctx,
+        )
+        .await;
 
         self.apply_fix_all_result(result).await;
         Ok(None)

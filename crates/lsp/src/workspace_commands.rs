@@ -110,11 +110,6 @@ impl Cancelled {
     }
 
     /// Signal cancellation.
-    ///
-    /// Currently unused — will be wired to `window/workDoneProgress/cancel`
-    /// once tower-lsp-server supports that notification. The infrastructure
-    /// is in place so the cancel button is shown in the editor UI.
-    #[allow(dead_code)]
     pub fn cancel(&self) {
         self.0.store(true, Ordering::Relaxed);
     }
@@ -128,6 +123,49 @@ impl Cancelled {
 impl Default for Cancelled {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Cancellation flags of running workspace operations, keyed by progress token.
+#[derive(Debug, Default)]
+pub struct ProgressCancels(Arc<DashMap<NumberOrString, Cancelled>>);
+
+impl ProgressCancels {
+    /// Track a new operation under a fresh progress token until the returned guard drops.
+    pub fn start(&self) -> TrackedProgress {
+        let token = NumberOrString::String(format!("actup-workspace-{}", progress_id()));
+        let cancelled = Cancelled::new();
+        self.0.insert(token.clone(), cancelled.clone());
+        TrackedProgress {
+            cancels: Arc::clone(&self.0),
+            token,
+            cancelled,
+        }
+    }
+
+    /// Cancel the operation reporting progress under `token`, if one is running.
+    pub fn cancel(&self, token: &NumberOrString) {
+        if let Some(cancelled) = self.0.get(token) {
+            cancelled.cancel();
+        } else {
+            tracing::debug!(?token, "no running operation for progress token");
+        }
+    }
+}
+
+/// A running operation registered in [`ProgressCancels`].
+#[derive(Debug)]
+pub struct TrackedProgress {
+    cancels: Arc<DashMap<NumberOrString, Cancelled>>,
+    /// Progress token the operation reports under.
+    pub token: NumberOrString,
+    /// Flag set when the client cancels `token`.
+    pub cancelled: Cancelled,
+}
+
+impl Drop for TrackedProgress {
+    fn drop(&mut self) {
+        self.cancels.remove(&self.token);
     }
 }
 
@@ -351,11 +389,14 @@ async fn process_loaded_file(
 /// tower-lsp-server builder API. If the client doesn't support
 /// `window/workDoneProgress/create`, progress is silently skipped.
 ///
-/// A cancel button is shown in the editor. The [`Cancelled`] flag is checked
+/// The progress reports under `token`, with a cancel button. The [`Cancelled`] flag is checked
 /// between files; when set, the operation stops and returns partial results
 /// with `cancelled: true`.
-pub async fn fix_all_in_workspace(client: Client, ctx: &ScanContext<'_>) -> FixAllResult {
-    let token = NumberOrString::String(format!("actup-workspace-{}", progress_id()));
+pub async fn fix_all_in_workspace(
+    client: Client,
+    token: NumberOrString,
+    ctx: &ScanContext<'_>,
+) -> FixAllResult {
     let progress = match client.create_work_done_progress(token.clone()).await {
         Ok(()) => Some(
             client
@@ -798,6 +839,24 @@ mod tests {
         let flag = Cancelled::new();
         flag.cancel();
         assert!(flag.is_cancelled());
+    }
+
+    #[test]
+    fn progress_cancels_cancel_only_the_named_running_operation() {
+        let cancels = ProgressCancels::default();
+        let first = cancels.start();
+        let second = cancels.start();
+        assert_ne!(first.token, second.token);
+
+        cancels.cancel(&first.token);
+        assert!(first.cancelled.is_cancelled());
+        assert!(!second.cancelled.is_cancelled());
+
+        let (token, cancelled) = (second.token.clone(), second.cancelled.clone());
+        drop(second);
+        cancels.cancel(&token);
+        assert!(!cancelled.is_cancelled());
+        cancels.cancel(&NumberOrString::String("unknown".into()));
     }
 
     #[test]

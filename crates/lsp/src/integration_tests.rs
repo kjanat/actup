@@ -30,8 +30,8 @@ use tower_lsp_server::{
         OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range, ShowMessageParams,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
         TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
-        WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
-        WorkspaceFolder, WorkspaceFoldersChangeEvent,
+        WorkDoneProgressCancelParams, WorkDoneProgressParams, WorkspaceClientCapabilities,
+        WorkspaceEditClientCapabilities, WorkspaceFolder, WorkspaceFoldersChangeEvent,
     },
 };
 
@@ -231,7 +231,7 @@ impl TestHarness {
     }
 
     fn with_user_config(user_config: Option<std::path::PathBuf>) -> Self {
-        let (service, socket) = LspService::new(move |client| {
+        let (service, socket) = crate::backend::service(move |client| {
             LspBackend::with_providers(client, user_config, test_utils::MOCK_PROVIDERS)
         });
         let collected = Arc::new(Mutex::new(CollectedMessages::default()));
@@ -1801,6 +1801,30 @@ async fn execute_command_unknown_command_returns_null() {
     );
 
     harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn work_done_progress_cancel_cancels_the_running_command()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+    let running = harness.service.inner().progress.start();
+    let other = harness.service.inner().progress.start();
+
+    harness
+        .notify(
+            Request::build("window/workDoneProgress/cancel")
+                .params(serde_json::to_value(WorkDoneProgressCancelParams {
+                    token: running.token.clone(),
+                })?)
+                .finish(),
+        )
+        .await;
+
+    assert!(running.cancelled.is_cancelled());
+    assert!(!other.cancelled.is_cancelled());
+    harness.shutdown().await;
+    Ok(())
 }
 
 // Snapshot tests: YAML before/after edits
