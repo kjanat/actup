@@ -49,7 +49,11 @@ worktree root. On Windows, a drive-relative `configPath` such as
 drive, and a path rooted without a drive, such as `\repo\actup.toml`, takes the
 worktree's drive or UNC share. The command reads files inside the worktree only,
 and reports an error for a `configPath` outside it. A `\\?\` or `\\.\` device
-path is an error even when it names a file inside the worktree. It applies
+path is an error even when it names a file inside the worktree. On macOS and
+Linux the command compares names exactly. On a case-insensitive macOS volume, a
+`configPath` of `ACTUP.toml` names the discovered `actup.toml`. The command
+reads that file as both layers, and the first output line lists both names. The
+resulting config equals the config of `ACTUP.toml` read once. It applies
 `ACTUP_*` variables from the worktree shell environment on top. Parent-directory
 configs and the user config do not apply. The first line of the output names the
 files it used, or `defaults`.

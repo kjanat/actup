@@ -1251,6 +1251,45 @@ mod tests {
     }
 
     #[test]
+    fn read_config_layers_a_case_different_posix_config_path_to_the_same_config()
+    -> Result<(), String> {
+        let contents = "default_host = \"ghe.corp.example\"\n\n\
+            [policy]\nbump = \"minor\"\n\n\
+            [scan]\nignore = [\"actions/cache\"]\n\n\
+            [hosts.\"ghe.corp.example\"]\nkind = \"github\"\ntoken_env = \"GHE_TOKEN\"\n\n\
+            [[overrides]]\npattern = \"actions/*\"\npolicy = { pin = \"sha\" }\n";
+        let config_path = worktree_relative(PathStyle::Posix, "/repo", "ACTUP.toml")?;
+        let both = HashMap::from([("actup.toml", contents), ("ACTUP.toml", contents)]);
+        let requested = RefCell::new(Vec::new());
+        let layered = read_config(read_from(&both, &requested), &[], Some(&config_path))?;
+        assert_eq!(
+            layered
+                .sources
+                .iter()
+                .map(ConfigSource::path)
+                .collect::<Vec<_>>(),
+            [Some(Path::new("actup.toml")), Some(Path::new("ACTUP.toml"))]
+        );
+        let explicit_only = HashMap::from([("ACTUP.toml", contents)]);
+        let requested = RefCell::new(Vec::new());
+        let single = read_config(
+            read_from(&explicit_only, &requested),
+            &[],
+            Some(&config_path),
+        )?;
+        let value = |config: &Config| zed::serde_json::to_value(config).map_err(|e| e.to_string());
+        assert_eq!(value(&layered)?, value(&single)?);
+        assert_eq!(layered.loaded_from(), single.loaded_from());
+        assert_eq!(layered.loaded_from(), Some(Path::new("ACTUP.toml")));
+        assert_eq!(
+            zed::serde_json::to_value(&layered.hosts).map_err(|e| e.to_string())?,
+            zed::serde_json::to_value(&single.hosts).map_err(|e| e.to_string())?
+        );
+        assert_eq!(layered.overrides.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn path_style_compares_windows_names_with_unicode_case() {
         assert!(PathStyle::Windows.same_name("ÄRGER", "ärger"));
         assert!(!PathStyle::Posix.same_name("ÄRGER", "ärger"));
