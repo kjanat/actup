@@ -50,7 +50,6 @@ itertools             = "0.14"  # iterator utilities
 js-sys                = "0.3.95"  # wasm js interop
 json_comments         = "0.2"  # jsonc
 owo-colors            = "4"  # colors
-rust-mcp-sdk          = "0.9"  # mcp
 saphyr-parser         = "0.0.6"  # yaml
 schemars              = "1"  # schema
 serde_json            = "1"  # json
@@ -100,6 +99,10 @@ default-features = false
 version          = "0.13"
 default-features = false
 features         = ["json", "rustls"]
+
+[workspace.dependencies.rust-mcp-sdk]  # mcp
+version          = "0.9"
+default-features = false
 
 [workspace.dependencies.serde]  # serialization
 version  = "1"
