@@ -222,11 +222,19 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     let config_path = LspSettings::for_worktree("actup-lsp", worktree)
         .ok()
         .and_then(|settings| settings.initialization_options)
-        .and_then(|options| config_path_option(&options));
+        .and_then(|options| config_path_option(&options))
+        .map(|path| {
+            worktree_relative(
+                PathStyle::of(zed::current_platform().0),
+                &worktree.root_path(),
+                &path,
+            )
+        })
+        .transpose()?;
     let config = read_config(
         |path| worktree.read_text_file(path),
         &shell_env,
-        config_path.as_deref(),
+        config_path.as_ref(),
     )?;
 
     // Discover and read workflow files
@@ -467,8 +475,91 @@ fn api_base_for_host(host: &str) -> String {
 }
 
 fn config_path_option(options: &zed::serde_json::Value) -> Option<String> {
-    let path = options.get("configPath")?.as_str()?.trim();
-    (!path.is_empty()).then(|| path.to_owned())
+    let path = options.get("configPath")?.as_str()?;
+    (!path.trim().is_empty()).then(|| path.to_owned())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PathStyle {
+    Posix,
+    Windows,
+}
+
+impl PathStyle {
+    const fn of(os: zed::Os) -> Self {
+        match os {
+            zed::Os::Windows => Self::Windows,
+            zed::Os::Mac | zed::Os::Linux => Self::Posix,
+        }
+    }
+
+    const fn is_separator(self, c: char) -> bool {
+        c == '/' || (matches!(self, Self::Windows) && c == '\\')
+    }
+
+    fn is_absolute(self, path: &str) -> bool {
+        match self {
+            Self::Posix => path.starts_with('/'),
+            Self::Windows => {
+                let bytes = path.as_bytes();
+                path.starts_with(['/', '\\'])
+                    || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+            }
+        }
+    }
+
+    fn same_name(self, a: &str, b: &str) -> bool {
+        match self {
+            Self::Posix => a == b,
+            Self::Windows => a.eq_ignore_ascii_case(b),
+        }
+    }
+
+    fn components(self, path: &str) -> Option<Vec<&str>> {
+        let mut parts = Vec::new();
+        for part in path.split(|c| self.is_separator(c)) {
+            match part {
+                "" | "." => {}
+                ".." => {
+                    parts.pop()?;
+                }
+                _ => parts.push(part),
+            }
+        }
+        Some(parts)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorktreePath(String);
+
+fn worktree_relative(
+    style: PathStyle,
+    root: &str,
+    config_path: &str,
+) -> Result<WorktreePath, String> {
+    let outside = || format!("configPath `{config_path}` is outside the worktree `{root}`");
+    let parts = style.components(config_path).ok_or_else(outside)?;
+    let parts = if style.is_absolute(config_path) {
+        let root_parts = style.components(root).ok_or_else(outside)?;
+        let inside = parts.len() >= root_parts.len()
+            && root_parts
+                .iter()
+                .zip(&parts)
+                .all(|(root_part, part)| style.same_name(root_part, part));
+        if !inside {
+            return Err(outside());
+        }
+        parts[root_parts.len()..].to_vec()
+    } else {
+        parts
+    };
+    if parts.is_empty() {
+        return Err(format!(
+            "configPath `{config_path}` names the worktree root `{root}`"
+        ));
+    }
+    Ok(WorktreePath(parts.join("/")))
 }
 
 fn file_parts((path, contents): &(String, String)) -> (&Path, &str) {
@@ -478,22 +569,22 @@ fn file_parts((path, contents): &(String, String)) -> (&Path, &str) {
 fn read_config(
     read: impl Fn(&str) -> Result<String, String>,
     shell_env: &[(String, String)],
-    config_path: Option<&str>,
+    config_path: Option<&WorktreePath>,
 ) -> Result<Config, String> {
     let env = EnvOverrides::from_vars(shell_env.iter().map(|(name, value)| (name, value)));
-    let discovered = repo_candidates()
-        .find_map(|candidate| {
-            let path = candidate.relative();
-            read(&path).ok().map(|contents| (path, contents))
-        })
-        .filter(|(path, _)| Some(path.as_str()) != config_path);
-    let explicit = config_path
-        .map(|path| {
-            read(path)
-                .map(|contents| (path.to_owned(), contents))
-                .map_err(|e| format!("cannot read configPath `{path}`: {e}"))
-        })
-        .transpose()?;
+    let found = repo_candidates().find_map(|candidate| {
+        let path = candidate.relative();
+        read(&path).ok().map(|contents| (path, contents))
+    });
+    let (discovered, explicit) = match (found, config_path) {
+        (Some(found), Some(WorktreePath(path))) if found.0 == *path => (None, Some(found)),
+        (found, None) => (found, None),
+        (found, Some(WorktreePath(path))) => {
+            let contents =
+                read(path).map_err(|e| format!("cannot read configPath `{path}`: {e}"))?;
+            (found, Some((path.clone(), contents)))
+        }
+    };
     Config::from_repo_and_explicit(
         discovered.as_ref().map(file_parts),
         explicit.as_ref().map(file_parts),
@@ -984,7 +1075,7 @@ mod tests {
         let option = |value| config_path_option(&value);
         assert_eq!(
             option(zed::serde_json::json!({ "configPath": " ci/actup.toml " })).as_deref(),
-            Some("ci/actup.toml")
+            Some(" ci/actup.toml ")
         );
         assert_eq!(option(zed::serde_json::json!({ "configPath": "  " })), None);
         assert_eq!(option(zed::serde_json::json!({ "configPath": 3 })), None);
@@ -1001,7 +1092,8 @@ mod tests {
             ),
         ]);
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested), &[], Some("ci/actup.toml"))?;
+        let config_path = WorktreePath("ci/actup.toml".to_owned());
+        let config = read_config(read_from(&files, &requested), &[], Some(&config_path))?;
         assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
         assert_eq!(config.policy.bump, policy::Update::Minor);
         assert_eq!(config.policy.pin, policy::Style::Sha);
@@ -1017,30 +1109,189 @@ mod tests {
                 },
             ]
         );
+        assert_eq!(*requested.borrow(), ["actup.toml", "ci/actup.toml"]);
         Ok(())
     }
 
     #[test]
     fn read_config_reads_a_discovered_config_path_file_once() -> Result<(), String> {
         let files = HashMap::from([("actup.toml", "default_host = \"ghe.corp.example\"\n")]);
-        let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested), &[], Some("actup.toml"))?;
-        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
-        assert_eq!(
-            config.sources,
-            [ConfigSource::Explicit {
-                path: PathBuf::from("actup.toml"),
-            }]
-        );
+        for written in [
+            "actup.toml",
+            "./actup.toml",
+            "ci/../actup.toml",
+            "/repo/actup.toml",
+        ] {
+            let requested = RefCell::new(Vec::new());
+            let config_path = worktree_relative(PathStyle::Posix, "/repo", written)?;
+            let config = read_config(read_from(&files, &requested), &[], Some(&config_path))?;
+            assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
+            assert_eq!(
+                config.sources,
+                [ConfigSource::Explicit {
+                    path: PathBuf::from("actup.toml"),
+                }],
+                "{written}"
+            );
+            assert_eq!(*requested.borrow(), ["actup.toml"], "{written}");
+        }
         Ok(())
+    }
+
+    #[test]
+    fn worktree_relative_maps_paths_inside_the_worktree() -> Result<(), String> {
+        let cases = [
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "ci/actup.toml",
+                "ci/actup.toml",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "./ci//./actup.toml",
+                "ci/actup.toml",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "ci/../.github/actup.yaml",
+                ".github/actup.yaml",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "/home/u/repo/ci/actup.toml",
+                "ci/actup.toml",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo/",
+                "/home/u/x/../repo/actup.toml",
+                "actup.toml",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "ci\\actup.toml",
+                "ci\\actup.toml",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\Users\\u\\repo",
+                "ci\\actup.toml",
+                "ci/actup.toml",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\Users\\u\\repo",
+                "c:/users/U/Repo/ci/actup.toml",
+                "ci/actup.toml",
+            ),
+        ];
+        for (style, root, written, expected) in cases {
+            assert_eq!(
+                worktree_relative(style, root, written)?,
+                WorktreePath(expected.to_owned()),
+                "{style:?} {root} {written}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn worktree_relative_rejects_paths_outside_the_worktree() {
+        let cases = [
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "../actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "ci/../../actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "/etc/actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "/home/u/repo2/actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "/home/u/repo/../actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "/home/u/repo",
+                "names the worktree root",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "ci/..",
+                "names the worktree root",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\repo",
+                "D:\\repo\\actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\repo",
+                "..\\actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\repo",
+                "\\\\server\\share\\actup.toml",
+                "is outside the worktree",
+            ),
+        ];
+        for (style, root, written, expected) in cases {
+            let Err(error) = worktree_relative(style, root, written) else {
+                panic!("{style:?} {root} {written} must fail");
+            };
+            assert_eq!(
+                error,
+                format!("configPath `{written}` {expected} `{root}`"),
+                "{style:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_style_follows_the_host_os() {
+        assert!(matches!(
+            PathStyle::of(zed::Os::Windows),
+            PathStyle::Windows
+        ));
+        assert!(matches!(PathStyle::of(zed::Os::Mac), PathStyle::Posix));
+        assert!(matches!(PathStyle::of(zed::Os::Linux), PathStyle::Posix));
     }
 
     #[test]
     fn read_config_rejects_a_missing_config_path_file() {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
-        let Err(error) = read_config(read_from(&files, &requested), &[], Some("ci/actup.toml"))
-        else {
+        let config_path = WorktreePath("ci/actup.toml".to_owned());
+        let Err(error) = read_config(read_from(&files, &requested), &[], Some(&config_path)) else {
             panic!("a missing configPath file must fail");
         };
         assert!(
