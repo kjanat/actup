@@ -21,7 +21,6 @@ actup-provider-gitlab = { workspace = true, optional = true }  # GitLab provider
 anstream              = { workspace = true }  # Colour-aware streams
 clap                  = { workspace = true }  # CLI parsing
 clap_complete         = { workspace = true }  # Shell completions
-dirs                  = { workspace = true }  # Directory paths
 indicatif             = { workspace = true }  # Progress spinner
 itertools             = { workspace = true }  # Iterator utilities
 owo-colors            = { workspace = true }  # Terminal colors
