@@ -64,7 +64,7 @@ for tag in "v1.0.0~x" "release/v1" ".v1" "${long}"; do
 done
 
 if ! LC_ALL=en_US.UTF-8 bash -c '[[ é =~ ^[A-Za-z]$ ]]'; then
-	fail "en_US.UTF-8 matches é with [A-Za-z]; generate the locale with locale-gen en_US.UTF-8"
+	fail "the en_US.UTF-8 locale is missing: uncomment \"en_US.UTF-8 UTF-8\" in /etc/locale.gen and run locale-gen, or on Ubuntu run sudo locale-gen en_US.UTF-8"
 elif ! LC_ALL=en_US.UTF-8 decide "v1.0.0-é" \
 	&& grep -q "::error::tag v1.0.0-é gives the invalid image tag" "${work}/out" \
 	&& [[ ! -s "${work}/output" ]]; then
