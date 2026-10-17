@@ -150,13 +150,15 @@ label from their comment. A tag ref written as a new tag gets the new version as
 the label of its comment. A note after the label, as in
 `# v4.0.0 pinned for node16`, stays in every case.
 
-An edit writes or rewrites a comment only for a result whose `takes_comment` is
-`true`. It adds a missing comment only when nothing but a closing quote, flow
-`}`, `]` and `,`, and spaces follows the value, and writes the comment after
-them in place of trailing spaces, as in `{ uses: "o/b@<sha>" } # v4.2.0`. It
+An edit adds a comment only for a result whose `takes_comment` is `true`. It
+adds a missing comment only when nothing but a closing quote, flow `}`, `]` and
+`,`, and spaces follows the value, and writes the comment after them in place of
+trailing spaces, as in `{ uses: "o/b@<sha>" } # v4.2.0`. On such a line it
 rewrites a label comment at the end of the line, also after other flow keys, and
-keeps its note. A label is a version, the result's own ref, or a ref that
-`label_listed` marks. It leaves any other comment alone.
+keeps its note. On a line whose `takes_comment` is `false`, such as a line with
+two `uses:` values, it rewrites only a label comment right after the ref and
+leaves the rest of the line alone. A label is a version, the result's own ref,
+or a ref that `label_listed` marks. It leaves any other comment alone.
 
 ### `parseConfig(path, contents)`
 
