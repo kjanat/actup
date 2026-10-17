@@ -17,9 +17,96 @@ use tower_lsp_server::ls_types::{
     WorkspaceEdit,
 };
 
-use actup_core::rewrite::{Rewrite, Trailing};
+use actup_core::{
+    rewrite::{Rewrite, Trailing},
+    validate_edit,
+};
 
-use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, OutdatedEdit};
+use crate::{
+    diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, OutdatedEdit},
+    position::PositionEncoding,
+    workspace_commands::apply_text_edits,
+};
+
+/// The open document text that a code action's edits must apply to.
+pub struct DocumentText<'a> {
+    text: &'a str,
+    encoding: PositionEncoding,
+}
+
+impl<'a> DocumentText<'a> {
+    /// Wrap the text of an open document and the client's position encoding.
+    pub const fn new(text: &'a str, encoding: PositionEncoding) -> Self {
+        Self { text, encoding }
+    }
+
+    /// Whether `edits` apply to the text and the result passes [`validate_edit`].
+    pub fn accepts(&self, edits: &[TextEdit]) -> bool {
+        apply_text_edits(self.text, edits, self.encoding)
+            .is_some_and(|edited| validate_edit(self.text, &edited).is_ok())
+    }
+
+    /// Keep the actions whose edits the text accepts.
+    pub fn retain(&self, actions: Vec<CodeActionOrCommand>) -> Vec<CodeActionOrCommand> {
+        actions
+            .into_iter()
+            .filter(|action| match action {
+                CodeActionOrCommand::CodeAction(CodeAction {
+                    edit: Some(edit), ..
+                }) => self.accepts(&text_edits(edit)),
+                CodeActionOrCommand::CodeAction(_) | CodeActionOrCommand::Command(_) => true,
+            })
+            .collect()
+    }
+
+    /// Keep the `Outdated` diagnostics whose own edit the text accepts.
+    pub fn fixable(&self, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
+        diagnostics
+            .iter()
+            .filter(|diag| outdated_edit(diag).is_some_and(|edit| self.accepts(&[edit])))
+            .cloned()
+            .collect()
+    }
+}
+
+fn text_edits(edit: &WorkspaceEdit) -> Vec<TextEdit> {
+    let changed = edit
+        .changes
+        .iter()
+        .flat_map(|changes| changes.values().flatten().cloned());
+    let documents = match &edit.document_changes {
+        Some(DocumentChanges::Edits(documents)) => documents.as_slice(),
+        Some(DocumentChanges::Operations(_)) | None => &[],
+    };
+    let versioned = documents.iter().flat_map(|doc| {
+        doc.edits.iter().map(|edit| match edit {
+            OneOf::Left(edit) => edit.clone(),
+            OneOf::Right(annotated) => annotated.text_edit.clone(),
+        })
+    });
+    changed.chain(versioned).collect()
+}
+
+fn outdated_edit(diag: &Diagnostic) -> Option<TextEdit> {
+    if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE) {
+        return None;
+    }
+    let data = serde_json::from_value::<DiagnosticData>(diag.data.clone()?).ok()?;
+    let DiagnosticData::Outdated {
+        target_ref,
+        repin_comment,
+        replace_end_col,
+    } = data
+    else {
+        return None;
+    };
+    Some(outdated_text_edit(
+        diag.range,
+        &target_ref,
+        repin_comment.as_deref(),
+        replace_end_col,
+    ))
+}
 
 /// Custom [`CodeActionKind`] for actup's fix-all source action.
 ///
@@ -351,30 +438,8 @@ pub fn fix_all_in_file(
     let mut fixed_diagnostics = Vec::new();
 
     for diag in diagnostics {
-        if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE) {
-            continue;
-        }
-
-        let Some(data) = diag
-            .data
-            .as_ref()
-            .and_then(|v| serde_json::from_value::<DiagnosticData>(v.clone()).ok())
-        else {
-            continue;
-        };
-
-        if let DiagnosticData::Outdated {
-            target_ref,
-            repin_comment,
-            replace_end_col,
-        } = data
-        {
-            edits.push(outdated_text_edit(
-                diag.range,
-                &target_ref,
-                repin_comment.as_deref(),
-                replace_end_col,
-            ));
+        if let Some(edit) = outdated_edit(diag) {
+            edits.push(edit);
             fixed_diagnostics.push(diag.clone());
         }
     }
@@ -1176,6 +1241,120 @@ mod tests {
         };
         // Untracked document should have version None (null).
         assert_eq!(doc_edits[0].text_document.version, None);
+    }
+
+    const VALIDATED: &str = "steps:\n  - uses: a/b@v1\n  - uses: a/c@v1\n";
+
+    fn titles(actions: &[CodeActionOrCommand]) -> Vec<&str> {
+        actions
+            .iter()
+            .map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) => action.title.as_str(),
+                CodeActionOrCommand::Command(command) => command.title.as_str(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn document_text_accepts_only_edits_that_keep_the_yaml_valid() {
+        let document = DocumentText::new(VALIDATED, crate::position::PositionEncoding::Utf16);
+        let edit = |line, new_text: &str| TextEdit {
+            range: make_range(line, 14, 16),
+            new_text: new_text.to_string(),
+        };
+
+        assert!(document.accepts(&[edit(1, "v2"), edit(2, "v3")]));
+        assert!(!document.accepts(&[edit(1, "v2\n  - [")]));
+        assert!(!document.accepts(&[edit(1, "v2\n  - uses: d/e@v1")]));
+        assert!(!document.accepts(&[edit(7, "v2")]));
+        assert!(!document.accepts(&[edit(1, "v2"), edit(1, "v3")]));
+    }
+
+    #[test]
+    fn document_text_retains_only_actions_with_valid_edits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let document = DocumentText::new(VALIDATED, crate::position::PositionEncoding::Utf16);
+        let good = make_outdated_diagnostic(make_range(1, 14, 16), "a/b@v1", "v2.0.0");
+        let corrupting = make_outdated_diagnostic(make_range(2, 14, 16), "a/c@v1", "v2\n  - [");
+        let suggestion = make_unresolvable_diagnostic(make_range(9, 14, 16), Some("v3.0.0"));
+
+        for supports_document_changes in [true, false] {
+            let actions = code_actions_for_diagnostics(
+                &uri,
+                TEST_VERSION,
+                &[good.clone(), corrupting.clone(), suggestion.clone()],
+                supports_document_changes,
+            );
+            assert_eq!(titles(&actions).len(), 3);
+            assert_eq!(titles(&document.retain(actions)), ["Update to v2.0.0"]);
+        }
+
+        let targets = PinTargets {
+            sha: None,
+            major: Some("v1".to_string()),
+            branch: Some("main\n  - [".to_string()),
+            unpin: None,
+        };
+        let pins = pin_code_actions(
+            &uri,
+            TEST_VERSION,
+            true,
+            make_range(1, 14, 16),
+            Trailing::None,
+            16,
+            &targets,
+        );
+        assert_eq!(titles(&document.retain(pins)), ["Pin to major tag v1"]);
+
+        let command = CodeActionOrCommand::Command(tower_lsp_server::ls_types::Command {
+            title: "run".to_string(),
+            command: "x".to_string(),
+            arguments: None,
+        });
+        let bare = CodeActionOrCommand::CodeAction(CodeAction {
+            title: "bare".to_string(),
+            ..Default::default()
+        });
+        assert_eq!(
+            titles(&document.retain(vec![command, bare])),
+            ["run", "bare"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fix_all_leaves_out_edits_the_document_refuses() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let text = "steps:\n  - uses: a/b@v1\n  - uses: a/c@v1\n  - uses: a/d@v1\n";
+        let document = DocumentText::new(text, crate::position::PositionEncoding::Utf16);
+        let diagnostics = [
+            make_outdated_diagnostic(make_range(1, 14, 16), "a/b@v1", "v2.0.0"),
+            make_outdated_diagnostic(make_range(2, 14, 16), "a/c@v1", "v2\n  - ["),
+            make_unresolvable_diagnostic(make_range(2, 14, 16), Some("v3.0.0")),
+            make_outdated_diagnostic(make_range(3, 14, 16), "a/d@v1", "v4.0.0"),
+        ];
+
+        let fixable = document.fixable(&diagnostics);
+        assert_eq!(fixable, [diagnostics[0].clone(), diagnostics[3].clone()]);
+        let action = fix_all_in_file(&uri, TEST_VERSION, &fixable, true).ok_or("no fix-all")?;
+        let retained = document.retain(vec![action]);
+        let [CodeActionOrCommand::CodeAction(action)] = retained.as_slice() else {
+            return Err("the document refused the fix-all".into());
+        };
+        let edits = extract_text_edits(action.edit.as_ref().ok_or("no edit")?, &uri, TEST_VERSION);
+        let new_texts: Vec<&str> = edits.iter().map(|edit| edit.new_text.as_str()).collect();
+        assert_eq!(new_texts, ["v2.0.0", "v4.0.0"]);
+
+        let overlapping = [
+            make_outdated_diagnostic(make_range(1, 14, 16), "a/b@v1", "v2.0.0"),
+            make_outdated_diagnostic(make_range(1, 15, 16), "a/b@v1", "3"),
+        ];
+        let fixable = document.fixable(&overlapping);
+        assert_eq!(fixable.len(), 2);
+        let action = fix_all_in_file(&uri, TEST_VERSION, &fixable, true).ok_or("no fix-all")?;
+        assert_eq!(document.retain(vec![action]), []);
+        Ok(())
     }
 
     const PIN_STYLE_WORKFLOW: &str = "steps:\n  - uses: actions/checkout@v4.0.0\n  - uses: o/p@OLD # v4.0.0\n  - uses: o/q@OLD\n  - uses: o/r@OLD # mine\n  - uses: pinned/x@v4.0.0\n";

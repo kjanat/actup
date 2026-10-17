@@ -1104,12 +1104,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scan_files_refuses_edits_to_invalid_yaml() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workflows_dir = temp.path().join(".github/workflows");
-        std::fs::create_dir_all(&workflows_dir).unwrap();
+    async fn scan_files_refuses_edits_to_invalid_yaml() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::TempDir::new()?;
+        let workflows_dir = temp.path().join(".github").join("workflows");
+        std::fs::create_dir_all(&workflows_dir)?;
         let yaml = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v3\n  bad: [\n";
-        std::fs::write(workflows_dir.join("ci.yml"), yaml).unwrap();
+        std::fs::write(workflows_dir.join("ci.yml"), yaml)?;
 
         let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
@@ -1135,6 +1135,7 @@ mod tests {
         );
         assert_eq!((result.files_changed, result.refs_updated), (0, 0));
         assert_eq!(result.edit, WorkspaceEdit::default());
+        Ok(())
     }
 
     fn test_uri() -> Uri {

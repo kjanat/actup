@@ -577,6 +577,42 @@ async fn code_action_returns_quickfix_for_outdated() {
 }
 
 #[tokio::test]
+async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/corrupting.yml").ok_or("no uri")?;
+    let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let range = test_utils::make_range(3, 31, 33);
+    let good = test_utils::make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
+    let corrupting =
+        test_utils::make_outdated_diagnostic(range, "actions/checkout@v3", "v4\n      - [");
+    let resp = harness
+        .request(code_action_request(12, &uri, range, vec![corrupting, good]))
+        .await
+        .ok_or("codeAction should return a response")?;
+    let (_, body) = resp.into_parts();
+    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(body?)?;
+    let quickfixes: Vec<&str> = actions
+        .iter()
+        .filter_map(|action| match action {
+            CodeActionOrCommand::CodeAction(c) if c.kind == Some(CodeActionKind::QUICKFIX) => {
+                Some(c.title.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(quickfixes, ["Update to v4.2.0"]);
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn code_action_expands_short_sha() -> Result<(), Box<dyn std::error::Error>> {
     let mut harness = TestHarness::new();
     harness.initialize(None).await;

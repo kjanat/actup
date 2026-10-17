@@ -49,6 +49,10 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | Expand short SHA         | Short SHA `Unresolvable`         | `code_actions::code_actions_for_diagnostics`                 |
 | Workspace update all     | Command palette                  | `workspace_commands::fix_all_workspace`                      |
 
+`code_actions::DocumentText` checks every action edit against the open document
+text with `validate_edit` and leaves out an edit that breaks the YAML or changes
+the `uses:` count. Fix-all keeps the edits that pass on their own.
+
 ## Architecture Notes
 
 - **Only supports GitHub provider**: GitLab/Gitea are not wired in the LSP or

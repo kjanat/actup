@@ -691,56 +691,49 @@ impl LanguageServer for LspBackend {
 
         let mut actions = Vec::new();
 
-        // Snapshot the document version for versioned edits. `None` if the
-        // document isn't tracked (shouldn't happen in normal flow).
-        let doc_version = self.documents.get(&uri).map(|doc| doc.version);
+        let Some((doc_version, text, cached)) = self
+            .documents
+            .get(&uri)
+            .map(|doc| (Some(doc.version), doc.text.clone(), doc.diagnostics.clone()))
+        else {
+            return Ok(None);
+        };
         let supports_doc_changes = self.supports_document_changes().await;
+        let encoding = self.position_encoding.get().copied().unwrap_or_default();
+        let document = crate::code_actions::DocumentText::new(&text, encoding);
 
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
         if crate::code_actions::kind_allowed(
             only,
             &tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
         ) {
-            let quickfixes = if context_diagnostics.is_empty() {
-                let cached = self
-                    .documents
-                    .get(&uri)
-                    .map(|doc| doc.diagnostics.clone())
-                    .unwrap_or_default();
-                crate::code_actions::code_actions_for_diagnostics(
-                    &uri,
-                    doc_version,
-                    &cached,
-                    supports_doc_changes,
-                )
+            let diagnostics = if context_diagnostics.is_empty() {
+                &cached
             } else {
-                crate::code_actions::code_actions_for_diagnostics(
+                context_diagnostics
+            };
+            actions.extend(
+                document.retain(crate::code_actions::code_actions_for_diagnostics(
                     &uri,
                     doc_version,
-                    context_diagnostics,
+                    diagnostics,
                     supports_doc_changes,
-                )
-            };
-            actions.extend(quickfixes);
+                )),
+            );
         }
 
         // Fix-all-in-file source action (uses ALL cached diagnostics, not
         // just the ones at the cursor). Only included when the requested
         // kind filter allows source.fixAll or source.fixAll.actup.
-        if crate::code_actions::kind_allowed(only, &crate::code_actions::SOURCE_FIX_ALL_ACTUP) {
-            let all_diagnostics = self
-                .documents
-                .get(&uri)
-                .map(|doc| doc.diagnostics.clone())
-                .unwrap_or_default();
-            if let Some(fix_all) = crate::code_actions::fix_all_in_file(
+        if crate::code_actions::kind_allowed(only, &crate::code_actions::SOURCE_FIX_ALL_ACTUP)
+            && let Some(fix_all) = crate::code_actions::fix_all_in_file(
                 &uri,
                 doc_version,
-                &all_diagnostics,
+                &document.fixable(&cached),
                 supports_doc_changes,
-            ) {
-                actions.push(fix_all);
-            }
+            )
+        {
+            actions.extend(document.retain(vec![fix_all]));
         }
 
         // "Pin to {SHA, major, branch}" refactor actions for the ref under the
@@ -750,8 +743,15 @@ impl LanguageServer for LspBackend {
             &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
         ) {
             actions.extend(
-                self.pin_actions_at(&uri, params.range.start, doc_version, supports_doc_changes)
+                document.retain(
+                    self.pin_actions_at(
+                        &uri,
+                        params.range.start,
+                        doc_version,
+                        supports_doc_changes,
+                    )
                     .await,
+                ),
             );
         }
 
