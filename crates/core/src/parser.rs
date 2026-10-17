@@ -81,6 +81,12 @@ fn parse_path(input: &str, path: &str) -> Result<ActionRepoId> {
     };
     check_name(input, "owner", owner)?;
     check_name(input, "repo", repo)?;
+    if subpath.iter().any(|segment| segment.is_empty()) {
+        return Err(Error::InvalidRef {
+            input: input.to_string(),
+            reason: "empty path segment".to_string(),
+        });
+    }
     let subpath = (!subpath.is_empty()).then(|| subpath.join("/"));
 
     Ok(ActionRepoId::new(host, *owner, *repo, subpath))
@@ -569,6 +575,31 @@ mod tests {
         assert_eq!(result.ref_str(), "v4");
         assert!(result.host().is_none());
         assert!(result.subpath().is_none());
+    }
+
+    #[test]
+    fn empty_path_segments_are_invalid() {
+        for input in [
+            "o/r/@v1",
+            "ghe.corp.com/o/r/@v1",
+            "o/r//x@v1",
+            "ghe.corp.com/o/r//x@v1",
+            "o/r/x/@v1",
+        ] {
+            let Err(Error::InvalidRef {
+                input: named,
+                reason,
+            }) = parse_uses(input)
+            else {
+                panic!("expected `{input}` to be invalid");
+            };
+            assert_eq!(named, input);
+            assert_eq!(reason, "empty path segment", "{input}");
+        }
+        let Err(Error::InvalidRef { reason, .. }) = parse_action_path("o/r//x") else {
+            panic!("expected `o/r//x` to be invalid");
+        };
+        assert_eq!(reason, "empty path segment");
     }
 
     #[test]
