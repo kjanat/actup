@@ -67,6 +67,12 @@ impl DocumentState {
     }
 }
 
+#[derive(Debug, Clone)]
+enum ConfigState {
+    Loaded(Config),
+    Invalid(String),
+}
+
 /// Returns `true` if the document text contains a `uses:` keyword,
 /// indicating it may reference GitHub Actions that need version checking.
 ///
@@ -193,9 +199,9 @@ pub struct LspBackend {
     workspace_root: RwLock<Option<PathBuf>>,
     /// Client capabilities from `initialize`, used to gate dynamic registration.
     client_capabilities: RwLock<ClientCapabilities>,
-    /// Loaded actup configuration (set during `initialize`, may be refreshed
-    /// on config file changes).
-    config: Arc<RwLock<Config>>,
+    /// Result of the latest config load (set during `initialize`, refreshed
+    /// on config file changes). An invalid config pauses diagnostics.
+    config: Arc<RwLock<ConfigState>>,
     /// Provider registry for version lookups (set during `initialize`).
     ///
     /// `None` until `initialize` completes. Providers are created from config
@@ -228,8 +234,7 @@ pub struct LspBackend {
     /// Explicit config file path from `initializationOptions.configPath`.
     ///
     /// Stored so that `reload_config` can re-use it (analogous to CLI's
-    /// `--config` flag). If the file disappears, reload falls back to
-    /// normal discovery but keeps the path for future reloads.
+    /// `--config` flag).
     config_path: RwLock<Option<PathBuf>>,
     /// Negotiated position encoding for `Position::character` columns.
     ///
@@ -249,7 +254,7 @@ impl LspBackend {
             documents: Arc::new(DashMap::new()),
             workspace_root: RwLock::new(None),
             client_capabilities: RwLock::new(ClientCapabilities::default()),
-            config: Arc::new(RwLock::new(Config::default())),
+            config: Arc::new(RwLock::new(ConfigState::Loaded(Config::default()))),
             registry: Arc::new(RwLock::new(None)),
             file_cache: Arc::new(RwLock::new(None)),
             in_flight: DashMap::new(),
@@ -300,34 +305,38 @@ impl LspBackend {
             // Snapshot shared state after debounce (picks up any config changes
             // that happened during the wait).
             let config = config.read().await.clone();
-            let registry = registry.read().await.clone();
-            let file_cache = file_cache.read().await.clone();
+            let (diagnostics, version_sets) = match config {
+                ConfigState::Invalid(_) => (Vec::new(), Arc::new(HashMap::new())),
+                ConfigState::Loaded(config) => {
+                    let registry = registry.read().await.clone();
+                    let file_cache = file_cache.read().await.clone();
 
-            let Some(registry) = registry else {
-                tracing::debug!("no provider registry; skipping diagnostics");
-                return;
+                    let Some(registry) = registry else {
+                        tracing::debug!("no provider registry; skipping diagnostics");
+                        return;
+                    };
+
+                    let file_cache = file_cache
+                        .unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
+
+                    let result = crate::diagnostics::compute_diagnostics(
+                        &text,
+                        &uri,
+                        &config,
+                        &registry,
+                        &file_cache,
+                        encoding,
+                    )
+                    .await;
+
+                    // Send user-visible notifications for environment errors (deduplicated).
+                    if result.errors.has_errors() {
+                        crate::error_ux::notify_errors(&client, &result.errors, &error_dedup).await;
+                    }
+
+                    (result.diagnostics, Arc::new(result.version_sets))
+                }
             };
-
-            let file_cache =
-                file_cache.unwrap_or_else(|| Arc::new(crate::file_cache::FileCache::disabled()));
-
-            let result = crate::diagnostics::compute_diagnostics(
-                &text,
-                &uri,
-                &config,
-                &registry,
-                &file_cache,
-                encoding,
-            )
-            .await;
-
-            // Send user-visible notifications for environment errors (deduplicated).
-            if result.errors.has_errors() {
-                crate::error_ux::notify_errors(&client, &result.errors, &error_dedup).await;
-            }
-
-            let diagnostics = result.diagnostics;
-            let version_sets = Arc::new(result.version_sets);
 
             // Update cached diagnostics in document state, checking for staleness.
             let should_publish = if let Some(mut doc) = documents.get_mut(&uri) {
@@ -395,44 +404,46 @@ impl LanguageServer for LspBackend {
                 } else {
                     tracing::info!("using default config (no config file found)");
                 }
-                c
+                ConfigState::Loaded(c)
             }
-            Err(e) => {
-                tracing::warn!("failed to load config, using defaults: {e}");
-                Config::default()
-            }
+            Err(e) => self.invalid_config(&e).await,
         };
 
-        // Build provider registry from config + compiled-in registrations.
-        let registry = match provider_setup::build_registry(&config) {
-            Ok(r) => {
-                if let Some(host) = r.default_host() {
-                    tracing::info!(default_host = host, "provider registry built");
+        let (registry, file_cache) = if let ConfigState::Loaded(config) = &config {
+            // Build provider registry from config + compiled-in registrations.
+            let registry = match provider_setup::build_registry(config) {
+                Ok(r) => {
+                    if let Some(host) = r.default_host() {
+                        tracing::info!(default_host = host, "provider registry built");
+                    }
+                    Some(Arc::new(r))
                 }
-                Some(Arc::new(r))
-            }
-            Err(e) => {
-                tracing::error!("failed to build provider registry: {e}");
-                self.client
-                    .log_message(
-                        MessageType::ERROR,
-                        format!("actup-lsp: failed to initialize providers: {e}"),
-                    )
-                    .await;
-                None
-            }
-        };
+                Err(e) => {
+                    tracing::error!("failed to build provider registry: {e}");
+                    self.client
+                        .log_message(
+                            MessageType::ERROR,
+                            format!("actup-lsp: failed to initialize providers: {e}"),
+                        )
+                        .await;
+                    None
+                }
+            };
 
-        // Initialize persistent file cache (shared with CLI).
-        let file_cache = Arc::new(provider_setup::build_file_cache(&config));
-        tracing::info!(enabled = file_cache.is_enabled(), "file cache initialized");
+            // Initialize persistent file cache (shared with CLI).
+            let file_cache = Arc::new(provider_setup::build_file_cache(config));
+            tracing::info!(enabled = file_cache.is_enabled(), "file cache initialized");
+            (registry, Some(file_cache))
+        } else {
+            (None, None)
+        };
 
         // Store state for use by other handlers.
         *self.workspace_root.write().await = workspace_root;
         *self.config_path.write().await = config_path;
         *self.config.write().await = config;
         *self.registry.write().await = registry;
-        *self.file_cache.write().await = Some(file_cache);
+        *self.file_cache.write().await = file_cache;
 
         Ok(InitializeResult {
             server_info: Some(ServerInfo {
@@ -445,14 +456,18 @@ impl LanguageServer for LspBackend {
     }
 
     async fn initialized(&self, _params: InitializedParams) {
-        let config = self.config.read().await;
-        let policy = config.policy;
-        let ignored = config.scan.ignore.len();
-        drop(config);
-
         let has_registry = self.registry.read().await.is_some();
 
-        tracing::info!(?policy, ignored, has_registry, "actup-lsp initialized");
+        match &*self.config.read().await {
+            ConfigState::Loaded(config) => {
+                let policy = config.policy;
+                let ignored = config.scan.ignore.len();
+                tracing::info!(?policy, ignored, has_registry, "actup-lsp initialized");
+            }
+            ConfigState::Invalid(_) => {
+                tracing::info!(has_registry, "actup-lsp initialized with an invalid config");
+            }
+        }
 
         // Register file watchers for actup config files (dynamic registration).
         self.register_config_watchers().await;
@@ -570,7 +585,9 @@ impl LanguageServer for LspBackend {
             return Ok(None);
         }
 
-        let config = self.config.read().await.clone();
+        let ConfigState::Loaded(config) = self.config.read().await.clone() else {
+            return Ok(None);
+        };
         let registry = self.registry.read().await.clone();
         let file_cache = self.file_cache.read().await.clone();
 
@@ -740,7 +757,16 @@ impl LanguageServer for LspBackend {
         };
 
         // Snapshot config, registry, and cache.
-        let config = self.config.read().await.clone();
+        let state = self.config.read().await.clone();
+        let config = match state {
+            ConfigState::Loaded(config) => config,
+            ConfigState::Invalid(error) => {
+                self.client
+                    .show_message(MessageType::ERROR, format!("actup: {error}"))
+                    .await;
+                return Ok(None);
+            }
+        };
         let registry = self.registry.read().await.clone();
         let file_cache = self.file_cache.read().await.clone();
 
@@ -1115,14 +1141,22 @@ impl LspBackend {
         }
     }
 
+    async fn invalid_config(&self, error: &actup_core::Error) -> ConfigState {
+        tracing::error!("{error}");
+        self.client
+            .show_message(
+                MessageType::ERROR,
+                format!("actup: {error}. Diagnostics are paused until the config parses."),
+            )
+            .await;
+        ConfigState::Invalid(error.to_string())
+    }
+
     /// Reload config from workspace root and rebuild providers.
     ///
     /// Called when a config file changes or workspace folders change.
     /// Compares old and new policy to decide whether diagnostics need refreshing.
-    ///
-    /// If an explicit `configPath` was set via `initializationOptions`, it is
-    /// tried first. If that file no longer exists, we fall back to normal
-    /// discovery and log a warning.
+    /// A load error pauses diagnostics until a later reload succeeds.
     async fn reload_config(&self) {
         let workspace_root = self.workspace_root.read().await.clone();
         let config_path = self.config_path.read().await.clone();
@@ -1130,9 +1164,8 @@ impl LspBackend {
             .as_deref()
             .unwrap_or_else(|| std::path::Path::new("."));
 
-        let old_config = self.config.read().await.clone();
+        let old_state = self.config.read().await.clone();
 
-        // Try explicit configPath first, fall back to discovery if it fails.
         let new_config = match Config::load(config_path.as_deref(), start_dir) {
             Ok(c) => {
                 if let Some(from) = &c.loaded_from {
@@ -1142,43 +1175,23 @@ impl LspBackend {
                 }
                 c
             }
-            Err(e) if config_path.is_some() => {
-                // Explicit path failed — fall back to discovery.
-                tracing::warn!(
-                    path = ?config_path,
-                    error = %e,
-                    "explicit configPath failed, falling back to discovery"
-                );
-                match Config::load(None, start_dir) {
-                    Ok(c) => c,
-                    Err(e2) => {
-                        tracing::warn!("fallback config load also failed: {e2}");
-                        self.client
-                            .log_message(
-                                MessageType::WARNING,
-                                format!("actup: failed to reload config: {e2}"),
-                            )
-                            .await;
-                        return;
-                    }
-                }
-            }
             Err(e) => {
-                tracing::warn!("failed to reload config: {e}");
-                self.client
-                    .log_message(
-                        MessageType::WARNING,
-                        format!("actup: failed to reload config: {e}"),
-                    )
-                    .await;
+                let invalid = self.invalid_config(&e).await;
+                *self.config.write().await = invalid;
+                self.refresh_all_diagnostics().await;
                 return;
             }
         };
 
-        let policy_changed = configs_differ_for_diagnostics(&old_config, &new_config);
+        let policy_changed = match &old_state {
+            ConfigState::Loaded(old_config) => {
+                configs_differ_for_diagnostics(old_config, &new_config)
+            }
+            ConfigState::Invalid(_) => true,
+        };
 
         // Update stored config.
-        *self.config.write().await = new_config.clone();
+        *self.config.write().await = ConfigState::Loaded(new_config.clone());
 
         // Rebuild provider registry (config may change hosts/tokens).
         match provider_setup::build_registry(&new_config) {

@@ -39,12 +39,12 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 
 ## Exit Codes
 
-| Code | Meaning                       | Enum Variant        |
-| ---- | ----------------------------- | ------------------- |
-| 0    | Success / all up-to-date      | `Success`           |
-| 1    | Outdated refs found           | `OutdatedFound`     |
-| 2    | Unresolvable refs             | `UnresolvableFound` |
-| 3    | Network/auth/rate-limit error | `EnvironmentError`  |
+| Code | Meaning                             | Enum Variant       |
+| ---- | ----------------------------------- | ------------------ |
+| 0    | Success / all up-to-date            | `Success`          |
+| 1    | Outdated refs found                 | `Outdated`         |
+| 2    | Unresolvable refs or invalid config | `Unresolvable`     |
+| 3    | Network/auth/rate-limit error       | `EnvironmentError` |
 
 ## Anti-Patterns (This Crate)
 

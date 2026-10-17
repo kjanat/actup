@@ -566,14 +566,6 @@ impl Config {
         })
     }
 
-    /// Discover and load config from standard locations (convenience method)
-    ///
-    /// Equivalent to `Config::load(None, start_dir)` but returns defaults on error.
-    #[must_use]
-    pub fn discover(start_dir: &Path) -> Self {
-        Self::load(None, start_dir).unwrap_or_default()
-    }
-
     /// Return the policy for `action`: `[policy]` with every matching override applied in order.
     #[must_use]
     pub fn policy_for(&self, action: &ActionRef) -> Policy {

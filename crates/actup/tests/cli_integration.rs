@@ -925,3 +925,51 @@ mod schema_tests {
         assert_eq!(ref_str, Some("#/$defs/HostConfig"));
     }
 }
+
+mod invalid_config_exit {
+    use std::{fs, path::Path, process::Command};
+
+    use tempfile::TempDir;
+
+    fn broken_repo() -> Result<TempDir, Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        fs::write(
+            temp.path().join("actup.toml"),
+            "[policy]\nbump = \"sideways\"\n",
+        )?;
+        Ok(temp)
+    }
+
+    fn actup(home: &Path) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_actup"));
+        cmd.env("XDG_CONFIG_HOME", home);
+        cmd
+    }
+
+    #[test]
+    fn check_with_invalid_config_exits_2() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = broken_repo()?;
+        let output = actup(repo.path()).arg("check").arg(repo.path()).output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        let config_path = repo.path().join("actup.toml").display().to_string();
+        assert!(stderr.contains(&config_path), "stderr: {stderr}");
+        assert!(stderr.contains("sideways"), "stderr: {stderr}");
+        Ok(())
+    }
+
+    #[test]
+    fn schema_ignores_invalid_config() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = broken_repo()?;
+        let output = actup(repo.path())
+            .arg("schema")
+            .current_dir(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0));
+        let schema: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert!(schema.get("properties").is_some(), "schema: {schema}");
+        Ok(())
+    }
+}

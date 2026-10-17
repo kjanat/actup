@@ -216,7 +216,7 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     let worktree = worktree.ok_or("no worktree available")?;
 
     // Try to read actup config from the worktree
-    let config = read_config(worktree);
+    let config = read_config(worktree)?;
 
     // Discover and read workflow files
     let files = discover_workflow_files(worktree);
@@ -342,26 +342,18 @@ fn api_base_for_host(host: &str) -> String {
 }
 
 /// Try to read actup config from the worktree.
-fn read_config(worktree: &zed::Worktree) -> Config {
+fn read_config(worktree: &zed::Worktree) -> Result<Config, String> {
     for name in &["actup.toml", ".actup.toml", ".config/actup.toml"] {
         if let Ok(content) = worktree.read_text_file(name) {
-            return parse_config(&content);
+            return parse_config(name, &content);
         }
     }
-    Config::default()
+    Ok(Config::default())
 }
 
-/// Parse an actup TOML config. On parse error, log a stderr warning and fall
-/// back to `Config::default()` so the slash command still produces useful
-/// output instead of crashing.
-fn parse_config(content: &str) -> Config {
-    match toml::from_str::<Config>(content) {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            eprintln!("actup: failed to parse config TOML, using defaults: {e}");
-            Config::default()
-        }
-    }
+/// Parse an actup TOML config, naming the file in the error.
+fn parse_config(name: &str, content: &str) -> Result<Config, String> {
+    toml::from_str::<Config>(content).map_err(|e| format!("invalid config at '{name}': {e}"))
 }
 
 /// Discover workflow and action files from the worktree.
@@ -579,4 +571,25 @@ fn format_check_output(
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_config_rejects_invalid_policy() {
+        let Err(error) = parse_config("actup.toml", "[policy]\nbump = \"sideways\"\n") else {
+            panic!("invalid config must not parse");
+        };
+        assert!(error.contains("actup.toml"), "{error}");
+        assert!(error.contains("sideways"), "{error}");
+    }
+
+    #[test]
+    fn parse_config_reads_policy() -> Result<(), String> {
+        let config = parse_config("actup.toml", "[policy]\nbump = \"minor\"\n")?;
+        assert_eq!(config.policy.bump, actup_core::policy::Update::Minor);
+        Ok(())
+    }
 }

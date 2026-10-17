@@ -144,12 +144,12 @@ actup completions powershell >> $PROFILE
 
 ## Exit Codes
 
-| Code | Meaning                       |
-| ---- | ----------------------------- |
-| 0    | Success / all up-to-date      |
-| 1    | Outdated refs found           |
-| 2    | Unresolvable refs             |
-| 3    | Network/auth/rate-limit error |
+| Code | Meaning                             |
+| ---- | ----------------------------------- |
+| 0    | Success / all up-to-date            |
+| 1    | Outdated refs found                 |
+| 2    | Unresolvable refs or invalid config |
+| 3    | Network/auth/rate-limit error       |
 
 ## Files Scanned
 

@@ -57,6 +57,10 @@ async fn run(cli: Cli) -> i32 {
         return CliExitCode::Success.into();
     }
 
+    if matches!(cli.command, Some(Command::Schema)) {
+        return commands::schema::run();
+    }
+
     // No subcommand and no positional action argument: print help
     if cli.command.is_none() && cli.latest.action.is_none() {
         let _ = <Cli as clap::CommandFactory>::command().print_help();
@@ -73,21 +77,21 @@ async fn run(cli: Cli) -> i32 {
             | Command::Pin { path, .. }
             | Command::Config { path, .. },
         ) => path.clone(),
-        Some(Command::Schema | Command::Cache { .. }) | None => match std::env::current_dir() {
+        Some(Command::Cache { .. }) | None => match std::env::current_dir() {
             Ok(dir) => dir,
             Err(e) => {
                 eprintln!("Error reading current directory: {e}");
                 return CliExitCode::EnvironmentError.into();
             }
         },
-        Some(Command::Completions { .. }) => unreachable!("handled above"),
+        Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
     };
 
     let config = match Config::load(None, &start_dir) {
         Ok(c) => c,
         Err(e) => {
-            tracing::warn!("Failed to load config, using defaults: {}", e);
-            Config::default()
+            eprintln!("Error: {e}");
+            return CliExitCode::Unresolvable.into();
         }
     };
 
@@ -127,11 +131,12 @@ async fn run(cli: Cli) -> i32 {
             let registrations = available_registrations();
             commands::config::run(&path, format, &config, &registrations)
         }
-        Some(Command::Schema) => commands::schema::run(),
         Some(Command::Cache { action, format }) => {
             commands::cache::run(&action, format, &config).await
         }
-        Some(Command::Completions { .. }) => unreachable!("handled before config load"),
+        Some(Command::Completions { .. } | Command::Schema) => {
+            unreachable!("handled before config load")
+        }
         None => commands::latest::run(&cli.latest, &config, &registry).await,
     }
 }

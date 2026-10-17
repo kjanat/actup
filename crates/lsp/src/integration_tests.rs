@@ -26,9 +26,10 @@ use tower_lsp_server::{
         ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionOrCommand,
         CodeActionParams, CompletionContext, CompletionParams, CompletionTriggerKind,
         DidChangeTextDocumentParams, DidChangeWatchedFilesClientCapabilities,
-        DidCloseTextDocumentParams, DidOpenTextDocumentParams, DocumentChanges,
-        ExecuteCommandParams, HoverParams, InitializeParams, InitializeResult, InitializedParams,
-        OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range,
+        DidChangeWatchedFilesParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
+        DocumentChanges, ExecuteCommandParams, FileChangeType, FileEvent, HoverParams,
+        InitializeParams, InitializeResult, InitializedParams, MessageType, OneOf,
+        PartialResultParams, Position, PublishDiagnosticsParams, Range, ShowMessageParams,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
         TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
         WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
@@ -121,6 +122,18 @@ fn did_close_notification(uri: &Uri) -> Request {
         .finish()
 }
 
+fn did_change_watched_files_notification(uri: &Uri) -> Request {
+    let params = DidChangeWatchedFilesParams {
+        changes: vec![FileEvent {
+            uri: uri.clone(),
+            typ: FileChangeType::CHANGED,
+        }],
+    };
+    Request::build("workspace/didChangeWatchedFiles")
+        .params(json!(params))
+        .finish()
+}
+
 fn shutdown_request(id: i64) -> Request {
     Request::build("shutdown").id(id).finish()
 }
@@ -184,6 +197,7 @@ fn execute_command_request(id: i64, command: &str, args: Vec<serde_json::Value>)
 #[derive(Default)]
 struct CollectedMessages {
     diagnostics: Vec<PublishDiagnosticsParams>,
+    messages: Vec<ShowMessageParams>,
 }
 
 /// Integration test harness.
@@ -290,6 +304,21 @@ impl TestHarness {
             .collect()
     }
 
+    async fn wait_until(
+        &self,
+        timeout: Duration,
+        done: impl Fn(&CollectedMessages) -> bool + Send + Sync,
+    ) -> bool {
+        let deadline = tokio::time::Instant::now() + timeout;
+        while tokio::time::Instant::now() < deadline {
+            if done(&*self.collected.lock().await) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        done(&*self.collected.lock().await)
+    }
+
     /// Clear collected diagnostics.
     async fn clear_diagnostics(&self) {
         self.collected.lock().await.diagnostics.clear();
@@ -326,6 +355,13 @@ async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMe
                 serde_json::from_value::<PublishDiagnosticsParams>(params.clone())
         {
             collected.lock().await.diagnostics.push(diag_params);
+        }
+
+        if method == "window/showMessage"
+            && let Some(params) = parsed.get("params")
+            && let Ok(message) = serde_json::from_value::<ShowMessageParams>(params.clone())
+        {
+            collected.lock().await.messages.push(message);
         }
     }
 }
@@ -609,6 +645,148 @@ async fn full_lifecycle_open_change_close() {
     );
 
     harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let config_file = temp.path().join("actup.toml");
+    std::fs::write(&config_file, "[policy]\nbump = \"sideways\"\n")?;
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness.initialize(Some(root)).await;
+
+    let config_path = config_file.display().to_string();
+    let shown = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            c.messages.iter().any(|m| {
+                m.typ == MessageType::ERROR
+                    && m.message.contains(&config_path)
+                    && m.message.contains("sideways")
+            })
+        })
+        .await;
+    assert!(
+        shown,
+        "expected an error showMessage naming the config file"
+    );
+
+    let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+    let text = "jobs:\n  build:\n    steps:\n      - uses: gitlab.com/owner/repo@v1\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+
+    let paused = harness
+        .wait_for_diagnostics(&uri, Duration::from_secs(2))
+        .await;
+    assert_ne!(
+        paused,
+        [],
+        "expected an empty publish for the open document"
+    );
+    assert!(
+        paused.iter().all(|d| d.diagnostics.is_empty()),
+        "invalid config must suppress diagnostics: {paused:?}"
+    );
+
+    let position = Position {
+        line: 3,
+        character: 20,
+    };
+    let resp = harness
+        .request(hover_request(40, &uri, position))
+        .await
+        .ok_or("hover returned no response")?;
+    let (_, body) = resp.into_parts();
+    assert_eq!(body?, serde_json::Value::Null);
+
+    harness.collected.lock().await.messages.clear();
+    harness
+        .request(execute_command_request(
+            41,
+            "actup-lsp/fixAllInWorkspace",
+            vec![],
+        ))
+        .await;
+    let refused = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            c.messages
+                .iter()
+                .any(|m| m.typ == MessageType::ERROR && m.message.contains("sideways"))
+        })
+        .await;
+    assert!(refused, "fix-all must report the invalid config");
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+    let config_uri = Uri::from_file_path(&config_file).ok_or("bad config uri")?;
+    harness
+        .notify(did_change_watched_files_notification(&config_uri))
+        .await;
+
+    let resumed = harness
+        .wait_until(Duration::from_secs(5), |c| {
+            c.diagnostics
+                .iter()
+                .any(|d| d.uri == uri && !d.diagnostics.is_empty())
+        })
+        .await;
+    assert!(resumed, "diagnostics must resume after the config parses");
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn config_turning_invalid_clears_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let config_file = temp.path().join("actup.toml");
+    std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness.initialize(Some(root)).await;
+
+    let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+    let text = "jobs:\n  build:\n    steps:\n      - uses: gitlab.com/owner/repo@v1\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    let loaded = harness
+        .wait_until(Duration::from_secs(5), |c| {
+            c.diagnostics
+                .iter()
+                .any(|d| d.uri == uri && !d.diagnostics.is_empty())
+        })
+        .await;
+    assert!(loaded, "a valid config must produce diagnostics");
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&config_file, "[policy]\nbump = \"sideways\"\n")?;
+    let config_uri = Uri::from_file_path(&config_file).ok_or("bad config uri")?;
+    harness
+        .notify(did_change_watched_files_notification(&config_uri))
+        .await;
+
+    let shown = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            c.messages
+                .iter()
+                .any(|m| m.typ == MessageType::ERROR && m.message.contains("sideways"))
+        })
+        .await;
+    assert!(shown, "expected an error showMessage for the broken config");
+
+    let cleared = harness
+        .wait_for_diagnostics(&uri, Duration::from_secs(2))
+        .await;
+    assert_ne!(cleared, [], "expected a publish clearing old diagnostics");
+    assert!(
+        cleared.iter().all(|d| d.diagnostics.is_empty()),
+        "invalid config must clear diagnostics: {cleared:?}"
+    );
+
+    harness.shutdown().await;
+    Ok(())
 }
 
 // Hover protocol tests
