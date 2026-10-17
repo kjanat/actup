@@ -113,40 +113,70 @@ describe("ConfigStore", () => {
 });
 
 describe("watchConfig", () => {
-	test("reloads on the setting, on candidate file events and on saving the configured file", () => {
-		const store = new ConfigStore(() => {});
+	test("reloads on the setting, on folder changes and on candidate file events", () => {
 		let reloads = 0;
-		const disposables = watchConfig(store, () => reloads++);
+		const disposables = watchConfig(new ConfigStore(() => {}), () => reloads++);
 		const [watcher] = mockWorkspace.watchers;
 		if (watcher === undefined) {
 			throw new Error("no watcher");
 		}
 
+		expect(mockWorkspace.watchers).toHaveLength(1);
 		expect(watcher.glob).toStartWith("**/{actup.toml,actup.json,");
 		expect(watcher.glob).toContain(".config/actup.yml");
 		mockWorkspace.configurationChanges.fire({ affectsConfiguration: section => section === "actup.configPath" });
 		mockWorkspace.configurationChanges.fire({ affectsConfiguration: section => section === "actup.server" });
-		expect(reloads).toBe(1);
+		mockWorkspace.folderChanges.fire(undefined);
+		expect(reloads).toBe(2);
 
 		watcher.created.fire(MockUri.parse("file:///repo/actup.toml"));
 		watcher.changed.fire(MockUri.parse("file:///repo/actup.toml"));
 		watcher.deleted.fire(MockUri.parse("file:///repo/actup.toml"));
-		expect(reloads).toBe(4);
-
-		mockWorkspace.saves.fire({ uri: MockUri.parse("file:///repo/ci/actup.json") });
-		mockWorkspace.settings.set("actup.configPath", "./ci/actup.json");
-		mockWorkspace.saves.fire({ uri: MockUri.parse("file:///repo/ci/actup.json") });
-		mockWorkspace.saves.fire({ uri: MockUri.parse("file:///repo/xci/actup.json") });
-		mockWorkspace.settings.set("actup.configPath", "/repo/ci/actup.json");
-		mockWorkspace.saves.fire({ uri: MockUri.parse("file:///repo/ci/actup.json") });
-		expect(reloads).toBe(6);
+		expect(reloads).toBe(5);
 
 		for (const disposable of disposables) {
 			disposable.dispose();
 		}
 		expect(watcher.disposed).toBe(true);
 		expect(mockWorkspace.configurationChanges.size).toBe(0);
-		expect(mockWorkspace.saves.size).toBe(0);
+		expect(mockWorkspace.folderChanges.size).toBe(0);
+	});
+
+	test("watches the file that actup.configPath names for each folder, outside the folder too", () => {
+		addFolder();
+		mockWorkspace.folders.push({ uri: MockUri.parse("file:///other"), name: "other", index: 1 });
+		mockWorkspace.settings.set("actup.configPath", "../shared/actup.toml");
+		let reloads = 0;
+		const disposables = watchConfig(new ConfigStore(() => {}), () => reloads++);
+		const explicit = () => mockWorkspace.watchers.flatMap(watcher => typeof watcher.glob === "string" || watcher.disposed ? [] : [watcher]);
+		const targets = () =>
+			explicit().map(watcher => typeof watcher.glob === "string" ? "" : `${watcher.glob.base.toString()} ${watcher.glob.pattern}`);
+
+		expect(targets()).toEqual(["file:///shared actup.toml", "file:///shared actup.toml"]);
+		explicit()[0]?.changed.fire(MockUri.parse("file:///shared/actup.toml"));
+		explicit()[1]?.deleted.fire(MockUri.parse("file:///shared/actup.toml"));
+		expect(reloads).toBe(2);
+
+		mockWorkspace.settings.set("actup.configPath", "/cfg/actup.json");
+		mockWorkspace.configurationChanges.fire({ affectsConfiguration: section => section === "actup.configPath" });
+		expect(targets()).toEqual(["file:///cfg actup.json", "file:///cfg actup.json"]);
+		expect(reloads).toBe(3);
+
+		mockWorkspace.folders.splice(1);
+		mockWorkspace.folderChanges.fire(undefined);
+		expect(targets()).toEqual(["file:///cfg actup.json"]);
+
+		mockWorkspace.settings.set("actup.configPath", null);
+		mockWorkspace.configurationChanges.fire({ affectsConfiguration: section => section === "actup.configPath" });
+		expect(targets()).toEqual([]);
+
+		mockWorkspace.settings.set("actup.configPath", "ci/actup.json");
+		mockWorkspace.folderChanges.fire(undefined);
+		expect(targets()).toEqual(["file:///repo/ci actup.json"]);
+		for (const disposable of disposables) {
+			disposable.dispose();
+		}
+		expect(targets()).toEqual([]);
 	});
 });
 

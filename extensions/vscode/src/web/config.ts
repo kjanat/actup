@@ -26,6 +26,11 @@ function parsed(path: string, contents: string): FolderConfig {
 	}
 }
 
+/** The file that `configPath` names for `folder`: absolute, or relative to `folder`. */
+export function resolveConfigPath(folder: vscode.Uri, configPath: string): vscode.Uri {
+	return configPath.startsWith("/") ? folder.with({ path: configPath }) : vscode.Uri.joinPath(folder, configPath);
+}
+
 /**
  * Load the repo config of `folder`.
  *
@@ -34,10 +39,9 @@ function parsed(path: string, contents: string): FolderConfig {
  */
 export async function loadFolderConfig(folder: vscode.Uri, configPath: string | undefined): Promise<FolderConfig> {
 	if (configPath !== undefined) {
-		const uri = configPath.startsWith("/") ? folder.with({ path: configPath }) : vscode.Uri.joinPath(folder, configPath);
 		let contents: string;
 		try {
-			contents = await readText(uri);
+			contents = await readText(resolveConfigPath(folder, configPath));
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
 			return { kind: "invalid", path: configPath, message: `cannot read ${configPath}: ${reason}` };
@@ -90,35 +94,53 @@ export class ConfigStore {
 }
 
 /**
- * Clear `store` and call `reload` when `actup.configPath` changes, when a
- * repo config candidate is created, changed or deleted, and when the file
- * that `actup.configPath` names is saved.
+ * Clear `store` and call `reload` when `actup.configPath` or the workspace
+ * folders change, when a repo config candidate is created, changed or
+ * deleted, and when the file that `actup.configPath` names for a folder is.
  */
 export function watchConfig(store: ConfigStore, reload: () => void): vscode.Disposable[] {
 	const changed = (): void => {
 		store.clear();
 		reload();
 	};
-	const watcher = vscode.workspace.createFileSystemWatcher(`**/{${repoConfigCandidates().join(",")}}`);
-	return [
-		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration(CONFIG_PATH_SETTING)) {
-				changed();
-			}
-		}),
-		vscode.workspace.onDidSaveTextDocument((document) => {
-			const configPath = configPathSetting();
-			if (configPath === undefined) {
-				return;
-			}
-			const suffix = configPath.startsWith("/") ? configPath : `/${configPath.replace(/^\.\//, "")}`;
-			if (document.uri.path.endsWith(suffix)) {
-				changed();
-			}
-		}),
+	const watch = (watcher: vscode.FileSystemWatcher): vscode.Disposable[] => [
 		watcher.onDidCreate(changed),
 		watcher.onDidChange(changed),
 		watcher.onDidDelete(changed),
 		watcher,
+	];
+	let explicit: vscode.Disposable[] = [];
+	const watchExplicit = (): void => {
+		for (const disposable of explicit) {
+			disposable.dispose();
+		}
+		const configPath = configPathSetting();
+		explicit = configPath === undefined ? [] : (vscode.workspace.workspaceFolders ?? []).flatMap((folder) => {
+			const file = resolveConfigPath(folder.uri, configPath);
+			const name = file.path.slice(file.path.lastIndexOf("/") + 1);
+			const pattern = new vscode.RelativePattern(vscode.Uri.joinPath(file, ".."), name);
+			return watch(vscode.workspace.createFileSystemWatcher(pattern));
+		});
+	};
+	watchExplicit();
+	return [
+		vscode.workspace.onDidChangeConfiguration((e) => {
+			if (e.affectsConfiguration(CONFIG_PATH_SETTING)) {
+				watchExplicit();
+				changed();
+			}
+		}),
+		vscode.workspace.onDidChangeWorkspaceFolders(() => {
+			watchExplicit();
+			changed();
+		}),
+		...watch(vscode.workspace.createFileSystemWatcher(`**/{${repoConfigCandidates().join(",")}}`)),
+		{
+			dispose: () => {
+				for (const disposable of explicit) {
+					disposable.dispose();
+				}
+			},
+		},
 	];
 }

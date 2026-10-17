@@ -20,7 +20,15 @@ export class Uri {
 	}
 
 	static joinPath(base: Uri, ...segments: string[]): Uri {
-		return new Uri([base.value.replace(/\/$/, ""), ...segments].join("/"));
+		const parts: string[] = [];
+		for (const part of [base.path, ...segments].join("/").split("/")) {
+			if (part === "..") {
+				parts.pop();
+			} else if (part !== "" && part !== ".") {
+				parts.push(part);
+			}
+		}
+		return new Uri(`file:///${parts.join("/")}`);
 	}
 
 	get path(): string {
@@ -60,6 +68,10 @@ export class EventEmitter<T> {
 	}
 }
 
+export class RelativePattern {
+	constructor(readonly base: Uri, readonly pattern: string) {}
+}
+
 class FileSystemWatcher {
 	readonly created = new EventEmitter<Uri>();
 	readonly changed = new EventEmitter<Uri>();
@@ -69,7 +81,7 @@ class FileSystemWatcher {
 	readonly onDidDelete = this.deleted.event;
 	disposed = false;
 
-	constructor(readonly glob: string) {}
+	constructor(readonly glob: string | RelativePattern) {}
 
 	dispose(): void {
 		this.disposed = true;
@@ -220,9 +232,13 @@ class Workspace {
 	readonly settings = new Map<string, string | null>();
 	readonly watchers: FileSystemWatcher[] = [];
 	readonly configurationChanges = new EventEmitter<{ affectsConfiguration(section: string): boolean }>();
-	readonly saves = new EventEmitter<{ readonly uri: Uri }>();
+	readonly folderChanges = new EventEmitter<undefined>();
 	readonly onDidChangeConfiguration = this.configurationChanges.event;
-	readonly onDidSaveTextDocument = this.saves.event;
+	readonly onDidChangeWorkspaceFolders = this.folderChanges.event;
+
+	get workspaceFolders(): readonly { readonly uri: Uri; readonly name: string; readonly index: number }[] {
+		return this.folders;
+	}
 
 	getWorkspaceFolder(uri: UriLike): { readonly uri: Uri; readonly name: string; readonly index: number } | undefined {
 		return this.folders.find(folder => uri.toString().startsWith(`${folder.uri.toString()}/`));
@@ -234,7 +250,7 @@ class Workspace {
 		};
 	}
 
-	createFileSystemWatcher(glob: string): FileSystemWatcher {
+	createFileSystemWatcher(glob: string | RelativePattern): FileSystemWatcher {
 		const watcher = new FileSystemWatcher(glob);
 		this.watchers.push(watcher);
 		return watcher;
