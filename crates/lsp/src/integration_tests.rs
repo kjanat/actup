@@ -603,6 +603,56 @@ async fn code_action_returns_quickfix_for_outdated() {
 }
 
 #[tokio::test]
+async fn code_action_returns_quickfix_in_a_markdown_file() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/README.md").ok_or("bad uri")?;
+    let text = "# Usage\n\nRun it:\n\n```yaml\nsteps:\n  - uses: actions/checkout@v3\n```\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let diag = test_utils::make_outdated_diagnostic(
+        test_utils::make_range(6, 27, 29),
+        "actions/checkout@v3",
+        "v4.2.0",
+    );
+    let value = harness
+        .request(code_action_request(14, &uri, diag.range, vec![diag]))
+        .await
+        .ok_or("codeAction should return a response")?
+        .into_parts()
+        .1?;
+
+    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value)?;
+    let Some(CodeActionOrCommand::CodeAction(action)) = actions.first() else {
+        panic!("expected a code action, got {actions:?}");
+    };
+    assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+    let Some(DocumentChanges::Edits(doc_edits)) = action
+        .edit
+        .as_ref()
+        .and_then(|edit| edit.document_changes.as_ref())
+    else {
+        panic!("expected document edits, got {:?}", action.edit);
+    };
+    let edits: Vec<(Range, &str)> = doc_edits
+        .iter()
+        .flat_map(|doc| &doc.edits)
+        .filter_map(|edit| match edit {
+            OneOf::Left(te) => Some((te.range, te.new_text.as_str())),
+            OneOf::Right(_) => None,
+        })
+        .collect();
+    assert_eq!(edits, [(test_utils::make_range(6, 27, 29), "v4.2.0")]);
+    assert_eq!(doc_edits[0].text_document.uri, uri);
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut harness = TestHarness::new();
