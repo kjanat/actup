@@ -1,19 +1,9 @@
 //! Zed editor extension for actup: starts the `actup-lsp` language server and the `actup-mcp` context server.
 use zed_extension_api::{self as zed};
 
-use std::{env, fs};
-
 use zed::settings::LspSettings;
 
-/// GitHub Actions language server npm package.
-const ACTIONS_LANGUAGE_SERVER_PACKAGE: &str = "@actions/languageserver";
-
-/// GitHub Actions language server executable name.
-const ACTIONS_LANGUAGE_SERVER_BINARY: &str = "actions-languageserver";
-
-/// GitHub Actions language server package bin path after npm install.
-const ACTIONS_LANGUAGE_SERVER_BIN_PATH: &str =
-    "node_modules/@actions/languageserver/bin/actions-languageserver";
+const LANGUAGE_SERVER: &str = "actup-lsp";
 
 const CONTEXT_SERVER: &str = "actup-mcp";
 
@@ -38,10 +28,7 @@ impl zed::Extension for ActupExtension {
         let args = binary_settings
             .as_ref()
             .and_then(|s| s.arguments.clone())
-            .unwrap_or_else(|| match server_name {
-                "actions-languageserver" | "yaml-language-server" => vec!["--stdio".to_string()],
-                _ => Vec::new(),
-            });
+            .unwrap_or_default();
 
         if let Some(command) = binary_settings.as_ref().and_then(|s| s.path.clone()) {
             return Ok(zed::Command {
@@ -51,18 +38,10 @@ impl zed::Extension for ActupExtension {
             });
         }
 
-        if server_name == "actions-languageserver" {
-            return actions_language_server_command(language_server_id, worktree, args);
-        }
-
-        let binary_name = match server_name {
-            "yaml-language-server" => "yaml-language-server",
-            _ => "actup-lsp",
-        };
         let settings_key = format!("lsp.{server_name}.binary.path");
-        let command = worktree.which(binary_name).ok_or_else(|| {
+        let command = worktree.which(LANGUAGE_SERVER).ok_or_else(|| {
             format!(
-                "`{binary_name}` not found in PATH. \
+                "`{LANGUAGE_SERVER}` not found in PATH. \
                  Set binary path in Zed settings under {settings_key}"
             )
         })?;
@@ -119,92 +98,39 @@ fn mcp_command() -> zed::Command {
     }
 }
 
-/// Return the command for GitHub's Actions language server.
-fn actions_language_server_command(
-    language_server_id: &zed::LanguageServerId,
-    worktree: &zed::Worktree,
-    args: Vec<String>,
-) -> zed::Result<zed::Command> {
-    if let Some(command) = worktree.which(ACTIONS_LANGUAGE_SERVER_BINARY) {
-        return Ok(zed::Command {
-            command,
-            args,
-            env: Vec::default(),
-        });
-    }
-
-    let server_path = ensure_actions_language_server_installed(language_server_id)?;
-    let mut node_args = Vec::with_capacity(args.len() + 1);
-    node_args.push(server_path);
-    node_args.extend(args);
-
-    Ok(zed::Command {
-        command: zed::node_binary_path()?,
-        args: node_args,
-        env: Vec::default(),
-    })
-}
-
-/// Install `@actions/languageserver` from npm if the package bin is absent or stale.
-fn ensure_actions_language_server_installed(
-    language_server_id: &zed::LanguageServerId,
-) -> zed::Result<String> {
-    let server_exists = actions_language_server_bin_exists();
-
-    zed::set_language_server_installation_status(
-        language_server_id,
-        &zed::LanguageServerInstallationStatus::CheckingForUpdate,
-    );
-    let latest_version = match zed::npm_package_latest_version(ACTIONS_LANGUAGE_SERVER_PACKAGE) {
-        Ok(version) => version,
-        Err(_) if server_exists => return actions_language_server_bin_path(),
-        Err(error) => return Err(error),
-    };
-
-    let installed_version = zed::npm_package_installed_version(ACTIONS_LANGUAGE_SERVER_PACKAGE)?;
-    if !server_exists || installed_version.as_ref() != Some(&latest_version) {
-        zed::set_language_server_installation_status(
-            language_server_id,
-            &zed::LanguageServerInstallationStatus::Downloading,
-        );
-        match zed::npm_install_package(ACTIONS_LANGUAGE_SERVER_PACKAGE, &latest_version) {
-            Ok(()) => {}
-            Err(_) if actions_language_server_bin_exists() => {
-                return actions_language_server_bin_path();
-            }
-            Err(error) => return Err(error),
-        }
-    }
-
-    if !actions_language_server_bin_exists() {
-        return Err(format!(
-            "installed package `{ACTIONS_LANGUAGE_SERVER_PACKAGE}` did not contain expected path `{ACTIONS_LANGUAGE_SERVER_BIN_PATH}`"
-        ));
-    }
-
-    actions_language_server_bin_path()
-}
-
-fn actions_language_server_bin_exists() -> bool {
-    fs::metadata(ACTIONS_LANGUAGE_SERVER_BIN_PATH).is_ok_and(|stat| stat.is_file())
-}
-
-fn actions_language_server_bin_path() -> zed::Result<String> {
-    let path = env::current_dir()
-        .map_err(|error| format!("failed to resolve extension directory: {error}"))?
-        .join(ACTIONS_LANGUAGE_SERVER_BIN_PATH);
-
-    path.to_str()
-        .map(ToString::to_string)
-        .ok_or_else(|| "actions-languageserver path is not valid UTF-8".to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn manifest() -> Result<toml::Table, toml::de::Error> {
         toml::from_str(include_str!("../extension.toml"))
+    }
+
+    #[test]
+    fn manifest_names_only_what_the_extension_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = manifest()?;
+        let servers = manifest
+            .get("language_servers")
+            .and_then(toml::Value::as_table)
+            .ok_or("extension.toml declares no language servers")?;
+        assert_eq!(servers.keys().collect::<Vec<_>>(), [LANGUAGE_SERVER]);
+        assert_eq!(manifest.get("capabilities"), None);
+
+        let grammar = manifest
+            .get("grammars")
+            .and_then(|grammars| grammars.get("github_actions"))
+            .ok_or("extension.toml declares no `github_actions` grammar")?;
+        let field = |key: &str| grammar.get(key).and_then(toml::Value::as_str);
+        assert_eq!(
+            field("repository"),
+            Some("https://github.com/kjanat/actup-v2")
+        );
+        assert_eq!(
+            field("rev"),
+            Some("57a4f01c4bd1c8cd7599fdfc72f72fd41bd7414b")
+        );
+        assert_eq!(field("path"), Some("languages/tree-sitter-github-actions"));
+        Ok(())
     }
 
     #[test]
