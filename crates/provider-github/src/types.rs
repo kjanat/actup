@@ -30,6 +30,34 @@ impl TagLike for GitHubTag {
     }
 }
 
+/// A repository search result page from the GitHub API
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitHubSearch {
+    /// Matching repositories, best match first
+    pub items: Vec<GitHubSearchItem>,
+}
+
+/// One repository in a GitHub search result
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitHubSearchItem {
+    /// Repository name
+    pub name: String,
+
+    /// Repository owner
+    pub owner: GitHubOwner,
+
+    /// Repository description
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// The owner of a GitHub repository
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitHubOwner {
+    /// Owner login
+    pub login: String,
+}
+
 /// Repository info from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubRepo {

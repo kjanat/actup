@@ -82,6 +82,26 @@ impl fmt::Display for Sha40 {
     }
 }
 
+/// A repository that an action search found.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RepoSummary {
+    /// Repository owner or group.
+    pub owner: String,
+    /// Repository or project name.
+    pub repo: String,
+    /// The repository description, when it has one.
+    pub description: Option<String>,
+}
+
+/// A provider's answer to an action search.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Search {
+    /// The provider offers no action search.
+    Unsupported,
+    /// The repositories that match, best match first.
+    Found(Vec<RepoSummary>),
+}
+
 /// Parsed action.yml content
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
@@ -600,6 +620,11 @@ pub trait Provider: MaybeSend + MaybeSync {
         repo: &ActionRepoId,
         ref_name: &str,
     ) -> BoxFuture<'_, Result<ActionYml>>;
+
+    /// Search the host for action repositories that match `query`
+    fn search_actions(&self, _query: &str) -> BoxFuture<'_, Result<Search>> {
+        Box::pin(async { Ok(Search::Unsupported) })
+    }
 }
 
 impl<P> Provider for Box<P>
@@ -660,6 +685,10 @@ where
         ref_name: &str,
     ) -> BoxFuture<'_, Result<ActionYml>> {
         (**self).get_action_yml(repo, ref_name)
+    }
+
+    fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<Search>> {
+        (**self).search_actions(query)
     }
 }
 

@@ -124,6 +124,8 @@ pub struct MockProvider {
     resolve: Result<String, CoreError>,
     resolve_calls: Arc<AtomicUsize>,
     rewrite: Option<(std::path::PathBuf, String)>,
+    search: Result<provider::Search, CoreError>,
+    searches: Arc<AtomicUsize>,
 }
 
 impl MockProvider {
@@ -137,6 +139,8 @@ impl MockProvider {
             resolve: Ok(DUMMY_SHA.to_string()),
             resolve_calls: Arc::new(AtomicUsize::new(0)),
             rewrite: None,
+            search: Ok(provider::Search::Unsupported),
+            searches: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -147,6 +151,17 @@ impl MockProvider {
 
     pub fn resolve_count(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.resolve_calls)
+    }
+
+    /// Answer every action search with `search`.
+    pub fn with_search(mut self, search: Result<provider::Search, CoreError>) -> Self {
+        self.search = search;
+        self
+    }
+
+    /// Count of action searches answered so far.
+    pub fn search_count(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.searches)
     }
 
     /// Overwrite `path` with `content` on every version lookup.
@@ -242,6 +257,12 @@ impl Provider for MockProvider {
         _ref_name: &str,
     ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
         Box::pin(async { Ok(ActionYml::default()) })
+    }
+
+    fn search_actions(&self, _query: &str) -> BoxFuture<'_, actup_core::Result<provider::Search>> {
+        self.searches.fetch_add(1, Ordering::SeqCst);
+        let result = self.search.clone();
+        Box::pin(async move { result })
     }
 }
 

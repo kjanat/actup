@@ -631,3 +631,61 @@ async fn batch_fetch_asks_rest_once_when_graphql_fails() -> Result<(), Box<dyn s
     assert_eq!((graphql, rest), (1, 2));
     Ok(())
 }
+
+#[tokio::test]
+async fn search_actions_queries_the_github_actions_topic() -> Result<(), Box<dyn std::error::Error>>
+{
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search/repositories"))
+        .and(query_param("q", "check topic:github-actions"))
+        .and(query_param("per_page", "20"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"total_count": 2, "items": [
+                {"name": "checkout", "owner": {"login": "actions"}, "description": "Check out a repo"},
+                {"name": "check-spelling", "owner": {"login": "check-spelling"}, "description": null}
+            ]}"#,
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let found = provider(&server)?.search_actions("check").await?;
+    assert_eq!(
+        found,
+        actup_core::provider::Search::Found(vec![
+            actup_core::provider::RepoSummary {
+                owner: "actions".into(),
+                repo: "checkout".into(),
+                description: Some("Check out a repo".into()),
+            },
+            actup_core::provider::RepoSummary {
+                owner: "check-spelling".into(),
+                repo: "check-spelling".into(),
+                description: None,
+            },
+        ])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn search_actions_reports_a_rate_limit() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/search/repositories"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-remaining", "0")
+                .set_body_string(r#"{"message": "API rate limit exceeded"}"#),
+        )
+        .mount(&server)
+        .await;
+
+    let result = provider(&server)?.search_actions("check").await;
+    assert!(
+        matches!(result, Err(actup_core::Error::RateLimited { .. })),
+        "{result:?}"
+    );
+    Ok(())
+}

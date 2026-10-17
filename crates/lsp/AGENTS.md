@@ -12,7 +12,7 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | ----------------------- | ----- | ----------------------------------------------- |
 | `backend.rs`            | 1546  | `LspBackend` — core LSP trait impl, lifecycle   |
 | `diagnostics.rs`        | 1109  | Diagnostic generation from `CheckResult`        |
-| `completion.rs`         | 839   | Version/tag completion for `uses:` refs         |
+| `completion.rs`         | 839   | Action-name and version completion for `uses:`  |
 | `hover.rs`              | 873   | Hover info: version status, README, action.yml  |
 | `workspace_commands.rs` | 839   | Workspace-level scan + update all               |
 | `code_actions.rs`       | 778   | Quick-fix code actions (update, pin)            |

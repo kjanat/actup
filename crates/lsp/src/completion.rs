@@ -2,14 +2,18 @@
 //!
 //! Provides two kinds of completions:
 //! - **Action suggestions**: After `uses:` with no or partial text, suggests
-//!   popular GitHub Actions from a hardcoded list (plus any actions seen in
-//!   the current document's cached diagnostics).
+//!   popular GitHub Actions from a hardcoded list, then the repositories the
+//!   default host's action search finds once two characters are typed.
 //! - **Version suggestions**: After `owner/repo@`, suggests available versions
 //!   fetched from the provider registry (with file cache).
 //!
 //! Trigger characters: `@` (for version completion after typing the `@`).
 
-use actup_core::{ActionRepoId, provider, version};
+use actup_core::{
+    ActionRepoId,
+    provider::{self, Search},
+    version,
+};
 use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,
     CompletionResponse, Documentation, MarkupContent, MarkupKind, Position,
@@ -29,79 +33,66 @@ const POPULAR_ACTIONS: &[PopularAction] = &[
         owner: "actions",
         repo: "checkout",
         description: "Check out a repository",
-        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-node",
         description: "Set up Node.js environment",
-        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-python",
         description: "Set up Python environment",
-        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "cache",
         description: "Cache dependencies and build outputs",
-        default_ref: "v5",
     },
     PopularAction {
         owner: "actions",
         repo: "upload-artifact",
         description: "Upload build artifacts",
-        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "download-artifact",
         description: "Download build artifacts",
-        default_ref: "v7",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-go",
         description: "Set up Go environment",
-        default_ref: "v6",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-java",
         description: "Set up Java JDK environment",
-        default_ref: "v5",
     },
     PopularAction {
         owner: "actions",
         repo: "github-script",
         description: "Run JavaScript in workflow with GitHub API",
-        default_ref: "v8",
     },
     PopularAction {
         owner: "actions",
         repo: "setup-dotnet",
         description: "Set up .NET SDK environment",
-        default_ref: "v5",
     },
     PopularAction {
         owner: "docker",
         repo: "build-push-action",
         description: "Build and push Docker images",
-        default_ref: "v6",
     },
     PopularAction {
         owner: "docker",
         repo: "login-action",
         description: "Log in to Docker registry",
-        default_ref: "v3",
     },
     PopularAction {
         owner: "docker",
         repo: "setup-buildx-action",
         description: "Set up Docker Buildx",
-        default_ref: "v3",
     },
 ];
 
@@ -110,7 +101,6 @@ struct PopularAction {
     owner: &'static str,
     repo: &'static str,
     description: &'static str,
-    default_ref: &'static str,
 }
 
 /// Context extracted from the cursor position on a `uses:` line.
@@ -239,50 +229,93 @@ fn last_uses_key(prefix: &str) -> Option<usize> {
     found
 }
 
+/// Shortest prefix that starts an action search.
+const MIN_SEARCH_CHARS: usize = 2;
+
+fn action_item(
+    owner: &str,
+    repo: &str,
+    description: Option<&str>,
+    host: &str,
+    idx: usize,
+) -> CompletionItem {
+    let label = format!("{owner}/{repo}");
+    let link = format!("[{label}](https://{host}/{owner}/{repo})");
+    CompletionItem {
+        label: label.clone(),
+        kind: Some(CompletionItemKind::MODULE),
+        detail: description.map(str::to_owned),
+        insert_text: Some(format!("{label}@")),
+        documentation: Some(Documentation::MarkupContent(MarkupContent {
+            kind: MarkupKind::Markdown,
+            value: description.map_or_else(|| link.clone(), |d| format!("{link}\n\n{d}")),
+        })),
+        sort_text: Some(format!("{idx:03}")),
+        filter_text: Some(label),
+        ..Default::default()
+    }
+}
+
 /// Build completion items for action name suggestions.
 ///
 /// Filters [`POPULAR_ACTIONS`] by the typed prefix (case-insensitive)
-/// and produces `CompletionItem`s with the full `owner/repo@default_ref`
-/// as the insert text.
+/// and produces `CompletionItem`s that insert `owner/repo@`.
 fn action_completions(prefix: &str) -> Vec<CompletionItem> {
     let prefix_lower = prefix.to_lowercase();
 
     POPULAR_ACTIONS
         .iter()
         .filter(|a| {
-            if prefix_lower.is_empty() {
-                return true;
-            }
-            let full = format!("{}/{}", a.owner, a.repo);
-            full.to_lowercase().contains(&prefix_lower)
+            prefix_lower.is_empty()
+                || format!("{}/{}", a.owner, a.repo)
+                    .to_lowercase()
+                    .contains(&prefix_lower)
         })
         .enumerate()
-        .map(|(idx, a)| {
-            let label = format!("{}/{}", a.owner, a.repo);
-
-            CompletionItem {
-                label: label.clone(),
-                kind: Some(CompletionItemKind::MODULE),
-                detail: Some(a.description.to_owned()),
-                label_details: Some(CompletionItemLabelDetails {
-                    detail: Some(format!("@{}", a.default_ref)),
-                    description: None,
-                }),
-                insert_text: Some(format!("{}/{}@{}", a.owner, a.repo, a.default_ref)),
-                documentation: Some(Documentation::MarkupContent(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: format!(
-                        "[{}/{}](https://github.com/{}/{})\n\n{}",
-                        a.owner, a.repo, a.owner, a.repo, a.description
-                    ),
-                })),
-                // Sort by list order (popular first).
-                sort_text: Some(format!("{idx:03}")),
-                filter_text: Some(label),
-                ..Default::default()
-            }
-        })
+        .map(|(idx, a)| action_item(a.owner, a.repo, Some(a.description), "github.com", idx))
         .collect()
+}
+
+/// Append the default host's action search results for `prefix` to `items`.
+///
+/// Returns whether the search answered.
+async fn add_search_results(
+    prefix: &str,
+    registry: &provider::Registry,
+    items: &mut Vec<CompletionItem>,
+) -> bool {
+    if prefix.chars().count() < MIN_SEARCH_CHARS {
+        return false;
+    }
+    let Some(provider) = registry.find(None) else {
+        return false;
+    };
+    let found = match provider.search_actions(prefix).await {
+        Ok(Search::Found(found)) => found,
+        Ok(Search::Unsupported) => return false,
+        Err(e) => {
+            tracing::debug!(error = %e, "action search failed; using the static list");
+            return false;
+        }
+    };
+    for summary in found {
+        let label = format!("{}/{}", summary.owner, summary.repo);
+        if items
+            .iter()
+            .any(|item| item.label.eq_ignore_ascii_case(&label))
+        {
+            continue;
+        }
+        let idx = items.len();
+        items.push(action_item(
+            &summary.owner,
+            &summary.repo,
+            summary.description.as_deref(),
+            provider.host(),
+            idx,
+        ));
+    }
+    true
 }
 
 const MAX_SEMVER_COMPLETIONS: usize = 20;
@@ -410,13 +443,13 @@ pub async fn compute_completions(
 
     match context {
         CompletionContext::ActionName { prefix } => {
-            let items = action_completions(&prefix);
+            let mut items = action_completions(&prefix);
+            let searched = add_search_results(&prefix, registry, &mut items).await;
             if items.is_empty() {
                 None
             } else {
                 Some(CompletionResponse::List(CompletionList {
-                    // Incomplete: further typing narrows the filter client-side.
-                    is_incomplete: false,
+                    is_incomplete: searched,
                     items,
                 }))
             }
@@ -733,7 +766,8 @@ mod tests {
         let items = action_completions("actions/checkout");
         assert_eq!(items.len(), 1);
         let item = &items[0];
-        assert_eq!(item.insert_text.as_deref(), Some("actions/checkout@v6"));
+        assert_eq!(item.insert_text.as_deref(), Some("actions/checkout@"));
+        assert_eq!(item.detail.as_deref(), Some("Check out a repository"));
     }
 
     #[test]
@@ -804,7 +838,6 @@ mod tests {
             assert_ne!(action.owner, "");
             assert_ne!(action.repo, "");
             assert_ne!(action.description, "");
-            assert!(action.default_ref.starts_with('v'));
         }
     }
 
@@ -835,6 +868,98 @@ mod tests {
                 assert_ne!(items, []);
             }
         }
+    }
+
+    fn summary(owner: &str, repo: &str, description: Option<&str>) -> provider::RepoSummary {
+        provider::RepoSummary {
+            owner: owner.into(),
+            repo: repo.into(),
+            description: description.map(Into::into),
+        }
+    }
+
+    async fn action_list(
+        typed: &str,
+        provider: crate::test_utils::MockProvider,
+    ) -> Result<CompletionList, Box<dyn std::error::Error>> {
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let text = format!("      - uses: {typed}\n");
+        let position = Position {
+            line: 0,
+            character: u32::try_from(text.trim_end().len())?,
+        };
+        match compute_completions(&text, position, &registry, &file_cache, None, ENC).await {
+            Some(CompletionResponse::List(list)) => Ok(list),
+            other => Err(format!("expected a completion list, got {other:?}").into()),
+        }
+    }
+
+    #[tokio::test]
+    async fn action_search_results_follow_the_static_matches()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = crate::test_utils::MockProvider::new("github.com").with_search(Ok(
+            Search::Found(vec![
+                summary("actions", "checkout", Some("Searched checkout")),
+                summary("check-spelling", "check-spelling", Some("Spell check")),
+                summary("acme", "check", None),
+            ]),
+        ));
+        let searches = provider.search_count();
+        let list = action_list("check", provider).await?;
+        assert!(list.is_incomplete);
+        assert_eq!(searches.load(Ordering::SeqCst), 1);
+        let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            [
+                "actions/checkout",
+                "check-spelling/check-spelling",
+                "acme/check"
+            ]
+        );
+        assert_eq!(
+            list.items[0].detail.as_deref(),
+            Some("Check out a repository")
+        );
+        let spelling = &list.items[1];
+        assert_eq!(spelling.detail.as_deref(), Some("Spell check"));
+        assert_eq!(
+            spelling.insert_text.as_deref(),
+            Some("check-spelling/check-spelling@")
+        );
+        assert_eq!(spelling.sort_text.as_deref(), Some("001"));
+        assert_eq!(list.items[2].detail, None);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn short_prefixes_and_failed_searches_keep_the_static_list()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let found = Ok(Search::Found(vec![summary("acme", "cache", None)]));
+        let provider = crate::test_utils::MockProvider::new("github.com").with_search(found);
+        let searches = provider.search_count();
+        let short = action_list("c", provider).await?;
+        assert!(!short.is_incomplete);
+        assert_eq!(searches.load(Ordering::SeqCst), 0);
+        assert!(short.items.iter().all(|i| i.label != "acme/cache"));
+
+        let limited = crate::test_utils::MockProvider::new("github.com").with_search(Err(
+            actup_core::Error::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            },
+        ));
+        let list = action_list("cache", limited).await?;
+        assert!(!list.is_incomplete);
+        let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["actions/cache"]);
+
+        let unsupported = crate::test_utils::MockProvider::new("github.com");
+        let list = action_list("cache", unsupported).await?;
+        assert!(!list.is_incomplete);
+        assert_eq!(list.items.len(), 1);
+        Ok(())
     }
 
     #[tokio::test]

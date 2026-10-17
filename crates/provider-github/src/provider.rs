@@ -6,7 +6,7 @@ use actup_core::{
     action_ref::ActionRepoId,
     compat::BoxFuture,
     error::Result,
-    provider::{self, ActionYml, Provider, Sha40},
+    provider::{self, ActionYml, Provider, RepoSummary, Search, Sha40},
     version,
 };
 use actup_providers::{RepoLabel, filename_label, list_refs, parse_action_yml, process_tags};
@@ -381,6 +381,25 @@ impl Provider for GitHubProvider {
             // Use the path that actually succeeded — parse errors otherwise
             // lie about which file caused them when the .yaml fallback fired.
             parse_action_yml(&raw, filename_label(&loaded_path))
+        })
+    }
+
+    fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<Search>> {
+        let query = query.to_string();
+
+        Box::pin(async move {
+            let found = self.client.search_repositories(&query).await?;
+            Ok(Search::Found(
+                found
+                    .items
+                    .into_iter()
+                    .map(|item| RepoSummary {
+                        owner: item.owner.login,
+                        repo: item.name,
+                        description: item.description,
+                    })
+                    .collect(),
+            ))
         })
     }
 }

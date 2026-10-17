@@ -81,12 +81,12 @@ Trace LSP protocol messages. One of `"off"`, `"messages"`, `"verbose"`. Default:
 
 ## Features
 
-| Feature      | Description                                          |
-| ------------ | ---------------------------------------------------- |
-| Diagnostics  | Warning on outdated refs, error on unresolvable refs |
-| Code actions | Quick-fix to update single ref or all refs in file   |
-| Hover        | Version status, README excerpt, action.yml summary   |
-| Completion   | Tag/version completion triggered by `@`              |
+| Feature      | Description                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| Diagnostics  | Warning on outdated refs, error on unresolvable refs                                              |
+| Code actions | Quick-fix to update single ref or all refs in file                                                |
+| Hover        | Version status, README excerpt, action.yml summary                                                |
+| Completion   | Action names from a built-in list and the default host's search; tag/version completion after `@` |
 
 ## Activation
 

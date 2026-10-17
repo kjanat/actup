@@ -18,8 +18,15 @@ use reqwest::{
 use tracing::{debug, warn};
 
 use crate::types::{
-    GitHubBranch, GitHubCommit, GitHubContent, GitHubRef, GitHubRepo, GitHubTag, GitHubTagObject,
+    GitHubBranch, GitHubCommit, GitHubContent, GitHubRef, GitHubRepo, GitHubSearch, GitHubTag,
+    GitHubTagObject,
 };
+
+/// Maximum repositories one action search returns
+pub const SEARCH_RESULTS: u8 = 20;
+
+/// Topic that the action search requires
+pub const ACTION_TOPIC: &str = "github-actions";
 
 /// Default items per page
 pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
@@ -249,6 +256,30 @@ impl GitHubClient {
 
         let response = self.get(&url).await?;
         self.handle_response(response, owner, repo).await
+    }
+
+    /// Search repositories that match `query` and carry the `github-actions` topic
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit or auth failure.
+    pub async fn search_repositories(&self, query: &str) -> Result<GitHubSearch> {
+        let url = reqwest::Url::parse_with_params(
+            &format!("{}/search/repositories", self.api_base),
+            &[
+                ("q", format!("{query} topic:{ACTION_TOPIC}")),
+                ("per_page", SEARCH_RESULTS.to_string()),
+            ],
+        )
+        .map_err(|e| Error::Internal {
+            context: "search URL".to_string(),
+            message: "invalid search URL".to_string(),
+            source: Some(Arc::new(e)),
+        })?;
+        debug!(url = %url, "searching repositories");
+
+        let response = self.get(url.as_str()).await?;
+        self.handle_response(response, "search", query).await
     }
 
     /// Get a specific git ref

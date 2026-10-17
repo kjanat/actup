@@ -96,6 +96,7 @@ pub struct CachingProvider<P> {
     version_cache: Memo<ActionRepoId, version::Set>,
     sha_cache: Memo<(ActionRepoId, String), Result<Sha40>>,
     branch_cache: Memo<ActionRepoId, String>,
+    search_cache: Memo<String, provider::Search>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
     // zero permits; followers `acquire().await` on it. The leader holds a
@@ -205,6 +206,7 @@ impl<P: Provider> CachingProvider<P> {
             version_cache: RwLock::new(HashMap::new()),
             sha_cache: RwLock::new(HashMap::new()),
             branch_cache: RwLock::new(HashMap::new()),
+            search_cache: RwLock::new(HashMap::new()),
             version_flights: Mutex::new(HashMap::new()),
             sha_flights: Mutex::new(HashMap::new()),
             branch_flights: Mutex::new(HashMap::new()),
@@ -215,11 +217,17 @@ impl<P: Provider> CachingProvider<P> {
 impl<P> CachingProvider<P> {
     /// Clear all cached data.
     pub fn clear_cache(&self) -> impl Future<Output = ()> + '_ {
-        let (versions, shas, branches) = (&self.version_cache, &self.sha_cache, &self.branch_cache);
+        let (versions, shas, branches, searches) = (
+            &self.version_cache,
+            &self.sha_cache,
+            &self.branch_cache,
+            &self.search_cache,
+        );
         async move {
             versions.write().await.clear();
             shas.write().await.clear();
             branches.write().await.clear();
+            searches.write().await.clear();
         }
     }
 
@@ -493,6 +501,27 @@ impl<P: Provider> Provider for CachingProvider<P> {
         // action.yml content is typically not fetched repeatedly in a single run,
         // so we don't cache it to avoid memory bloat.
         self.inner.get_action_yml(repo, ref_name)
+    }
+
+    fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<provider::Search>> {
+        let query = query.to_string();
+
+        Box::pin(async move {
+            let hit = self
+                .retention
+                .fresh(self.search_cache.read().await.get(&query));
+            if let Some(found) = hit {
+                return Ok(found);
+            }
+            let result = self.inner.search_actions(&query).await;
+            if let Ok(found) = &result {
+                self.search_cache
+                    .write()
+                    .await
+                    .insert(query, self.retention.stamp(found.clone()));
+            }
+            result
+        })
     }
 }
 
@@ -1401,6 +1430,113 @@ mod tests {
         assert!(cached.refresh_ref_to_sha(&repo, "main").await.is_err());
         assert_eq!(cached.resolve_ref_to_sha(&repo, "main").await?, sha("c")?);
         assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 4);
+        Ok(())
+    }
+
+    struct Searching {
+        calls: AtomicUsize,
+    }
+
+    impl Provider for Searching {
+        fn kind(&self) -> provider::Kind {
+            provider::Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            repo: &ActionRepoId,
+            ref_name: &str,
+        ) -> BoxFuture<'_, Result<Sha40>> {
+            let err = crate::Error::RefNotFound {
+                owner: repo.owner().to_string(),
+                repo: repo.repo().to_string(),
+                ref_name: ref_name.to_string(),
+                host: None,
+            };
+            Box::pin(async move { Err(err) })
+        }
+
+        fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+
+        fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<provider::Search>> {
+            let calls = self.calls.fetch_add(1, Ordering::SeqCst);
+            let found = provider::Search::Found(vec![provider::RepoSummary {
+                owner: query.to_string(),
+                repo: format!("call-{calls}"),
+                description: None,
+            }]);
+            Box::pin(async move { Ok(found) })
+        }
+    }
+
+    #[tokio::test]
+    async fn search_results_are_cached_per_query_until_the_ttl() -> TestResult {
+        let clock = crate::clock::ManualClock::new();
+        let cached = CachingProvider::with_retention(
+            Searching {
+                calls: AtomicUsize::new(0),
+            },
+            expiring(&clock, 60),
+        );
+        let repo_of = |search: provider::Search| match search {
+            provider::Search::Found(found) => found.first().map(|r| r.repo.clone()),
+            provider::Search::Unsupported => None,
+        };
+        assert_eq!(
+            repo_of(cached.search_actions("che").await?).as_deref(),
+            Some("call-0")
+        );
+        assert_eq!(
+            repo_of(cached.search_actions("che").await?).as_deref(),
+            Some("call-0")
+        );
+        assert_eq!(
+            repo_of(cached.search_actions("cac").await?).as_deref(),
+            Some("call-1")
+        );
+        clock.advance(std::time::Duration::from_secs(61));
+        assert_eq!(
+            repo_of(cached.search_actions("che").await?).as_deref(),
+            Some("call-2")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn search_defaults_to_unsupported() -> TestResult {
+        let boxed: Box<dyn Provider> = Box::new(Moving {
+            calls: AtomicUsize::new(0),
+        });
+        assert_eq!(
+            boxed.search_actions("che").await?,
+            provider::Search::Unsupported
+        );
         Ok(())
     }
 }
