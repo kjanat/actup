@@ -244,6 +244,39 @@ mod tests {
     }
 
     #[test]
+    fn process_tags_orders_by_semver_precedence() -> Result<(), Box<dyn std::error::Error>> {
+        let tags = vec![
+            TestTag::new("v2.0.0-rc.2", "a"),
+            TestTag::new("v2.0.0-rc.10", "b"),
+            TestTag::new("v1.0.0", "c"),
+            TestTag::new("v1.0.1+build.7", "d"),
+            TestTag::new("2024-01-15", "e"),
+            TestTag::new("v2.0.0-beta.11", "f"),
+        ];
+        let result = process_tags(tags);
+
+        let order: Vec<&str> = result
+            .semver_tags()
+            .iter()
+            .map(|t| t.version().as_str())
+            .collect();
+        assert_eq!(
+            order,
+            [
+                "v2.0.0-rc.10",
+                "v2.0.0-rc.2",
+                "v2.0.0-beta.11",
+                "v1.0.1+build.7",
+                "v1.0.0"
+            ]
+        );
+        let latest = result.latest().ok_or("expected latest")?;
+        assert_eq!(latest.version().as_str(), "v1.0.1+build.7");
+        assert_eq!(latest.sha(), "d");
+        Ok(())
+    }
+
+    #[test]
     fn test_process_tags_non_semver_ignored() {
         let tags = vec![
             TestTag::new("v1.0.0", "aaa"),

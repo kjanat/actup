@@ -81,6 +81,12 @@ impl Version {
             };
         }
 
+        if is_iso_date(ref_str) {
+            return Self::Other {
+                tag: ref_str.to_string(),
+            };
+        }
+
         // Try to parse as semver
         if let Some(semver) = Self::try_parse_semver(ref_str) {
             return semver;
@@ -96,6 +102,7 @@ impl Version {
     /// Try to parse a string as semver
     fn try_parse_semver(s: &str) -> Option<Self> {
         let version_str = s.strip_prefix('v').unwrap_or(s);
+        let version_str = version_str.split_once('+').map_or(version_str, |(v, _)| v);
 
         // First, split off prerelease suffix (everything after first '-')
         let (version_part, prerelease) = version_str
@@ -273,7 +280,7 @@ impl Ord for Version {
                     (None, None) => Ordering::Equal,
                     (None, Some(_)) => Ordering::Greater,
                     (Some(_), None) => Ordering::Less,
-                    (Some(a), Some(b)) => a.cmp(b),
+                    (Some(a), Some(b)) => cmp_prerelease(a, b),
                 }
             }
 
@@ -294,6 +301,46 @@ impl Ord for Version {
             (Self::Sha { .. }, _) => Ordering::Greater,
             (_, Self::Sha { .. }) => Ordering::Less,
         }
+    }
+}
+
+fn is_iso_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            _ => c.is_ascii_digit(),
+        })
+}
+
+// Precedence follows SemVer 2.0.0 §11.4.
+fn cmp_prerelease(a: &str, b: &str) -> Ordering {
+    let mut xs = a.split('.');
+    let mut ys = b.split('.');
+    loop {
+        match (xs.next(), ys.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => match cmp_identifier(x, y) {
+                Ordering::Equal => {}
+                ord => return ord,
+            },
+        }
+    }
+}
+
+fn cmp_identifier(x: &str, y: &str) -> Ordering {
+    let numeric = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+    match (numeric(x), numeric(y)) {
+        (true, true) => {
+            let x = x.trim_start_matches('0');
+            let y = y.trim_start_matches('0');
+            x.len().cmp(&y.len()).then_with(|| x.cmp(y))
+        }
+        (true, false) => Ordering::Less,
+        (false, true) => Ordering::Greater,
+        (false, false) => x.cmp(y),
     }
 }
 
@@ -808,6 +855,163 @@ mod tests {
         let alpha = Version::parse("v1.0.0-alpha");
         let beta = Version::parse("v1.0.0-beta");
         assert!(beta > alpha);
+    }
+
+    #[test]
+    fn prerelease_precedence_chain_is_strictly_ascending() {
+        let chains: [&[&str]; 2] = [
+            &[
+                "1.0.0-alpha",
+                "1.0.0-alpha.1",
+                "1.0.0-beta.2",
+                "1.0.0-beta.11",
+                "1.0.0-rc.1",
+                "1.0.0",
+            ],
+            &[
+                "v1.0.0-alpha",
+                "v1.0.0-alpha.1",
+                "v1.0.0-alpha.beta",
+                "v1.0.0-beta",
+                "v1.0.0-beta.2",
+                "v1.0.0-beta.11",
+                "v1.0.0-rc.1",
+                "v1.0.0",
+            ],
+        ];
+        for chain in chains {
+            for (i, lo) in chain.iter().enumerate() {
+                for hi in &chain[i + 1..] {
+                    assert_eq!(
+                        Version::parse(lo).cmp(&Version::parse(hi)),
+                        Ordering::Less,
+                        "{lo} < {hi}"
+                    );
+                    assert_eq!(
+                        Version::parse(hi).cmp(&Version::parse(lo)),
+                        Ordering::Greater,
+                        "{hi} > {lo}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn semver_precedence_table() {
+        let cases = [
+            ("v1.0.0-rc.2", "v1.0.0-rc.10", Ordering::Less),
+            ("v1.0.0-alpha", "v1.0.0-beta", Ordering::Less),
+            ("v1.0.0-1", "v1.0.0-alpha", Ordering::Less),
+            ("v1.0.0-alpha", "v1.0.0-alpha.0", Ordering::Less),
+            ("v1.0.0-RC.1", "v1.0.0-alpha", Ordering::Less),
+            ("v1.0.0-rc.01", "v1.0.0-rc.1", Ordering::Equal),
+            (
+                "v1.0.0-rc.99999999999999999999",
+                "v1.0.0-rc.100000000000000000000",
+                Ordering::Less,
+            ),
+            ("v1.0.0+build", "v1.0.0", Ordering::Equal),
+            ("v1.0.0+build.1", "v1.0.0+build.2", Ordering::Equal),
+            (
+                "v1.0.0-rc.1+exp.sha.5114f85",
+                "v1.0.0-rc.1",
+                Ordering::Equal,
+            ),
+            ("v1.0.0+build", "v1.0.0-rc.1", Ordering::Greater),
+            ("v1.0.1+build", "v1.0.0", Ordering::Greater),
+        ];
+        for (a, b, want) in cases {
+            assert_eq!(
+                Version::parse(a).cmp(&Version::parse(b)),
+                want,
+                "{a} vs {b}"
+            );
+            assert_eq!(
+                Version::parse(b).cmp(&Version::parse(a)),
+                want.reverse(),
+                "{b} vs {a}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_metadata_is_stripped_from_components() {
+        let cases = [
+            ("v1.0.0+build", 1, Some(0), Some(0), None),
+            ("1.2.3+build-1", 1, Some(2), Some(3), None),
+            (
+                "v1.2.3-rc.1+exp.sha.5114f85",
+                1,
+                Some(2),
+                Some(3),
+                Some("rc.1"),
+            ),
+            ("v2+meta", 2, None, None, None),
+        ];
+        for (input, want_major, want_minor, want_patch, want_pre) in cases {
+            let Version::Semver {
+                major,
+                minor,
+                patch,
+                prerelease,
+                original,
+            } = Version::parse(input)
+            else {
+                panic!("{input} should parse as semver");
+            };
+            assert_eq!(major, want_major, "{input} major");
+            assert_eq!(minor, want_minor, "{input} minor");
+            assert_eq!(patch, want_patch, "{input} patch");
+            assert_eq!(prerelease.as_deref(), want_pre, "{input} prerelease");
+            assert_eq!(original, input, "{input} keeps its original text");
+        }
+    }
+
+    #[test]
+    fn iso_dates_parse_as_other() {
+        for input in ["2024-01-15", "1999-12-31"] {
+            assert_eq!(
+                Version::parse(input),
+                Version::Other {
+                    tag: input.to_string(),
+                },
+                "{input}"
+            );
+        }
+        for input in ["2024.01.15", "v2024", "2024-01-15-rc"] {
+            assert!(Version::parse(input).is_semver(), "{input}");
+        }
+    }
+
+    #[test]
+    fn cached_set_reparses_versions_on_load() -> Result<(), Box<dyn std::error::Error>> {
+        let json = r#"{
+            "semver_tags": [
+                {"version": "v1.0.0+build", "sha": "a"},
+                {"version": "v1.0.0-rc.2", "sha": "b"},
+                {"version": "v1.0.0-rc.10", "sha": "c"},
+                {"version": "2024-01-15", "sha": "d"}
+            ],
+            "latest_per_major": {},
+            "major_tags": {},
+            "latest": null,
+            "default_branch": null
+        }"#;
+        let set: Set = serde_json::from_str(json)?;
+        let versions: Vec<&Version> = set.semver_tags().iter().map(|t| t.version()).collect();
+        let [build, rc2, rc10, date] = versions.as_slice() else {
+            panic!("expected four cached tags, got {versions:?}");
+        };
+        assert_eq!(build.patch(), Some(0));
+        assert!(rc10 > rc2);
+        assert_eq!(
+            *date,
+            &Version::Other {
+                tag: "2024-01-15".to_string(),
+            }
+        );
+        Ok(())
     }
 
     #[test]
