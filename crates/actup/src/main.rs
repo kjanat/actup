@@ -21,7 +21,7 @@ use actup_core::{
 };
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, CliExitCode, Command};
+use crate::cli::{CacheMode, Cli, CliExitCode, Command};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -176,14 +176,15 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
-/// Load the config for `start_dir` and build the registry the global flags select.
 fn setup(
     cli: &Cli,
     start_dir: &std::path::Path,
 ) -> Result<(Config, provider::Registry), CliExitCode> {
     let mut config = load_config(cli.config.as_deref(), start_dir).ok_or(CliExitCode::UserError)?;
-    if cli.no_cache {
-        config.cache.enabled = false;
+    match cli.cache_mode() {
+        CacheMode::Bypass => config.cache.enabled = false,
+        CacheMode::Refresh => config.cache.ttl = std::time::Duration::ZERO,
+        CacheMode::Default | CacheMode::Offline => {}
     }
     let registry = build_registry(&config).map_err(|e| {
         eprintln!(
@@ -192,7 +193,7 @@ fn setup(
         );
         CliExitCode::EnvironmentError
     })?;
-    let registry = if cli.offline {
+    let registry = if cli.cache_mode() == CacheMode::Offline {
         registry.map_providers(offline::Offline::wrap)
     } else {
         registry

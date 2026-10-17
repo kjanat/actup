@@ -45,16 +45,39 @@ pub struct Cli {
     )]
     pub color: ColorChoice,
 
-    /// Use only cached version data; a ref missing from the cache is an environment error
-    #[arg(long, global = true)]
-    pub offline: bool,
-
-    /// Neither read nor write the version cache
-    #[arg(long, global = true)]
-    pub no_cache: bool,
+    #[command(flatten)]
+    cache: CacheArgs,
 
     #[command(flatten)]
     pub latest: LatestArgs,
+}
+
+#[derive(clap::Args)]
+struct CacheArgs {
+    /// Use only cached version data; a ref missing from the cache is an environment error
+    #[arg(long, global = true)]
+    offline: bool,
+
+    /// Neither read nor write the version cache
+    #[arg(long, global = true)]
+    no_cache: bool,
+
+    /// Skip cached versions and write the freshly fetched ones
+    #[arg(long, global = true)]
+    refresh: bool,
+}
+
+/// How a run uses the version cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CacheMode {
+    /// Read fresh entries, fetch the rest and write them.
+    Default,
+    /// Read entries only and never fetch.
+    Offline,
+    /// Neither read nor write entries.
+    Bypass,
+    /// Fetch every repo and write the results.
+    Refresh,
 }
 
 /// Arguments for the default `actup <owner/repo[@ref]>` quick lookup.
@@ -72,7 +95,7 @@ pub struct LatestArgs {
 }
 
 impl Cli {
-    /// Parse `args` and reject top-level arguments given on the command line next to a subcommand, and `--offline` with `--no-cache`.
+    /// Parse `args` and reject top-level arguments given on the command line next to a subcommand, and more than one of `--offline`, `--no-cache` and `--refresh`.
     ///
     /// An empty `ACTUP_*` flag variable counts as unset.
     pub fn try_parse_args<I, T>(args: I) -> Result<Self, Error>
@@ -101,13 +124,37 @@ impl Cli {
             }
         }
         let cli = Self::from_arg_matches_mut(&mut matches)?;
-        if cli.offline && cli.no_cache {
+        let CacheArgs {
+            offline,
+            no_cache,
+            refresh,
+        } = cli.cache;
+        let given: Vec<&str> = [
+            (offline, "--offline"),
+            (no_cache, "--no-cache"),
+            (refresh, "--refresh"),
+        ]
+        .into_iter()
+        .filter_map(|(set, flag)| set.then_some(flag))
+        .collect();
+        if let [first, second, ..] = given[..] {
             return Err(command.error(
                 ErrorKind::ArgumentConflict,
-                "--offline reads only the cache and cannot be used with --no-cache",
+                format!("{first} cannot be used with {second}"),
             ));
         }
         Ok(cli)
+    }
+
+    /// The cache mode that `--offline`, `--no-cache` or `--refresh` selects.
+    #[must_use]
+    pub const fn cache_mode(&self) -> CacheMode {
+        match (self.cache.offline, self.cache.no_cache, self.cache.refresh) {
+            (true, _, _) => CacheMode::Offline,
+            (_, true, _) => CacheMode::Bypass,
+            (_, _, true) => CacheMode::Refresh,
+            _ => CacheMode::Default,
+        }
     }
 
     fn color_in(args: &[OsString]) -> ColorChoice {
@@ -395,14 +442,20 @@ mod tests {
     }
 
     #[test]
-    fn offline_and_no_cache_parse_globally_and_conflict() -> Result<(), Error> {
-        let cli = parse(&["check", "--offline"])?;
-        assert!(cli.offline && !cli.no_cache);
-        let cli = parse(&["--no-cache", "update"])?;
-        assert!(cli.no_cache && !cli.offline);
+    fn cache_flags_parse_globally_and_exclude_each_other() -> Result<(), Error> {
+        for (args, mode) in [
+            (&["check"][..], CacheMode::Default),
+            (&["check", "--offline"][..], CacheMode::Offline),
+            (&["--no-cache", "update"][..], CacheMode::Bypass),
+            (&["pin", "--refresh"][..], CacheMode::Refresh),
+        ] {
+            assert_eq!(parse(args)?.cache_mode(), mode, "{args:?}");
+        }
         for args in [
             &["--offline", "check", "--no-cache"][..],
             &["--offline", "--no-cache", "check"][..],
+            &["--refresh", "update", "--offline"][..],
+            &["--refresh", "--no-cache", "pin"][..],
         ] {
             let Err(error) = parse(args) else {
                 panic!("{args:?} must be rejected");

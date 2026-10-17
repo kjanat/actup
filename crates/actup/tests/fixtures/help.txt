@@ -24,6 +24,7 @@ Options:
       --offline          Use only cached version data; a ref missing from the cache is an
                          environment error
       --no-cache         Neither read nor write the version cache
+      --refresh          Skip cached versions and write the freshly fetched ones
       --format <FORMAT>  Output format [env: ACTUP_FORMAT=] [default: human] [possible values:
                          human, json, toml]
   -h, --help             Print help

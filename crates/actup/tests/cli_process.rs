@@ -67,7 +67,7 @@ struct Repo {
 
 impl Repo {
     fn new(server: &MockServer, steps: &[&str]) -> Result<Self, Box<dyn std::error::Error>> {
-        Self::with_config(server, steps, "")
+        Self::with_config(server, steps, "\n[cache]\nenabled = false\n")
     }
 
     fn with_config(
@@ -87,7 +87,7 @@ impl Repo {
         fs::write(
             &config,
             format!(
-                "default_host = \"{HOST}\"\n\n[cache]\nenabled = false\n\n[hosts.\"{HOST}\"]\nkind = \"github\"\napi_base = \"{}\"\ntoken_env = \"ACTUP_E2E_NO_TOKEN\"\napi_mode = \"rest\"\n{extra}",
+                "default_host = \"{HOST}\"\n\n[hosts.\"{HOST}\"]\nkind = \"github\"\napi_base = \"{}\"\ntoken_env = \"ACTUP_E2E_NO_TOKEN\"\napi_mode = \"rest\"\n{extra}",
                 server.uri()
             ),
         )?;
@@ -284,7 +284,7 @@ async fn check_fail_on_picks_the_kinds_that_exit_1() -> TestResult {
     let repo = Repo::with_config(
         &server,
         &["o/old@v1.0.0", "o/major@v1.0.0", "o/new@main"],
-        "\n[policy]\nbranch = \"warn\"\n",
+        "\n[cache]\nenabled = false\n\n[policy]\nbranch = \"warn\"\n",
     )?;
     for (args, expected) in [
         (&["check", "."][..], 0),
@@ -442,5 +442,48 @@ async fn sarif_reports_unreadable_files_as_notifications() -> TestResult {
         .as_str()
         .ok_or("no notification")?;
     assert!(text.contains("bad.yml"), "{text}");
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn refresh_skips_cached_versions_and_writes_fresh_ones() -> TestResult {
+    let server = remote().await;
+    let cache = TempDir::new()?;
+    let repo = Repo::with_config(
+        &server,
+        &["o/old@v1.0.0"],
+        &format!(
+            "\n[cache]\npath = {:?}\n",
+            cache.path().display().to_string()
+        ),
+    )?;
+    let tag_requests = || async {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path() == "/repos/o/old/tags")
+            .count()
+    };
+
+    for (args, expected) in [
+        (&["check", "."][..], 1),
+        (&["check", "."][..], 1),
+        (&["--refresh", "check", "."][..], 2),
+        (&["check", "."][..], 2),
+    ] {
+        let output = repo.run(args).await?;
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        assert_eq!(tag_requests().await, expected, "{args:?}");
+    }
+
+    let shown = repo
+        .run(&["--refresh", "config", "--format", "json"])
+        .await?;
+    let config: serde_json::Value = serde_json::from_slice(&shown.stdout)?;
+    assert_eq!(config.pointer("/cache/ttl"), Some(&serde_json::json!(0)));
+    let conflict = repo.run(&["--refresh", "--offline", "check", "."]).await?;
+    assert_eq!(conflict.status.code(), Some(2));
     Ok(())
 }
