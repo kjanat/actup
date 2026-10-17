@@ -381,7 +381,8 @@ file, the explicit file and the `ACTUP_*` variables that set config keys.
 
 - `ACTUP_CONFIG` - Config file path, same as `--config`
 - `ACTUP_VERBOSE` - Enable verbose output
-- `ACTUP_FORMAT` - Default output format (`human`, `json`, `toml`)
+- `ACTUP_FORMAT` - Default `--format` of the subcommands (`human`, `json`,
+  `toml`, and `table` or `sarif` for `check`); the quick lookup ignores it
 - `ACTUP_STRICT` - Enable strict mode for `check`
 - `ACTUP_COLOR` - Colour mode, same as `--color` (`auto`, `always`, `never`)
 
@@ -467,12 +468,12 @@ and the server answers the next call afresh.
 
 ## Exit Codes
 
-| Code | Meaning                                                                        |
-| ---- | ------------------------------------------------------------------------------ |
-| 0    | Success / all up-to-date                                                       |
-| 1    | A `check --fail-on` kind found, or `update`/`pin` skipped a ref it cannot edit |
-| 2    | User error: unresolvable refs, invalid config, invalid CLI input               |
-| 3    | Network/auth/rate-limit error, no provider for a ref's host, or stale data     |
+| Code | Meaning                                                                                                         |
+| ---- | --------------------------------------------------------------------------------------------------------------- |
+| 0    | Success / all up-to-date                                                                                        |
+| 1    | A `check --fail-on` kind found, `update --dry-run` with changes, or `update`/`pin` skipped a ref it cannot edit |
+| 2    | User error: unresolvable refs, invalid config, invalid CLI input                                                |
+| 3    | Network/auth/rate-limit error, no provider for a ref's host, or stale data                                      |
 
 ## Files Scanned
 

@@ -90,7 +90,7 @@ pub struct LatestArgs {
     pub action: Option<String>,
 
     /// Output format
-    #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
+    #[arg(long, default_value = "human")]
     pub format: OutputFormat,
 }
 

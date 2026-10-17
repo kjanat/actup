@@ -487,3 +487,21 @@ async fn refresh_skips_cached_versions_and_writes_fresh_ones() -> TestResult {
     assert_eq!(conflict.status.code(), Some(2));
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn actup_format_selects_check_only_formats() -> TestResult {
+    let server = remote().await;
+    let repo = Repo::new(&server, &["o/old@v1.0.0"])?;
+    for (format, check) in [("sarif", "\"version\": \"2.1.0\""), ("table", "LOCATION")] {
+        let mut cmd = actup(repo.path());
+        cmd.env("ACTUP_FORMAT", format)
+            .arg("--config")
+            .arg(&repo.config)
+            .arg("check")
+            .arg(repo.path());
+        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+        assert_eq!(output.status.code(), Some(0), "{format}: {output:?}");
+        assert!(stdout(&output)?.contains(check), "{format}: {output:?}");
+    }
+    Ok(())
+}
