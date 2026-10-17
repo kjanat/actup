@@ -614,6 +614,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_comments_lines_with_a_hash_before_the_value()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let line = |r: &str, comment: &str| {
+            format!("steps:\n  - {{ name: \"Build #1\", uses: o/a@{r} }}{comment}\n")
+        };
+        for (toml, before, after) in [
+            (
+                "[policy]\npin = \"preserve\"\n",
+                line(&old, ""),
+                line(&new, " # v4.2.0"),
+            ),
+            (
+                "[policy]\npin = \"sha\"\n",
+                line("v4.0.0", ""),
+                line(&new, " # v4.2.0"),
+            ),
+            (
+                "[policy]\npin = \"tag\"\n",
+                line(&old, " # v4.0.0"),
+                line("v4.2.0", ""),
+            ),
+        ] {
+            assert_eq!(update_with_config(toml, &before).await?, after, "{toml}");
+        }
+        let written =
+            update_with_config_runs("[policy]\nbranch = \"update\"\n", &line("main", ""), 1)
+                .await?;
+        assert_eq!(written, line(&old, " # main"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_pin_tag_unpins_outdated_shas() -> Result<(), Box<dyn std::error::Error>> {
         let written =
             update_with_config("[policy]\npin = \"tag\"\n", &pin_style_workflow()).await?;

@@ -739,6 +739,8 @@ mod tests {
             "  - { uses: o/b@main, with: { b: !!str 'x # v9' } }",
             "  - uses: 'o/b@main' # keep me",
             "  - uses: o/b@v1 # v0.9.0",
+            "  - { name: \"Build #1\", uses: o/b@main }",
+            "  - { name: \"Build #1\", uses: o/b@v1 }",
             "",
         ]
         .join("\n");
@@ -752,6 +754,8 @@ mod tests {
             "  - { uses: o/b@CCC, with: { b: !!str 'x # v9' } }",
             "  - uses: 'o/b@CCC' # keep me",
             "  - uses: o/b@CCC # v1",
+            "  - { name: \"Build #1\", uses: o/b@CCC } # main",
+            "  - { name: \"Build #1\", uses: o/b@CCC } # v1",
             "",
         ]
         .join("\n")

@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Rewrite, Trailing, closer, labeled_comment, note_comment},
+    rewrite::{Rewrite, Trailing, after_value, closer, labeled_comment, note_comment},
     version,
 };
 
@@ -363,7 +363,7 @@ impl<L> FileEdits<L> {
     /// the text stays unchanged; edits that share a line without overlapping
     /// all apply. A
     /// comment is appended only when its line holds a single `uses:` value, no
-    /// `#`, no other applied edit with a comment, and is in
+    /// comment after the edit, no other applied edit with a comment, and is in
     /// [`SourceFormat::commentable_lines`]. The comment replaces the
     /// trailing whitespace of its line.
     #[must_use]
@@ -417,10 +417,11 @@ impl<L> FileEdits<L> {
             };
             let sole_uses = self.uses_per_line.get(&edit.line).copied().unwrap_or(0) <= 1;
             let sole_comment = commented_per_line.get(&edit.line) == Some(&1);
-            let uncommented = !self.content[span.clone()].contains('#');
+            let line = &self.content[span.clone()];
+            let uncommented = after_value(line, edit_end - span.start).is_empty();
             let commentable = self.commentable_lines.contains(&edit.line);
             if sole_uses && sole_comment && uncommented && commentable {
-                let text_end = span.start + self.content[span.clone()].trim_end().len();
+                let text_end = span.start + line.trim_end().len();
                 splices.push((text_end.max(edit_end)..span.end, true, comment));
                 outcomes[i] = EditOutcome::Applied {
                     comment: Some(comment.clone()),
@@ -739,6 +740,45 @@ mod tests {
                 "{line:?}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_hash_before_the_value_allows_a_comment() -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let at = |r: &str, comment: &str| {
+            format!("      - {{ name: \"Build #1\", uses: a/b@{r} }}{comment}\n")
+        };
+        let (old, new) = (old.as_str(), new.as_str());
+        for (current, comment, is_sha, style, written, written_comment) in [
+            (old, "", true, Style::Preserve, new, " # v7.0.1"),
+            (old, " # v7.0.0", true, Style::Preserve, new, " # v7.0.1"),
+            ("v7.0.0", "", false, Style::Sha, new, " # v7.0.1"),
+            (old, " # v7.0.0", true, Style::Tag, "v7.0.1", ""),
+            ("v7.0.0", "", false, Style::Preserve, "v7.0.1", ""),
+        ] {
+            let line = at(current, comment);
+            let loc = quoted_loc(&line)?;
+            assert_eq!(
+                applied(&line, retarget_edit(&loc, is_sha, &target, style))?,
+                at(written, written_comment),
+                "{line} {style}"
+            );
+        }
+        let line = at("main", "");
+        let loc = quoted_loc(&line)?;
+        assert_eq!(
+            applied(&line, pin_edit(&loc, new, "main"))?,
+            at(new, " # main")
+        );
+        let line = at("main", " # mine");
+        let loc = quoted_loc(&line)?;
+        assert_eq!(
+            applied(&line, pin_edit(&loc, new, "main"))?,
+            at(new, " # mine")
+        );
         Ok(())
     }
 
