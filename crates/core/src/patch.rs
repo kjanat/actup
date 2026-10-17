@@ -810,6 +810,11 @@ mod tests {
                 "      - uses: actions/checkout@v4.2.0 # mine",
                 None,
             ),
+            (
+                "      - uses: actions/checkout@v4.0.0 # 1st step",
+                "      - uses: actions/checkout@v4.2.0 # 1st step",
+                None,
+            ),
         ] {
             for style in [Style::Preserve, Style::Tag] {
                 let edit =
@@ -821,6 +826,36 @@ mod tests {
                     "{style}"
                 );
             }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_sha_target_keeps_a_comment_that_names_no_version()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let target = version::Info::new(version::Version::parse("v4.2.0"), sha40('b'));
+        let old = sha40('a');
+        let new = sha40('b');
+        for (line, current_is_sha, style) in [
+            (
+                "      - uses: actions/checkout@v4.0.0 # 1st step".to_string(),
+                false,
+                Style::Sha,
+            ),
+            (
+                format!("      - uses: actions/checkout@{old} # 1st step"),
+                true,
+                Style::Preserve,
+            ),
+        ] {
+            let edit =
+                retarget_edit(&sha_loc(&line)?, current_is_sha, &target, style).ok_or("no edit")?;
+            assert_eq!(edit.inline_comment, None, "{line}");
+            assert_eq!(
+                apply_line(&line, edit).ok_or("edit did not apply")?,
+                format!("      - uses: actions/checkout@{new} # 1st step"),
+                "{line}"
+            );
         }
         Ok(())
     }

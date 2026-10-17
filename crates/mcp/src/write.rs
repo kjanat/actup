@@ -697,15 +697,31 @@ mod tests {
 
     #[test]
     fn retarget_refreshes_the_version_comment_of_a_tag() -> Result<(), Box<dyn std::error::Error>> {
-        for (content, written) in [
+        let sha = "b".repeat(40);
+        for (style, content, written) in [
             (
+                Style::Preserve,
                 "- uses: a/b@v4.0.0 # v4.0.0 keep\n",
-                "- uses: a/b@v4.2.0 # v4.2.0 keep\n",
+                "- uses: a/b@v4.2.0 # v4.2.0 keep\n".to_string(),
             ),
-            ("- uses: a/b@v4.0.0 # mine\n", "- uses: a/b@v4.2.0 # mine\n"),
+            (
+                Style::Preserve,
+                "- uses: a/b@v4.0.0 # mine\n",
+                "- uses: a/b@v4.2.0 # mine\n".to_string(),
+            ),
+            (
+                Style::Preserve,
+                "- uses: a/b@v4.0.0 # 1st step\n",
+                "- uses: a/b@v4.2.0 # 1st step\n".to_string(),
+            ),
+            (
+                Style::Sha,
+                "- uses: a/b@v4.0.0 # 1st step\n",
+                format!("- uses: a/b@{sha} # 1st step\n"),
+            ),
         ] {
             let (l, action) = loc(content)?;
-            let (edit, to) = retarget(&l, &action, &target(), Style::Preserve).ok_or("no edit")?;
+            let (edit, to) = retarget(&l, &action, &target(), style).ok_or("no edit")?;
             let site = Site {
                 path: "f".into(),
                 line: 1,
@@ -715,7 +731,7 @@ mod tests {
             };
             let mut edits = FileEdits::new("f".into(), content.to_string(), SourceFormat::Yaml);
             edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), &to));
-            assert_eq!(plan(content, edits)?.content, written);
+            assert_eq!(plan(content, edits)?.content, written, "{style}");
         }
         Ok(())
     }

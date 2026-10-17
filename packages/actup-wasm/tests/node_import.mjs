@@ -401,6 +401,15 @@ for (const pin of ["preserve", "tag"]) {
 	);
 }
 
+const steppedYaml =
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.0.0 # 1st step\n      - uses: actions/checkout@${oldSha} # 1st step\n`;
+const steppedResults = await checkRefs(steppedYaml, mockProvider);
+assert.equal(
+	applyEdits(steppedYaml, planUpdates(steppedResults, { policy: { pin: "sha" } })),
+	steppedYaml.replace("v4.0.0 # 1st step", `${newSha} # 1st step`).replace(`${oldSha} # 1st step`, `${newSha} # 1st step`),
+	"a SHA target keeps a comment that names no version",
+);
+
 console.log("PASS: policy.pin picks tag or SHA output");
 
 // Test 16: a closing quote or flow bracket stays between the ref and the comment.

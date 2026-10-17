@@ -1592,6 +1592,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn every_pin_style_keeps_a_comment_that_names_no_version()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workflow = "steps:\n  - uses: o/p@OLD # 1st step\n  - uses: o/q@v4.0.0 # 1st step\n";
+        let sha = "b".repeat(40);
+        for (pin, expected) in [
+            ("preserve", [format!("o/p@{sha}"), "o/q@v4.2.0".to_string()]),
+            ("sha", [format!("o/p@{sha}"), format!("o/q@{sha}")]),
+            ("tag", ["o/p@v4.2.0".to_string(), "o/q@v4.2.0".to_string()]),
+        ] {
+            let toml = format!("[policy]\npin = \"{pin}\"\n");
+            assert_eq!(
+                fix_text_under_config(workflow, &toml).await?,
+                format!(
+                    "steps:\n  - uses: {} # 1st step\n  - uses: {} # 1st step\n",
+                    expected[0], expected[1]
+                ),
+                "{pin}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn pin_preserve_keeps_each_ref_style() -> Result<(), Box<dyn std::error::Error>> {
         assert_eq!(
             fix_under_config("[policy]\npin = \"preserve\"\n").await?,

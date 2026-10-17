@@ -564,16 +564,24 @@ mod tests {
     #[tokio::test]
     async fn test_run_refreshes_the_version_comment_of_a_retargeted_tag()
     -> Result<(), Box<dyn std::error::Error>> {
-        let content = "steps:\n  - uses: o/p@v4.0.0 # v4.0.0 keep\n  - uses: o/q@v4.0.0 # mine\n";
+        let content = "steps:\n  - uses: o/p@v4.0.0 # v4.0.0 keep\n  - uses: o/q@v4.0.0 # mine\n  - uses: o/r@v4.0.0 # 1st step\n";
         for pin in ["preserve", "tag"] {
             let written =
                 update_with_config(&format!("[policy]\npin = \"{pin}\"\n"), content).await?;
             assert_eq!(
                 written,
-                "steps:\n  - uses: o/p@v4.2.0 # v4.2.0 keep\n  - uses: o/q@v4.2.0 # mine\n",
+                "steps:\n  - uses: o/p@v4.2.0 # v4.2.0 keep\n  - uses: o/q@v4.2.0 # mine\n  - uses: o/r@v4.2.0 # 1st step\n",
                 "{pin}"
             );
         }
+        let written = update_with_config("[policy]\npin = \"sha\"\n", content).await?;
+        assert_eq!(
+            written,
+            format!(
+                "steps:\n  - uses: o/p@{sha} # v4.2.0 keep\n  - uses: o/q@{sha} # mine\n  - uses: o/r@{sha} # 1st step\n",
+                sha = "b".repeat(40)
+            )
+        );
         Ok(())
     }
 
