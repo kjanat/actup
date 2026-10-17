@@ -1317,6 +1317,59 @@ mod tests {
     }
 
     #[test]
+    fn config_note_lists_no_repo_key_a_case_different_config_path_sets() -> Result<(), String> {
+        let contents = "default_host = \"ghe.corp.example\"\n\n\
+            [scan]\nextra_paths = [\"docs/*.yml\"]\n\n\
+            [hosts.\"ghe.corp.example\"]\nkind = \"github\"\ntoken_env = \"GHE_TOKEN\"\n";
+        let config_path = worktree_relative(PathStyle::Posix, "/repo", "ACTUP.toml")?;
+        let both = HashMap::from([("actup.toml", contents), ("ACTUP.toml", contents)]);
+        let requested = RefCell::new(Vec::new());
+        let layered = read_config(read_from(&both, &requested), &[], Some(&config_path))?;
+        assert_eq!(
+            layered.sources,
+            [
+                ConfigSource::Repo {
+                    path: PathBuf::from("actup.toml"),
+                    ignored: Vec::new(),
+                },
+                ConfigSource::Explicit {
+                    path: PathBuf::from("ACTUP.toml"),
+                },
+            ]
+        );
+        assert_eq!(
+            config_note(&layered),
+            format!("Config: `actup.toml`, `ACTUP.toml` (`configPath`). {SCOPE}\n\n")
+        );
+        let explicit_only = HashMap::from([("ACTUP.toml", contents)]);
+        let requested = RefCell::new(Vec::new());
+        let single = read_config(
+            read_from(&explicit_only, &requested),
+            &[],
+            Some(&config_path),
+        )?;
+        let value = |config: &Config| zed::serde_json::to_value(config).map_err(|e| e.to_string());
+        assert_eq!(value(&layered)?, value(&single)?);
+
+        let without_extra_paths = "default_host = \"ghe.corp.example\"\n\n\
+            [hosts.\"ghe.corp.example\"]\nkind = \"github\"\ntoken_env = \"GHE_TOKEN\"\n";
+        let differing = HashMap::from([
+            ("actup.toml", contents),
+            ("ACTUP.toml", without_extra_paths),
+        ]);
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&differing, &requested), &[], Some(&config_path))?;
+        assert_eq!(config.scan.extra_paths, []);
+        assert_eq!(
+            config_note(&config),
+            format!(
+                "Config: `actup.toml` (ignored `scan.extra_paths`), `ACTUP.toml` (`configPath`). {SCOPE}\n\n"
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn path_style_compares_windows_names_with_unicode_case() {
         assert!(PathStyle::Windows.same_name("ÄRGER", "ärger"));
         assert!(!PathStyle::Posix.same_name("ÄRGER", "ärger"));
