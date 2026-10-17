@@ -571,8 +571,8 @@ mod tests {
         let err = Error::InvalidConfig {
             path: "actup.toml".into(),
             reason: String::new(),
-            source: Some(refused()),
             hint: Some("did you mean `policy.bump`?".into()),
+            source: Some(refused()),
         };
         assert_eq!(err.to_string(), "invalid config at 'actup.toml'");
         assert_eq!(

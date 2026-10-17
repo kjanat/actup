@@ -180,8 +180,8 @@ impl Resolved {
             reason: format!(
                 "kind required for \"{hostname}\" (not a preset host; specify kind in [hosts.\"{hostname}\"])"
             ),
-            source: None,
             hint: None,
+            source: None,
         })
     }
 
@@ -249,8 +249,8 @@ fn build_and_validate(
     let resolved_api_base = api_base.ok_or_else(|| Error::InvalidConfig {
         path: ctx.clone(),
         reason: format!("api_base required for \"{hostname}\" (provider cannot infer; specify api_base in [hosts.\"{hostname}\"])"),
-        source: None,
         hint: None,
+        source: None,
     })?;
 
     if token_env.is_none() && !repo_only {

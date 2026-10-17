@@ -758,8 +758,8 @@ fn read_config_file(path: &Path) -> Result<FileContents, Error> {
     let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
         path: path.display().to_string(),
         reason: String::new(),
-        source: Some(Arc::new(e)),
         hint: None,
+        source: Some(Arc::new(e)),
     })?;
     FileContents::new(path, &contents)
 }
@@ -926,8 +926,8 @@ impl FileContents {
                     .map_err(|e| Error::InvalidConfig {
                         path: path.display().to_string(),
                         reason: "failed to strip comments".into(),
-                        source: Some(Arc::new(e)),
                         hint: None,
+                        source: Some(Arc::new(e)),
                     })?;
                 stripped
             }
