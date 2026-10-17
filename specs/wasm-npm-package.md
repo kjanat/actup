@@ -142,9 +142,19 @@ Call sites that take a `Clock`:
   comparison
 - `provider-github/src/client.rs:706` — REST rate limit reset time comparison
 
-These native paths still read the system clock directly: `Entry::renewed`
-(`cache.rs:95`), and `Entry::is_expired` and `Entry::age` (`cache.rs:56`,
-`:63`).
+These native paths read the system clock directly:
+
+- `version.rs:610` — `Set::from_tags` stamps `fetched_at`. `process_tags`
+  (`providers/src/tags.rs:52`) calls it for GitHub REST and GraphQL, git
+  `ls-refs`, GitLab and Gitea. The Zed extension calls it at
+  `extensions/zed/src/provider.rs:176`.
+- `version.rs:577` — `Set::build` stamps `fetched_at`.
+- `cache.rs:39` — `Entry::new` stamps `stored_at`. `FileCache`
+  (`file_cache.rs:117`) and the GitHub batch fetcher
+  (`provider-github/src/batch.rs:237`, `:466`) call it.
+- `cache.rs:95` — `Entry::renewed` stamps `stored_at`.
+- `cache.rs:56`, `:63` — `Entry::is_expired` and `Entry::age` call
+  `SystemTime::elapsed`.
 
 ### JS ↔ Rust bridge types
 
