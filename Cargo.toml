@@ -58,6 +58,7 @@ serde-wasm-bindgen         = "0.6"  # wasm serde bridge
 serde_yaml_ng              = "0.10"  # yaml
 strsim                     = "0.11"  # did-you-mean hints
 tempfile                   = "3"  # testing
+thiserror                  = "2"  # error derive
 toml                       = "1"  # config
 tower                      = "0.5"  # service
 tower-lsp-server           = "0.23"  # lsp

@@ -4,8 +4,6 @@
 //! - **User errors**: Invalid input, typos, misconfiguration (user can fix)
 //! - **Environment errors**: Network, rate limits, auth (external factors)
 
-use std::fmt;
-
 /// Result type alias using [`Error`]
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -32,9 +30,10 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`Network`]: Error::Network
 /// [`Internal`]: Error::Internal
 /// [`YamlParse`]: Error::YamlParse
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     /// Invalid `uses:` reference syntax
+    #[error("invalid action reference '{input}': {reason}")]
     InvalidRef {
         /// The malformed reference string
         input: String,
@@ -54,6 +53,7 @@ pub enum Error {
     ///     host: Some(self.host.clone()),
     /// })
     /// ```
+    #[error("action not found: {}", qualified(.host.as_deref(), .owner, .repo))]
     NotFound {
         /// The owner/org that wasn't found
         owner: String,
@@ -76,6 +76,7 @@ pub enum Error {
     ///     host: Some(self.host.clone()),
     /// })
     /// ```
+    #[error("ref '{ref_name}' not found in {}", qualified(.host.as_deref(), .owner, .repo))]
     RefNotFound {
         /// The owner/org
         owner: String,
@@ -88,6 +89,7 @@ pub enum Error {
     },
 
     /// Configuration file is invalid
+    #[error("invalid config at '{path}': {reason}")]
     InvalidConfig {
         /// Path to the config file
         path: String,
@@ -96,6 +98,7 @@ pub enum Error {
     },
 
     /// YAML parsing failed
+    #[error("failed to parse YAML '{path}': {reason}")]
     YamlParse {
         /// File path
         path: String,
@@ -104,6 +107,7 @@ pub enum Error {
     },
 
     /// Network request failed
+    #[error("network error during {operation}: {message}")]
     Network {
         /// What we were trying to do
         operation: String,
@@ -127,6 +131,7 @@ pub enum Error {
     ///         .map(std::time::Duration::from_secs),
     /// })
     /// ```
+    #[error("rate limited by {provider}{}", retry_hint(.retry_after.as_ref()))]
     RateLimited {
         /// Provider that rate limited us
         provider: String,
@@ -138,6 +143,7 @@ pub enum Error {
     ///
     /// Distinct from `RateLimited` - this indicates insufficient scopes/access
     /// rather than temporary throttling.
+    #[error("permission denied by {provider}: {reason}")]
     Forbidden {
         /// Provider that denied access
         provider: String,
@@ -162,6 +168,7 @@ pub enum Error {
     ///     reason: "unauthorized - check your token".to_string(),
     /// })
     /// ```
+    #[error("authentication failed for {provider}: {reason}")]
     Auth {
         /// Provider requiring auth
         provider: String,
@@ -170,6 +177,7 @@ pub enum Error {
     },
 
     /// Cache operation failed
+    #[error("cache {operation} failed: {reason}")]
     Cache {
         /// What operation failed
         operation: String,
@@ -178,12 +186,14 @@ pub enum Error {
     },
 
     /// Provider not found for host
+    #[error("no provider configured for host: {host}")]
     ProviderNotFound {
         /// The host we couldn't find a provider for
         host: String,
     },
 
     /// Generic internal error (should be rare)
+    #[error("internal error in {context}: {message}")]
     Internal {
         /// Error context
         context: String,
@@ -231,70 +241,16 @@ impl Error {
     }
 }
 
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidRef { input, reason } => {
-                write!(f, "invalid action reference '{input}': {reason}")
-            }
-            Self::NotFound { owner, repo, host } => {
-                if let Some(h) = host {
-                    write!(f, "action not found: {h}/{owner}/{repo}")
-                } else {
-                    write!(f, "action not found: {owner}/{repo}")
-                }
-            }
-            Self::RefNotFound {
-                owner,
-                repo,
-                ref_name,
-                host,
-            } => {
-                if let Some(h) = host {
-                    write!(f, "ref '{ref_name}' not found in {h}/{owner}/{repo}")
-                } else {
-                    write!(f, "ref '{ref_name}' not found in {owner}/{repo}")
-                }
-            }
-            Self::InvalidConfig { path, reason } => {
-                write!(f, "invalid config at '{path}': {reason}")
-            }
-            Self::YamlParse { path, reason } => {
-                write!(f, "failed to parse YAML '{path}': {reason}")
-            }
-            Self::Network { operation, message } => {
-                write!(f, "network error during {operation}: {message}")
-            }
-            Self::RateLimited {
-                provider,
-                retry_after,
-            } => {
-                if let Some(dur) = retry_after {
-                    write!(f, "rate limited by {provider}, retry after {dur:?}")
-                } else {
-                    write!(f, "rate limited by {provider}")
-                }
-            }
-            Self::Forbidden { provider, reason } => {
-                write!(f, "permission denied by {provider}: {reason}")
-            }
-            Self::Auth { provider, reason } => {
-                write!(f, "authentication failed for {provider}: {reason}")
-            }
-            Self::Cache { operation, reason } => {
-                write!(f, "cache {operation} failed: {reason}")
-            }
-            Self::ProviderNotFound { host } => {
-                write!(f, "no provider configured for host: {host}")
-            }
-            Self::Internal { context, message } => {
-                write!(f, "internal error in {context}: {message}")
-            }
-        }
-    }
+fn qualified(host: Option<&str>, owner: &str, repo: &str) -> String {
+    host.map_or_else(
+        || format!("{owner}/{repo}"),
+        |h| format!("{h}/{owner}/{repo}"),
+    )
 }
 
-impl std::error::Error for Error {}
+fn retry_hint(retry_after: Option<&std::time::Duration>) -> String {
+    retry_after.map_or_else(String::new, |d| format!(", retry after {d:?}"))
+}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
@@ -450,6 +406,27 @@ mod tests {
         };
         assert!(err.to_string().contains("rate limited by github"));
         assert!(err.to_string().contains("60"));
+
+        let missing_ref = |host: Option<&str>| Error::RefNotFound {
+            owner: "foo".into(),
+            repo: "bar".into(),
+            ref_name: "v9".into(),
+            host: host.map(Into::into),
+        };
+        assert_eq!(
+            missing_ref(None).to_string(),
+            "ref 'v9' not found in foo/bar"
+        );
+        assert_eq!(
+            missing_ref(Some("ghe.corp.com")).to_string(),
+            "ref 'v9' not found in ghe.corp.com/foo/bar"
+        );
+
+        let err = Error::RateLimited {
+            provider: "gitea".into(),
+            retry_after: None,
+        };
+        assert_eq!(err.to_string(), "rate limited by gitea");
 
         let err = Error::ProviderNotFound {
             host: "unknown.com".into(),
