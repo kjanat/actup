@@ -173,12 +173,14 @@ report has empty lists and `check` prints no findings.
 
 An unresolvable ref that names no tag can get a suggested tag. A partial version
 names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). A
-full version such as `v4.2.9` that does not exist gets no suggestion. Any other
-ref names the tag within two edits of it, and the higher version wins a tie
-(`v42.0` and `v4.2.O` name `v4.2.0`). Prerelease tags count only under
-`policy.prerelease = true`. `check` prints the suggestion on a `hint:` line and
-adds `suggestion` to the JSON and TOML entry. The LSP offers a `Change to` quick
-fix that writes the tag in the `policy.pin` style.
+full version names a listed tag of the same version (`4.2.0` names `v4.2.0`),
+and gets no suggestion when none exists. Any other ref names the tag within two
+edits of it, and the higher version wins a tie (`v4.2.O` names `v4.2.0`). A
+partial version that no tag completes takes only full `X.Y.Z` tags within two
+edits (`v42.0` names `v4.2.0`, `v7` names nothing). Prerelease tags count only
+under `policy.prerelease = true`. `check` prints the suggestion on a `hint:`
+line and adds `suggestion` to the JSON and TOML entry. The LSP offers a
+`Change to` quick fix that writes the tag in the `policy.pin` style.
 
 `check`, `update` and `pin` read every file first. They then fetch the versions
 of each repo that an unignored ref names, once per repo and in one batch through

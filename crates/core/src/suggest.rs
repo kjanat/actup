@@ -34,7 +34,7 @@ fn shape(ref_name: &str) -> Shape {
     }
 }
 
-/// Return the highest tag that completes the partial version `ref_name`, or else the listed tag within two edits of it, counting prerelease tags only when `allow_prerelease` is set.
+/// Return the listed tag closest to `ref_name`, counting prerelease tags only when `allow_prerelease` is set.
 #[must_use]
 pub fn closest_tag(ref_name: &str, versions: &Set, allow_prerelease: bool) -> Option<Arc<Info>> {
     let tags = || {
@@ -43,8 +43,17 @@ pub fn closest_tag(ref_name: &str, versions: &Set, allow_prerelease: bool) -> Op
             .iter()
             .filter(move |tag| allow_prerelease || !tag.version().is_prerelease())
     };
-    match shape(ref_name) {
-        Shape::Full => return None,
+    let full_only = match shape(ref_name) {
+        Shape::Full => {
+            let wanted = Version::parse(ref_name);
+            return versions
+                .semver_tags()
+                .iter()
+                .filter(|tag| tag.version().cmp(&wanted).is_eq())
+                .filter(|tag| tag.version().as_str() != ref_name)
+                .max_by(|a, b| rank(a.version(), b.version()))
+                .map(Arc::clone);
+        }
         Shape::Partial => {
             let wanted = Version::parse(ref_name);
             let completes = tags()
@@ -57,10 +66,12 @@ pub fn closest_tag(ref_name: &str, versions: &Set, allow_prerelease: bool) -> Op
             if let Some(tag) = completes {
                 return Some(Arc::clone(tag));
             }
+            true
         }
-        Shape::Other => {}
-    }
+        Shape::Other => false,
+    };
     tags()
+        .filter(|tag| !full_only || tag.version().patch().is_some())
         .map(|tag| (strsim::levenshtein(ref_name, tag.version().as_str()), tag))
         .filter(|(edits, _)| (1..=MAX_EDITS).contains(edits))
         .min_by(|(a, x), (b, y)| a.cmp(b).then_with(|| rank(y.version(), x.version())))
@@ -128,8 +139,28 @@ mod tests {
     fn missing_full_versions_get_no_suggestion() {
         let tags = ["v4.2.0", "v4.2.1"];
         assert_eq!(suggest("v4.2.2", &tags), None);
-        assert_eq!(suggest("4.2.0", &tags), None);
         assert_eq!(suggest("v4.2.1-rc.1", &tags), None);
+    }
+
+    #[test]
+    fn full_versions_name_the_listed_tag_of_equal_version() {
+        assert_eq!(suggest("4.2.0", &["v4.2.0"]).as_deref(), Some("v4.2.0"));
+        assert_eq!(
+            suggest("4.2.0", &["v4.2.0+build.1", "v4.2.0"]).as_deref(),
+            Some("v4.2.0")
+        );
+        assert_eq!(suggest("v4.2.0", &["4.2.0"]).as_deref(), Some("4.2.0"));
+    }
+
+    #[test]
+    fn partial_versions_fall_back_only_to_full_tags() {
+        let tags = ["v1", "v6", "v6.0.0", "v4.2", "v4.2.0"];
+        assert_eq!(suggest("v7", &tags), None);
+        assert_eq!(suggest("v4.3", &tags), None);
+        assert_eq!(
+            suggest("v42.0", &["v4.2", "v4.2.0"]).as_deref(),
+            Some("v4.2.0")
+        );
     }
 
     #[test]
