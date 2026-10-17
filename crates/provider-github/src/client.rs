@@ -307,11 +307,20 @@ impl GitHubClient {
     /// # Errors
     ///
     /// Returns error on network failure, rate limit, auth failure, or commit not found.
+    /// An unknown commit in an existing repository is [`Error::RefNotFound`].
     pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitHubCommit> {
         let url = format!("{}/repos/{owner}/{repo}/commits/{sha}", self.api_base);
         debug!(url = %url, "fetching commit");
 
         let response = self.get(&url).await?;
+        if response.status() == StatusCode::UNPROCESSABLE_ENTITY {
+            return Err(Error::RefNotFound {
+                owner: owner.to_string(),
+                repo: repo.to_string(),
+                ref_name: sha.to_string(),
+                host: Some(self.host.clone()),
+            });
+        }
         self.handle_response(response, owner, repo).await
     }
 

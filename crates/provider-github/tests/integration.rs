@@ -248,3 +248,29 @@ async fn resolve_missing_name_skips_commit_lookup() -> Result<(), Box<dyn std::e
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn resolve_unknown_short_sha_is_ref_not_found() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_not_found(&server, "/repos/o/r/git/ref/tags/abc1234").await;
+    mount_not_found(&server, "/repos/o/r/branches/abc1234").await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/commits/abc1234"))
+        .respond_with(
+            ResponseTemplate::new(422).set_body_string(
+                r#"{"message": "No commit found for SHA: abc1234", "status": "422"}"#,
+            ),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let result = provider(&server)?
+        .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), "abc1234")
+        .await;
+    let Err(actup_core::Error::RefNotFound { ref_name, .. }) = result else {
+        panic!("expected RefNotFound, got {result:?}");
+    };
+    assert_eq!(ref_name, "abc1234");
+    Ok(())
+}
