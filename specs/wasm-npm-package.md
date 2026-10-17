@@ -352,13 +352,13 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 
 ## Test Strategy
 
-| Layer       | What                          | How                                           |
-| ----------- | ----------------------------- | --------------------------------------------- |
-| Unit (Rust) | `Clock` trait, bridge adapter | Standard `#[cfg(test)]`, mock clock           |
-| Unit (TS)   | npm wrapper types, loader     | Vitest / bun:test                             |
-| Integration | Full parse → check → plan     | WASM in Node.js with mock provider            |
-| Size        | Bundle size regression        | CI check: `wasm-opt --print-size` + threshold |
-| E2E         | VS Code web extension         | Manual initially; `@vscode/test-web` later    |
+| Layer       | What                          | How                                                  |
+| ----------- | ----------------------------- | ---------------------------------------------------- |
+| Unit (Rust) | `Clock` trait, bridge adapter | Standard `#[cfg(test)]`, mock clock                  |
+| Unit (TS)   | npm wrapper types, loader     | `node --test` over `tests/*.mjs`                     |
+| Integration | Full parse → check → plan     | WASM in Node.js with mock provider                   |
+| Size        | Bundle size regression        | `scripts/build-wasm.ts` fails above 512000 B gzipped |
+| E2E         | VS Code web extension         | Manual initially; `@vscode/test-web` later           |
 
 ## Risks & Mitigations
 
@@ -367,7 +367,7 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 | `serde_yaml_ng` bloats WASM       | Medium     | M      | Profile with `twiggy`; consider `serde_yaml_ng` → lighter parser |
 | `SystemTime` in `Set::fetched_at` | Low        | S      | `#[serde(skip)]` — WASM consumer won't use cache timestamps      |
 | Async executor mismatch in WASM   | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4             |
-| Zed wasip2 needs different build  | Medium     | L      | Defer D9; may need separate crate or build profile               |
+| Zed wasip2 needs different build  | Medium     | L      | D9 shipped: `extensions/zed` builds for `wasm32-wasip2`          |
 
 ## Trade-offs Made
 
@@ -393,10 +393,11 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
       `wasm-pack` works in the workspace. Separate = duplicated lockfile.
 - [x] **WASM LSP transport** → Skip WASM LSP for D8 (web extension). The current
       desktop extension uses `LanguageClient` + `actup-lsp` subprocess, which is
-      correct for native. D8's web extension will call WASM functions directly
-      via `registerDiagnosticsProvider` / `registerCodeActionsProvider` — LSP
-      protocol is overhead when the engine runs in-process. This is what
-      Biome/Ruff/OXC do.
+      correct for native. D8's web extension calls WASM functions directly and
+      reports through a diagnostic collection, `registerCodeActionsProvider`,
+      `registerHoverProvider` and `registerCompletionItemProvider`. LSP protocol
+      is overhead when the engine runs in-process. This is what Biome/Ruff/OXC
+      do.
 - [x] **Source maps** → `wasm-opt -O2` without `-g` on `.wasm`. Ship `.js.map`
       for TS wrapper (tiny, useful). No DWARF-in-WASM (enormous, spotty devtools
       support).
