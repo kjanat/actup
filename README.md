@@ -80,6 +80,13 @@ stays unchanged. An `errors` entry adds `kind` (such as `not_found`,
 `message`. With no workflow files, the report has empty lists and `check` prints
 no findings.
 
+An unresolvable ref that names no tag can get a suggested tag. A partial version
+names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). Any
+other ref names the most similar tag when their Jaro-Winkler similarity is at
+least 0.9 (`v42.0` names `v4.2.0`). `check` prints the suggestion on a `hint:`
+line and adds `suggestion` to the JSON and TOML entry. The LSP offers a
+`Change to` quick fix.
+
 `update` and `pin` write each file to a temp file in its directory, flush it,
 give it the mode of the original and rename it over the original. A failed write
 leaves the original intact. A write through a symlink replaces the file it

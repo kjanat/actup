@@ -62,8 +62,6 @@ pub enum DiagnosticData {
         replace_end_col: Option<u32>,
     },
     /// The ref is unresolvable — includes a suggested ref if available.
-    // TODO: implement closest-tag suggestion for typos (e.g. "v4.0" → "v4.0.0")
-    // and attach this variant via `data:` in `status_to_diagnostic` once populated.
     #[serde(rename = "unresolvable")]
     Unresolvable {
         /// Optional suggested replacement (e.g. closest matching tag).
@@ -344,6 +342,14 @@ async fn compute_diagnostics_for_actions(
             result.ref_kind(),
         ) {
             let mut diag = same_commit_diagnostic(diag, &result, &action.uses_value);
+            if diag.data.is_none()
+                && let Some(tag) = result.suggestion()
+            {
+                diag.data = serde_json::to_value(DiagnosticData::Unresolvable {
+                    suggested_ref: Some(tag.version().to_string()),
+                })
+                .ok();
+            }
             if !action.editable {
                 diag.data = None;
             }
@@ -570,9 +576,6 @@ fn unresolvable_diagnostic(
     } else {
         format!("{uses_value}: {reason}")
     };
-    // TODO: attach `DiagnosticData::Unresolvable { suggested_ref }` via `data:`
-    // once closest-tag suggestion logic is implemented (like the Outdated
-    // branch does), so `code_actions.rs` can offer "Change to ..." quickfixes.
     Diagnostic {
         range,
         severity: Some(severity),
@@ -1253,6 +1256,42 @@ jobs:
             )]));
         }
         versions
+    }
+
+    #[tokio::test]
+    async fn unresolvable_typo_offers_the_closest_tag() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = version::Set::build(
+            vec![
+                test_utils::make_version_info("v4.1.0", DUMMY_SHA_2),
+                test_utils::make_version_info("v4.2.0", DUMMY_SHA),
+            ],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@v42.0\n";
+        let diags =
+            diagnostics_under(yaml, versions, actup_core::config::Policy::default()).await?;
+        let [diag] = diags.as_slice() else {
+            return Err(format!("expected one diagnostic, got {diags:?}").into());
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(
+            diag.code,
+            Some(NumberOrString::String("unresolvable".into()))
+        );
+        let data: DiagnosticData = serde_json::from_value(diag.data.clone().ok_or("no data")?)?;
+        let DiagnosticData::Unresolvable { suggested_ref } = data else {
+            return Err(format!("expected unresolvable data, got {data:?}").into());
+        };
+        assert_eq!(suggested_ref.as_deref(), Some("v4.2.0"));
+        let ref_start = yaml.find("v42.0").ok_or("ref")?;
+        assert_eq!(usize::try_from(diag.range.start.character)?, ref_start);
+        assert_eq!(
+            usize::try_from(diag.range.end.character)?,
+            ref_start + "v42.0".len()
+        );
+        Ok(())
     }
 
     #[tokio::test]

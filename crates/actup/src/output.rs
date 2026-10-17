@@ -36,6 +36,8 @@ struct JsonFinding {
     ref_kind: Option<RefKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     same_commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    suggestion: Option<String>,
 }
 
 impl From<&Finding> for JsonFinding {
@@ -136,6 +138,7 @@ impl From<&Finding> for JsonFinding {
             reason,
             ref_kind: f.ref_kind(),
             same_commit: f.same_commit().map(|t| t.version().to_string()),
+            suggestion: f.suggestion().map(|t| t.version().to_string()),
         }
     }
 }
@@ -153,6 +156,7 @@ pub struct Finding {
     host: String,
     ref_kind: Option<RefKind>,
     same_commit: Option<Arc<version::Info>>,
+    suggestion: Option<Arc<version::Info>>,
 }
 
 impl Finding {
@@ -175,6 +179,7 @@ impl Finding {
             host,
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         }
     }
 
@@ -187,6 +192,13 @@ impl Finding {
     ) -> Self {
         self.ref_kind = ref_kind;
         self.same_commit = same_commit;
+        self
+    }
+
+    /// Record the listed tag closest to an unresolvable ref.
+    #[must_use]
+    pub fn with_suggestion(mut self, suggestion: Option<Arc<version::Info>>) -> Self {
+        self.suggestion = suggestion;
         self
     }
 
@@ -236,6 +248,12 @@ impl Finding {
     #[must_use]
     pub const fn same_commit(&self) -> Option<&Arc<version::Info>> {
         self.same_commit.as_ref()
+    }
+
+    /// Get the listed tag closest to an unresolvable ref
+    #[must_use]
+    pub const fn suggestion(&self) -> Option<&Arc<version::Info>> {
+        self.suggestion.as_ref()
     }
 }
 
@@ -391,20 +409,27 @@ fn print_finding_line(finding: &Finding) {
         FindingStatus::Unresolvable {
             reason,
             is_environment_error,
-        } => {
-            let label = if *is_environment_error {
-                "error"
-            } else {
-                "unresolvable"
-            };
-            println!(
-                "{}{}  {}",
-                line_prefix.dimmed(),
-                action_str.red(),
-                format!("{label}: {reason}").red()
-            );
-        }
+        } => print_unresolvable(finding, &line_prefix, reason, *is_environment_error),
     }
+}
+
+fn print_unresolvable(finding: &Finding, line_prefix: &str, reason: &str, environment: bool) {
+    let label = if environment { "error" } else { "unresolvable" };
+    println!(
+        "{}{}  {}",
+        line_prefix.dimmed(),
+        finding.action_ref().to_string().red(),
+        format!("{label}: {reason}").red()
+    );
+    if let Some(hint) = suggestion_hint(finding) {
+        println!("{}{}", " ".repeat(line_prefix.len()), hint.dimmed());
+    }
+}
+
+fn suggestion_hint(finding: &Finding) -> Option<String> {
+    finding
+        .suggestion()
+        .map(|tag| format!("hint: change to {}", tag.version()))
 }
 
 fn kind_note(finding: &Finding) -> String {
@@ -673,6 +698,37 @@ mod tests {
             FindingStatus::UpToDate,
         )))?;
         assert!(unlisted.get("ref_kind").is_none(), "{unlisted}");
+        Ok(())
+    }
+
+    fn typo_finding() -> Finding {
+        make_finding(
+            "ci.yml",
+            6,
+            make_action_ref("actions", "checkout", "v42.0"),
+            FindingStatus::Unresolvable {
+                reason: "no versions found".to_string(),
+                is_environment_error: false,
+            },
+        )
+        .with_suggestion(Some(make_version_info("v4.2.0", "abc123")))
+    }
+
+    #[test]
+    fn unresolvable_findings_carry_the_suggested_tag() -> Result<(), Box<dyn std::error::Error>> {
+        let typo = typo_finding();
+        assert_eq!(
+            suggestion_hint(&typo).as_deref(),
+            Some("hint: change to v4.2.0")
+        );
+        let json = serde_json::to_value(JsonFinding::from(&typo))?;
+        assert_eq!(json["status"], "unresolvable");
+        assert_eq!(json["suggestion"], "v4.2.0");
+
+        let bump = serde_json::to_value(JsonFinding::from(&bump_finding()))?;
+        assert!(bump.get("suggestion").is_none(), "{bump}");
+        assert_eq!(suggestion_hint(&bump_finding()), None);
+        print_human(&[typo]);
         Ok(())
     }
 
@@ -1662,6 +1718,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1694,6 +1751,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1721,6 +1779,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1750,6 +1809,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1774,6 +1834,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1799,6 +1860,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1826,6 +1888,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1850,6 +1913,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1873,6 +1937,7 @@ mod tests {
             host: "github.com".to_string(),
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         };
 
         let json_finding = JsonFinding::from(&finding);

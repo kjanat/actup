@@ -106,6 +106,7 @@ async fn check_action_with_versions(
         result.as_ref().and_then(CheckResult::ref_kind),
         result.as_ref().and_then(|r| r.same_commit().cloned()),
     )
+    .with_suggestion(result.as_ref().and_then(|r| r.suggestion().cloned()))
 }
 
 /// Collected action for batch processing.
@@ -944,6 +945,41 @@ mod tests {
             matches!(named.status(), FindingStatus::UpToDate),
             "{:?}",
             named.status()
+        );
+    }
+
+    #[tokio::test]
+    async fn check_suggests_the_closest_tag_for_a_typo() {
+        let versions = version::Set::build(
+            vec![
+                make_version_info("v4.1.0", &"a".repeat(40)),
+                make_version_info("v4.2.0", &"b".repeat(40)),
+            ],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        let typo = check_action_with_versions(
+            &collected("v42.0"),
+            Some(&Ok(versions)),
+            &Config::default(),
+            &test_registry(),
+        )
+        .await;
+        assert!(
+            matches!(
+                typo.status(),
+                FindingStatus::Unresolvable {
+                    is_environment_error: false,
+                    ..
+                }
+            ),
+            "{:?}",
+            typo.status()
+        );
+        assert_eq!(
+            typo.suggestion().map(|t| t.version().as_str()),
+            Some("v4.2.0")
         );
     }
 

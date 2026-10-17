@@ -38,6 +38,9 @@ pub struct CheckResult {
     /// The suggested target, when it sits on the commit the ref already names
     #[serde(default)]
     same_commit: Option<Arc<version::Info>>,
+    /// The listed tag closest to an unresolvable ref
+    #[serde(default)]
+    suggestion: Option<Arc<version::Info>>,
 }
 
 /// Kind of ref a `uses:` reference names.
@@ -72,6 +75,7 @@ impl CheckResult {
             status,
             ref_kind: None,
             same_commit: None,
+            suggestion: None,
         }
     }
 
@@ -82,9 +86,19 @@ impl CheckResult {
         config: &Config,
         resolved: Option<&str>,
     ) -> Self {
+        let suggestion = match &status {
+            CheckStatus::Unresolvable {
+                is_environment_error: false,
+                ..
+            } => crate::suggest::closest_tag(action_ref.ref_str(), versions),
+            _ => None,
+        };
         let listed = current_commit(action_ref, versions);
         let Some(sha) = listed.map(|(_, sha)| sha).or(resolved) else {
-            return Self::new(action_ref.clone(), status);
+            return Self {
+                suggestion,
+                ..Self::new(action_ref.clone(), status)
+            };
         };
         let target = match &status {
             CheckStatus::Outdated { target, .. } => Some(Arc::clone(target)),
@@ -103,7 +117,14 @@ impl CheckResult {
             status,
             ref_kind: listed.map(|(kind, _)| kind),
             same_commit,
+            suggestion,
         }
+    }
+
+    /// Get the listed tag closest to an unresolvable ref
+    #[must_use]
+    pub const fn suggestion(&self) -> Option<&Arc<version::Info>> {
+        self.suggestion.as_ref()
     }
 
     /// Get the kind of ref, when the version set lists it
@@ -3047,5 +3068,60 @@ mod tests {
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: CheckResult = serde_json::from_str(&json).unwrap();
         assert_eq!(result, deserialized);
+    }
+
+    #[test]
+    fn unresolvable_user_errors_carry_the_closest_tag() {
+        let versions = complete(prerelease_set(&["v4.1.0", "v4.2.0", "v4.2.1"]));
+        let config = Config::default();
+        let suggestion = |ref_str: &str| {
+            check_action(
+                &make_action_ref("actions", "checkout", ref_str),
+                &versions,
+                &config,
+            )
+            .suggestion()
+            .map(|t| t.version().to_string())
+        };
+        assert_eq!(suggestion("v4.2").as_deref(), Some("v4.2.1"));
+        assert_eq!(suggestion("v42.1").as_deref(), Some("v4.2.1"));
+        assert_eq!(suggestion("v4.2.0"), None);
+        assert_eq!(suggestion("nope"), None);
+    }
+
+    #[tokio::test]
+    async fn only_user_errors_carry_a_suggestion() {
+        let versions = prerelease_set(&["v4.2.0"]);
+        let action = make_action_ref("actions", "checkout", "v4.2.O");
+        let config = Config::default();
+        let offline_provider = ResolveMockProvider::with(Resolve::Offline);
+        let offline =
+            check_action_with_provider(&action, &versions, &config, &offline_provider).await;
+        assert!(
+            matches!(
+                offline.status(),
+                CheckStatus::Unresolvable {
+                    is_environment_error: true,
+                    ..
+                }
+            ),
+            "{:?}",
+            offline.status()
+        );
+        assert_eq!(offline.suggestion(), None);
+        let missing_provider = ResolveMockProvider::with(Resolve::Missing);
+        let missing =
+            check_action_with_provider(&action, &versions, &config, &missing_provider).await;
+        assert_eq!(
+            missing.status(),
+            &unresolvable("tag 'v4.2.O' not found; use 'v4.2.0'", false)
+        );
+        assert_eq!(
+            missing
+                .suggestion()
+                .map(|t| t.version().to_string())
+                .as_deref(),
+            Some("v4.2.0")
+        );
     }
 }

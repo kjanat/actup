@@ -26,6 +26,7 @@ pub mod policy;
 pub mod provider;
 pub mod resolution;
 pub mod rewrite;
+pub mod suggest;
 pub mod syntax;
 pub mod version;
 
@@ -59,5 +60,6 @@ pub use resolution::{
     CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, RefKind, SHORT_SHA_REASON, check_action,
     check_action_remote, check_action_with_provider,
 };
+pub use suggest::closest_tag;
 pub use syntax::SourceFormat;
 pub use version::{BranchInfo, Info, Version};
