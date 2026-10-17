@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use super::{
-    ApiMode, Config, FetchSettings, HostConfig, HostKind,
+    ApiMode, Config, FetchSettings, Host, HostKind,
     registration::{ProviderConfig, Registration},
     validation::{validate_api_base, validate_hostname, validate_provider_config},
 };
@@ -141,7 +141,7 @@ impl Resolved {
     }
 
     /// Step 2 — overlay user `[hosts."hostname"]` settings. `Some` wins.
-    fn apply_host_overrides(&mut self, host_config: Option<&HostConfig>) {
+    fn apply_host_overrides(&mut self, host_config: Option<&Host>) {
         let Some(hc) = host_config else { return };
         if let Some(k) = hc.kind {
             self.kind = Some(k);
@@ -161,7 +161,7 @@ impl Resolved {
     fn reset_preset_fields_on_kind_override(
         &mut self,
         preset_reg: Option<&Registration>,
-        host_config: Option<&HostConfig>,
+        host_config: Option<&Host>,
     ) {
         let Some(reg) = preset_reg else { return };
         if self.kind == Some(reg.kind) {
@@ -395,7 +395,7 @@ mod tests {
 
     use super::*;
     use crate::config::{
-        HostConfig,
+        Host,
         registration::{Capabilities, Preset, Registration},
     };
 
@@ -506,7 +506,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: Some("MY_CUSTOM_TOKEN".into()),
@@ -529,7 +529,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("https://proxy.corp.com/github".into()),
                 token_env: None,
@@ -549,7 +549,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -569,7 +569,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -589,7 +589,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some("https://ghe.corp.com/api/v3".into()),
                 token_env: Some("GHE_TOKEN".into()),
@@ -614,7 +614,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,  // should be inferred
                 token_env: None, // should use default_token_env
@@ -635,7 +635,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "custom.host.com".into(),
-            HostConfig {
+            Host {
                 kind: None, // no kind!
                 api_base: Some("https://custom.host.com/api".into()),
                 token_env: Some("TOKEN".into()),
@@ -658,7 +658,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitlab.internal".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: Some("https://gitlab.internal/api/v4".into()),
                 token_env: Some("GL_TOKEN".into()),
@@ -681,7 +681,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitlab.internal".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: None, // GitLab infer_api_base returns None
                 token_env: Some("GL_TOKEN".into()),
@@ -708,7 +708,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitea.local".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::Gitea),
                 api_base: None,  // inferred
                 token_env: None, // no default
@@ -734,7 +734,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitlab.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -806,7 +806,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -841,7 +841,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "code.internal.org".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::Gitea),
                 api_base: None, // should be inferred
                 token_env: Some("GITEA_TOKEN".into()),
@@ -867,7 +867,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("https://api.github.com/".into()),
                 token_env: None,
@@ -964,7 +964,7 @@ mod tests {
         };
         config.hosts.insert(
             "ghe.corp.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some("https://ghe.corp.com/api/v3".into()),
                 token_env: Some("GHE_TOKEN".into()),
@@ -1070,7 +1070,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: Some("https://gitlab-proxy.corp.com/api/v4".into()),
                 token_env: Some("GL_TOKEN".into()),
@@ -1097,7 +1097,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab), // Override kind only
                 api_base: None,               // NOT provided -- should NOT leak github.com preset
                 token_env: None,              // NOT provided -- should NOT leak GITHUB_TOKEN
@@ -1130,7 +1130,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: Some("https://gitlab-proxy.corp.com/api/v4".into()), // provided
                 token_env: None, // NOT provided -- should NOT leak GITHUB_TOKEN
@@ -1166,7 +1166,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: None, // NOT provided -- should NOT leak api.github.com
                 token_env: Some("MY_GL_TOKEN".into()), // provided
@@ -1214,7 +1214,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "custom.host.io".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some("https://custom.host.io/api/v3".into()),
                 token_env: Some("CUSTOM_TOKEN".into()),
@@ -1236,7 +1236,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None, // keep preset kind
                 api_base: Some("https://proxy.corp.com/gh".into()),
                 token_env: Some("CORP_GH_TOKEN".into()),
@@ -1255,13 +1255,13 @@ mod tests {
 
     #[test]
     fn user_none_fields_preserve_preset_values() {
-        // Step 2: all-None HostConfig should change nothing from preset
+        // Step 2: all-None Host should change nothing from preset
         let gh = github_registration();
         let regs: Vec<&Registration> = vec![&gh];
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1283,7 +1283,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "my.special.host".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("https://my.special.host/api".into()),
                 token_env: Some("TOKEN".into()),
@@ -1305,7 +1305,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "some.host".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some("https://some.host/api/v3".into()),
                 token_env: Some("TOKEN".into()),
@@ -1329,7 +1329,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gl.corp.com".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: Some("https://gl.corp.com/api/v4".into()),
                 token_env: Some("GL_TOKEN".into()),
@@ -1357,7 +1357,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.internal".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,  // inferred: https://ghe.internal/api/v3
                 token_env: None, // should use default_token_env: "GITHUB_TOKEN"
@@ -1383,7 +1383,7 @@ mod tests {
         ] {
             config.hosts.insert(
                 host.into(),
-                HostConfig {
+                Host {
                     kind: Some(kind),
                     api_base: Some(format!("https://{host}/api/v1")),
                     token_env: None,
@@ -1411,7 +1411,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.internal".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: Some("MY_GHE_TOKEN".into()),
@@ -1432,7 +1432,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.example.org".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: Some("TOKEN".into()),
@@ -1452,7 +1452,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.example.org".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some("https://proxy.corp.com/ghe".into()),
                 token_env: Some("TOKEN".into()),
@@ -1474,7 +1474,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gl.internal.io".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitLab),
                 api_base: None,
                 token_env: Some("GL_TOKEN".into()),
@@ -1500,7 +1500,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("ftp://api.github.com".into()), // invalid scheme
                 token_env: None,
@@ -1521,7 +1521,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("https://api.github.com?key=val".into()),
                 token_env: None,
@@ -1564,7 +1564,7 @@ mod tests {
 
         config.hosts.insert(
             "graphql-only.example.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1625,7 +1625,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitlab.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1651,7 +1651,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1677,7 +1677,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1697,7 +1697,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1787,7 +1787,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "code.corp.io".into(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::Gitea),
                 api_base: None,
                 token_env: Some("GITEA_TOKEN".into()),
@@ -1896,7 +1896,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("https://proxy.github.com".into()),
                 token_env: None, // not overridden
@@ -1931,7 +1931,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".into(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some("https://api.github.com///".into()),
                 token_env: None,

@@ -339,7 +339,7 @@ async fn batch_fetch_reports_a_failed_repo_after_one_attempt()
 
     use actup_core::{
         Config, Retention, cache,
-        config::{ApiMode, HostConfig, HostKind},
+        config::{ApiMode, Host, HostKind},
         provider::Registry,
     };
 
@@ -369,7 +369,7 @@ async fn batch_fetch_reports_a_failed_repo_after_one_attempt()
     };
     config.hosts.insert(
         host.clone(),
-        HostConfig {
+        Host {
             kind: Some(HostKind::GitHub),
             api_base: Some(server.uri()),
             token_env: Some("ACTUP_TEST_TOKEN_THAT_IS_NEVER_SET".to_string()),
@@ -606,7 +606,7 @@ async fn test_registry_fetch_reports_each_repo_once() -> Result<(), Box<dyn std:
     let mut config = actup_core::Config::default();
     config.hosts.insert(
         "gh.invalid".to_string(),
-        actup_core::config::HostConfig {
+        actup_core::config::Host {
             kind: Some(actup_core::config::HostKind::GitHub),
             api_base: Some(mock_server.uri()),
             token_env: Some("_ACTUP_TEST_NO_TOKEN".to_string()),

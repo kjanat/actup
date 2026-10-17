@@ -1,7 +1,7 @@
 //! Platform-agnostic time source
 //!
 //! Provides a [`Clock`] trait that abstracts `SystemTime::now()` for
-//! WASM compatibility. Native code uses [`SystemClock`] (the default);
+//! WASM compatibility. Native code uses [`System`] (the default);
 //! WASM hosts inject a `JsClock` backed by `Date.now()`.
 
 use std::{fmt, time::SystemTime};
@@ -20,10 +20,9 @@ pub trait Clock: fmt::Debug + MaybeSend + MaybeSync {
 
 /// Default clock that delegates to [`SystemTime::now()`].
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(clippy::module_name_repetitions)]
-pub struct SystemClock;
+pub struct System;
 
-impl Clock for SystemClock {
+impl Clock for System {
     #[inline]
     fn now(&self) -> SystemTime {
         SystemTime::now()
@@ -80,7 +79,7 @@ mod tests {
 
     #[test]
     fn system_clock_returns_recent_time() {
-        let clock = SystemClock;
+        let clock = System;
         let now = clock.now();
         let elapsed = now.elapsed().unwrap();
         assert!(elapsed < Duration::from_secs(1));

@@ -6,7 +6,7 @@ use std::{collections::HashMap, num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{
     action_ref::ActionRepoId,
-    clock::{Clock, SystemClock},
+    clock::{self, Clock},
     error::{Error, Result},
     version,
 };
@@ -30,7 +30,7 @@ pub struct GraphQLClient {
 }
 
 impl GraphQLClient {
-    /// Create a new GraphQL client (requires authentication, uses [`SystemClock`]).
+    /// Create a new GraphQL client (requires authentication, uses [`clock::System`]).
     ///
     /// # Errors
     /// Returns error if HTTP client cannot be created or token is missing/invalid.
@@ -41,12 +41,12 @@ impl GraphQLClient {
     /// User-Agent header value derived from crate version at compile time
     const USER_AGENT_VALUE: &'static str = concat!("actup/", env!("CARGO_PKG_VERSION"));
 
-    /// Create a GraphQL client for a custom endpoint (GitHub Enterprise, uses [`SystemClock`]).
+    /// Create a GraphQL client for a custom endpoint (GitHub Enterprise, uses [`clock::System`]).
     ///
     /// # Errors
     /// Returns error if HTTP client cannot be created or token is invalid.
     pub fn with_endpoint(endpoint: &str, token: &str) -> Result<Self> {
-        Self::with_endpoint_and_clock(endpoint, token, Arc::new(SystemClock))
+        Self::with_endpoint_and_clock(endpoint, token, Arc::new(clock::System))
     }
 
     /// Create a GraphQL client with a custom endpoint and [`Clock`].

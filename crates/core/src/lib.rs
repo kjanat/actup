@@ -41,11 +41,13 @@ pub use action_ref::{ActionRef, ActionRepoId};
 #[cfg(not(target_arch = "wasm32"))]
 pub use atomic_write::{resolve_within, rewrite_atomic, write_atomic};
 pub use caching_provider::{CacheStats, CachingProvider, Retention};
-pub use clock::{Clock, SystemClock};
+pub use clock::{Clock, System as SystemClock};
 pub use compat::{BoxFuture, MaybeSend, MaybeSync};
 pub use config::{
-    ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, HostConfig, HostKind,
-    Source as ConfigSource, canonical_path, find_repo_config, iter_config_candidates,
+    ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, Host as HostConfig, HostKind,
+    Source as ConfigSource, canonical_path,
+    discovery::find_repo_config,
+    iter_config_candidates,
     registration::{
         Capabilities, Preset, ProviderConfig, Registration, validate_no_duplicate_presets,
     },

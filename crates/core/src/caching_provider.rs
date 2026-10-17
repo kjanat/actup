@@ -15,7 +15,7 @@ use tokio::sync::{RwLock, Semaphore};
 
 use crate::{
     ActionRepoId, Result,
-    clock::{Clock, SystemClock},
+    clock::{self, Clock},
     compat::BoxFuture,
     provider::{self, ActionYml, Provider, Sha40},
     version,
@@ -36,12 +36,12 @@ pub enum Retention {
 }
 
 impl Retention {
-    /// Reuse answers for `ttl` of [`SystemClock`] time.
+    /// Reuse answers for `ttl` of [`clock::System`] time.
     #[must_use]
     pub fn expiring(ttl: Duration) -> Self {
         Self::Expiring {
             ttl,
-            clock: Arc::new(SystemClock),
+            clock: Arc::new(clock::System),
         }
     }
 

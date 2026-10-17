@@ -10,7 +10,7 @@ use std::{cmp::Ordering, fmt, sync::Arc};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    clock::{Clock, SystemClock},
+    clock::{self, Clock},
     policy,
 };
 
@@ -558,7 +558,7 @@ impl Set {
         Self::default()
     }
 
-    /// Build a version set with all fields (uses [`SystemClock`]).
+    /// Build a version set with all fields (uses [`clock::System`]).
     ///
     /// This is the primary constructor for providers building version information.
     /// Use [`Set::new()`] for an empty set.
@@ -574,7 +574,7 @@ impl Set {
             latest_per_major,
             major_tags,
             latest,
-            &SystemClock,
+            &clock::System,
         )
     }
 
@@ -601,13 +601,13 @@ impl Set {
         }
     }
 
-    /// Build a version set from `(tag name, commit SHA)` pairs (uses [`SystemClock`]).
+    /// Build a version set from `(tag name, commit SHA)` pairs (uses [`clock::System`]).
     ///
     /// Semver tags are sorted newest first. `latest` and `latest_per_major`
     /// skip prereleases. Non-semver tags go to the non-semver tag map.
     #[must_use]
     pub fn from_tags(tags: impl IntoIterator<Item = (String, String)>) -> Self {
-        Self::from_tags_with_clock(tags, &SystemClock)
+        Self::from_tags_with_clock(tags, &clock::System)
     }
 
     /// Build a version set like [`Set::from_tags`], stamped by `clock`.
@@ -1782,7 +1782,7 @@ mod tests {
             latest_per_major,
             major_tags,
             Some(Arc::clone(&v2)),
-            &crate::clock::SystemClock,
+            &crate::clock::System,
         )
         .with_default_branch(branch);
 

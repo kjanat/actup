@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     ActionRepoId,
-    clock::{Clock, SystemClock},
+    clock::{self, Clock},
     compat::{BoxFuture, MaybeSend, MaybeSync},
     version,
 };
@@ -33,10 +33,10 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// Create a new cache entry (uses [`SystemClock`]).
+    /// Create a new cache entry (uses [`clock::System`]).
     #[must_use]
     pub fn new(versions: version::Set) -> Self {
-        Self::with_clock(versions, &SystemClock)
+        Self::with_clock(versions, &clock::System)
     }
 
     /// Create a new cache entry using the provided [`Clock`].
@@ -92,7 +92,7 @@ impl Entry {
     #[must_use]
     pub fn renewed(self) -> Self {
         Self {
-            stored_at: SystemClock.now(),
+            stored_at: clock::System.now(),
             ..self
         }
     }

@@ -182,7 +182,6 @@ fn survives_win32(component: &str) -> bool {
 
 /// Find the first existing repo config in [`repo_search_dirs`].
 #[must_use]
-#[allow(clippy::module_name_repetitions, reason = "clear naming")]
 pub fn find_repo_config(start_dir: &Path, ceiling: Option<&Path>) -> Option<PathBuf> {
     repo_search_dirs(start_dir, ceiling)
         .iter()

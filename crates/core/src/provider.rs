@@ -1582,7 +1582,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "codeberg.org".into(),
-            crate::HostConfig {
+            crate::config::Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1603,7 +1603,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitlab.com".into(),
-            crate::HostConfig {
+            crate::config::Host {
                 kind: None,
                 api_base: None,
                 token_env: None,
@@ -1622,8 +1622,8 @@ mod tests {
         );
     }
 
-    fn host_of_kind(kind: crate::HostKind) -> crate::HostConfig {
-        crate::HostConfig {
+    fn host_of_kind(kind: crate::HostKind) -> crate::config::Host {
+        crate::config::Host {
             kind: Some(kind),
             api_base: Some("https://example.com/api".into()),
             token_env: Some("TOKEN".into()),

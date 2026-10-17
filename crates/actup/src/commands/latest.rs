@@ -341,7 +341,7 @@ mod tests {
         config.cache.enabled = false;
         config.hosts.insert(
             "gitlab.com".to_string(),
-            actup_core::config::HostConfig {
+            actup_core::config::Host {
                 kind: None,
                 api_base: Some(format!("{}/api/v4", server.uri())),
                 token_env: Some("_ACTUP_TEST_UNSET_GITLAB_TOKEN".to_string()),

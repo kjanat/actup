@@ -24,13 +24,11 @@ use std::{
     time::Duration,
 };
 
-use discovery::Format;
-#[allow(clippy::module_name_repetitions)]
-pub use discovery::find_repo_config;
 pub use discovery::{
     CONFIG_EXTENSIONS, Candidate, canonical_path, iter_config_candidates, repo_candidates,
     repo_search_dirs, user_config_path,
 };
+use discovery::{Format, find_repo_config};
 #[cfg(feature = "clap")]
 pub use env::ignore_empty_env;
 pub use env::{
@@ -179,7 +177,7 @@ pub struct Config {
     /// api_base = "https://ghe.corp.internal/api/v3"
     /// token_env = "GHE_TOKEN"
     /// ```
-    pub hosts: HashMap<String, HostConfig>,
+    pub hosts: HashMap<String, Host>,
 
     /// Every layer that contributed to this config, lowest precedence first.
     #[serde(skip)]
@@ -617,10 +615,10 @@ impl Default for FetchSettings {
 /// and `token_env` must all be present (validated post-merge).
 ///
 /// Used as values in the `[hosts."hostname"]` config map.
-#[allow(clippy::module_name_repetitions)]
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct HostConfig {
+#[schemars(rename = "HostConfig")]
+pub struct Host {
     /// Provider kind. Required for non-preset hosts; implied by preset for known hosts.
     pub kind: Option<HostKind>,
 
@@ -1462,7 +1460,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    // HostConfig tests
+    // Host tests
 
     #[allow(clippy::unwrap_used)]
     #[test]
@@ -1474,7 +1472,7 @@ mod tests {
             "api_mode": "rest",
             "max_tags_per_repo": 50
         }"#;
-        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        let hc: Host = serde_json::from_str(json).unwrap();
         assert_eq!(hc.kind, Some(HostKind::GitHub));
         assert_eq!(hc.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
         assert_eq!(hc.token_env.as_deref(), Some("GHE_TOKEN"));
@@ -1486,7 +1484,7 @@ mod tests {
     #[test]
     fn test_hostconfig_no_fields() {
         let json = "{}";
-        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        let hc: Host = serde_json::from_str(json).unwrap();
         assert_eq!(hc.kind, None);
         assert_eq!(hc.api_base, None);
         assert_eq!(hc.token_env, None);
@@ -1498,7 +1496,7 @@ mod tests {
     #[test]
     fn test_hostconfig_partial_kind_only() {
         let json = r#"{"kind": "gitlab"}"#;
-        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        let hc: Host = serde_json::from_str(json).unwrap();
         assert_eq!(hc.kind, Some(HostKind::GitLab));
         assert_eq!(hc.api_base, None);
         assert_eq!(hc.token_env, None);
@@ -1510,7 +1508,7 @@ mod tests {
     #[test]
     fn test_hostconfig_partial_fetch_overrides_only() {
         let json = r#"{"api_mode": "rest", "max_tags_per_repo": 25}"#;
-        let hc: HostConfig = serde_json::from_str(json).unwrap();
+        let hc: Host = serde_json::from_str(json).unwrap();
         assert_eq!(hc.kind, None);
         assert_eq!(hc.api_base, None);
         assert_eq!(hc.api_mode, Some(ApiMode::Rest));
@@ -1520,28 +1518,28 @@ mod tests {
     #[test]
     fn test_hostconfig_deny_unknown_fields() {
         let json = r#"{"kind": "github", "bogus": true}"#;
-        let result = serde_json::from_str::<HostConfig>(json);
+        let result = serde_json::from_str::<Host>(json);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_hostconfig_rejects_invalid_kind() {
         let json = r#"{"kind": "bitbucket"}"#;
-        let result = serde_json::from_str::<HostConfig>(json);
+        let result = serde_json::from_str::<Host>(json);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_hostconfig_rejects_zero_max_tags() {
         let json = r#"{"max_tags_per_repo": 0}"#;
-        let result = serde_json::from_str::<HostConfig>(json);
+        let result = serde_json::from_str::<Host>(json);
         assert!(result.is_err());
     }
 
     #[allow(clippy::unwrap_used)]
     #[test]
     fn test_hostconfig_serde_roundtrip() {
-        let hc = HostConfig {
+        let hc = Host {
             kind: Some(HostKind::Gitea),
             api_base: Some("https://gitea.local/api/v1".into()),
             token_env: Some("GITEA_TOKEN".into()),
@@ -1549,7 +1547,7 @@ mod tests {
             max_tags_per_repo: NonZeroU8::new(100),
         };
         let json = serde_json::to_string(&hc).unwrap();
-        let back: HostConfig = serde_json::from_str(&json).unwrap();
+        let back: Host = serde_json::from_str(&json).unwrap();
         assert_eq!(back.kind, hc.kind);
         assert_eq!(back.api_base, hc.api_base);
         assert_eq!(back.token_env, hc.token_env);
@@ -1566,7 +1564,7 @@ mod tests {
             (HostKind::Gitea, "gitea"),
         ] {
             let json = format!(r#"{{"kind": "{name}"}}"#);
-            let hc: HostConfig = serde_json::from_str(&json).unwrap();
+            let hc: Host = serde_json::from_str(&json).unwrap();
             assert_eq!(hc.kind, Some(variant), "kind={name}");
         }
     }
@@ -1621,7 +1619,7 @@ mod tests {
             api_mode          = "rest"
             max_tags_per_repo = 50
         "#;
-        let hc: HostConfig = toml::from_str(toml_str).unwrap();
+        let hc: Host = toml::from_str(toml_str).unwrap();
         assert_eq!(hc.kind, Some(HostKind::GitHub));
         assert_eq!(hc.api_base.as_deref(), Some("https://ghe.corp.com/api/v3"));
         assert_eq!(hc.token_env.as_deref(), Some("GHE_TOKEN"));
@@ -1633,7 +1631,7 @@ mod tests {
     #[test]
     fn test_hostconfig_toml_minimal() {
         let toml_str = r#"kind = "gitea""#;
-        let hc: HostConfig = toml::from_str(toml_str).unwrap();
+        let hc: Host = toml::from_str(toml_str).unwrap();
         assert_eq!(hc.kind, Some(HostKind::Gitea));
         assert_eq!(hc.api_base, None);
         assert_eq!(hc.token_env, None);
@@ -1645,7 +1643,7 @@ mod tests {
             kind = "github"
             typo_field = "oops"
         "#;
-        let result = toml::from_str::<HostConfig>(toml_str);
+        let result = toml::from_str::<Host>(toml_str);
         assert!(result.is_err());
     }
 
@@ -1655,7 +1653,7 @@ mod tests {
         // Test as it would appear in actual config: [hosts."hostname"]
         #[derive(Deserialize)]
         struct Outer {
-            hosts: HashMap<String, HostConfig>,
+            hosts: HashMap<String, Host>,
         }
         let toml_str = r#"
             [hosts."ghe.corp.com"]

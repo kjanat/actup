@@ -24,7 +24,7 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 | `error`            | Structured errors (user vs environment)                   | `Error`, `Result`                                      |
 | `cache`            | Cache trait, entries, entry file names                    | `Cache`, `Entry`, `Record`                             |
 | `file_cache`       | Disk cache shared by CLI, LSP and MCP (native only)       | `FileCache`, `Access`                                  |
-| `clock`            | Time source for TTL checks                                | `Clock`, `SystemClock`                                 |
+| `clock`            | Time source for TTL checks                                | `Clock`, `System`                                      |
 | `compat`           | `Send`/`Sync` bounds and boxed futures for wasm           | `BoxFuture`, `MaybeSend`, `MaybeSync`                  |
 | `text`             | Sanitize text for terminal and editor output              | `sanitize_for_terminal`, `sanitize_line`               |
 | `url_path`         | Percent-encode the path and query parts of provider URLs  | `encode_path`, `encode_segment`                        |
