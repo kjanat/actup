@@ -1031,6 +1031,59 @@ async fn relative_config_path_resolves_against_workspace_root()
         "missing workspace-relative configPath watcher in {patterns:?}"
     );
 
+    let uri = Uri::from_file_path(repo.join("ci.yml")).ok_or("bad file uri")?;
+    harness
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
+        .await;
+    harness.assert_paused(&uri).await;
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&explicit, "[cache]\nenabled = false\n")?;
+    harness.notify_changed(&explicit).await?;
+    assert!(
+        harness.diagnostics_published(&uri).await,
+        "diagnostics must resume after the relative configPath parses"
+    );
+
+    let second = temp.path().join("second");
+    std::fs::create_dir(&second)?;
+    let second_explicit = second.join("custom.toml");
+    std::fs::write(&second_explicit, "[policy]\nbump = \"backwards\"\n")?;
+    let second_explicit_str = second_explicit.to_str().ok_or("temp path is not UTF-8")?;
+    let change = DidChangeWorkspaceFoldersParams {
+        event: WorkspaceFoldersChangeEvent {
+            added: vec![WorkspaceFolder {
+                uri: Uri::from_file_path(&second).ok_or("bad uri")?,
+                name: "second".to_owned(),
+            }],
+            removed: vec![WorkspaceFolder {
+                uri: repo_uri,
+                name: "repo".to_owned(),
+            }],
+        },
+    };
+    harness.clear_diagnostics().await;
+    harness
+        .notify(
+            Request::build("workspace/didChangeWorkspaceFolders")
+                .params(json!(change))
+                .finish(),
+        )
+        .await;
+    assert!(
+        harness.error_shown(second_explicit_str).await,
+        "expected the new root's configPath to load"
+    );
+    harness.assert_paused(&uri).await;
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&second_explicit, "[cache]\nenabled = false\n")?;
+    harness.notify_changed(&second_explicit).await?;
+    assert!(
+        harness.diagnostics_published(&uri).await,
+        "diagnostics must resume after the new root's configPath parses"
+    );
+
     harness.shutdown().await;
     Ok(())
 }
