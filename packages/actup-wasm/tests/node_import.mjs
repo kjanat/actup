@@ -360,6 +360,19 @@ const [shaEdit] = planUpdates(pinResults, { policy: { pin: "sha" } });
 assert.equal(shaEdit.newRef, newSha, "newRef is the bare SHA");
 assert.equal(shaEdit.replaceEnd, shaEdit.refEnd, "a tag ref keeps the rest of its line");
 
+const notedYaml = `jobs:\n  build:\n    steps:\n      - uses: actions/checkout@${oldSha} # v4.0.0 pinned for node16\n`;
+const notedResults = await checkRefs(notedYaml, mockProvider);
+assert.equal(
+	applyEdits(notedYaml, planUpdates(notedResults)),
+	notedYaml.replace(`${oldSha} # v4.0.0`, `${newSha} # v4.2.0`),
+	"a re-pin keeps the note after the version",
+);
+assert.equal(
+	applyEdits(notedYaml, planUpdates(notedResults, { policy: { pin: "tag" } })),
+	notedYaml.replace(`${oldSha} # v4.0.0`, "v4.2.0 #"),
+	"an unpin keeps the note as the comment",
+);
+
 console.log("PASS: policy.pin picks tag or SHA output");
 
 // Test 16: sortVersionTags orders by semver precedence, newest first.

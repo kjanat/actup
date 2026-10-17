@@ -167,9 +167,11 @@ action.
 | `sha`      | `@<new> # v4.2.0` | `@<new> # v4.2.0`         |
 | `tag`      | `@v4.2.0`         | `@v4.2.0`                 |
 
-The `# vX.Y.Z` comment replaces an old version comment. It is added only where
-the line can take it: never next to another comment, never on a line that holds
-other `uses:` values or ends inside a scalar, and never in a plain-text file.
+The `# vX.Y.Z` comment replaces the version of an old version comment and keeps
+the note after it: `# v4.0.0 pinned for node16` becomes
+`# v4.2.0 pinned for node16`. It is added only where the line can take it: never
+next to another comment, never on a line that holds other `uses:` values or ends
+inside a scalar, and never in a plain-text file.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose
@@ -179,8 +181,9 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 
 > [!WARNING]
 > `pin = "tag"` unpins. It rewrites an outdated SHA pin to its target's tag,
-> which the action's owner can move, and drops the version comment. Set `tag`
-> only to leave SHA pins on purpose.
+> which the action's owner can move, and drops the version from its version
+> comment. A note after the version stays as the comment. Set `tag` only to
+> leave SHA pins on purpose.
 
 ### Config Discovery
 

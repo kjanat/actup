@@ -971,7 +971,7 @@ impl LspBackend {
             doc_version,
             supports_doc_changes,
             ref_range,
-            action.trailing,
+            action.trailing(),
             action.line_end_col,
             &targets,
         )
@@ -1668,7 +1668,7 @@ mod tests {
             None,
             false,
             ref_range,
-            action.trailing,
+            action.trailing(),
             action.line_end_col,
             &only_unpin,
         );

@@ -4,24 +4,29 @@ use crate::{policy::Style, version};
 
 /// What follows a `uses:` ref on its line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Trailing {
+pub enum Trailing<'a> {
     /// Nothing but whitespace.
     None,
-    /// A version comment like `# v8.1.0`.
-    Version,
+    /// A version comment like `# v8.1.0 pinned for node16`.
+    Version {
+        /// The text after the version, trimmed, like `pinned for node16`.
+        note: &'a str,
+    },
     /// Any other text.
     Foreign,
 }
 
-impl Trailing {
+impl<'a> Trailing<'a> {
     /// Classify the text of `raw_line` after byte offset `ref_end`.
     #[must_use]
-    pub fn after(raw_line: &str, ref_end: usize) -> Self {
+    pub fn after(raw_line: &'a str, ref_end: usize) -> Self {
         let tail = raw_line.get(ref_end..).unwrap_or("").trim_start();
         if tail.is_empty() {
             Self::None
         } else if is_version_comment(tail) {
-            Self::Version
+            Self::Version {
+                note: split_comment(tail).map_or("", |(_, note)| note),
+            }
         } else {
             Self::Foreign
         }
@@ -37,6 +42,30 @@ pub fn is_version_comment(tail: &str) -> bool {
     let body = body.trim();
     let body = body.strip_prefix('v').unwrap_or(body);
     body.starts_with(|c: char| c.is_ascii_digit())
+}
+
+fn split_comment(tail: &str) -> Option<(&str, &str)> {
+    let body = tail.trim_start().strip_prefix('#')?.trim();
+    Some(
+        body.split_once(char::is_whitespace)
+            .map_or((body, ""), |(first, note)| (first, note.trim())),
+    )
+}
+
+/// The comment ` # <label>`, followed by ` <note>` when `note` is not empty.
+#[must_use]
+pub fn labeled_comment(label: &str, note: &str) -> String {
+    if note.is_empty() {
+        format!(" # {label}")
+    } else {
+        format!(" # {label} {note}")
+    }
+}
+
+/// The comment ` # <note>`, or `None` for an empty `note`.
+#[must_use]
+pub fn note_comment(note: &str) -> Option<String> {
+    (!note.is_empty()).then(|| format!(" # {note}"))
 }
 
 /// A `# <ref> [note]` comment after a SHA pin that names the ref it was pinned from.
@@ -55,10 +84,7 @@ impl<'a> PinMarker<'a> {
     /// `develop`, `trunk`, or a ref holding `/`, and holds no control character.
     #[must_use]
     pub fn parse(tail: &'a str) -> Option<Self> {
-        let body = tail.trim_start().strip_prefix('#')?.trim();
-        let (tag, note) = body
-            .split_once(char::is_whitespace)
-            .map_or((body, ""), |(tag, note)| (tag, note.trim()));
+        let (tag, note) = split_comment(tail)?;
         if tag.is_empty() || tag.chars().any(char::is_control) {
             return None;
         }
@@ -94,36 +120,49 @@ impl Rewrite {
     /// Write `target` for an outdated ref under `style`.
     ///
     /// A SHA gets a ` # <version>` comment unless foreign text follows the ref.
-    /// A SHA pin rewritten to a tag loses its trailing version comment.
+    /// A SHA pin rewritten to a tag loses the version of its trailing version
+    /// comment and keeps the note after it.
     #[must_use]
     pub fn outdated(
         style: Style,
         current_is_sha: bool,
         target: &version::Info,
-        trailing: Trailing,
+        trailing: Trailing<'_>,
     ) -> Self {
         let version = target.version().to_string();
         if style.writes_sha(current_is_sha) {
-            Self::pin(target.sha(), &version, trailing)
-        } else {
-            Self {
+            return Self::pin(target.sha(), &version, trailing);
+        }
+        match trailing {
+            Trailing::Version { note } if current_is_sha => Self {
+                new_ref: version,
+                comment: note_comment(note),
+                to_line_end: true,
+            },
+            Trailing::None | Trailing::Version { .. } | Trailing::Foreign => Self {
                 new_ref: version,
                 comment: None,
-                to_line_end: current_is_sha && trailing == Trailing::Version,
-            }
+                to_line_end: false,
+            },
         }
     }
 
     /// Pin to `sha` with a ` # <label>` comment.
     ///
-    /// A trailing version comment is replaced, a missing one is added, and
-    /// foreign text after the ref is kept without a comment.
+    /// The version of a trailing version comment is replaced and its note
+    /// kept, a missing comment is added, and foreign text after the ref is
+    /// kept without a comment.
     #[must_use]
-    pub fn pin(sha: &str, label: &str, trailing: Trailing) -> Self {
+    pub fn pin(sha: &str, label: &str, trailing: Trailing<'_>) -> Self {
+        let (comment, to_line_end) = match trailing {
+            Trailing::None => (Some(labeled_comment(label, "")), false),
+            Trailing::Version { note } => (Some(labeled_comment(label, note)), true),
+            Trailing::Foreign => (None, false),
+        };
         Self {
             new_ref: sha.to_string(),
-            comment: (trailing != Trailing::Foreign).then(|| format!(" # {label}")),
-            to_line_end: trailing == Trailing::Version,
+            comment,
+            to_line_end,
         }
     }
 
@@ -132,7 +171,7 @@ impl Rewrite {
     pub fn unpin(marker: PinMarker<'_>) -> Self {
         Self {
             new_ref: marker.tag.to_string(),
-            comment: (!marker.note.is_empty()).then(|| format!(" # {}", marker.note)),
+            comment: note_comment(marker.note),
             to_line_end: true,
         }
     }
@@ -160,14 +199,22 @@ mod tests {
         }
     }
 
-    fn trailing(line: &str) -> Trailing {
+    const VERSION: Trailing<'static> = Trailing::Version { note: "" };
+
+    fn trailing(line: &str) -> Trailing<'_> {
         let ref_end = line.find("@v1").map_or(0, |at| at + 3);
         Trailing::after(line, ref_end)
     }
 
     #[test]
     fn trailing_classifies_the_text_after_the_ref() {
-        assert_eq!(trailing("  - uses: a/b@v1   # v1.2.0"), Trailing::Version);
+        assert_eq!(trailing("  - uses: a/b@v1   # v1.2.0"), VERSION);
+        assert_eq!(
+            trailing("  - uses: a/b@v1 #v1.2.0   pinned for node16 "),
+            Trailing::Version {
+                note: "pinned for node16"
+            }
+        );
         assert_eq!(trailing("  - uses: a/b@v1  "), Trailing::None);
         assert_eq!(trailing("  - { uses: a/b@v1 }"), Trailing::Foreign);
         assert_eq!(trailing("  - uses: a/b@v1 # mine"), Trailing::Foreign);
@@ -202,7 +249,7 @@ mod tests {
             (
                 Style::Preserve,
                 true,
-                Trailing::Version,
+                VERSION,
                 rewrite(&sha, Some(" # v4.2.0"), true),
             ),
             (
@@ -223,24 +270,14 @@ mod tests {
                 Trailing::Foreign,
                 rewrite(&sha, None, false),
             ),
-            (
-                Style::Tag,
-                false,
-                Trailing::Version,
-                rewrite("v4.2.0", None, false),
-            ),
+            (Style::Tag, false, VERSION, rewrite("v4.2.0", None, false)),
             (
                 Style::Tag,
                 true,
                 Trailing::None,
                 rewrite("v4.2.0", None, false),
             ),
-            (
-                Style::Tag,
-                true,
-                Trailing::Version,
-                rewrite("v4.2.0", None, true),
-            ),
+            (Style::Tag, true, VERSION, rewrite("v4.2.0", None, true)),
             (
                 Style::Tag,
                 true,
@@ -255,6 +292,45 @@ mod tests {
                 "{style} {is_sha} {trailing:?}"
             );
         }
+    }
+
+    #[test]
+    fn rewriting_a_version_comment_keeps_its_note() {
+        let target = info("v4.2.0", 'b');
+        let sha = "b".repeat(40);
+        let noted = Trailing::Version {
+            note: "pinned for node16",
+        };
+        for (style, is_sha, expected) in [
+            (
+                Style::Preserve,
+                true,
+                rewrite(&sha, Some(" # v4.2.0 pinned for node16"), true),
+            ),
+            (
+                Style::Sha,
+                false,
+                rewrite(&sha, Some(" # v4.2.0 pinned for node16"), true),
+            ),
+            (
+                Style::Tag,
+                true,
+                rewrite("v4.2.0", Some(" # pinned for node16"), true),
+            ),
+            (Style::Tag, false, rewrite("v4.2.0", None, false)),
+        ] {
+            assert_eq!(
+                Rewrite::outdated(style, is_sha, &target, noted),
+                expected,
+                "{style} {is_sha}"
+            );
+        }
+        assert_eq!(
+            Rewrite::pin(&sha, "v4", noted),
+            rewrite(&sha, Some(" # v4 pinned for node16"), true)
+        );
+        assert_eq!(labeled_comment("v1", ""), " # v1");
+        assert_eq!(note_comment(""), None);
     }
 
     const fn marker<'a>(tag: &'a str, note: &'a str) -> PinMarker<'a> {

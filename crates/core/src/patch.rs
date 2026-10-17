@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Trailing, is_version_comment},
+    rewrite::{Trailing, labeled_comment, note_comment},
     version,
 };
 
@@ -96,47 +96,52 @@ pub fn retarget_edit(
 
 /// Build an edit that pins a ref to the `target` commit SHA.
 ///
-/// Keeps a `# vX.Y.Z` version comment accurate: a stale version comment is
-/// refreshed, a missing one is added, and a foreign comment is left
-/// untouched. Shared by `update` and `pin`.
+/// Keeps a `# vX.Y.Z` version comment accurate: a stale version is
+/// refreshed and the note after it kept, a missing comment is added, and a
+/// foreign comment is left untouched. Shared by `update` and `pin`.
 #[must_use]
 pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<PendingEdit> {
     let new_sha = target.sha();
-    let version_comment = format!(" # {}", target.version());
+    let version = target.version().to_string();
     let range = loc.ref_range()?;
 
     let raw = loc.raw_line();
-    let tail = raw.get(range.end..).unwrap_or("").trim_start();
-    Some(if is_version_comment(tail) {
-        // Overwrite the SHA and the stale version comment together.
-        PendingEdit::replace_range(
-            loc.line(),
-            range.start..raw.len(),
-            format!("{new_sha}{version_comment}"),
-        )
-        .with_inline_comment(version_comment)
-    } else {
+    Some(match Trailing::after(raw, range.end) {
+        Trailing::Version { note } => {
+            let comment = labeled_comment(&version, note);
+            PendingEdit::replace_range(
+                loc.line(),
+                range.start..raw.len(),
+                format!("{new_sha}{comment}"),
+            )
+            .with_inline_comment(comment)
+        }
         // `with_comment` adds the version note only when the line has none, so a
         // foreign comment is preserved.
-        PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
-            .with_comment(version_comment)
+        Trailing::None | Trailing::Foreign => {
+            PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
+                .with_comment(labeled_comment(&version, ""))
+        }
     })
 }
 
-/// Build an edit that writes the tag `tag` over a SHA pin and drops a trailing version comment.
+/// Build an edit that writes the tag `tag` over a SHA pin.
+///
+/// A trailing version comment loses its version and keeps its note.
 #[must_use]
 pub fn unpin_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
     let raw = loc.raw_line();
-    let end = match Trailing::after(raw, range.end) {
-        Trailing::Version => raw.len(),
-        Trailing::None | Trailing::Foreign => range.end,
-    };
-    Some(PendingEdit::replace_range(
-        loc.line(),
-        range.start..end,
-        tag.to_string(),
-    ))
+    Some(match Trailing::after(raw, range.end) {
+        Trailing::Version { note } => PendingEdit::replace_range(
+            loc.line(),
+            range.start..raw.len(),
+            format!("{tag}{}", note_comment(note).unwrap_or_default()),
+        ),
+        Trailing::None | Trailing::Foreign => {
+            PendingEdit::replace_range(loc.line(), range, tag.to_string())
+        }
+    })
 }
 
 /// Why a planned edit leaves an action reference unchanged.
@@ -589,6 +594,39 @@ mod tests {
                 "{style} {is_sha}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_rewritten_version_comment_keeps_its_note() -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v4.2.0"), &new);
+        let line = format!("      - uses: actions/checkout@{old}  #v4.0.0  pinned for node16");
+        let loc = sha_loc(&line)?;
+        for (style, written, comment) in [
+            (
+                Style::Preserve,
+                format!("{new} # v4.2.0 pinned for node16"),
+                Some(" # v4.2.0 pinned for node16"),
+            ),
+            (Style::Tag, "v4.2.0 # pinned for node16".to_string(), None),
+        ] {
+            let edit = retarget_edit(&loc, true, &target, style).ok_or("no edit")?;
+            assert_eq!(edit.inline_comment.as_deref(), comment, "{style}");
+            let result = apply_line(&line, edit).ok_or("edit did not apply")?;
+            assert_eq!(
+                result,
+                format!("      - uses: actions/checkout@{written}"),
+                "{style}"
+            );
+        }
+        let bare = format!("      - uses: actions/checkout@{old} # v4.0.0");
+        let edit = unpin_edit(&sha_loc(&bare)?, "v4.2.0").ok_or("no edit")?;
+        assert_eq!(
+            apply_line(&bare, edit).ok_or("edit did not apply")?,
+            "      - uses: actions/checkout@v4.2.0"
+        );
         Ok(())
     }
 

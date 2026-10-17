@@ -476,6 +476,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_keeps_the_note_of_a_rewritten_version_comment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = format!(
+            "steps:\n  - uses: o/p@{} # v4.0.0 pinned for node16\n  - uses: o/q@v4.0.0\n",
+            sha40('a')
+        );
+        let new = sha40('b');
+        for (pin, sha_line, tag_line) in [
+            (
+                "preserve",
+                format!("o/p@{new} # v4.2.0 pinned for node16"),
+                "o/q@v4.2.0".to_string(),
+            ),
+            (
+                "sha",
+                format!("o/p@{new} # v4.2.0 pinned for node16"),
+                format!("o/q@{new} # v4.2.0"),
+            ),
+            (
+                "tag",
+                "o/p@v4.2.0 # pinned for node16".to_string(),
+                "o/q@v4.2.0".to_string(),
+            ),
+        ] {
+            let written =
+                update_with_config(&format!("[policy]\npin = \"{pin}\"\n"), &content).await?;
+            assert_eq!(
+                written,
+                format!("steps:\n  - uses: {sha_line}\n  - uses: {tag_line}\n"),
+                "{pin}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_pin_override_wins_for_matching_actions()
     -> Result<(), Box<dyn std::error::Error>> {
         let toml = "[policy]\npin = \"tag\"\n\n[[overrides]]\npattern = \"pinned/*\"\npolicy = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"o/q\"\npolicy = { pin = \"preserve\" }\n";

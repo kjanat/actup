@@ -945,7 +945,9 @@ mod tests {
             sha: Sha40::new(old.clone()).ok_or("fixture SHA must be valid")?,
             versions,
         };
-        let content = format!("steps:\n  - uses: actions/cache@{old}\n");
+        let content = format!(
+            "steps:\n  - uses: actions/cache@{old}\n  - uses: o/noted@{old} # v4.0.0 keep me\n"
+        );
 
         let mut file_edits = FileEdits::new(
             std::path::PathBuf::from("/ci.yml"),
@@ -970,7 +972,9 @@ mod tests {
 
         assert_eq!(
             file_edits.plan().content(),
-            format!("steps:\n  - uses: actions/cache@{new} # v4.2.0\n")
+            format!(
+                "steps:\n  - uses: actions/cache@{new} # v4.2.0\n  - uses: o/noted@{new} # v4.2.0 keep me\n"
+            )
         );
         Ok(())
     }

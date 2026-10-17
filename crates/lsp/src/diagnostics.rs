@@ -103,10 +103,11 @@ pub struct LocatedAction {
     pub editable: bool,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
-    /// What follows the ref on its line.
-    pub trailing: Trailing,
-    /// The text after the ref on its line, empty when the ref is not editable.
+    /// The text after the ref on its line, empty when the ref is not editable
+    /// or the line takes no comment.
     pub tail: String,
+    /// Whether the line may take a version comment.
+    takes_comment: bool,
     /// 0-indexed end-of-line column (negotiated encoding), used to overwrite a
     /// stale version comment when re-pinning.
     pub line_end_col: u32,
@@ -119,6 +120,17 @@ pub fn uri_format(uri: &Uri) -> SourceFormat {
     }
     uri.to_file_path()
         .map_or(SourceFormat::Yaml, |path| SourceFormat::from_path(&path))
+}
+
+impl LocatedAction {
+    /// What follows the ref on its line, [`Trailing::Foreign`] on a line that takes no comment.
+    pub fn trailing(&self) -> Trailing<'_> {
+        if self.takes_comment {
+            Trailing::after(&self.tail, 0)
+        } else {
+            Trailing::Foreign
+        }
+    }
 }
 
 /// Find the `uses:` action whose ref range contains the cursor `position`.
@@ -165,19 +177,15 @@ fn extract_located_actions(
                 // Convert byte offsets to the negotiated LSP encoding.
                 let raw_line = loc.raw_line();
                 let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
-                let (col_start, col_end, editable, trailing, tail) =
+                let (col_start, col_end, editable, takes_comment, tail) =
                     loc.ref_range()
-                        .map_or((0, line_end_col, false, Trailing::None, ""), |r| {
+                        .map_or((0, line_end_col, false, true, ""), |r| {
                             let takes_comment = commentable.contains(&loc.line());
                             (
                                 crate::position::byte_to_col(raw_line, r.start, encoding),
                                 crate::position::byte_to_col(raw_line, r.end, encoding),
                                 true,
-                                if takes_comment {
-                                    Trailing::after(raw_line, r.end)
-                                } else {
-                                    Trailing::Foreign
-                                },
+                                takes_comment,
                                 if takes_comment {
                                     raw_line.get(r.end..).unwrap_or("")
                                 } else {
@@ -195,8 +203,8 @@ fn extract_located_actions(
                     col_end,
                     editable,
                     uses_value: loc.value().to_string(),
-                    trailing,
                     tail: tail.to_string(),
+                    takes_comment,
                     line_end_col,
                 });
             }
@@ -315,7 +323,7 @@ async fn compute_diagnostics_for_actions(
                     config.policy_for(&action.action_ref).pin,
                     action.action_ref.is_sha(),
                     target,
-                    action.trailing,
+                    action.trailing(),
                 ),
                 action.line_end_col,
             )),
@@ -375,7 +383,7 @@ async fn expand_edit(
             .and_then(|v| v.tag_on(sha))
             .map_or_else(untagged, |tag| {
                 OutdatedEdit::new(
-                    Rewrite::pin(sha, tag.version().as_str(), action.trailing),
+                    Rewrite::pin(sha, tag.version().as_str(), action.trailing()),
                     action.line_end_col,
                 )
             }),
@@ -976,22 +984,23 @@ jobs:
         let yaml = format!(
             "steps:\n  - {{ uses: a/b@v4, with: {{ x: 1 }} }}\n  - [{{ uses: c/d@v1 }}]\n  - {{ name: \"✓ ok\", uses: e/f@v2 }}\n  - {{ uses: g/h@{sha}, id: x }} # v1.0.0\n"
         );
-        let located: Vec<(String, u32, u32, u32, Trailing)> = extract_located_actions(
+        let actions = extract_located_actions(
             &yaml,
             SourceFormat::Yaml,
             crate::position::PositionEncoding::Utf16,
-        )
-        .into_iter()
-        .map(|a| {
-            (
-                a.action_ref.ref_str().to_string(),
-                a.line,
-                a.col_start,
-                a.col_end,
-                a.trailing,
-            )
-        })
-        .collect();
+        );
+        let located: Vec<(String, u32, u32, u32, Trailing<'_>)> = actions
+            .iter()
+            .map(|a| {
+                (
+                    a.action_ref.ref_str().to_string(),
+                    a.line,
+                    a.col_start,
+                    a.col_end,
+                    a.trailing(),
+                )
+            })
+            .collect();
         assert_eq!(
             located,
             [
@@ -1058,7 +1067,7 @@ jobs:
             let line_len = line.encode_utf16().count();
             assert!(!action.editable, "{yaml:?}");
             assert_eq!(
-                (action.col_start, action.col_end, action.trailing),
+                (action.col_start, action.col_end, action.trailing()),
                 (0, u32::try_from(line_len)?, Trailing::None),
                 "{yaml:?}"
             );
@@ -1916,27 +1925,31 @@ jobs:
     #[test]
     fn located_actions_read_no_tail_on_lines_without_comments() {
         let sha = "a".repeat(40);
-        let line = format!("run(\"uses: o/p@{sha} # v4\");\n");
-        let found = |format| {
-            extract_located_actions(&line, format, crate::position::PositionEncoding::Utf16)
-                .into_iter()
-                .map(|a| (a.trailing, a.tail))
-                .collect::<Vec<_>>()
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let text = extract_located_actions(
+            &format!("run(\"uses: o/p@{sha} # v4\");\n"),
+            SourceFormat::Text,
+            encoding,
+        );
+        let [action] = text.as_slice() else {
+            panic!("expected one action, got {}", text.len());
         };
         assert_eq!(
-            found(SourceFormat::Text),
-            [(Trailing::Foreign, String::new())]
+            (action.trailing(), action.tail.as_str()),
+            (Trailing::Foreign, "")
         );
-        let yaml = format!("- uses: o/p@{sha} # v4\n");
-        let located: Vec<(Trailing, String)> = extract_located_actions(
-            &yaml,
+        let yaml = extract_located_actions(
+            &format!("- uses: o/p@{sha} # v4\n"),
             SourceFormat::Yaml,
-            crate::position::PositionEncoding::Utf16,
-        )
-        .into_iter()
-        .map(|a| (a.trailing, a.tail))
-        .collect();
-        assert_eq!(located, [(Trailing::Version, " # v4".to_string())]);
+            encoding,
+        );
+        let [action] = yaml.as_slice() else {
+            panic!("expected one action, got {}", yaml.len());
+        };
+        assert_eq!(
+            (action.trailing(), action.tail.as_str()),
+            (Trailing::Version { note: "" }, " # v4")
+        );
     }
 
     #[test]

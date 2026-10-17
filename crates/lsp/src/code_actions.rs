@@ -19,7 +19,7 @@ use tower_lsp_server::ls_types::{
 
 use actup_core::{
     SourceFormat,
-    rewrite::{Rewrite, Trailing},
+    rewrite::{Rewrite, Trailing, note_comment},
 };
 
 use crate::{
@@ -336,12 +336,15 @@ pub fn pin_code_actions(
     version: Option<i32>,
     supports_document_changes: bool,
     ref_range: Range,
-    trailing: Trailing,
+    trailing: Trailing<'_>,
     line_end_col: u32,
     targets: &PinTargets,
 ) -> Vec<CodeActionOrCommand> {
-    // Switching to a floating ref drops a now-inaccurate version comment.
-    let strip_end = matches!(trailing, Trailing::Version).then_some(line_end_col);
+    // Switching to a floating ref drops the version of a now-inaccurate version comment.
+    let (strip_end, kept_note) = match trailing {
+        Trailing::Version { note } => (Some(line_end_col), note_comment(note)),
+        Trailing::None | Trailing::Foreign => (None, None),
+    };
     let mut actions = Vec::new();
 
     if let Some((sha, label)) = &targets.sha {
@@ -361,7 +364,7 @@ pub fn pin_code_actions(
         ));
     }
     if let Some(major) = &targets.major {
-        let edit = outdated_text_edit(ref_range, major, None, strip_end);
+        let edit = outdated_text_edit(ref_range, major, kept_note.as_deref(), strip_end);
         actions.push(pin_action(
             uri,
             version,
@@ -371,7 +374,7 @@ pub fn pin_code_actions(
         ));
     }
     if let Some(branch) = &targets.branch {
-        let edit = outdated_text_edit(ref_range, branch, None, strip_end);
+        let edit = outdated_text_edit(ref_range, branch, kept_note.as_deref(), strip_end);
         actions.push(pin_action(
             uri,
             version,
@@ -793,7 +796,7 @@ mod tests {
             TEST_VERSION,
             true,
             make_range(0, 31, 71),
-            Trailing::Version,
+            Trailing::Version { note: "" },
             86,
             &targets,
         );
@@ -804,6 +807,62 @@ mod tests {
         let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
         assert_eq!(edits[0].new_text, "v7");
         assert_eq!(edits[0].range.end.character, 86);
+    }
+
+    #[test]
+    fn floating_pins_keep_the_note_of_a_version_comment() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
+        let targets = PinTargets {
+            sha: Some((sha.to_string(), "v7.2.3".to_string())),
+            major: Some("v7".to_string()),
+            branch: Some("main".to_string()),
+            unpin: None,
+        };
+        let actions = pin_code_actions(
+            &uri,
+            TEST_VERSION,
+            true,
+            make_range(0, 31, 71),
+            Trailing::Version {
+                note: "pinned for node16",
+            },
+            104,
+            &targets,
+        );
+        let written: Vec<(String, u32)> = actions
+            .iter()
+            .map(|action| {
+                let edits = edits_of_versioned(action, &uri);
+                let [edit] = edits.as_slice() else {
+                    panic!("expected one edit: {edits:?}");
+                };
+                (edit.new_text.clone(), edit.range.end.character)
+            })
+            .collect();
+        assert_eq!(
+            written,
+            [
+                (format!("{sha} # v7.2.3 pinned for node16"), 104),
+                ("v7 # pinned for node16".to_string(), 104),
+                ("main # pinned for node16".to_string(), 104),
+            ]
+        );
+        Ok(())
+    }
+
+    fn edits_of_versioned(action: &CodeActionOrCommand, uri: &Uri) -> Vec<TextEdit> {
+        let CodeActionOrCommand::CodeAction(CodeAction {
+            edit: Some(edit), ..
+        }) = action
+        else {
+            panic!("expected a CodeAction with an edit");
+        };
+        extract_text_edits(edit, uri, TEST_VERSION)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     #[test]
@@ -1409,7 +1468,14 @@ mod tests {
     }
 
     async fn fix_under_config(toml: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let text = PIN_STYLE_WORKFLOW.replace("OLD", &"a".repeat(40));
+        fix_text_under_config(PIN_STYLE_WORKFLOW, toml).await
+    }
+
+    async fn fix_text_under_config(
+        workflow: &str,
+        toml: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let text = workflow.replace("OLD", &"a".repeat(40));
         let mut provider = test_utils::MockProvider::new("github.com");
         for (owner, repo) in [
             ("actions", "checkout"),
@@ -1455,6 +1521,47 @@ mod tests {
 
     fn expected(lines: [&str; 5]) -> String {
         format!("steps:\n{}\n", lines.join("\n")).replace("NEW", &"b".repeat(40))
+    }
+
+    #[tokio::test]
+    async fn every_pin_style_keeps_the_note_of_a_version_comment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workflow = "steps:\n  - uses: o/p@OLD # v4.0.0 pinned for node16\n  - uses: o/q@v4.0.0 # v4.0.0 keep\n";
+        let sha = "b".repeat(40);
+        for (pin, expected) in [
+            (
+                "preserve",
+                [
+                    format!("o/p@{sha} # v4.2.0 pinned for node16"),
+                    "o/q@v4.2.0 # v4.0.0 keep".to_string(),
+                ],
+            ),
+            (
+                "sha",
+                [
+                    format!("o/p@{sha} # v4.2.0 pinned for node16"),
+                    format!("o/q@{sha} # v4.2.0 keep"),
+                ],
+            ),
+            (
+                "tag",
+                [
+                    "o/p@v4.2.0 # pinned for node16".to_string(),
+                    "o/q@v4.2.0 # v4.0.0 keep".to_string(),
+                ],
+            ),
+        ] {
+            let toml = format!("[policy]\npin = \"{pin}\"\n");
+            assert_eq!(
+                fix_text_under_config(workflow, &toml).await?,
+                format!(
+                    "steps:\n  - uses: {}\n  - uses: {}\n",
+                    expected[0], expected[1]
+                ),
+                "{pin}"
+            );
+        }
+        Ok(())
     }
 
     #[tokio::test]

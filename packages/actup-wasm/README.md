@@ -123,8 +123,9 @@ edit.
 `config.policy.pin` picks the written form, as in `actup update`. `preserve`
 (the default) keeps a tag a tag and re-pins a SHA to the new SHA with a
 `# vX.Y.Z` comment. `sha` writes every target as a SHA with that comment.
-**`tag` unpins:** it writes outdated SHA pins as mutable tags and drops their
-version comment.
+**`tag` unpins:** it writes outdated SHA pins as mutable tags and drops the
+version from their version comment. A note after the version, as in
+`# v4.0.0 pinned for node16`, stays in every case.
 
 ### `sortVersionTags(tags)`
 
