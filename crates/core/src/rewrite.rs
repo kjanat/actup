@@ -315,14 +315,17 @@ pub enum Named {
 }
 
 impl Named {
-    /// A branch when `versions` lists a branch `name` and no tag of that name, else a tag.
+    /// A tag when `versions` lists a tag `name`, or lists no ref `name` and `name` is a version token, else a branch.
+    ///
+    /// A provider's version set can leave out branches other than the
+    /// default one, so an unlisted name that is no version reads as a branch.
     #[must_use]
     pub fn listed(name: &str, versions: &version::Set) -> Self {
         let tagged = versions.has_exact_tag(name) || versions.other_tag_sha(name).is_some();
-        if !tagged && versions.branch_sha(name).is_some() {
-            Self::Branch
-        } else {
+        if tagged || (!versions.names_ref(name) && is_version_token(name)) {
             Self::Tag
+        } else {
+            Self::Branch
         }
     }
 }
@@ -619,17 +622,20 @@ mod tests {
             rewrite(&sha, Some(" # main keep"), true)
         );
         let mut versions = version::Set::new();
-        versions.set_branches(std::collections::HashMap::from([
-            ("main".to_string(), "c".repeat(40)),
-            ("nightly".to_string(), "c".repeat(40)),
-        ]));
         versions.set_other_tags(std::collections::HashMap::from([(
             "nightly".to_string(),
             "d".repeat(40),
         )]));
+        versions.set_branches(std::collections::HashMap::from([
+            ("main".to_string(), "c".repeat(40)),
+            ("nightly".to_string(), "c".repeat(40)),
+            ("v2".to_string(), "c".repeat(40)),
+        ]));
         assert_eq!(Named::listed("main", &versions), Named::Branch);
         assert_eq!(Named::listed("nightly", &versions), Named::Tag);
         assert_eq!(Named::listed("v9", &versions), Named::Tag);
+        assert_eq!(Named::listed("v2", &versions), Named::Branch);
+        assert_eq!(Named::listed("develop", &versions), Named::Branch);
         assert_eq!(labeled_comment("v1", ""), " # v1");
         assert_eq!(note_comment(""), None);
     }

@@ -117,6 +117,7 @@ impl Provider for MockProvider {
             "v4.0.0" => Sha40::new(sha('a')),
             "v4.2.0" | "v4" => Sha40::new(sha('b')),
             "main" => Sha40::new(sha('c')),
+            "develop" => Sha40::new(sha('f')),
             _ => None,
         };
         let result = found.ok_or_else(|| CoreError::RefNotFound {
@@ -1209,6 +1210,20 @@ fn update_all_rewrites_labels_after_named_refs(client: &mut Client, ws: &Workspa
     let actual = ws.read(".github/workflows/build.yml")?;
     expect(actual == expected, || {
         format!("build.yml:\n{actual}\nexpected:\n{expected}")
+    })?;
+
+    ws.write(
+        ".github/workflows/develop.yml",
+        &steps(&["v4.0.0 # v4.0.0 keep".into()]),
+    )?;
+    let unlisted = call(client, "develop")?;
+    expect(!is_error(&unlisted), || {
+        format!("updateAll failed: {unlisted}")
+    })?;
+    let expected = steps(&["develop # keep".into()]);
+    let actual = ws.read(".github/workflows/develop.yml")?;
+    expect(actual == expected, || {
+        format!("develop.yml:\n{actual}\nexpected:\n{expected}")
     })
 }
 
