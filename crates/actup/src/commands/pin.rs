@@ -848,7 +848,7 @@ mod tests {
             return None;
         };
         Some(Pinned {
-            line: plan.content.lines().nth(1)?.to_owned(),
+            line: plan.content().lines().nth(1)?.to_owned(),
             new_ref: change.new_ref.clone(),
             comment: comment.clone(),
         })
