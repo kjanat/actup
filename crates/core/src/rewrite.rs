@@ -5,22 +5,24 @@ use crate::{policy::Style, version};
 /// What follows a `uses:` ref on its line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trailing<'a> {
-    /// Nothing but whitespace.
+    /// Nothing but a [`closer`].
     None,
     /// A version comment like `# v8.1.0 pinned for node16`.
     Version {
         /// The text after the version, trimmed, like `pinned for node16`.
         note: &'a str,
     },
-    /// Any other text.
+    /// A comment that is not a version comment, or text that is not a [`closer`].
     Foreign,
 }
 
 impl<'a> Trailing<'a> {
-    /// Classify the text of `raw_line` after byte offset `ref_end`.
+    /// Classify the text of `raw_line` after the ref that ends at byte offset `ref_end`.
+    ///
+    /// The [`closer`] of the value is not part of that text.
     #[must_use]
     pub fn after(raw_line: &'a str, ref_end: usize) -> Self {
-        let tail = raw_line.get(ref_end..).unwrap_or("").trim_start();
+        let tail = after_value(raw_line, ref_end).trim_start();
         if tail.is_empty() {
             Self::None
         } else if is_version_comment(tail) {
@@ -31,6 +33,31 @@ impl<'a> Trailing<'a> {
             Self::Foreign
         }
     }
+}
+
+/// The text after the ref that ends at byte offset `ref_end` that closes its value.
+///
+/// That is a closing quote, then flow `}`, `]` and `,` and spaces. A comment
+/// written after the ref goes after this text.
+#[must_use]
+pub fn closer(raw_line: &str, ref_end: usize) -> &str {
+    let rest = raw_line.get(ref_end..).unwrap_or("");
+    let quote = rest
+        .chars()
+        .next()
+        .filter(|c| matches!(c, '"' | '\''))
+        .map_or(0, char::len_utf8);
+    let len = rest[quote..]
+        .find(|c: char| !(c.is_whitespace() || matches!(c, '}' | ']' | ',')))
+        .map_or(rest.len(), |at| quote + at);
+    &rest[..len]
+}
+
+/// The text of `raw_line` after the [`closer`] of the ref that ends at byte offset `ref_end`.
+#[must_use]
+pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
+    let rest = raw_line.get(ref_end..).unwrap_or("");
+    &rest[closer(raw_line, ref_end).len()..]
 }
 
 /// Whether a line fragment is a version comment like `# v1.2.3` or `# 1.2`.
@@ -187,6 +214,26 @@ impl Rewrite {
     pub fn text(&self) -> String {
         format!("{}{}", self.new_ref, self.comment.as_deref().unwrap_or(""))
     }
+
+    /// The text written from the start of the ref after which `closer` follows, and whether it runs to the line end.
+    ///
+    /// A comment or a replacement to the line end writes `closer` again
+    /// between the ref and the comment.
+    #[must_use]
+    pub fn splice(&self, closer: &str) -> (String, bool) {
+        let closer = closer.trim_end();
+        if closer.is_empty() || (self.comment.is_none() && !self.to_line_end) {
+            return (self.text(), self.to_line_end);
+        }
+        (
+            format!(
+                "{}{closer}{}",
+                self.new_ref,
+                self.comment.as_deref().unwrap_or("")
+            ),
+            true,
+        )
+    }
 }
 
 #[cfg(test)]
@@ -222,7 +269,7 @@ mod tests {
             }
         );
         assert_eq!(trailing("  - uses: a/b@v1  "), Trailing::None);
-        assert_eq!(trailing("  - { uses: a/b@v1 }"), Trailing::Foreign);
+        assert_eq!(trailing("  - { uses: a/b@v1 }"), Trailing::None);
         assert_eq!(trailing("  - uses: a/b@v1 # mine"), Trailing::Foreign);
         assert_eq!(Trailing::after("  - uses: a/b@v1", 99), Trailing::None);
     }
@@ -437,5 +484,55 @@ mod tests {
     fn text_joins_the_ref_and_its_comment() {
         assert_eq!(rewrite("abc", Some(" # v1"), false).text(), "abc # v1");
         assert_eq!(rewrite("v1", None, true).text(), "v1");
+    }
+
+    #[test]
+    fn trailing_skips_the_closer() {
+        for (line, closing, trailing) in [
+            ("  - uses: \"a/b@v1\" # v1.2.0", "\" ", VERSION),
+            ("  - uses: 'a/b@v1' # mine", "' ", Trailing::Foreign),
+            ("  - uses: \"a/b@v1\"", "\"", Trailing::None),
+            ("  - { uses: 'a/b@v1' }", "' }", Trailing::None),
+            ("  - { uses: a/b@v1 } # v1.2.0", " } ", VERSION),
+            ("  - [{ uses: a/b@v1 }]  ", " }]  ", Trailing::None),
+            (
+                "  - { uses: a/b@v1, with: { x: 1 } }",
+                ", ",
+                Trailing::Foreign,
+            ),
+            ("  - uses: a/b@v1 # v1.2.0", " ", VERSION),
+            (
+                "  - uses: 'a/b@v1' # v1.2.0 keep me",
+                "' ",
+                Trailing::Version { note: "keep me" },
+            ),
+        ] {
+            let ref_end = line.find("@v1").map_or(0, |at| at + 3);
+            assert_eq!(closer(line, ref_end), closing, "{line}");
+            assert_eq!(
+                after_value(line, ref_end),
+                &line[ref_end + closing.len()..],
+                "{line}"
+            );
+            assert_eq!(Trailing::after(line, ref_end), trailing, "{line}");
+        }
+    }
+
+    #[test]
+    fn splice_writes_the_closer_before_a_comment() {
+        for (rewrite, closing, text, to_line_end) in [
+            (rewrite("S", None, false), "\" ", "S", false),
+            (rewrite("S", Some(" # v2"), false), "\"", "S\" # v2", true),
+            (rewrite("S", Some(" # v2"), true), "' } ", "S' } # v2", true),
+            (rewrite("v2", None, true), "\" ", "v2\"", true),
+            (rewrite("S", Some(" # v2"), false), " ", "S # v2", false),
+            (rewrite("S", Some(" # v2"), true), "", "S # v2", true),
+        ] {
+            assert_eq!(
+                rewrite.splice(closing),
+                (text.to_string(), to_line_end),
+                "{rewrite:?} {closing:?}"
+            );
+        }
     }
 }

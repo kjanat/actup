@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat,
     check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
-    rewrite::{Rewrite, Trailing},
+    rewrite::{Rewrite, Trailing, after_value, closer},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -92,14 +92,25 @@ pub struct OutdatedEdit {
 }
 
 impl OutdatedEdit {
-    /// Place `rewrite` on a line whose end is column `line_end_col`.
-    pub fn new(rewrite: Rewrite, line_end_col: u32) -> Self {
+    /// Place `rewrite` on the line that `end` describes.
+    pub fn new(rewrite: Rewrite, end: LineEnd<'_>) -> Self {
+        let (text, to_line_end) = rewrite.splice(end.closer);
+        let after_ref = text.get(rewrite.new_ref.len()..).unwrap_or("").to_string();
         Self {
             target_ref: rewrite.new_ref,
-            repin_comment: rewrite.comment,
-            replace_end_col: rewrite.to_line_end.then_some(line_end_col),
+            repin_comment: (!after_ref.is_empty()).then_some(after_ref),
+            replace_end_col: to_line_end.then_some(end.line_end_col),
         }
     }
+}
+
+/// The text after a ref on its line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LineEnd<'a> {
+    /// The [`closer`] of the value.
+    pub closer: &'a str,
+    /// 0-indexed end-of-line column in the negotiated encoding.
+    pub line_end_col: u32,
 }
 
 /// Parsed action reference with its source location in the document.
@@ -116,7 +127,9 @@ pub struct LocatedAction {
     pub editable: bool,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
-    /// The text after the ref on its line, empty when the ref is not editable
+    /// The [`closer`] of the value, empty when the line takes no comment.
+    pub closer: String,
+    /// The text after the value on its line, empty when the ref is not editable
     /// or the line takes no comment.
     pub tail: String,
     /// Whether the line may take a version comment.
@@ -165,6 +178,16 @@ pub fn locate_action_at(
         })
 }
 
+impl LocatedAction {
+    /// The text after the ref on its line.
+    pub fn line_end(&self) -> LineEnd<'_> {
+        LineEnd {
+            closer: &self.closer,
+            line_end_col: self.line_end_col,
+        }
+    }
+}
+
 /// Extract and parse all `uses:` references from document text read as `format`.
 ///
 /// Skips local (`./`) and docker (`docker://`) references, and logs
@@ -173,15 +196,16 @@ pub fn locate_action_at(
 ///
 /// Column positions are converted from byte offsets to the negotiated
 /// LSP position encoding. A ref on a line outside
-/// [`SourceFormat::commentable_lines`] gets [`Trailing::Foreign`] and an
-/// empty tail, so no edit appends, rewrites or reads a comment there.
+/// [`SourceFormat::comment_lines`] gets [`Trailing::Foreign`], an empty
+/// closer and an empty tail, so no edit appends, rewrites or reads a comment
+/// there.
 fn extract_located_actions(
     text: &str,
     format: SourceFormat,
     encoding: crate::position::PositionEncoding,
 ) -> Vec<LocatedAction> {
     let locations = format.extract_uses(text);
-    let commentable = format.commentable_lines(text);
+    let commentable = format.comment_lines(text);
     let mut actions = Vec::with_capacity(locations.len());
 
     for loc in locations {
@@ -190,22 +214,27 @@ fn extract_located_actions(
                 // Convert byte offsets to the negotiated LSP encoding.
                 let raw_line = loc.raw_line();
                 let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
-                let (col_start, col_end, editable, takes_comment, tail) =
-                    loc.ref_range()
-                        .map_or((0, line_end_col, false, true, ""), |r| {
-                            let takes_comment = commentable.contains(&loc.line());
-                            (
-                                crate::position::byte_to_col(raw_line, r.start, encoding),
-                                crate::position::byte_to_col(raw_line, r.end, encoding),
-                                true,
-                                takes_comment,
-                                if takes_comment {
-                                    raw_line.get(r.end..).unwrap_or("")
-                                } else {
-                                    ""
-                                },
-                            )
-                        });
+                let (col_start, col_end, editable, takes_comment, closing, tail) = loc
+                    .ref_range()
+                    .map_or((0, line_end_col, false, true, "", ""), |r| {
+                        let takes_comment = commentable.contains(&loc.line());
+                        (
+                            crate::position::byte_to_col(raw_line, r.start, encoding),
+                            crate::position::byte_to_col(raw_line, r.end, encoding),
+                            true,
+                            takes_comment,
+                            if takes_comment {
+                                closer(raw_line, r.end)
+                            } else {
+                                ""
+                            },
+                            if takes_comment {
+                                after_value(raw_line, r.end)
+                            } else {
+                                ""
+                            },
+                        )
+                    });
 
                 let Some(line) = loc
                     .line()
@@ -221,6 +250,7 @@ fn extract_located_actions(
                     col_end,
                     editable,
                     uses_value: loc.value().to_string(),
+                    closer: closing.to_string(),
                     tail: tail.to_string(),
                     takes_comment,
                     line_end_col,
@@ -344,11 +374,11 @@ async fn compute_diagnostics_for_actions(
                     target,
                     action.trailing(),
                 ),
-                action.line_end_col,
+                action.line_end(),
             )),
             CheckStatus::PinBranch { ref_name, sha } => Some(OutdatedEdit::new(
                 Rewrite::pin(sha, ref_name, action.trailing()),
-                action.line_end_col,
+                action.line_end(),
             )),
             CheckStatus::Unresolvable {
                 reason,
@@ -415,7 +445,7 @@ async fn expand_edit(
             .map_or_else(untagged, |tag| {
                 OutdatedEdit::new(
                     Rewrite::pin(sha, tag.version().as_str(), action.trailing()),
-                    action.line_end_col,
+                    action.line_end(),
                 )
             }),
     )
@@ -801,11 +831,45 @@ mod tests {
             comment: Some(" # x".into()),
             to_line_end,
         };
-        let edit = OutdatedEdit::new(rewrite(true), 70);
+        let end = LineEnd {
+            closer: " ",
+            line_end_col: 70,
+        };
+        let edit = OutdatedEdit::new(rewrite(true), end);
         assert_eq!(edit.target_ref, "v8.2.0");
         assert_eq!(edit.repin_comment.as_deref(), Some(" # x"));
         assert_eq!(edit.replace_end_col, Some(70));
-        assert_eq!(OutdatedEdit::new(rewrite(false), 70).replace_end_col, None);
+        assert_eq!(OutdatedEdit::new(rewrite(false), end).replace_end_col, None);
+    }
+
+    #[test]
+    fn outdated_edit_writes_the_comment_after_the_closer() {
+        let rewrite = |comment: Option<&str>, to_line_end| Rewrite {
+            new_ref: "v8.2.0".into(),
+            comment: comment.map(str::to_string),
+            to_line_end,
+        };
+        let end = LineEnd {
+            closer: "\" } ",
+            line_end_col: 70,
+        };
+        let placed = |rewrite| {
+            let edit = OutdatedEdit::new(rewrite, end);
+            (edit.repin_comment, edit.replace_end_col)
+        };
+        assert_eq!(
+            placed(rewrite(Some(" # x"), false)),
+            (Some("\" } # x".to_string()), Some(70))
+        );
+        assert_eq!(
+            placed(rewrite(Some(" # x"), true)),
+            (Some("\" } # x".to_string()), Some(70))
+        );
+        assert_eq!(
+            placed(rewrite(None, true)),
+            (Some("\" }".to_string()), Some(70))
+        );
+        assert_eq!(placed(rewrite(None, false)), (None, None));
     }
 
     #[test]
@@ -1046,8 +1110,8 @@ jobs:
             located,
             [
                 ("v4".to_string(), 1, 16, 18, Trailing::Foreign),
-                ("v1".to_string(), 2, 17, 19, Trailing::Foreign),
-                ("v2".to_string(), 3, 30, 32, Trailing::Foreign),
+                ("v1".to_string(), 2, 17, 19, Trailing::None),
+                ("v2".to_string(), 3, 30, 32, Trailing::None),
                 (sha, 4, 16, 56, Trailing::Foreign),
             ]
         );
@@ -2096,7 +2160,36 @@ jobs:
         };
         assert_eq!(
             (action.trailing(), action.tail.as_str()),
-            (Trailing::Version { note: "" }, " # v4")
+            (Trailing::Version { note: "" }, "# v4")
+        );
+    }
+
+    #[test]
+    fn located_actions_read_the_tail_after_the_closer() {
+        let sha = "a".repeat(40);
+        let yaml = format!(
+            "- uses: \"o/p@{sha}\" # v4\n- uses: 'o/q@v1'\n- uses: o/r@v1\n- {{ uses: o/s@v1 }} # v1\n- [{{ uses: o/t@v1 }}, {{ uses: o/u@v1 }}]\n"
+        );
+        let actions = extract_located_actions(
+            &yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
+        let located: Vec<(Trailing<'_>, &str, &str)> = actions
+            .iter()
+            .map(|a| (a.trailing(), a.closer.as_str(), a.tail.as_str()))
+            .collect();
+        let version = Trailing::Version { note: "" };
+        assert_eq!(
+            located,
+            [
+                (version, "\" ", "# v4"),
+                (Trailing::None, "'", ""),
+                (Trailing::None, "", ""),
+                (version, " } ", "# v1"),
+                (Trailing::Foreign, "", ""),
+                (Trailing::Foreign, "", ""),
+            ]
         );
     }
 

@@ -721,6 +721,48 @@ mod tests {
     }
 
     #[test]
+    fn retarget_keeps_the_closer() -> Result<(), Box<dyn std::error::Error>> {
+        let old = "a".repeat(40);
+        let new = "b".repeat(40);
+        for (open, close) in [("\"", "\""), ("'", "'"), ("{ uses: ", " }")] {
+            let uses = if open.starts_with('{') { "" } else { "uses: " };
+            for (line, style, expected) in [
+                (
+                    format!("- {uses}{open}a/b@{old}{close} # v4.0.0\n"),
+                    Style::Preserve,
+                    format!("- {uses}{open}a/b@{new}{close} # v4.2.0\n"),
+                ),
+                (
+                    format!("- {uses}{open}a/b@{old}{close}\n"),
+                    Style::Preserve,
+                    format!("- {uses}{open}a/b@{new}{close} # v4.2.0\n"),
+                ),
+                (
+                    format!("- {uses}{open}a/b@{old}{close} # v4.0.0\n"),
+                    Style::Tag,
+                    format!("- {uses}{open}a/b@v4.2.0{close}\n"),
+                ),
+            ] {
+                let (l, action) = loc(&line)?;
+                let (edit, to) =
+                    retarget(&l, &action, &target(), style).ok_or("no retarget edit")?;
+                let site = Site {
+                    path: "f".into(),
+                    line: 1,
+                    provider: "github".into(),
+                    host: "github.com".into(),
+                    action: action.to_string(),
+                };
+                let labelled = label(site, &edit, &l, action.ref_str(), &to);
+                let mut edits = FileEdits::new("f".into(), line.clone(), SourceFormat::Yaml);
+                edits.add(edit, labelled);
+                assert_eq!(plan(&line, edits)?.content, expected, "{line:?} {style}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn retarget_skips_a_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>> {
         let (escaped, action) = loc("- uses: \"a/b@v4.0.\\x30\"\n")?;
         assert!(retarget(&escaped, &action, &target(), Style::Preserve).is_none());

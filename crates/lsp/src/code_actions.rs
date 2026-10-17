@@ -24,7 +24,7 @@ use actup_core::{
 };
 
 use crate::{
-    diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, OutdatedEdit},
+    diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, LineEnd, OutdatedEdit},
     position::PositionEncoding,
     workspace_commands::apply_text_edits,
 };
@@ -307,77 +307,78 @@ pub struct PinTargets {
 
 /// Build "Pin to …" and unpin refactor actions for the ref under the cursor.
 ///
-/// `ref_range` is the ref portion's range; `trailing`/`line_end_col` describe
-/// the line's existing comment so the SHA pin refreshes a `# vX.Y.Z` note and
-/// the floating pins (major/branch) drop a now-stale one. The unpin action
-/// replaces the marker comment with its note. None of these is a `source.fixAll`
-/// action.
+/// `ref_range` is the ref portion's range; `trailing` and `end` describe the
+/// text after it, so the SHA pin refreshes a `# vX.Y.Z` note, the floating
+/// pins (major/branch) drop a now-stale one, and a quoted value keeps its
+/// closing quote before the comment. The unpin action replaces the marker
+/// comment with its note. None of these is a `source.fixAll` action.
 pub fn pin_code_actions(
     uri: &Uri,
     version: Option<i32>,
     supports_document_changes: bool,
     ref_range: Range,
     trailing: Trailing<'_>,
-    line_end_col: u32,
+    end: LineEnd<'_>,
     targets: &PinTargets,
 ) -> Vec<CodeActionOrCommand> {
     // Switching to a floating ref drops the version of a now-inaccurate version comment.
-    let (strip_end, kept_note) = match trailing {
-        Trailing::Version { note } => (Some(line_end_col), note_comment(note)),
-        Trailing::None | Trailing::Foreign => (None, None),
+    let floating = |new_ref: &str| match trailing {
+        Trailing::Version { note } => Rewrite {
+            new_ref: new_ref.to_string(),
+            comment: note_comment(note),
+            to_line_end: true,
+        },
+        Trailing::None | Trailing::Foreign => Rewrite {
+            new_ref: new_ref.to_string(),
+            comment: None,
+            to_line_end: false,
+        },
     };
-    let mut actions = Vec::new();
-
-    if let Some((sha, label)) = &targets.sha {
-        let e = OutdatedEdit::new(Rewrite::pin(sha, label, trailing), line_end_col);
-        let edit = outdated_text_edit(
+    let placed = |rewrite: Rewrite| {
+        let e = OutdatedEdit::new(rewrite, end);
+        outdated_text_edit(
             ref_range,
             &e.target_ref,
             e.repin_comment.as_deref(),
             e.replace_end_col,
-        );
+        )
+    };
+    let mut actions = Vec::new();
+
+    if let Some((sha, label)) = &targets.sha {
         actions.push(pin_action(
             uri,
             version,
             supports_document_changes,
             format!("Pin to commit SHA ({label})"),
-            edit,
+            placed(Rewrite::pin(sha, label, trailing)),
         ));
     }
     if let Some(major) = &targets.major {
-        let edit = outdated_text_edit(ref_range, major, kept_note.as_deref(), strip_end);
         actions.push(pin_action(
             uri,
             version,
             supports_document_changes,
             format!("Pin to major tag {major}"),
-            edit,
+            placed(floating(major)),
         ));
     }
     if let Some(branch) = &targets.branch {
-        let edit = outdated_text_edit(ref_range, branch, kept_note.as_deref(), strip_end);
         actions.push(pin_action(
             uri,
             version,
             supports_document_changes,
             format!("Pin to branch {branch}"),
-            edit,
+            placed(floating(branch)),
         ));
     }
     if let Some(unpin) = &targets.unpin {
-        let e = OutdatedEdit::new(unpin.clone(), line_end_col);
-        let edit = outdated_text_edit(
-            ref_range,
-            &e.target_ref,
-            e.repin_comment.as_deref(),
-            e.replace_end_col,
-        );
         actions.push(pin_action(
             uri,
             version,
             supports_document_changes,
             format!("actup: unpin to `{}`", unpin.new_ref),
-            edit,
+            placed(unpin.clone()),
         ));
     }
     actions
@@ -505,6 +506,13 @@ mod tests {
 
     fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
         test_utils::make_range(line, col_start, col_end)
+    }
+
+    const fn unquoted(line_end_col: u32) -> LineEnd<'static> {
+        LineEnd {
+            closer: "",
+            line_end_col,
+        }
     }
 
     fn make_outdated_diagnostic(
@@ -761,7 +769,7 @@ mod tests {
             true,
             make_range(0, 31, 37),
             Trailing::None,
-            40,
+            unquoted(40),
             &targets,
         );
         let titles: Vec<&str> = actions
@@ -805,7 +813,7 @@ mod tests {
             true,
             make_range(0, 31, 71),
             Trailing::Version { note: "" },
-            86,
+            unquoted(86),
             &targets,
         );
         assert_eq!(actions.len(), 1);
@@ -836,7 +844,7 @@ mod tests {
             Trailing::Version {
                 note: "pinned for node16",
             },
-            104,
+            unquoted(104),
             &targets,
         );
         let written: Vec<(String, u32)> = actions
@@ -892,7 +900,7 @@ mod tests {
             true,
             make_range(0, 31, 71),
             Trailing::Foreign,
-            86,
+            unquoted(86),
             &targets,
         );
         let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
@@ -926,7 +934,7 @@ mod tests {
             true,
             make_range(0, 31, 37),
             Trailing::None,
-            40,
+            unquoted(40),
             &targets,
         );
         assert_eq!(actions, []);
@@ -1394,7 +1402,7 @@ mod tests {
             true,
             make_range(1, 14, 16),
             Trailing::None,
-            16,
+            unquoted(16),
             &targets,
         );
         assert_eq!(titles(&document.retain(pins)), ["Pin to major tag v1"]);
@@ -1743,6 +1751,107 @@ mod tests {
                 c = "c".repeat(40),
                 d = "d".repeat(40),
             )
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn closers_keep_their_place_before_the_comment() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let old = "a".repeat(40);
+        let text = format!(
+            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n"
+        );
+        let new = test_utils::make_version_info("v1.2.0", &"b".repeat(40));
+        let mut versions = actup_core::version::Set::build(
+            vec![
+                std::sync::Arc::clone(&new),
+                test_utils::make_version_info("v1.0.0", &old),
+            ],
+            HashMap::from([(1, std::sync::Arc::clone(&new))]),
+            HashMap::new(),
+            Some(new),
+        );
+        versions.set_branches(HashMap::from([("main".to_string(), "c".repeat(40))]));
+        versions.set_other_tags(HashMap::from([("nightly".to_string(), "d".repeat(40))]));
+        let mut provider = test_utils::MockProvider::new("github.com");
+        for repo in ["b", "t", "s", "u", "f", "g", "h", "i"] {
+            provider = provider.with_versions("o", repo, versions.clone());
+        }
+        let registry = test_utils::mock_registry(provider);
+        let config = actup_core::Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[policy]\nbranch = \"update\"\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let diagnostics = crate::diagnostics::compute_diagnostics(
+            &text,
+            &uri,
+            &config,
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            encoding,
+        )
+        .await
+        .diagnostics;
+        let fix_all = fix_all_in_file(&uri, None, &diagnostics, false).ok_or("no fix-all")?;
+        let fixed =
+            crate::workspace_commands::apply_text_edits(&text, &edits_of(&fix_all, &uri), encoding)
+                .ok_or("fix-all edits do not fit")?;
+        assert_eq!(
+            fixed,
+            format!(
+                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n",
+                b = "b".repeat(40),
+                c = "c".repeat(40),
+                d = "d".repeat(40),
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pin_actions_keep_the_closer() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let targets = PinTargets {
+            sha: Some(("c".repeat(40), "v7.2.3".to_string())),
+            major: Some("v7".to_string()),
+            branch: None,
+            unpin: None,
+        };
+        let end = LineEnd {
+            closer: "\" ",
+            line_end_col: 47,
+        };
+        let actions = pin_code_actions(
+            &uri,
+            None,
+            false,
+            make_range(0, 31, 37),
+            Trailing::Version { note: "" },
+            end,
+            &targets,
+        );
+        let edits: Vec<TextEdit> = actions
+            .iter()
+            .flat_map(|action| edits_of(action, &uri))
+            .collect();
+        assert_eq!(
+            edits,
+            [
+                TextEdit {
+                    range: make_range(0, 31, 47),
+                    new_text: format!("{}\" # v7.2.3", "c".repeat(40)),
+                },
+                TextEdit {
+                    range: make_range(0, 31, 47),
+                    new_text: "v7\"".to_string(),
+                },
+            ]
         );
         Ok(())
     }

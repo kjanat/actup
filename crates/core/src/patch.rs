@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Trailing, labeled_comment, note_comment},
+    rewrite::{Rewrite, Trailing, closer, labeled_comment, note_comment},
     version,
 };
 
@@ -69,21 +69,22 @@ impl PendingEdit {
 
 fn retag_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
-    let raw = loc.raw_line();
-    Some(match Trailing::after(raw, range.end) {
+    match Trailing::after(loc.raw_line(), range.end) {
         Trailing::Version { note } => {
             let comment = labeled_comment(tag, note);
-            PendingEdit::replace_range(
-                loc.line(),
-                range.start..raw.len(),
-                format!("{tag}{comment}"),
-            )
-            .with_inline_comment(comment)
+            let rewrite = Rewrite {
+                new_ref: tag.to_string(),
+                comment: Some(comment.clone()),
+                to_line_end: true,
+            };
+            Some(rewrite_edit(loc, &rewrite)?.with_inline_comment(comment))
         }
-        Trailing::None | Trailing::Foreign => {
-            PendingEdit::replace_range(loc.line(), range, tag.to_string())
-        }
-    })
+        Trailing::None | Trailing::Foreign => Some(PendingEdit::replace_range(
+            loc.line(),
+            range,
+            tag.to_string(),
+        )),
+    }
 }
 
 /// Build the edit that moves the ref at `loc` to `target` under the `style` pin style.
@@ -124,12 +125,12 @@ pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<Pend
     Some(match Trailing::after(raw, range.end) {
         Trailing::Version { note } => {
             let comment = labeled_comment(&version, note);
-            PendingEdit::replace_range(
-                loc.line(),
-                range.start..raw.len(),
-                format!("{new_sha}{comment}"),
-            )
-            .with_inline_comment(comment)
+            let rewrite = Rewrite {
+                new_ref: new_sha.to_string(),
+                comment: Some(comment.clone()),
+                to_line_end: true,
+            };
+            rewrite_edit(loc, &rewrite)?.with_inline_comment(comment)
         }
         // `with_comment` adds the version note only when the line has none, so a
         // foreign comment is preserved.
@@ -146,17 +147,33 @@ pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<Pend
 #[must_use]
 pub fn unpin_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
+    let rewrite = match Trailing::after(loc.raw_line(), range.end) {
+        Trailing::Version { note } => Rewrite {
+            new_ref: tag.to_string(),
+            comment: note_comment(note),
+            to_line_end: true,
+        },
+        Trailing::None | Trailing::Foreign => Rewrite {
+            new_ref: tag.to_string(),
+            comment: None,
+            to_line_end: false,
+        },
+    };
+    rewrite_edit(loc, &rewrite)
+}
+
+/// Build the edit that writes `rewrite` at the ref of `loc`, keeping the [`closer`] of the value.
+#[must_use]
+pub fn rewrite_edit(loc: &UsesLocation, rewrite: &Rewrite) -> Option<PendingEdit> {
+    let range = loc.ref_range()?;
     let raw = loc.raw_line();
-    Some(match Trailing::after(raw, range.end) {
-        Trailing::Version { note } => PendingEdit::replace_range(
-            loc.line(),
-            range.start..raw.len(),
-            format!("{tag}{}", note_comment(note).unwrap_or_default()),
-        ),
-        Trailing::None | Trailing::Foreign => {
-            PendingEdit::replace_range(loc.line(), range, tag.to_string())
-        }
-    })
+    let (text, to_line_end) = rewrite.splice(closer(raw, range.end));
+    let end = if to_line_end { raw.len() } else { range.end };
+    Some(PendingEdit::replace_range(
+        loc.line(),
+        range.start..end,
+        text,
+    ))
 }
 
 /// Why a planned edit leaves an action reference unchanged.
@@ -208,6 +225,7 @@ pub struct FileEdits<L> {
     format: SourceFormat,
     uses_per_line: HashMap<usize, usize>,
     commentable_lines: BTreeSet<usize>,
+    comment_lines: BTreeSet<usize>,
     edits: Vec<(PendingEdit, L)>,
 }
 
@@ -287,6 +305,7 @@ impl<L> FileEdits<L> {
             path,
             format,
             commentable_lines: format.commentable_lines(&content),
+            comment_lines: format.comment_lines(&content),
             content,
             uses_per_line,
             edits: Vec::new(),
@@ -296,12 +315,12 @@ impl<L> FileEdits<L> {
     /// Return `loc` with its line cut after the value when that line takes no comment.
     ///
     /// An edit built from the result leaves the text after the ref alone on a
-    /// line outside [`SourceFormat::commentable_lines`].
+    /// line outside [`SourceFormat::comment_lines`].
     #[must_use]
     pub fn writable(&self, loc: &UsesLocation) -> UsesLocation {
         let head = loc
             .value_range()
-            .filter(|_| !self.commentable_lines.contains(&loc.line()))
+            .filter(|_| !self.comment_lines.contains(&loc.line()))
             .and_then(|range| loc.raw_line().get(..range.end));
         head.map_or_else(
             || loc.clone(),
@@ -551,6 +570,97 @@ mod tests {
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
+        );
+        Ok(())
+    }
+
+    fn quoted_loc(line: &str) -> Result<UsesLocation, Box<dyn std::error::Error>> {
+        let locations = crate::extract_uses_from_yaml(line);
+        let [loc] = locations.as_slice() else {
+            return Err(format!("expected one `uses:`, got {locations:?}").into());
+        };
+        Ok(loc.clone())
+    }
+
+    fn applied(
+        line: &str,
+        edit: Option<PendingEdit>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let mut file_edits = FileEdits::new(
+            PathBuf::from("/test.yml"),
+            line.to_string(),
+            SourceFormat::Yaml,
+        );
+        let edit = edit.ok_or("no edit")?;
+        file_edits.add(edit, ());
+        Ok(file_edits.plan().content())
+    }
+
+    #[test]
+    fn test_closers_keep_their_place_before_the_comment() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        for (open, close) in [
+            ("\"", "\""),
+            ("'", "'"),
+            ("{ uses: ", " }"),
+            ("[{ uses: '", "' }]"),
+        ] {
+            let at = |body: &str, comment: &str| {
+                let uses = if open.starts_with(['{', '[']) {
+                    ""
+                } else {
+                    "uses: "
+                };
+                format!("      - {uses}{open}actions/checkout@{body}{close}{comment}\n")
+            };
+            let wrap =
+                |line: String| -> Result<(String, UsesLocation), Box<dyn std::error::Error>> {
+                    let loc = quoted_loc(&line)?;
+                    Ok((line, loc))
+                };
+            let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
+            assert_eq!(
+                applied(&line, repin_sha_edit(&loc, &target))?,
+                at(&new, " # v7.0.1")
+            );
+            let (line, loc) = wrap(at(&old, ""))?;
+            assert_eq!(
+                applied(&line, repin_sha_edit(&loc, &target))?,
+                at(&new, " # v7.0.1")
+            );
+            let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
+            assert_eq!(
+                applied(&line, unpin_edit(&loc, "v7.0.1"))?,
+                at("v7.0.1", "")
+            );
+            let (line, loc) = wrap(at("v7.0.0", " # v7.0.0 keep"))?;
+            assert_eq!(
+                applied(&line, retarget_edit(&loc, false, &target, Style::Preserve))?,
+                at("v7.0.1", " # v7.0.1 keep")
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_line_with_two_values_takes_no_comment() -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let line = format!("      - [{{ uses: a/b@v1 }}, {{ uses: c/d@{old} }}] # v7.0.0\n");
+        let locations = crate::extract_uses_from_yaml(&line);
+        let [_, loc] = locations.as_slice() else {
+            return Err(format!("expected two `uses:`, got {locations:?}").into());
+        };
+        let file_edits =
+            FileEdits::<()>::new(PathBuf::from("/t.yml"), line.clone(), SourceFormat::Yaml);
+        let loc = file_edits.writable(loc);
+        assert_eq!(
+            applied(&line, repin_sha_edit(&loc, &target))?,
+            line.replace(&old, &new)
         );
         Ok(())
     }

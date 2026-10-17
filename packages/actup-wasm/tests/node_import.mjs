@@ -335,7 +335,7 @@ const pinResults = await checkRefs(pinYaml, mockProvider);
 assert.deepEqual(pinResults.map((r) => statusName(r.status)), ["Outdated", "Outdated", "Outdated"]);
 const applyEdits = (text, edits) => {
 	const lines = text.split("\n");
-	for (const e of edits) {
+	for (const e of [...edits].sort((x, y) => y.refStart - x.refStart)) {
 		const l = lines[e.line - 1];
 		lines[e.line - 1] = l.slice(0, e.refStart) + e.newText + l.slice(e.replaceEnd);
 	}
@@ -393,6 +393,31 @@ for (const pin of ["preserve", "tag"]) {
 }
 
 console.log("PASS: policy.pin picks tag or SHA output");
+
+// Test 16: a closing quote or flow bracket stays between the ref and the comment.
+const closerYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: "actions/checkout@${oldSha}" # v4.0.0
+      - uses: 'actions/checkout@${oldSha}'
+      - { uses: actions/checkout@${oldSha} } # v4.0.0
+      - [{ uses: actions/checkout@${oldSha} }, { uses: actions/checkout@${oldSha} }]
+`;
+const closerResults = await checkRefs(closerYaml, mockProvider);
+const closerEdits = planUpdates(closerResults);
+assert.equal(
+	applyEdits(closerYaml, closerEdits),
+	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@${newSha}" # v4.2.0\n      - uses: 'actions/checkout@${newSha}' # v4.2.0\n      - { uses: actions/checkout@${newSha} } # v4.2.0\n      - [{ uses: actions/checkout@${newSha} }, { uses: actions/checkout@${newSha} }]\n`,
+	"SHA pins write the closer before the comment, and a line with two refs gets none",
+);
+assert.equal(
+	applyEdits(closerYaml, planUpdates(closerResults, { policy: { pin: "tag" } })),
+	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@v4.2.0"\n      - uses: 'actions/checkout@v4.2.0'\n      - { uses: actions/checkout@v4.2.0 }\n      - [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@v4.2.0 }]\n`,
+	"unpinned tags keep the closer",
+);
+
+console.log("PASS: closers stay before the comment");
 
 // Test 16: sortVersionTags orders by semver precedence, newest first.
 const sorted = sortVersionTags([

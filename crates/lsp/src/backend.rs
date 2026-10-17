@@ -988,7 +988,7 @@ impl LspBackend {
             supports_doc_changes,
             ref_range,
             action.trailing(),
-            action.line_end_col,
+            action.line_end(),
             &targets,
         )
     }
@@ -1702,7 +1702,7 @@ mod tests {
             false,
             ref_range,
             action.trailing(),
-            action.line_end_col,
+            action.line_end(),
             &only_unpin,
         );
         let [tower_lsp_server::ls_types::CodeActionOrCommand::CodeAction(unpin)] =

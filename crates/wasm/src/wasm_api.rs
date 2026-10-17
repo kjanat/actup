@@ -9,7 +9,7 @@ use actup_core::{
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, RefKind, check_action_remote},
-    rewrite::{Rewrite, Trailing},
+    rewrite::{Rewrite, Trailing, closer},
     version,
 };
 use serde::{Deserialize, Serialize};
@@ -238,14 +238,15 @@ struct UpdateEdit {
     /// 0-indexed byte offset of the ref portion end within the line
     ref_end: usize,
     /// 0-indexed byte offset within the line where the replacement ends:
-    /// `refEnd`, or the line end when the edit replaces or drops a version comment
+    /// `refEnd`, or the line end when the edit replaces or drops a version
+    /// comment or writes a comment after a closing quote or flow bracket
     replace_end: usize,
     /// The full original `uses:` value (e.g. `"actions/checkout@v3"`)
     original: String,
     /// The replacement ref string (e.g. `"v4.2.0"` or a commit SHA)
     new_ref: String,
     /// The text that replaces `refStart..replaceEnd`: `newRef` plus any
-    /// version comment (e.g. `"<sha> # v4.2.0"`)
+    /// closing quote or flow bracket and version comment (e.g. `"<sha> # v4.2.0"`)
     new_text: String,
 }
 
@@ -275,6 +276,11 @@ pub fn plan_updates(
     };
     let results: Vec<LocatedCheckResult> = serde_json::from_str(results_json)
         .map_err(|e| JsValue::from_str(&format!("invalid results JSON: {e}")))?;
+    let mut refs_per_line: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::new();
+    for result in &results {
+        *refs_per_line.entry(result.location.line()).or_insert(0) += 1;
+    }
 
     let edits: Vec<UpdateEdit> = results
         .iter()
@@ -285,23 +291,33 @@ pub fn plan_updates(
             let location = &result.location;
             let range = location.ref_range()?;
             let raw_line = location.raw_line();
+            let sole = refs_per_line.get(&location.line()) == Some(&1);
+            let (trailing, closing) = if sole {
+                (
+                    Trailing::after(raw_line, range.end),
+                    closer(raw_line, range.end),
+                )
+            } else {
+                (Trailing::Foreign, "")
+            };
             let rewrite = Rewrite::outdated(
                 config.policy_for(&result.action_ref).pin,
                 result.action_ref.is_sha(),
                 target,
-                Trailing::after(raw_line, range.end),
+                trailing,
             );
+            let (new_text, to_line_end) = rewrite.splice(closing);
             Some(UpdateEdit {
                 line: location.line(),
                 ref_start: range.start,
                 ref_end: range.end,
-                replace_end: if rewrite.to_line_end {
+                replace_end: if to_line_end {
                     raw_line.len()
                 } else {
                     range.end
                 },
                 original: location.value().to_owned(),
-                new_text: rewrite.text(),
+                new_text,
                 new_ref: rewrite.new_ref,
             })
         })

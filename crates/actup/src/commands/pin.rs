@@ -5,9 +5,9 @@ use std::{ops::Range, path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
-    patch::{FileEdits, PendingEdit, SkipReason, repin_sha_edit},
+    patch::{FileEdits, PendingEdit, SkipReason, repin_sha_edit, rewrite_edit},
     provider,
-    rewrite::{PinMarker, Rewrite},
+    rewrite::{PinMarker, Rewrite, after_value},
     sanitize_line, version,
 };
 use owo_colors::OwoColorize;
@@ -173,7 +173,7 @@ fn marked_pin<'a>(
     let (Some(range), Some((prefix, _))) = (loc.ref_range(), loc.value().split_once('@')) else {
         return None;
     };
-    let tail = loc.raw_line().get(range.end..).unwrap_or("");
+    let tail = after_value(loc.raw_line(), range.end);
     PinMarker::parse(tail).map(|_| (range, prefix, tail))
 }
 
@@ -187,18 +187,16 @@ fn unpin_action_edit(
     versions: &version::Set,
     site: &RefSite,
 ) -> PinStep {
-    let Some((range, prefix, tail)) = marked_pin(action_ref, loc) else {
+    let Some((_, prefix, tail)) = marked_pin(action_ref, loc) else {
         return PinStep::Nothing;
     };
     let Some(marker) = PinMarker::unpinnable(action_ref.ref_str(), tail, versions) else {
         return PinStep::Nothing;
     };
     let rewrite = Rewrite::unpin(marker);
-    let edit = PendingEdit::replace_range(
-        loc.line(),
-        range.start..loc.raw_line().len(),
-        rewrite.text(),
-    );
+    let Some(edit) = rewrite_edit(loc, &rewrite) else {
+        return PinStep::Nothing;
+    };
     let change = Change {
         site: site.clone(),
         target: format!("{prefix}@{}", rewrite.text()),
@@ -1168,6 +1166,8 @@ mod tests {
             "  - uses: o/g@v4.1.0 # v4.1.0",
             "  - uses: skip/h@AAA # v4.1.0",
             "  - { uses: o/i@AAA } # v4.1.0",
+            "  - uses: \"o/j@AAA\" # v4.1.0",
+            "  - uses: 'o/k@AAA' # v4 keep me",
             "",
         ]
         .join("\n")
@@ -1177,6 +1177,15 @@ mod tests {
             .replace(
                 &format!("o/b@{}  #v4 keep me", sha('a')),
                 "o/b@v4 # keep me",
+            )
+            .replace(&format!("\"o/j@{}\" # v4.1.0", sha('a')), "\"o/j@v4.1.0\"")
+            .replace(
+                &format!("'o/k@{}' # v4 keep me", sha('a')),
+                "'o/k@v4' # keep me",
+            )
+            .replace(
+                &format!("{{ uses: o/i@{} }} # v4.1.0", sha('a')),
+                "{ uses: o/i@v4.1.0 }",
             );
         let file = workflow(dir.path(), &content)?;
         let config = Config::from_contents(
@@ -1205,7 +1214,16 @@ mod tests {
             .iter()
             .map(|e| (e.site.line, e.to.as_str()))
             .collect();
-        assert_eq!(edited, [(2, "v4.1.0"), (3, "v4")]);
+        assert_eq!(
+            edited,
+            [
+                (2, "v4.1.0"),
+                (3, "v4"),
+                (10, "v4.1.0"),
+                (11, "v4.1.0"),
+                (12, "v4")
+            ]
+        );
         let skipped: Vec<(usize, SkipCause)> = result
             .skipped
             .iter()

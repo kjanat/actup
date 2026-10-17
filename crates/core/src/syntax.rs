@@ -66,6 +66,22 @@ impl SourceFormat {
         }
     }
 
+    /// Return the [`commentable_lines`](Self::commentable_lines) that hold one `uses:` value.
+    ///
+    /// Writers add or rewrite the comment after a ref only on these lines.
+    #[must_use]
+    pub fn comment_lines(self, content: &str) -> BTreeSet<usize> {
+        let mut uses_per_line: std::collections::HashMap<usize, usize> =
+            std::collections::HashMap::new();
+        for loc in self.extract_uses(content) {
+            *uses_per_line.entry(loc.line()).or_insert(0) += 1;
+        }
+        self.commentable_lines(content)
+            .into_iter()
+            .filter(|line| uses_per_line.get(line).copied().unwrap_or(0) <= 1)
+            .collect()
+    }
+
     /// Check that `after`, an edit of `before`, keeps its syntax and its number of `uses:` values.
     ///
     /// YAML text must pass [`validate_edit`]. In Markdown, each fenced YAML
@@ -373,6 +389,15 @@ mod tests {
         assert_eq!(
             SourceFormat::Text.commentable_lines("uses: a/b@v1\n"),
             BTreeSet::new()
+        );
+    }
+
+    #[test]
+    fn comment_lines_hold_one_uses_value() {
+        let yaml = "steps:\n  - uses: a/b@v1\n  - [{ uses: a/b@v1 }, { uses: c/d@v2 }]\n  - run: |\n      x\n";
+        assert_eq!(
+            SourceFormat::Yaml.comment_lines(yaml),
+            BTreeSet::from([1, 2, 4])
         );
     }
 }
