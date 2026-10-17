@@ -22,27 +22,76 @@ const CONFIG_NAMES_SUBDIR: &[&str] = &["actup"];
 /// Supported extensions in priority order
 pub const CONFIG_EXTENSIONS: &[&str] = &["toml", "json", "jsonc", "yaml", "yml"];
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Format {
+    Toml,
+    Json,
+    Jsonc,
+    Yaml,
+}
+
+impl Format {
+    pub(crate) fn from_path(path: &Path) -> Self {
+        match path.extension().and_then(|e| e.to_str()) {
+            Some("json") => Self::Json,
+            Some("jsonc") => Self::Jsonc,
+            Some("yaml" | "yml") => Self::Yaml,
+            _ => Self::Toml,
+        }
+    }
+}
+
+/// A repo config location relative to the directory being searched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Candidate {
+    dir: Option<&'static str>,
+    name: &'static str,
+    ext: &'static str,
+}
+
+impl Candidate {
+    /// Return the path of this candidate inside `base`.
+    #[must_use]
+    pub fn path_in(&self, base: &Path) -> PathBuf {
+        let file = format!("{}.{}", self.name, self.ext);
+        match self.dir {
+            Some(dir) => base.join(dir).join(file),
+            None => base.join(file),
+        }
+    }
+
+    /// Return the `/`-separated path of this candidate relative to the searched directory.
+    #[must_use]
+    pub fn relative(&self) -> String {
+        self.dir.map_or_else(
+            || format!("{}.{}", self.name, self.ext),
+            |dir| format!("{dir}/{}.{}", self.name, self.ext),
+        )
+    }
+}
+
+/// Iterate the repo config candidates of one directory in priority order.
+pub fn repo_candidates() -> impl Iterator<Item = Candidate> {
+    CONFIG_DIRS.iter().flat_map(|&dir| {
+        let (dir, names) = if dir.is_empty() {
+            (None, CONFIG_NAMES_ROOT)
+        } else {
+            (Some(dir), CONFIG_NAMES_SUBDIR)
+        };
+
+        names.iter().flat_map(move |&name| {
+            CONFIG_EXTENSIONS
+                .iter()
+                .map(move |&ext| Candidate { dir, name, ext })
+        })
+    })
+}
+
 /// Iterate all candidate config paths for a directory (no existence check).
 ///
 /// Yields paths in priority order for display/debugging.
 pub fn iter_config_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_ {
-    CONFIG_DIRS.iter().flat_map(move |dir| {
-        let names: &[&str] = if dir.is_empty() {
-            CONFIG_NAMES_ROOT
-        } else {
-            CONFIG_NAMES_SUBDIR
-        };
-
-        names.iter().flat_map(move |name| {
-            CONFIG_EXTENSIONS.iter().map(move |ext| {
-                if dir.is_empty() {
-                    base.join(format!("{name}.{ext}"))
-                } else {
-                    base.join(dir).join(format!("{name}.{ext}"))
-                }
-            })
-        })
-    })
+    repo_candidates().map(move |candidate| candidate.path_in(base))
 }
 
 /// Find repo config path, searching upward from `start_dir`.
@@ -123,5 +172,44 @@ mod tests {
             .iter()
             .any(|p| p.to_string_lossy().contains(".github/.actup"));
         assert!(!dotfile_in_github);
+    }
+
+    #[test]
+    fn test_repo_candidates_match_paths() {
+        let base = Path::new("/repo");
+        let relative: Vec<_> = repo_candidates().map(|c| base.join(c.relative())).collect();
+        let joined: Vec<_> = iter_config_candidates(base).collect();
+        assert_eq!(relative, joined);
+        assert_eq!(relative.len(), 20);
+    }
+
+    #[test]
+    fn test_repo_candidate_relative() {
+        let candidates: Vec<_> = repo_candidates().collect();
+        let Some(first) = candidates.first() else {
+            panic!("no candidates");
+        };
+        assert_eq!(first.relative(), "actup.toml");
+        let Some(github_yaml) = candidates
+            .iter()
+            .find(|c| c.relative() == ".github/actup.yaml")
+        else {
+            panic!("missing .github/actup.yaml");
+        };
+        assert_eq!(
+            github_yaml.path_in(Path::new("/repo")),
+            PathBuf::from("/repo/.github/actup.yaml")
+        );
+    }
+
+    #[test]
+    fn test_format_from_path() {
+        assert_eq!(Format::from_path(Path::new("a/actup.toml")), Format::Toml);
+        assert_eq!(Format::from_path(Path::new("a/actup.json")), Format::Json);
+        assert_eq!(Format::from_path(Path::new("a/actup.jsonc")), Format::Jsonc);
+        assert_eq!(Format::from_path(Path::new("a/actup.yaml")), Format::Yaml);
+        assert_eq!(Format::from_path(Path::new("a/actup.yml")), Format::Yaml);
+        assert_eq!(Format::from_path(Path::new("a/actup.conf")), Format::Toml);
+        assert_eq!(Format::from_path(Path::new("a/actup")), Format::Toml);
     }
 }

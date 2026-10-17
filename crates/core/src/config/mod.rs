@@ -22,12 +22,15 @@ use std::{
     time::Duration,
 };
 
+use discovery::Format;
 #[allow(clippy::module_name_repetitions)]
 pub use discovery::find_repo_config;
-pub use discovery::{CONFIG_EXTENSIONS, iter_config_candidates, user_config_path};
+pub use discovery::{
+    CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, user_config_path,
+};
 use figment::{
     Figment,
-    providers::{Env, Format, Json, Serialized, Toml, Yaml},
+    providers::{Env, Format as _, Json, Serialized, Toml, Yaml},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -582,35 +585,38 @@ impl Config {
         Ok(config)
     }
 
+    /// Parse one config file from its contents, with `path` choosing the format.
+    ///
+    /// Applies the same defaults and format handling as a repo config read by
+    /// [`Config::load`], without environment variables or a user config.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidConfig`] naming `path` if `contents` is invalid.
+    pub fn from_contents(path: &Path, contents: &str) -> Result<Self, Error> {
+        let figment = Figment::new()
+            .merge(Serialized::defaults(Self::default()))
+            .merge(FileContents::new(path, contents)?);
+        let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
+            path: error_origin(&e, Some(path)),
+            reason: e.to_string(),
+        })?;
+        config.loaded_from = Some(path.to_path_buf());
+        Ok(config)
+    }
+
     /// Merge a config file into figment based on extension
     fn merge_config_file(figment: Figment, path: &Path) -> Result<Figment, Error> {
-        let ext = path.extension().and_then(|e| e.to_str());
-
-        Ok(match ext {
-            Some("yaml" | "yml") => figment.merge(Yaml::file(path)),
-            Some("json") => figment.merge(Json::file(path)),
-            Some("jsonc") => {
-                // Read file, strip comments, parse as JSON
-                let content = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
+        Ok(match Format::from_path(path) {
+            Format::Yaml => figment.merge(Yaml::file(path)),
+            Format::Json => figment.merge(Json::file(path)),
+            Format::Jsonc => {
+                let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
                     path: path.display().to_string(),
                     reason: e.to_string(),
                 })?;
-
-                let mut stripped = String::new();
-                json_comments::StripComments::new(content.as_bytes())
-                    .read_to_string(&mut stripped)
-                    .map_err(|e| Error::InvalidConfig {
-                        path: path.display().to_string(),
-                        reason: format!("failed to strip comments: {e}"),
-                    })?;
-
-                figment.merge(JsoncFile {
-                    path: path.to_path_buf(),
-                    json: stripped,
-                })
+                figment.merge(FileContents::new(path, &contents)?)
             }
-            // Default to TOML for .toml or unknown extensions
-            _ => figment.merge(Toml::file(path)),
+            Format::Toml => figment.merge(Toml::file(path)),
         })
     }
 
@@ -641,20 +647,55 @@ impl Config {
     }
 }
 
-struct JsoncFile {
+struct FileContents {
     path: PathBuf,
-    json: String,
+    format: Format,
+    contents: String,
 }
 
-impl figment::Provider for JsoncFile {
+impl FileContents {
+    fn new(path: &Path, contents: &str) -> Result<Self, Error> {
+        let format = Format::from_path(path);
+        let contents = match format {
+            Format::Jsonc => {
+                let mut stripped = String::new();
+                json_comments::StripComments::new(contents.as_bytes())
+                    .read_to_string(&mut stripped)
+                    .map_err(|e| Error::InvalidConfig {
+                        path: path.display().to_string(),
+                        reason: format!("failed to strip comments: {e}"),
+                    })?;
+                stripped
+            }
+            Format::Toml | Format::Json | Format::Yaml => contents.to_owned(),
+        };
+        Ok(Self {
+            path: path.to_path_buf(),
+            format,
+            contents,
+        })
+    }
+}
+
+impl figment::Provider for FileContents {
     fn metadata(&self) -> figment::Metadata {
-        figment::Metadata::from("JSONC file", self.path.as_path())
+        let name = match self.format {
+            Format::Toml => "TOML file",
+            Format::Json => "JSON file",
+            Format::Jsonc => "JSONC file",
+            Format::Yaml => "YAML file",
+        };
+        figment::Metadata::from(name, self.path.as_path())
     }
 
     fn data(
         &self,
     ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
-        figment::Provider::data(&Json::string(&self.json))
+        match self.format {
+            Format::Toml => figment::Provider::data(&Toml::string(&self.contents)),
+            Format::Json | Format::Jsonc => figment::Provider::data(&Json::string(&self.contents)),
+            Format::Yaml => figment::Provider::data(&Yaml::string(&self.contents)),
+        }
     }
 }
 
@@ -1488,5 +1529,50 @@ mod tests {
         assert!(config.ignore.is_none());
         assert!(config.actions.is_none());
         Ok(())
+    }
+
+    #[test]
+    fn test_from_contents_reads_every_format() -> Result<(), Error> {
+        let samples = [
+            ("actup.toml", "[policy]\nbump = \"minor\"\n"),
+            ("actup.json", r#"{"policy": {"bump": "minor"}}"#),
+            (
+                "actup.jsonc",
+                "{\n  // keep majors\n  \"policy\": { \"bump\": \"minor\" } /* end */\n}",
+            ),
+            (".github/actup.yaml", "policy:\n  bump: minor\n"),
+            (".config/actup.yml", "policy:\n  bump: minor\n"),
+        ];
+        for (name, contents) in samples {
+            let config = Config::from_contents(Path::new(name), contents)?;
+            assert_eq!(config.policy.bump, policy::Update::Minor, "{name}");
+            assert_eq!(config.policy.pin, Policy::default().pin, "{name}");
+            assert_eq!(config.loaded_from.as_deref(), Some(Path::new(name)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_contents_rejects_renamed_key_naming_the_file() {
+        let Err(Error::InvalidConfig { path, reason }) =
+            Config::from_contents(Path::new(".github/actup.yaml"), "update_policy: patch\n")
+        else {
+            panic!("renamed key must be rejected");
+        };
+        assert_eq!(path, ".github/actup.yaml");
+        assert!(
+            reason.contains("`update_policy` is no longer supported; use `policy.bump`"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn test_from_contents_syntax_error_names_the_file() {
+        let Err(Error::InvalidConfig { path, .. }) =
+            Config::from_contents(Path::new("actup.toml"), "[policy\n")
+        else {
+            panic!("invalid TOML must be rejected");
+        };
+        assert_eq!(path, "actup.toml");
     }
 }

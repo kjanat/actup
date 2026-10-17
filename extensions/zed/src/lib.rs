@@ -4,10 +4,11 @@ use zed_extension_api::{self as zed};
 
 mod provider;
 
-use std::{env, fmt::Write as _, fs};
+use std::{env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
-    ActionRef, CheckResult, CheckStatus, Config, UsesLocation, extract_uses_from_yaml,
+    ActionRef, CheckResult, CheckStatus, Config, UsesLocation, config::repo_candidates,
+    extract_uses_from_yaml,
 };
 use zed::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection, settings::LspSettings};
 
@@ -215,8 +216,7 @@ fn actions_language_server_bin_path() -> zed::Result<String> {
 fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOutput, String> {
     let worktree = worktree.ok_or("no worktree available")?;
 
-    // Try to read actup config from the worktree
-    let config = read_config(worktree)?;
+    let config = read_config(|path| worktree.read_text_file(path))?;
 
     // Discover and read workflow files
     let files = discover_workflow_files(worktree);
@@ -341,19 +341,14 @@ fn api_base_for_host(host: &str) -> String {
     }
 }
 
-/// Try to read actup config from the worktree.
-fn read_config(worktree: &zed::Worktree) -> Result<Config, String> {
-    for name in &["actup.toml", ".actup.toml", ".config/actup.toml"] {
-        if let Ok(content) = worktree.read_text_file(name) {
-            return parse_config(name, &content);
+fn read_config(read: impl Fn(&str) -> Result<String, String>) -> Result<Config, String> {
+    for candidate in repo_candidates() {
+        let path = candidate.relative();
+        if let Ok(contents) = read(&path) {
+            return Config::from_contents(Path::new(&path), &contents).map_err(|e| e.to_string());
         }
     }
     Ok(Config::default())
-}
-
-/// Parse an actup TOML config, naming the file in the error.
-fn parse_config(name: &str, content: &str) -> Result<Config, String> {
-    toml::from_str::<Config>(content).map_err(|e| format!("invalid config at '{name}': {e}"))
 }
 
 /// Discover workflow and action files from the worktree.
@@ -575,11 +570,30 @@ fn format_check_output(
 
 #[cfg(test)]
 mod tests {
+    use std::{cell::RefCell, collections::HashMap, path::PathBuf};
+
+    use actup_core::{iter_config_candidates, policy};
+
     use super::*;
 
+    fn read_from<'a>(
+        files: &'a HashMap<&str, &str>,
+        requested: &'a RefCell<Vec<String>>,
+    ) -> impl Fn(&str) -> Result<String, String> + 'a {
+        move |path| {
+            requested.borrow_mut().push(path.to_owned());
+            files
+                .get(path)
+                .map(|contents| (*contents).to_owned())
+                .ok_or_else(|| format!("{path}: not found"))
+        }
+    }
+
     #[test]
-    fn parse_config_rejects_invalid_policy() {
-        let Err(error) = parse_config("actup.toml", "[policy]\nbump = \"sideways\"\n") else {
+    fn read_config_rejects_invalid_policy() {
+        let files = HashMap::from([("actup.toml", "[policy]\nbump = \"sideways\"\n")]);
+        let requested = RefCell::new(Vec::new());
+        let Err(error) = read_config(read_from(&files, &requested)) else {
             panic!("invalid config must not parse");
         };
         assert!(error.contains("actup.toml"), "{error}");
@@ -587,11 +601,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_rejects_renamed_key() {
-        let Err(error) = parse_config("actup.toml", "update_policy = \"patch\"\n") else {
+    fn read_config_rejects_renamed_key() {
+        let files = HashMap::from([(".github/actup.yaml", "update_policy: patch\n")]);
+        let requested = RefCell::new(Vec::new());
+        let Err(error) = read_config(read_from(&files, &requested)) else {
             panic!("renamed key must not parse");
         };
-        assert!(error.contains("actup.toml"), "{error}");
+        assert!(error.contains(".github/actup.yaml"), "{error}");
         assert!(
             error.contains("`update_policy` is no longer supported; use `policy.bump`"),
             "{error}"
@@ -599,9 +615,41 @@ mod tests {
     }
 
     #[test]
-    fn parse_config_reads_policy() -> Result<(), String> {
-        let config = parse_config("actup.toml", "[policy]\nbump = \"minor\"\n")?;
-        assert_eq!(config.policy.bump, actup_core::policy::Update::Minor);
+    fn read_config_reads_github_yaml() -> Result<(), String> {
+        let files = HashMap::from([(".github/actup.yaml", "policy:\n  bump: minor\n")]);
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&files, &requested))?;
+        assert_eq!(config.policy.bump, policy::Update::Minor);
+        assert_eq!(
+            config.loaded_from.as_deref(),
+            Some(Path::new(".github/actup.yaml"))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_prefers_earlier_candidate() -> Result<(), String> {
+        let files = HashMap::from([
+            ("actup.toml", "[policy]\nbump = \"patch\"\n"),
+            (".github/actup.yaml", "policy:\n  bump: minor\n"),
+        ]);
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&files, &requested))?;
+        assert_eq!(config.policy.bump, policy::Update::Patch);
+        assert_eq!(*requested.borrow(), ["actup.toml"]);
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_tries_core_candidates_in_order() -> Result<(), String> {
+        let files = HashMap::new();
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&files, &requested))?;
+        assert!(config.loaded_from.is_none());
+        let requested: Vec<PathBuf> = requested.borrow().iter().map(PathBuf::from).collect();
+        let core: Vec<PathBuf> = iter_config_candidates(Path::new("")).collect();
+        assert_eq!(requested, core);
+        assert_eq!(requested.len(), 20);
         Ok(())
     }
 }
