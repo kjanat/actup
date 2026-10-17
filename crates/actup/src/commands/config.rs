@@ -39,7 +39,7 @@ pub fn run(
             display_human(config, path, registrations);
         }
         OutputFormat::Json => {
-            let json = match serde_json::to_string_pretty(&Report::new(config)) {
+            let json = match crate::structured::json_pretty(&Report::new(config)) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error serializing config: {e}");
@@ -49,7 +49,7 @@ pub fn run(
             println!("{json}");
         }
         OutputFormat::Toml => {
-            let toml = match toml::to_string_pretty(&Report::new(config)) {
+            let toml = match crate::structured::toml(&Report::new(config)) {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("Error serializing config: {e}");

@@ -103,7 +103,7 @@ fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> i32 
                 entry_count,
                 total_size_bytes: total_size,
             };
-            match serde_json::to_string_pretty(&info) {
+            match crate::structured::json_pretty(&info) {
                 Ok(json) => println!("{json}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
@@ -119,7 +119,7 @@ fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> i32 
                 entry_count,
                 total_size_bytes: total_size,
             };
-            match toml::to_string_pretty(&info) {
+            match crate::structured::toml(&info) {
                 Ok(toml) => println!("{toml}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
@@ -147,14 +147,14 @@ async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>
                     println!("{}", "Cache is disabled".yellow());
                 }
                 OutputFormat::Human => println!("{}", dir_text(None).yellow()),
-                OutputFormat::Json => match serde_json::to_string(&output) {
+                OutputFormat::Json => match crate::structured::json(&output) {
                     Ok(json) => println!("{json}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
                         return 3;
                     }
                 },
-                OutputFormat::Toml => match toml::to_string_pretty(&output) {
+                OutputFormat::Toml => match crate::structured::toml(&output) {
                     Ok(toml) => println!("{toml}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
@@ -184,14 +184,14 @@ async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>
         let output = ClearedOutput { cleared: 0 };
         match format {
             OutputFormat::Human => println!("{}", "Cache is already empty".dimmed()),
-            OutputFormat::Json => match serde_json::to_string(&output) {
+            OutputFormat::Json => match crate::structured::json(&output) {
                 Ok(json) => println!("{json}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
                     return 3;
                 }
             },
-            OutputFormat::Toml => match toml::to_string_pretty(&output) {
+            OutputFormat::Toml => match crate::structured::toml(&output) {
                 Ok(toml) => println!("{toml}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
@@ -211,14 +211,14 @@ async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>
                 OutputFormat::Human => {
                     println!("{} {} cache entries", "Cleared".green(), entry_count);
                 }
-                OutputFormat::Json => match serde_json::to_string(&output) {
+                OutputFormat::Json => match crate::structured::json(&output) {
                     Ok(json) => println!("{json}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
                         return 3;
                     }
                 },
-                OutputFormat::Toml => match toml::to_string_pretty(&output) {
+                OutputFormat::Toml => match crate::structured::toml(&output) {
                     Ok(toml) => println!("{toml}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
@@ -242,14 +242,14 @@ fn path(format: OutputFormat, cache_dir: Option<&Path>) -> i32 {
         OutputFormat::Human => {
             println!("{}", dir_text(cache_dir));
         }
-        OutputFormat::Json => match serde_json::to_string(&output) {
+        OutputFormat::Json => match crate::structured::json(&output) {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("{}: {}", "Error serializing output".red(), e);
                 return 3; // Environment error
             }
         },
-        OutputFormat::Toml => match toml::to_string_pretty(&output) {
+        OutputFormat::Toml => match crate::structured::toml(&output) {
             Ok(toml) => println!("{toml}"),
             Err(e) => {
                 eprintln!("{}: {}", "Error serializing output".red(), e);

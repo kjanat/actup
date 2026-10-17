@@ -683,10 +683,10 @@ impl EditResult {
         let text = match format {
             OutputFormat::Human => return,
             OutputFormat::Json => {
-                serde_json::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string())
+                crate::structured::json_pretty(&self.report(dry_run)).map_err(|e| e.to_string())
             }
             OutputFormat::Toml => {
-                toml::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string())
+                crate::structured::toml(&self.report(dry_run)).map_err(|e| e.to_string())
             }
         };
         match text {

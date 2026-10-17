@@ -8,7 +8,7 @@ use crate::cli::CliExitCode;
 
 pub fn run() -> i32 {
     let schema = schema_for!(Config);
-    match serde_json::to_string_pretty(&schema) {
+    match crate::structured::json_pretty(&schema) {
         Ok(json) => {
             println!("{json}");
             CliExitCode::Success.into()

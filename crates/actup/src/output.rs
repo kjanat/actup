@@ -348,7 +348,7 @@ pub fn print_findings(findings: &[Finding], format: CheckFormat, unreadable: &[S
         CheckFormat::Toml => print_toml(findings),
         CheckFormat::Table => println!("{}", table(findings)),
         CheckFormat::Sarif => {
-            match serde_json::to_string_pretty(&sarif::sarif(findings, unreadable)) {
+            match crate::structured::json_pretty(&sarif::sarif(findings, unreadable)) {
                 Ok(json) => println!("{json}"),
                 Err(e) => eprintln!("Error serializing SARIF: {e}"),
             }
@@ -582,7 +582,7 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
 
 fn print_json(findings: &[Finding]) {
     let json_findings: Vec<JsonFinding> = findings.iter().map(JsonFinding::from).collect();
-    match serde_json::to_string_pretty(&json_findings) {
+    match crate::structured::json_pretty(&json_findings) {
         Ok(json) => println!("{json}"),
         Err(e) => eprintln!("Error serializing findings: {e}"),
     }
@@ -599,7 +599,7 @@ fn print_toml(findings: &[Finding]) {
     let wrapper = TomlFindings {
         findings: toml_findings,
     };
-    match toml::to_string_pretty(&wrapper) {
+    match crate::structured::toml(&wrapper) {
         Ok(toml) => println!("{toml}"),
         Err(e) => eprintln!("Error serializing findings: {e}"),
     }

@@ -11,6 +11,7 @@ mod output;
 mod progress;
 mod sarif;
 mod scan;
+mod structured;
 
 use anstream::{eprintln, println};
 use std::{process::ExitCode, sync::Arc};
@@ -283,12 +284,12 @@ mod tests {
         use std::io::Write as _;
 
         let mut writer = CommandSafe(Vec::new());
-        let line = b" DEBUG ref_str=v1\n::error::forged\n";
+        let line = b" DEBUG ref_str=v1\n::error::forged\r::warning::cr ##[error]x\n";
         assert_eq!(writer.write(line)?, line.len());
         writer.flush()?;
         assert_eq!(
             String::from_utf8_lossy(&writer.0),
-            " DEBUG ref_str=v1\n\u{fffd}:error::forged\n"
+            " DEBUG ref_str=v1\n\u{fffd}:error::forged\r\u{fffd}:warning::cr ##\u{fffd}error]x\n"
         );
         Ok(())
     }

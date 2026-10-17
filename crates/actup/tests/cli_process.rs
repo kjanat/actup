@@ -522,7 +522,10 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
     let server = remote().await;
     Mock::given(method("GET"))
         .and(path("/repos/o/forge/tags"))
-        .respond_with(ResponseTemplate::new(400).set_body_string("x\n::error::lf"))
+        .respond_with(
+            ResponseTemplate::new(400)
+                .set_body_string("x\n::error::lf\r::error::cr ##[error]legacy"),
+        )
         .mount(&server)
         .await;
     let repo = Repo::new(
@@ -531,14 +534,18 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
             "o/old@v1.0.0",
             "\"o/old@::error::ref\"",
             "\"o/old@v\\n::error::lf\"",
+            "\"o/old@v\\r::error::cr\"",
+            "\"o/old@##[error]legacy\"",
             "o/forge@v1",
         ],
     )?;
     let forged = "::error file=x::forged.yml";
-    fs::copy(
-        repo.path().join(".github/workflows/ci.yml"),
-        repo.path().join(".github/workflows").join(forged),
-    )?;
+    for name in [forged, "##[error]forged.yml"] {
+        fs::copy(
+            repo.path().join(".github/workflows/ci.yml"),
+            repo.path().join(".github/workflows").join(name),
+        )?;
+    }
     fs::copy(
         repo.path().join(".github/workflows/ci.yml"),
         repo.path().join(forged),
@@ -548,8 +555,13 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
         &["check", ".", "--github-annotations", "--verbose"][..],
         &["check", forged, "--github-annotations"],
         &["check", forged, "--format", "table"],
+        &["check", ".", "--format", "json"],
+        &["check", ".", "--format", "toml"],
+        &["check", ".", "--format", "sarif"],
         &["update", forged, "--dry-run", "--verbose"],
+        &["update", ".", "--dry-run", "--format", "toml"],
         &["pin", forged, "--dry-run"],
+        &["pin", ".", "--dry-run", "--format", "json"],
     ] {
         let output = repo.run(args).await?;
         let text = format!(
@@ -558,15 +570,22 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
             String::from_utf8(output.stderr)?
         );
         assert!(text.contains("forged"), "{args:?}: {text}");
+        let lines: Vec<&str> = text.split(['\n', '\r']).collect();
         if args.contains(&"--verbose") {
-            assert!(
-                text.lines()
-                    .any(|line| line.starts_with("\u{fffd}:error::lf")),
-                "{args:?}: {text}"
-            );
+            for neutralized in ["\u{fffd}:error::lf", "\u{fffd}:error::cr"] {
+                assert!(
+                    lines.iter().any(|line| line.starts_with(neutralized)),
+                    "{args:?}: {text}"
+                );
+            }
         }
-        let commands: Vec<&str> = text
-            .lines()
+        assert!(
+            lines.iter().all(|line| !line.contains("##[")),
+            "{args:?}: {text}"
+        );
+        let commands: Vec<&str> = lines
+            .iter()
+            .copied()
             .filter(|line| line.trim_start().starts_with("::"))
             .collect();
         for line in &commands {

@@ -199,11 +199,11 @@ pub async fn run(
                 sanitize_line(&suffix).dimmed()
             );
         }
-        OutputFormat::Json => match serde_json::to_string_pretty(&result) {
+        OutputFormat::Json => match crate::structured::json_pretty(&result) {
             Ok(json) => println!("{json}"),
             Err(e) => eprintln!("Error serializing result: {e}"),
         },
-        OutputFormat::Toml => match toml::to_string_pretty(&result) {
+        OutputFormat::Toml => match crate::structured::toml(&result) {
             Ok(t) => println!("{t}"),
             Err(e) => eprintln!("Error serializing result: {e}"),
         },

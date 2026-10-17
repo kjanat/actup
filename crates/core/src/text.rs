@@ -27,30 +27,31 @@ fn replace(text: &str, reject: impl Fn(char) -> bool) -> Cow<'_, str> {
     }
 }
 
-fn opens_command(line: &str) -> bool {
-    line.trim_start().starts_with("::")
-}
-
-/// Replace the first `:` of each line of `text` that starts with `::` after leading whitespace with U+FFFD.
+/// Replace with U+FFFD the first `:` of each line of `text` that starts with `::` after leading whitespace, and every `[` that follows `##`.
 ///
-/// A GitHub Actions runner reads such a line on stdout or stderr as a workflow command.
+/// A GitHub Actions runner splits stdout and stderr into lines at CR and LF. It reads a line that starts with `::` as a workflow command, and a line that contains `##[` as a legacy one.
 #[must_use]
 pub fn neutralize_workflow_commands(text: &str) -> Cow<'_, str> {
-    if !text.split('\n').any(opens_command) {
+    if !text.contains("::") && !text.contains("##[") {
         return Cow::Borrowed(text);
     }
-    Cow::Owned(
-        text.split_inclusive('\n')
-            .map(|line| {
-                if opens_command(line) {
-                    let indent = line.len() - line.trim_start().len();
-                    format!("{}\u{fffd}{}", &line[..indent], &line[indent + 1..])
-                } else {
-                    line.to_string()
-                }
-            })
-            .collect(),
-    )
+    let mut neutralized = String::with_capacity(text.len());
+    let mut line_start = true;
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        let opens = match c {
+            ':' => line_start && chars.peek() == Some(&':'),
+            '[' => neutralized.ends_with("##"),
+            _ => false,
+        };
+        neutralized.push(if opens { '\u{fffd}' } else { c });
+        line_start = matches!(c, '\n' | '\r') || (line_start && c.is_whitespace());
+    }
+    if neutralized == text {
+        Cow::Borrowed(text)
+    } else {
+        Cow::Owned(neutralized)
+    }
 }
 
 fn sanitize(text: &str, reject: impl Fn(char) -> bool) -> Cow<'_, str> {
@@ -131,6 +132,26 @@ mod tests {
             "bad\u{fffd}\n\u{fffd}:stop-commands::t"
         );
         assert_eq!(sanitize_line("x\n::error::y"), "x\u{fffd}::error::y");
+    }
+
+    #[test]
+    fn workflow_commands_open_after_cr_and_legacy_ones_anywhere() {
+        assert_eq!(
+            neutralize_workflow_commands("v\r::error::cr\r\n ::x"),
+            "v\r\u{fffd}:error::cr\r\n \u{fffd}:x"
+        );
+        assert_eq!(
+            neutralize_workflow_commands("o/r@##[error]x ###[warning]y ##z [a]"),
+            "o/r@##\u{fffd}error]x ###\u{fffd}warning]y ##z [a]"
+        );
+        assert_eq!(
+            sanitize_line("##[error]forged.yml"),
+            "##\u{fffd}error]forged.yml"
+        );
+        assert!(matches!(
+            neutralize_workflow_commands("a:: b #[c] ::"),
+            Cow::Borrowed("a:: b #[c] ::")
+        ));
     }
 
     #[test]
