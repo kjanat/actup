@@ -5,7 +5,7 @@ use std::{fmt, str::FromStr};
 use glob::{MatchOptions, Pattern};
 use serde::{Deserialize, Serialize};
 
-use crate::{ActionRef, parser::looks_like_host};
+use crate::{ActionRef, parser::names_host};
 
 const SEGMENT: MatchOptions = MatchOptions {
     case_sensitive: true,
@@ -74,7 +74,10 @@ impl FromStr for ActionPattern {
         };
 
         let mut segments: Vec<&str> = path.split('/').collect();
-        let host = if segments.first().is_some_and(|s| looks_like_host(s)) {
+        let host = if segments
+            .first()
+            .is_some_and(|s| names_host(s, segments.len()))
+        {
             Some(segments.remove(0))
         } else {
             None
@@ -176,6 +179,22 @@ mod tests {
         assert!(!pattern.matches(&action("platform/ci@v1"), "github.com"));
         assert!(pattern.matches(&action("platform/ci@v1"), "ghe.corp.com"));
         assert!(!pattern.matches(&action("github.com/platform/ci@v1"), "ghe.corp.com"));
+        Ok(())
+    }
+
+    #[test]
+    fn pattern_host_detection_follows_the_parser() -> Result<(), String> {
+        assert!(matches("a.b/c", "a.b/c@v1")?);
+        assert!(!matches("a.b/c", "a.b/c/d@v1")?);
+        assert!(matches("localhost/o/*", "localhost/o/r@v1")?);
+        assert!(!matches("localhost/o/*", "o/r@v1")?);
+        assert!(matches("host:8443/o/r", "HOST:8443/o/r@v1")?);
+        assert!(matches("ghe/o/r", "ghe/o/r@v1")?);
+        assert!(!matches("ghe/o/r", "ghe.corp/o/r@v1")?);
+        assert!(matches(
+            "my.org/repo/.github",
+            "my.org/repo/.github/workflows/ci.yml@main"
+        )?);
         Ok(())
     }
 

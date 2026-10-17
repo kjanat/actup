@@ -6,6 +6,8 @@
 //! - `host/owner/repo@ref` (explicit host)
 //! - `./path` (local, returned as None)
 
+use std::net::Ipv6Addr;
+
 use saphyr_parser::{Event, Parser, ScalarStyle, Span};
 
 use crate::{ActionRef, Error, Result};
@@ -43,89 +45,74 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
         });
     }
 
-    // Split the path part by '/' using iterator
-    let mut parts = path_part.split('/');
-
-    let first = parts.next().ok_or_else(|| Error::InvalidRef {
-        input: input.to_string(),
-        reason: "expected at least owner/repo".to_string(),
-    })?;
-
-    let second = parts.next().ok_or_else(|| Error::InvalidRef {
-        input: input.to_string(),
-        reason: "expected at least owner/repo".to_string(),
-    })?;
-
-    // Determine if first part is a host (contains '.' or is a known pattern)
-    let (host, owner, repo, subpath) = if looks_like_host(first) {
-        // host/owner/repo[@ref] or host/owner/repo/path[@ref]
-        let third = parts.next().ok_or_else(|| Error::InvalidRef {
-            input: input.to_string(),
-            reason: "with host prefix, expected host/owner/repo".to_string(),
-        })?;
-        let subpath: Option<String> = {
-            let rest: Vec<_> = parts.collect();
-            if rest.is_empty() {
-                None
-            } else {
-                Some(rest.join("/"))
-            }
-        };
-        (
-            Some(first.to_string()),
-            second.to_string(),
-            third.to_string(),
-            subpath,
-        )
-    } else {
-        // owner/repo[@ref] or owner/repo/path[@ref]
-        let subpath: Option<String> = {
-            let rest: Vec<_> = parts.collect();
-            if rest.is_empty() {
-                None
-            } else {
-                Some(rest.join("/"))
-            }
-        };
-        (None, first.to_string(), second.to_string(), subpath)
+    let segments: Vec<&str> = path_part.split('/').collect();
+    let (host, rest) = match segments.split_first() {
+        Some((first, rest)) if names_host(first, segments.len()) => {
+            (Some(first.to_ascii_lowercase()), rest)
+        }
+        _ => (None, segments.as_slice()),
     };
 
-    // Validate owner and repo aren't empty
-    if owner.is_empty() {
+    let [owner, repo, subpath @ ..] = rest else {
         return Err(Error::InvalidRef {
             input: input.to_string(),
-            reason: "empty owner".to_string(),
+            reason: "expected at least owner/repo".to_string(),
         });
-    }
+    };
+    check_name(input, "owner", owner)?;
+    check_name(input, "repo", repo)?;
+    let subpath = (!subpath.is_empty()).then(|| subpath.join("/"));
 
-    if repo.is_empty() {
-        return Err(Error::InvalidRef {
-            input: input.to_string(),
-            reason: "empty repo".to_string(),
-        });
-    }
-
-    Ok(Some(ActionRef::new(host, owner, repo, subpath, ref_str)))
+    Ok(Some(ActionRef::new(host, *owner, *repo, subpath, ref_str)))
 }
 
-/// Check if a string looks like a hostname
-pub(crate) fn looks_like_host(s: &str) -> bool {
-    // Contains a dot (like github.com, ghe.corp.internal)
-    if s.contains('.') {
-        return true;
+fn check_name(input: &str, field: &str, name: &str) -> Result<()> {
+    let valid = !matches!(name, "" | "." | "..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if valid {
+        return Ok(());
     }
+    Err(Error::InvalidRef {
+        input: input.to_string(),
+        reason: format!("{field} `{name}` must match `[A-Za-z0-9._-]+`"),
+    })
+}
 
-    // localhost
-    if s == "localhost" {
-        return true;
+pub(crate) fn names_host(first: &str, segments: usize) -> bool {
+    if segments < 3 {
+        return false;
     }
-
-    // Contains a port (like localhost:8080)
-    if s.contains(':') {
-        return true;
+    if let Some(literal) = first.strip_prefix('[') {
+        return literal.split_once(']').is_some_and(|(addr, port)| {
+            addr.parse::<Ipv6Addr>().is_ok()
+                && (port.is_empty() || port.strip_prefix(':').is_some_and(is_port))
+        });
     }
+    let is_dns_name = |name: &str| name.split('.').all(is_dns_label);
+    if let Some((name, port)) = first.rsplit_once(':') {
+        return is_dns_name(name) && is_port(port);
+    }
+    is_dns_name(first) && (first.contains('.') || first.eq_ignore_ascii_case("localhost"))
+}
 
-    false
+fn is_dns_label(label: &str) -> bool {
+    let bytes = label.as_bytes();
+    match (bytes.first(), bytes.last()) {
+        (Some(head), Some(tail)) => {
+            head.is_ascii_alphanumeric()
+                && tail.is_ascii_alphanumeric()
+                && bytes
+                    .iter()
+                    .all(|b| b.is_ascii_alphanumeric() || *b == b'-')
+        }
+        _ => false,
+    }
+}
+
+fn is_port(port: &str) -> bool {
+    port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok()
 }
 
 /// Extract all `uses:` values from a YAML workflow file.
@@ -417,6 +404,71 @@ mod tests {
         assert!(parse_uses("no-at-sign").is_err());
         assert!(parse_uses("missing@").is_err());
         assert!(parse_uses("@no-path").is_err());
+    }
+
+    #[test]
+    fn host_needs_three_segments_and_a_dns_shaped_first_label()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        type Parts<'a> = (Option<&'a str>, &'a str, &'a str, Option<&'a str>);
+        let cases: [(&str, Parts<'_>); 12] = [
+            (
+                "my.org/repo/.github/workflows/ci.yml@main",
+                (Some("my.org"), "repo", ".github", Some("workflows/ci.yml")),
+            ),
+            ("ghe.corp/o/r@v1", (Some("ghe.corp"), "o", "r", None)),
+            ("localhost/o/r@v1", (Some("localhost"), "o", "r", None)),
+            (
+                "localhost:3000/o/r@v1",
+                (Some("localhost:3000"), "o", "r", None),
+            ),
+            ("host:8443/o/r@v1", (Some("host:8443"), "o", "r", None)),
+            ("[::1]/o/r@v1", (Some("[::1]"), "o", "r", None)),
+            ("[::1]:8080/o/r@v1", (Some("[::1]:8080"), "o", "r", None)),
+            (
+                "GitHub.COM/Actions/Checkout@v4",
+                (Some("github.com"), "Actions", "Checkout", None),
+            ),
+            ("a.b/c@v1", (None, "a.b", "c", None)),
+            ("ghe.corp.com/org@v1", (None, "ghe.corp.com", "org", None)),
+            ("ghe/o/r@v1", (None, "ghe", "o", Some("r"))),
+            ("a..b/o/r@v1", (None, "a..b", "o", Some("r"))),
+        ];
+        for (uses, want) in cases {
+            let Some(action) = parse_uses(uses)? else {
+                return Err(format!("{uses} parsed as local").into());
+            };
+            let got = (
+                action.host(),
+                action.owner(),
+                action.repo(),
+                action.subpath(),
+            );
+            assert_eq!(got, want, "{uses}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_owner_or_repo_outside_the_name_charset() {
+        for uses in [
+            "own er/repo@v1",
+            "owner/re$po@v1",
+            "ghe.corp/o!/r@v1",
+            "ghe.corp/o/r+x@v1",
+            "o/..@v1",
+            "owner/.@v1",
+            "/repo@v1",
+            "owner/@v1",
+            "host:99999/o/r@v1",
+            "-bad-.com:8/o/r@v1",
+            "[nope]/o/r@v1",
+        ] {
+            let result = parse_uses(uses);
+            assert!(
+                matches!(result, Err(Error::InvalidRef { .. })),
+                "{uses}: {result:?}"
+            );
+        }
     }
 
     #[test]

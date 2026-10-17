@@ -246,4 +246,22 @@ await assert.rejects(
 
 console.log("PASS: deeply nested configs are rejected");
 
+// Test 12: a mixed-case host resolves on the default host and keeps its edit.
+const hostYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: GitHub.COM/actions/checkout@v4.0.0
+`;
+const hostResults = await checkRefs(hostYaml, mockProvider);
+assert.equal(hostResults.length, 1, "one ref in host YAML");
+assert.equal(hostResults[0].action_ref.host, "github.com", "host is lower-cased");
+assert.equal(statusName(hostResults[0].status), "Outdated", `got ${JSON.stringify(hostResults[0].status)}`);
+const hostEdits = planUpdates(hostYaml, hostResults);
+assert.equal(hostEdits.length, 1, "one edit for the mixed-case host");
+assert.equal(hostEdits[0].original, "GitHub.COM/actions/checkout@v4.0.0", "edit keeps the host as written");
+assert.equal(hostEdits[0].newRef, "v4.2.0", "edit targets v4.2.0");
+
+console.log("PASS: mixed-case host resolves and plans its edit");
+
 console.log("\nAll npm package integration tests PASSED");

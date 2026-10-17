@@ -12,23 +12,6 @@ use crate::{
     common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, repin_sha_edit},
 };
 
-/// Get the prefix of an action ref (everything before @ref).
-fn action_prefix(action: &ActionRef) -> String {
-    let mut s = String::new();
-    if let Some(h) = action.host() {
-        s.push_str(h);
-        s.push('/');
-    }
-    s.push_str(action.owner());
-    s.push('/');
-    s.push_str(action.repo());
-    if let Some(p) = action.subpath() {
-        s.push('/');
-        s.push_str(p);
-    }
-    s
-}
-
 /// Resolve the SHA for an action reference.
 ///
 /// First tries to find it in the version list, then falls back to resolving the ref directly.
@@ -102,8 +85,9 @@ async fn pin_action_edit(
         let display = format!("{} ({short})", target.version());
         Some((repin_sha_edit(loc, action_ref, target), display))
     } else {
+        let (prefix, _) = loc.value().split_once('@')?;
         let sha = resolve_sha(provider, action_ref, errors).await?;
-        let new_uses = format!("{}@{sha}", action_prefix(action_ref));
+        let new_uses = format!("{prefix}@{sha}");
         let comment = format!(" # {}", action_ref.ref_str());
         let edit = PendingEdit::replace_range(loc.line(), loc.value_range(), new_uses.clone())
             .with_comment(comment.clone());
@@ -324,54 +308,35 @@ mod tests {
         assert_eq!(pinned, expected);
     }
 
-    fn make_action_ref(
-        host: Option<&str>,
-        owner: &str,
-        repo: &str,
-        subpath: Option<&str>,
-        ref_str: &str,
-    ) -> ActionRef {
-        ActionRef::new(
-            host.map(String::from),
-            owner,
-            repo,
-            subpath.map(String::from),
-            ref_str,
-        )
-    }
+    #[tokio::test]
+    async fn test_pin_keeps_the_host_as_written() -> Result<(), Box<dyn std::error::Error>> {
+        let sha = "d".repeat(40);
+        let sha40 = Sha40::new(sha.clone()).ok_or("fixture SHA must be valid")?;
+        let provider = FixedShaProvider { sha: sha40 };
+        let content = "steps:\n  - uses: GitHub.COM/actions/checkout@v4\n".to_string();
 
-    // action_prefix tests
+        let config = Config::default();
+        let mut errors = ErrorTally::default();
+        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
+        let mut hosts = Vec::new();
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+            hosts.push(action_ref.host().map(str::to_owned));
+            let (edit, display) =
+                pin_action_edit(&provider, &action_ref, &loc, &config, &mut errors)
+                    .await
+                    .ok_or("pin produced no edit")?;
+            assert_eq!(display, format!("GitHub.COM/actions/checkout@{sha} # v4"));
+            assert!(file_edits.add(edit));
+        }
 
-    #[test]
-    fn test_action_prefix_simple() {
-        let action = make_action_ref(None, "actions", "checkout", None, "v4");
-        assert_eq!(action_prefix(&action), "actions/checkout");
-    }
-
-    #[test]
-    fn test_action_prefix_with_host() {
-        let action = make_action_ref(Some("github.com"), "actions", "checkout", None, "v4");
-        assert_eq!(action_prefix(&action), "github.com/actions/checkout");
-    }
-
-    #[test]
-    fn test_action_prefix_with_subpath() {
-        let action = make_action_ref(None, "actions", "cache", Some("restore"), "v4");
-        assert_eq!(action_prefix(&action), "actions/cache/restore");
-    }
-
-    #[test]
-    fn test_action_prefix_with_host_and_subpath() {
-        let action = make_action_ref(
-            Some("ghe.corp.com"),
-            "org",
-            "monorepo",
-            Some(".github/actions/build"),
-            "main",
-        );
+        assert_eq!(hosts, [Some("github.com".to_owned())]);
+        assert_eq!(errors.total(), 0);
         assert_eq!(
-            action_prefix(&action),
-            "ghe.corp.com/org/monorepo/.github/actions/build"
+            file_edits
+                .apply()
+                .map_err(|line| format!("edit on line {line} did not apply"))?,
+            format!("steps:\n  - uses: GitHub.COM/actions/checkout@{sha} # v4\n")
         );
+        Ok(())
     }
 }

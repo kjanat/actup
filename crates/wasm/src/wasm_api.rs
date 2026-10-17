@@ -1,6 +1,7 @@
 //! Public WASM-facing API. Compiled only on `wasm32` targets.
 
 use actup_core::{
+    UsesLocation,
     config::Config,
     extract_uses_from_yaml, parse_uses, policy,
     provider::{Kind, Registry},
@@ -199,9 +200,10 @@ pub fn plan_updates(yaml: &str, results_json: &str) -> Result<JsValue, JsValue> 
         // Emit an edit for every matching location — the same action can
         // appear in multiple jobs/steps of a single workflow.
         let action_ref = result.action_ref();
-        let uses_str = action_ref.to_uses_string();
+        let written_as_action =
+            |l: &&UsesLocation| parse_uses(l.value()).is_ok_and(|p| p.as_ref() == Some(action_ref));
 
-        for loc in locations.iter().filter(|l| l.value() == uses_str) {
+        for loc in locations.iter().filter(written_as_action) {
             if let Some(range) = loc.ref_range() {
                 edits.push(UpdateEdit {
                     line: loc.line(),
