@@ -35,7 +35,6 @@ base64          = { workspace = true }
 reqwest         = { workspace = true }
 serde           = { workspace = true }
 serde_json      = { workspace = true }
-serde_yaml_ng   = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
 ```
@@ -199,10 +198,11 @@ Create `src/provider.rs`:
 use std::{future::Future, pin::Pin};
 
 use actup_core::{
+    ActionRepoId, Error, Result,
     provider::{ActionYml, Kind, Provider, Sha40},
     version,
 };
-use actup_providers::process_tags;
+use actup_providers::{filename_label, parse_action_yml, process_tags};
 
 pub struct YourProvider {
     client: YourClient,
@@ -323,19 +323,29 @@ impl Provider for YourProvider {
         let subpath = repo.subpath().map(ToString::to_string);
 
         Box::pin(async move {
-            let path = match &subpath {
-                Some(p) => format!("{p}/action.yml"),
-                None => "action.yml".to_string(),
-            };
+            let dir = subpath.map(|p| format!("{p}/")).unwrap_or_default();
 
-            let content = self
-                .client
-                .get_file(&owner, &repo_name, &path, &ref_name)
-                .await?;
-            let raw = decode_base64_content(&content)?;
+            // GitHub accepts both extensions; try action.yml first
+            for path in [format!("{dir}action.yml"), format!("{dir}action.yaml")] {
+                match self
+                    .client
+                    .get_file(&owner, &repo_name, &path, &ref_name)
+                    .await
+                {
+                    Ok(content) => {
+                        let raw = decode_base64_content(&content)?;
+                        return parse_action_yml(&raw, filename_label(&path));
+                    }
+                    Err(Error::NotFound { .. }) => continue, // Try action.yaml
+                    Err(e) => return Err(e), // Propagate auth/rate-limit/network errors
+                }
+            }
 
-            // Call module-level parse function, not Self::method
-            parse_action_yml(&raw)
+            Err(Error::NotFound {
+                owner,
+                repo: repo_name,
+                host: Some(self.host.clone()),
+            })
         })
     }
 }
@@ -358,65 +368,11 @@ fn decode_base64_content(content: &str) -> Result<String> {
         message: e.to_string(),
     })
 }
-
-/// Parse action.yml content (module-level function, not method!)
-fn parse_action_yml(raw: &str) -> Result<ActionYml> {
-    #[derive(Deserialize)]
-    struct RawInput {
-        description: Option<String>,
-        required: Option<bool>,
-        default: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    struct RawOutput {
-        description: Option<String>,
-        value: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    struct RawStep {
-        name: Option<String>,
-        uses: Option<String>,
-        run: Option<String>,
-        #[serde(rename = "if")]
-        condition: Option<String>,
-    }
-
-    #[derive(Deserialize)]
-    struct RawRuns {
-        using: Option<String>,
-        main: Option<String>,
-        pre: Option<String>,
-        post: Option<String>,
-        steps: Option<Vec<RawStep>>,
-    }
-
-    #[derive(Deserialize)]
-    struct RawActionYml {
-        name: Option<String>,
-        description: Option<String>,
-        author: Option<String>,
-        inputs: Option<HashMap<String, RawInput>>,
-        outputs: Option<HashMap<String, RawOutput>>,
-        runs: Option<RawRuns>,
-    }
-
-    let parsed: RawActionYml = serde_yaml_ng::from_str(raw).map_err(|e| Error::YamlParse {
-        path: "action.yml".into(),
-        reason: e.to_string(),
-    })?;
-
-    // Build ActionYml using builder pattern
-    let mut action = ActionYml::new(raw);
-    if let Some(name) = parsed.name {
-        action = action.with_name(name);
-    }
-    // ... continue building
-
-    Ok(action)
-}
 ```
+
+Parse `action.yml` content with the shared
+`actup_providers::parse_action_yml(raw, path)`. Pass the loaded filename as
+`path` through `actup_providers::filename_label`. Parse errors name that file.
 
 ### 6. Export REGISTRATION
 
@@ -521,8 +477,8 @@ Box::pin(async move {
 **DO:**
 
 ```rust
-// parse_action_yml as module-level function
-fn parse_action_yml(raw: &str) -> Result<ActionYml> {
+// decode_base64_content as module-level function
+fn decode_base64_content(content: &str) -> Result<String> {
     // ...
 }
 
@@ -530,7 +486,8 @@ impl Provider for YourProvider {
     fn get_action_yml(...) -> Pin<Box<...>> {
         Box::pin(async move {
             // Call as free function
-            parse_action_yml(&raw)
+            let raw = decode_base64_content(&content)?;
+            parse_action_yml(&raw, filename_label(&path))
         })
     }
 }
@@ -541,7 +498,7 @@ impl Provider for YourProvider {
 ```rust
 impl YourProvider {
     // ❌ Don't make it a method - causes lifetime issues in async traits
-    fn parse_action_yml(raw: &str) -> ActionYml {
+    fn decode_base64_content(content: &str) -> Result<String> {
         // ...
     }
 }
@@ -549,7 +506,8 @@ impl YourProvider {
 impl Provider for YourProvider {
     fn get_action_yml(...) -> Pin<Box<...>> {
         Box::pin(async move {
-            Self::parse_action_yml(&raw)  // ❌ Lifetime issues
+            let raw = Self::decode_base64_content(&content)?;  // ❌ Lifetime issues
+            parse_action_yml(&raw, filename_label(&path))
         })
     }
 }
@@ -682,7 +640,7 @@ if encoding == "base64" {
       `actup_providers::process_tags`
 - [ ] HTTP client handles auth, rate limiting, pagination
 - [ ] Provider trait impl extracts data before async blocks
-- [ ] `parse_action_yml` is module-level function (not method)
+- [ ] `get_action_yml` calls `actup_providers::parse_action_yml`
 - [ ] Error handling uses proper `actup_core::Error` variants
 - [ ] SHAs validated with `Sha40::new()`
 - [ ] `REGISTRATION` static exported with presets, inference, and capabilities

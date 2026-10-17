@@ -260,7 +260,7 @@ When implementing or reviewing a provider:
       resource/provider)
 - [ ] Tag type implements `TagLike` and `get_versions` calls
       `actup_providers::process_tags`
-- [ ] `parse_action_yml` is module-level function (not method)
+- [ ] `get_action_yml` calls `actup_providers::parse_action_yml`
 - [ ] Async trait methods extract data from params before `async move`
 - [ ] SHAs validated with `Sha40::new()` and errors handled
 - [ ] Rate limiting detected and returned as `Error::RateLimited`

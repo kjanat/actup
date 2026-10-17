@@ -5,11 +5,13 @@ Shared utility layer between `actup-core` and individual provider crates
 
 ## Module Map
 
-| Module          | Purpose                                | Key Types                             |
-| --------------- | -------------------------------------- | ------------------------------------- |
-| `action_yml.rs` | Parse action.yml/action.yaml files     | `RawActionYml`, `parse_action_yml`    |
-| `tags.rs`       | Common tag processing across providers | `TagLike` trait, `process_tags`       |
-| `client.rs`     | Shared HTTP client constants           | `DEFAULT_MAX_RETRIES`, `MAX_PER_PAGE` |
+| Module          | Purpose                                         | Key Types                                           |
+| --------------- | ----------------------------------------------- | --------------------------------------------------- |
+| `action_yml.rs` | Parse action.yml/action.yaml files              | `RawActionYml`, `parse_action_yml`                  |
+| `tags.rs`       | Common tag processing across providers          | `TagLike` trait, `process_tags`                     |
+| `ls_refs.rs`    | List remote tags and branches over git protocol | `list_refs`, `RemoteRefs`, `RemoteTag`, `RepoLabel` |
+| `client.rs`     | Shared HTTP client constants                    | `DEFAULT_MAX_RETRIES`, `MAX_PER_PAGE`               |
+| `lib.rs`        | Re-exports and the loaded-filename helper       | `filename_label`                                    |
 
 ## Where to Look
 
@@ -17,6 +19,7 @@ Shared utility layer between `actup-core` and individual provider crates
 | ------------------------ | -------------------------- |
 | Change tag normalization | `tags.rs` → `process_tags` |
 | Parse action metadata    | `action_yml.rs`            |
+| Change git ref listing   | `ls_refs.rs` → `list_refs` |
 | Modify HTTP defaults     | `client.rs`                |
 
 ## Conventions
@@ -25,10 +28,12 @@ Shared utility layer between `actup-core` and individual provider crates
 - `TagLike` trait: providers implement to normalize their tag API responses
 - `process_tags` converts any iterator of `TagLike` items into an
   `actup_core::version::Set`
-- `parse_action_yml` has `cognitive_complexity` + `too_many_lines` suppressed —
-  refactoring candidate
+- `parse_action_yml(raw, path)` takes the loaded filename from `filename_label`
+  for its error messages
 
 ## Anti-Patterns
 
 - **Not a provider registry**: Don't add provider-specific logic here
-- **No HTTP calls**: Only constants and parsing utilities
+- **Network access is host-neutral**: `list_refs` speaks the git smart-HTTP
+  protocol every host shares; host REST and GraphQL APIs belong in provider
+  crates
