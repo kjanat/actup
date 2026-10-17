@@ -791,8 +791,7 @@ const base = grammar({
 						optional($._expr_ws),
 						$.operator,
 						optional($._expr_ws),
-						optional($.not),
-						optional($._expr_ws),
+						repeat(seq($.not, optional($._expr_ws))),
 						$._evaluation,
 					),
 				),
@@ -804,16 +803,14 @@ const base = grammar({
 		_dlm_expr_tal: $ =>
 			seq(
 				optional($._expr_ws),
-				optional($.not),
-				optional($._expr_ws),
+				repeat(seq($.not, optional($._expr_ws))),
 				$._evaluation,
 				repeat(
 					seq(
 						optional($._expr_ws),
 						$.operator,
 						optional($._expr_ws),
-						optional($.not),
-						optional($._expr_ws),
+						repeat(seq($.not, optional($._expr_ws))),
 						$._evaluation,
 					),
 				),
@@ -829,11 +826,10 @@ const base = grammar({
 
 		_dot: () => ".",
 
-		number: $ => choice(seq(optional("-"), $._int), $._float, $._hex, $._exp),
+		number: $ => choice(seq(optional("-"), $._int, optional(seq($._dot, $._int)), optional($._exp)), $._hex),
 		_int: () => /\d+/,
-		_float: $ => seq(optional("-"), $._int, $._dot, $._int),
 		_hex: () => seq("0x", /[0-9a-fA-F]+/),
-		_exp: $ => seq($._float, "e", optional("-"), $._int),
+		_exp: $ => seq(choice("e", "E"), optional(choice("+", "-")), $._int),
 
 		string: $ => seq("'", repeat(choice($.string_content, $.scape_sequence)), "'"),
 		string_content: _ => token(prec(-1, /([^'\\\r\n]|\\(.|\r?\n))+/)),
@@ -908,16 +904,14 @@ const base = grammar({
 			seq(
 				"(",
 				optional($._expr_ws),
-				optional($.not),
-				optional($._expr_ws),
+				repeat(seq($.not, optional($._expr_ws))),
 				$._evaluation,
 				repeat(
 					seq(
 						optional($._expr_ws),
 						$.operator,
 						optional($._expr_ws),
-						optional($.not),
-						optional($._expr_ws),
+						repeat(seq($.not, optional($._expr_ws))),
 						$._evaluation,
 					),
 				),

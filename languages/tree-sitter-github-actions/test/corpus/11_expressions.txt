@@ -587,3 +587,30 @@ x:
                       value: (flow_node
                         (plain_scalar
                           (string_scalar))))))))))))))
+
+============================================================================
+Repeated negation and an exponent in a plain expression
+============================================================================
+name: ${{ !!a && 1E3 }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (not)
+                (not)
+                (context
+                  (identifier))
+                (operator
+                  (and))
+                (number)))))))))

@@ -1060,3 +1060,164 @@ jobs:
                                   value: (flow_node
                                     (plain_scalar
                                       (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: JSON exponent numbers
+============================================================================
+jobs:
+  build:
+    if: x == 1e3 || x == 1E3 || x == 1e-3 || x == 1.0e+3 || y == 2E-3
+    runs-on: ubuntu-latest
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier))
+                          (operator
+                            (eq))
+                          (number)
+                          (operator
+                            (or))
+                          (context
+                            (identifier))
+                          (operator
+                            (eq))
+                          (number)
+                          (operator
+                            (or))
+                          (context
+                            (identifier))
+                          (operator
+                            (eq))
+                          (number)
+                          (operator
+                            (or))
+                          (context
+                            (identifier))
+                          (operator
+                            (eq))
+                          (number)
+                          (operator
+                            (or))
+                          (context
+                            (identifier))
+                          (operator
+                            (eq))
+                          (number))))
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (string_scalar))))))))))))))
+
+============================================================================
+Bare if: repeated negation
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: a && !!b
+        run: c
+      - if: (!!a || !!!b)
+        run: d
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (context
+                                        (identifier))
+                                      (operator
+                                        (and))
+                                      (not)
+                                      (not)
+                                      (context
+                                        (identifier)))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))))))
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (logical_group
+                                        (not)
+                                        (not)
+                                        (context
+                                          (identifier))
+                                        (operator
+                                          (or))
+                                        (not)
+                                        (not)
+                                        (not)
+                                        (context
+                                          (identifier))))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
