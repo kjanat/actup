@@ -364,7 +364,7 @@ pub enum Branch {
     /// ```
     Warn,
 
-    /// Treat branch refs as updatable (pin to latest commit SHA).
+    /// Treat branch and non-semver tag refs as updatable (pin to their commit SHA).
     ///
     /// ```yaml
     /// # Before:

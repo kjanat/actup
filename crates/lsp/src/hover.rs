@@ -7,7 +7,7 @@ use std::{fmt::Write as _, sync::Arc};
 
 use actup_core::{
     ActionRef, Config, check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
-    resolution::{CheckResult, CheckStatus},
+    resolution::{CheckResult, CheckStatus, RefKind},
     version,
 };
 use dashmap::DashMap;
@@ -214,7 +214,7 @@ fn repo_url(action_ref: &ActionRef, default_host: Option<&str>) -> String {
 }
 
 /// Format version status information for hover display.
-fn format_version_status(status: &CheckStatus) -> String {
+fn format_version_status(status: &CheckStatus, ref_kind: Option<RefKind>) -> String {
     match status {
         CheckStatus::UpToDate => "Up to date".to_owned(),
         CheckStatus::Outdated { current, target } => {
@@ -240,7 +240,8 @@ fn format_version_status(status: &CheckStatus) -> String {
         }
         CheckStatus::PinBranch { ref_name, sha } => {
             format!(
-                "**Pin branch** `{ref_name}` -> `{}` # {ref_name}",
+                "**Pin {}** `{ref_name}` -> `{}` # {ref_name}",
+                ref_kind.map_or_else(|| "ref".to_string(), |k| k.to_string()),
                 sha.get(..12).unwrap_or(sha)
             )
         }
@@ -259,7 +260,7 @@ fn format_version_status(status: &CheckStatus) -> String {
 
 fn format_check_result(result: &CheckResult) -> String {
     let Some(target) = result.same_commit() else {
-        return format_version_status(result.status());
+        return format_version_status(result.status(), result.ref_kind());
     };
     let kind = result
         .ref_kind()
@@ -604,7 +605,10 @@ mod tests {
 
     #[test]
     fn format_version_status_up_to_date() {
-        assert_eq!(format_version_status(&CheckStatus::UpToDate), "Up to date");
+        assert_eq!(
+            format_version_status(&CheckStatus::UpToDate, None),
+            "Up to date"
+        );
     }
 
     #[test]
@@ -617,7 +621,7 @@ mod tests {
             current: "v1.0.0".into(),
             target,
         };
-        let result = format_version_status(&status);
+        let result = format_version_status(&status, None);
         assert!(result.contains("Outdated"));
         assert!(result.contains("v1.0.0"));
         assert!(result.contains("v2.0.0"));
@@ -630,7 +634,7 @@ mod tests {
             sha: "abc1234567890abcdef1234567890abcdef123456".into(),
             tag: Some("v3.1.0".into()),
         };
-        let result = format_version_status(&status);
+        let result = format_version_status(&status, None);
         assert!(result.contains("Pinned"));
         assert!(result.contains("v3.1.0"));
         assert!(result.contains("abc123456789"));
@@ -642,14 +646,29 @@ mod tests {
             sha: "abc1234567890abcdef1234567890abcdef123456".into(),
             tag: None,
         };
-        let result = format_version_status(&status);
+        let result = format_version_status(&status, None);
         assert!(result.contains("unknown version"));
+    }
+
+    #[test]
+    fn format_version_status_pin_names_the_ref_kind() {
+        let status = CheckStatus::PinBranch {
+            ref_name: "nightly".into(),
+            sha: "c".repeat(40),
+        };
+        let pin = |kind| format_version_status(&status, kind);
+        assert_eq!(
+            pin(Some(RefKind::Tag)),
+            format!("**Pin tag** `nightly` -> `{}` # nightly", "c".repeat(12))
+        );
+        assert!(pin(Some(RefKind::Branch)).starts_with("**Pin branch** `nightly`"));
+        assert!(pin(None).starts_with("**Pin ref** `nightly`"));
     }
 
     #[test]
     fn format_version_status_ignored() {
         assert_eq!(
-            format_version_status(&CheckStatus::Ignored),
+            format_version_status(&CheckStatus::Ignored, None),
             "Ignored by config"
         );
     }
@@ -660,7 +679,7 @@ mod tests {
             reason: "repository not found".into(),
             is_environment_error: false,
         };
-        let result = format_version_status(&status);
+        let result = format_version_status(&status, None);
         assert!(result.contains("Unresolvable"));
         assert!(result.contains("repository not found"));
     }
@@ -671,7 +690,7 @@ mod tests {
             reason: "rate limited".into(),
             is_environment_error: true,
         };
-        let result = format_version_status(&status);
+        let result = format_version_status(&status, None);
         assert!(result.contains("Check failed"));
         assert!(result.contains("rate limited"));
     }

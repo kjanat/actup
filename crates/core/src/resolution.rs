@@ -169,8 +169,8 @@ pub enum CheckStatus {
         /// The branch or non-semver ref that floats
         ref_name: String,
     },
-    /// Action references a floating branch under `update` branch policy: it
-    /// should be pinned to the branch's current HEAD SHA.
+    /// Action references a floating branch (or non-semver tag) under `update`
+    /// branch policy: it should be pinned to the ref's current commit SHA.
     PinBranch {
         /// The branch ref to pin (used for the `# branch` comment)
         ref_name: String,
@@ -302,9 +302,14 @@ fn should_respect_branch_policy_for_major_ref(
 }
 
 struct Lookup {
-    found: CheckStatus,
+    found: Found,
     missing: CheckStatus,
     commit: Option<CheckStatus>,
+}
+
+enum Found {
+    Status(CheckStatus),
+    Floating(policy::Branch),
 }
 
 /// Check action using pre-fetched versions and provider ref resolution.
@@ -334,9 +339,12 @@ pub async fn check_action_with_provider(
         .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
         .await;
     let status = match &resolved {
-        Ok(sha) => match lookup.commit {
-            Some(commit) if action_ref.abbreviates(sha.as_str()) => commit,
-            _ => lookup.found,
+        Ok(sha) => match (lookup.commit, lookup.found) {
+            (Some(commit), _) if action_ref.abbreviates(sha.as_str()) => commit,
+            (_, Found::Status(status)) => status,
+            (_, Found::Floating(branch_policy)) => {
+                status_for_non_semver(action_ref.ref_str(), branch_policy, sha.as_str())
+            }
         },
         Err(e) if e.is_environment_error() => CheckStatus::Unresolvable {
             reason: e.to_string(),
@@ -404,11 +412,10 @@ fn classify(
         return classify_non_semver(ref_str, policy.branch, versions);
     }
 
-    if !versions.has_exact_tag(ref_str) && versions.branch_sha(ref_str).is_some() {
-        return (
-            status_for_non_semver(ref_str, policy.branch, versions),
-            None,
-        );
+    if !versions.has_exact_tag(ref_str)
+        && let Some(head) = versions.branch_sha(ref_str)
+    {
+        return (status_for_non_semver(ref_str, policy.branch, head), None);
     }
 
     let Some(target) = find_best_target(versions, &current, policy) else {
@@ -428,7 +435,7 @@ fn classify(
             return defer(
                 missing.clone(),
                 Lookup {
-                    found: CheckStatus::UpToDate,
+                    found: Found::Status(CheckStatus::UpToDate),
                     missing,
                     commit: None,
                 },
@@ -442,11 +449,10 @@ fn classify(
         target,
     };
     if should_respect_branch_policy_for_major_ref(action_ref, versions, &status) {
-        let found = status_for_non_semver(ref_str, policy.branch, versions);
         return defer(
             status.clone(),
             Lookup {
-                found,
+                found: Found::Floating(policy.branch),
                 missing: status,
                 commit: None,
             },
@@ -461,9 +467,8 @@ fn classify_non_semver(
     branch_policy: policy::Branch,
     versions: &version::Set,
 ) -> (CheckStatus, Option<Lookup>) {
-    let status = status_for_non_semver(ref_name, branch_policy, versions);
-    if versions.names_ref(ref_name) {
-        return (status, None);
+    if let Some(commit) = listed_commit(ref_name, versions) {
+        return (status_for_non_semver(ref_name, branch_policy, commit), None);
     }
     defer(
         CheckStatus::Unresolvable {
@@ -471,7 +476,7 @@ fn classify_non_semver(
             is_environment_error: true,
         },
         Lookup {
-            found: status,
+            found: Found::Floating(branch_policy),
             missing: CheckStatus::Unresolvable {
                 reason: format!("ref '{ref_name}' not found"),
                 is_environment_error: false,
@@ -513,7 +518,7 @@ fn classify_short_sha(
     defer(
         short.clone(),
         Lookup {
-            found: status_for_non_semver(ref_name, branch_policy, versions),
+            found: Found::Floating(branch_policy),
             missing: CheckStatus::Unresolvable {
                 reason: format!("ref '{ref_name}' not found"),
                 is_environment_error: false,
@@ -562,34 +567,33 @@ fn check_pinned_sha(
     }
 }
 
-/// Handle non-semver refs based on branch policy.
+/// Handle a non-semver ref on `commit` based on branch policy.
+///
+/// Under [`policy::Branch::Update`] the ref pins to `commit`, and a `# ref`
+/// comment marks what was pinned.
 fn status_for_non_semver(
     ref_name: &str,
     branch_policy: policy::Branch,
-    versions: &version::Set,
+    commit: &str,
 ) -> CheckStatus {
     match branch_policy {
         policy::Branch::Ignore => CheckStatus::UpToDate,
         policy::Branch::Warn => CheckStatus::Floating {
             ref_name: ref_name.to_string(),
         },
-        policy::Branch::Update => {
-            // Pin the branch to its current HEAD commit SHA (locking it where it
-            // is), keeping the ref's meaning. Only a `# branch` comment marks
-            // what was pinned. Falls back when the branch head is unknown (e.g.
-            // versions came from an API that doesn't enumerate branches).
-            versions.branch_sha(ref_name).map_or_else(
-                || CheckStatus::Unresolvable {
-                    reason: "branch ref should be pinned to a SHA".into(),
-                    is_environment_error: false,
-                },
-                |sha| CheckStatus::PinBranch {
-                    ref_name: ref_name.to_string(),
-                    sha: sha.to_string(),
-                },
-            )
-        }
+        policy::Branch::Update => CheckStatus::PinBranch {
+            ref_name: ref_name.to_string(),
+            sha: commit.to_string(),
+        },
     }
+}
+
+fn listed_commit<'a>(ref_name: &str, versions: &'a version::Set) -> Option<&'a str> {
+    versions
+        .tag(ref_name)
+        .map(|t| t.sha())
+        .or_else(|| versions.other_tag_sha(ref_name))
+        .or_else(|| versions.branch_sha(ref_name))
 }
 
 /// Find the best target version, respecting [`Policy::track`].
@@ -1195,34 +1199,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_check_action_update_unresolvable_when_branch_head_unknown() {
-        // Update policy but no branch head available (e.g. API without branch
-        // enumeration) falls back to unresolvable rather than guessing a tag.
+    async fn test_update_pins_an_unlisted_ref_to_the_resolved_commit() {
         let action = make_action_ref("dtolnay", "rust-toolchain", "stable");
         let v1 = make_version_info("v1.0.0", "abc123");
         let versions = make_version_set(vec![v1.clone()], Some(v1), HashMap::new(), HashMap::new());
-
-        let config = Config {
-            policy: Policy {
-                branch: policy::Branch::Update,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let config = branch_config(policy::Branch::Update);
 
         let provider = ResolveMockProvider::new(true);
         let result = check_action_with_provider(&action, &versions, &config, &provider).await;
-        assert!(
-            matches!(
-                result.status(),
-                CheckStatus::Unresolvable {
-                    is_environment_error: false,
-                    ..
-                }
-            ),
-            "got: {:?}",
-            result.status()
+        assert_eq!(
+            result.status(),
+            &CheckStatus::PinBranch {
+                ref_name: "stable".to_string(),
+                sha: "a".repeat(40),
+            }
         );
+        assert_eq!(result.ref_kind(), None);
+    }
+
+    #[test]
+    fn test_update_pins_a_non_semver_tag_to_its_commit() {
+        let action = make_action_ref("dtolnay", "rust-toolchain", "nightly");
+        let mut versions = prerelease_set(&["v1.0.0"]);
+        versions.set_other_tags(HashMap::from([("nightly".to_string(), "c".repeat(40))]));
+        versions.set_branches(HashMap::from([("nightly".to_string(), "d".repeat(40))]));
+
+        let result = check_action(&action, &versions, &branch_config(policy::Branch::Update));
+        assert_eq!(
+            result.status(),
+            &CheckStatus::PinBranch {
+                ref_name: "nightly".to_string(),
+                sha: "c".repeat(40),
+            }
+        );
+        assert_eq!(result.ref_kind(), Some(RefKind::Tag));
+    }
+
+    #[test]
+    fn test_update_pins_a_non_semver_tag_in_the_tag_list() {
+        let action = make_action_ref("actions", "checkout", "2024-01-15");
+        let versions = versions_in_order(&[("v1.0.0", "a"), ("2024-01-15", "e")]);
+
+        let result = check_action(&action, &versions, &branch_config(policy::Branch::Update));
+        assert_eq!(
+            result.status(),
+            &CheckStatus::PinBranch {
+                ref_name: "2024-01-15".to_string(),
+                sha: "e".to_string(),
+            }
+        );
+        assert_eq!(result.ref_kind(), Some(RefKind::Tag));
     }
 
     #[test]
@@ -2168,7 +2194,10 @@ mod tests {
             ),
             (
                 policy::Branch::Update,
-                unresolvable("branch ref should be pinned to a SHA", false),
+                CheckStatus::PinBranch {
+                    ref_name: "nope".to_string(),
+                    sha: "a".repeat(40),
+                },
                 CheckStatus::PinBranch {
                     ref_name: "main".to_string(),
                     sha: "b".repeat(40),

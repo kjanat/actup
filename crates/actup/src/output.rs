@@ -377,11 +377,7 @@ fn print_finding_line(finding: &Finding) {
                 "{}{}  {}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                format!(
-                    "pin branch '{ref_name}' -> {} # {ref_name}",
-                    &sha[..7.min(sha.len())]
-                )
-                .yellow()
+                pin_label(finding, ref_name, sha).yellow()
             );
         }
         FindingStatus::Unknown { reason } => {
@@ -415,6 +411,16 @@ fn kind_note(finding: &Finding) -> String {
     finding
         .ref_kind()
         .map_or_else(String::new, |k| format!(" ({k})"))
+}
+
+fn pin_label(finding: &Finding, ref_name: &str, sha: &str) -> String {
+    let kind = finding
+        .ref_kind()
+        .map_or_else(|| "ref".to_string(), |k| k.to_string());
+    format!(
+        "pin {kind} '{ref_name}' -> {} # {ref_name}",
+        sha.get(..7).unwrap_or(sha)
+    )
 }
 
 fn same_commit_label(finding: &Finding) -> Option<String> {
@@ -678,6 +684,32 @@ mod tests {
         );
         assert_eq!(same_commit_label(&bump_finding()), None);
         assert_eq!(kind_note(&bump_finding()), " (tag)");
+    }
+
+    #[test]
+    fn pin_label_names_the_ref_kind() {
+        let finding = |kind| {
+            make_finding(
+                "ci.yml",
+                3,
+                make_action_ref("dtolnay", "rust-toolchain", "nightly"),
+                FindingStatus::PinBranch {
+                    ref_name: "nightly".to_string(),
+                    sha: REPRO_SHA.to_string(),
+                },
+            )
+            .with_ref(kind, None)
+        };
+        let label = |kind| pin_label(&finding(kind), "nightly", REPRO_SHA);
+        assert_eq!(
+            label(Some(RefKind::Tag)),
+            "pin tag 'nightly' -> c6f97d4 # nightly"
+        );
+        assert_eq!(
+            label(Some(RefKind::Branch)),
+            "pin branch 'nightly' -> c6f97d4 # nightly"
+        );
+        assert_eq!(label(None), "pin ref 'nightly' -> c6f97d4 # nightly");
     }
 
     #[test]

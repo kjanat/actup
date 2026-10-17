@@ -314,7 +314,8 @@ pub struct Policy {
     /// How to handle floating branch refs like `@main` or `@v2`.
     ///
     /// `ignore` leaves them untouched (default), `warn` flags them as
-    /// floating, `update` pins the branch to its current HEAD SHA.
+    /// floating, `update` pins the branch or non-semver tag to its current
+    /// commit SHA.
     ///
     /// ```toml
     /// branch = "warn"   # @main -> flagged, pin to a tag or SHA

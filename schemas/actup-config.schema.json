@@ -96,7 +96,7 @@
           "const": "warn"
         },
         {
-          "description": "Treat branch refs as updatable (pin to latest commit SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@main\n\n# After (branch = \"update\"):\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main\n# Branch pinned to current HEAD SHA\n```",
+          "description": "Treat branch and non-semver tag refs as updatable (pin to their commit SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@main\n\n# After (branch = \"update\"):\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main\n# Branch pinned to current HEAD SHA\n```",
           "type": "string",
           "const": "update"
         }
@@ -252,7 +252,7 @@
       "type": "object",
       "properties": {
         "branch": {
-          "description": "How to handle floating branch refs like `@main` or `@v2`.\n\n`ignore` leaves them untouched (default), `warn` flags them as\nfloating, `update` pins the branch to its current HEAD SHA.\n\n```toml\nbranch = \"warn\"   # @main -> flagged, pin to a tag or SHA\n```",
+          "description": "How to handle floating branch refs like `@main` or `@v2`.\n\n`ignore` leaves them untouched (default), `warn` flags them as\nfloating, `update` pins the branch or non-semver tag to its current\ncommit SHA.\n\n```toml\nbranch = \"warn\"   # @main -> flagged, pin to a tag or SHA\n```",
           "$ref": "#/$defs/Branch",
           "default": "ignore"
         },

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat,
     check_action_with_provider, parse_uses, provider,
-    resolution::{CheckResult, CheckStatus},
+    resolution::{CheckResult, CheckStatus, RefKind},
     rewrite::{Rewrite, Trailing},
 };
 use serde::{Deserialize, Serialize};
@@ -328,7 +328,13 @@ async fn compute_diagnostics_for_actions(
             _ => None,
         };
 
-        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value, edit) {
+        if let Some(diag) = status_to_diagnostic(
+            result.status(),
+            range,
+            &action.uses_value,
+            edit,
+            result.ref_kind(),
+        ) {
             let mut diag = same_commit_diagnostic(diag, &result, &action.uses_value);
             if !action.editable {
                 diag.data = None;
@@ -406,6 +412,7 @@ fn status_to_diagnostic(
     range: Range,
     uses_value: &str,
     edit: Option<OutdatedEdit>,
+    ref_kind: Option<RefKind>,
 ) -> Option<Diagnostic> {
     match status {
         CheckStatus::UpToDate | CheckStatus::Ignored => None,
@@ -485,7 +492,8 @@ fn status_to_diagnostic(
             code: Some(NumberOrString::String("pin-branch".into())),
             source: Some(DIAGNOSTIC_SOURCE.into()),
             message: format!(
-                "{uses_value}: pin branch '{ref_name}' to {} # {ref_name}",
+                "{uses_value}: pin {} '{ref_name}' to {} # {ref_name}",
+                ref_kind.map_or_else(|| "ref".to_string(), |k| k.to_string()),
                 sha.get(..7).unwrap_or(sha)
             ),
             ..Default::default()
@@ -651,7 +659,7 @@ mod tests {
         range: Range,
         uses_value: &str,
     ) -> Option<Diagnostic> {
-        super::status_to_diagnostic(status, range, uses_value, None)
+        super::status_to_diagnostic(status, range, uses_value, None, None)
     }
 
     // --- CheckStatus -> Diagnostic severity mapping ---
@@ -1270,6 +1278,40 @@ jobs:
         };
         assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(diag.code, Some(NumberOrString::String("pin-branch".into())));
+        assert_eq!(
+            diag.message,
+            format!(
+                "rust-lang/crates-io-auth-action@v1: pin branch 'v1' to {} # v1",
+                &DUMMY_SHA_2[..7]
+            )
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn non_semver_tag_under_update_pins_the_tag() -> Result<(), Box<dyn std::error::Error>> {
+        let policy = actup_core::config::Policy {
+            branch: actup_core::policy::Branch::Update,
+            ..Default::default()
+        };
+        let mut versions = v1_versions(None, None);
+        versions.set_other_tags(std::collections::HashMap::from([(
+            "nightly".to_string(),
+            DUMMY_SHA_2.to_string(),
+        )]));
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@nightly\n";
+        let diags = diagnostics_under(yaml, versions, policy).await?;
+        let [diag] = diags.as_slice() else {
+            return Err(format!("expected one diagnostic, got {diags:?}").into());
+        };
+        assert_eq!(diag.code, Some(NumberOrString::String("pin-branch".into())));
+        assert_eq!(
+            diag.message,
+            format!(
+                "rust-lang/crates-io-auth-action@nightly: pin tag 'nightly' to {} # nightly",
+                &DUMMY_SHA_2[..7]
+            )
+        );
         Ok(())
     }
 
