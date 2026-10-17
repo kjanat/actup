@@ -60,8 +60,6 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 			actions.push(action);
 		}
 
-		// Fix-all uses every fixable diagnostic in the document, not just those
-		// in `context.diagnostics` (which is range-scoped to the cursor).
 		const allFixable: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
 		for (const diag of vscode.languages.getDiagnostics(document.uri)) {
 			if (diag.source !== "actup") continue;
