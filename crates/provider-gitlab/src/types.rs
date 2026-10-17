@@ -120,22 +120,6 @@ pub struct GitLabFile {
     pub commit_id: String,
 }
 
-/// Tree entry (for listing directory contents)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitLabTreeEntry {
-    /// Entry ID
-    pub id: String,
-    /// Entry name
-    pub name: String,
-    /// Entry type ("tree" or "blob")
-    #[serde(rename = "type")]
-    pub entry_type: String,
-    /// Path from repository root
-    pub path: String,
-    /// Entry mode (file permissions)
-    pub mode: String,
-}
-
 /// API error response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabError {

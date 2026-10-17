@@ -122,26 +122,6 @@ pub struct RefObject {
     pub sha: String,
 }
 
-/// Rate limit info from GitHub API
-#[derive(Debug, Clone, Deserialize)]
-pub struct RateLimit {
-    /// Rate limit details
-    pub rate: RateLimitInfo,
-}
-
-/// Rate limit details
-#[derive(Debug, Clone, Deserialize)]
-pub struct RateLimitInfo {
-    /// Maximum requests per hour
-    pub limit: u32,
-
-    /// Remaining requests
-    pub remaining: u32,
-
-    /// Unix timestamp when limit resets
-    pub reset: u64,
-}
-
 /// Content response from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubContent {
@@ -184,14 +164,4 @@ pub struct TagObjectTarget {
     pub object_type: String,
     /// Object SHA
     pub sha: String,
-}
-
-/// Error response from GitHub API
-#[derive(Debug, Clone, Deserialize)]
-pub struct GitHubError {
-    /// Error message
-    pub message: String,
-
-    /// Documentation URL
-    pub documentation_url: Option<String>,
 }

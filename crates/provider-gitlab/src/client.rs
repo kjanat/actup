@@ -15,9 +15,7 @@ use reqwest::{
 };
 use tracing::{debug, warn};
 
-use crate::types::{
-    GitLabBranch, GitLabCommit, GitLabError, GitLabFile, GitLabProject, GitLabTag, GitLabTreeEntry,
-};
+use crate::types::{GitLabBranch, GitLabCommit, GitLabError, GitLabFile, GitLabProject, GitLabTag};
 
 /// HTTP client configured for GitLab API
 #[derive(Debug, Clone)]
@@ -250,31 +248,6 @@ impl GitLabClient {
             self.api_base
         );
         debug!(url = %url, path = %path, ref_name = %ref_name, "fetching file");
-
-        let response = self.get(&url).await?;
-        self.handle_response(response, owner, repo).await
-    }
-
-    /// List directory contents
-    ///
-    /// # Errors
-    ///
-    /// Returns error on network failure, rate limit, auth failure, or path not found.
-    pub async fn list_tree(
-        &self,
-        owner: &str,
-        repo: &str,
-        path: &str,
-        ref_name: &str,
-    ) -> Result<Vec<GitLabTreeEntry>> {
-        let project_id = Self::encode_project_path(owner, repo);
-        let ref_encoded = urlencoding::encode(ref_name);
-        let url = format!(
-            "{}/projects/{project_id}/repository/tree?path={}&ref={ref_encoded}",
-            self.api_base,
-            urlencoding::encode(path)
-        );
-        debug!(url = %url, path = %path, ref_name = %ref_name, "listing tree");
 
         let response = self.get(&url).await?;
         self.handle_response(response, owner, repo).await

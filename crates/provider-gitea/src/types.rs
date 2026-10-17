@@ -143,30 +143,6 @@ pub struct GiteaContent {
     pub download_url: Option<String>,
 }
 
-/// Git ref information (for resolving refs to SHAs)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GiteaRef {
-    /// Ref name (e.g., "refs/heads/main", "refs/tags/v1.0.0")
-    #[serde(rename = "ref")]
-    pub ref_name: String,
-    /// API URL
-    pub url: String,
-    /// Object this ref points to
-    pub object: GiteaRefObject,
-}
-
-/// Object referenced by a git ref
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GiteaRefObject {
-    /// Object type: "commit", "tag", "tree", "blob"
-    #[serde(rename = "type")]
-    pub object_type: String,
-    /// SHA of the object
-    pub sha: String,
-    /// API URL for the object
-    pub url: String,
-}
-
 /// Commit information (full)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GiteaCommit {
