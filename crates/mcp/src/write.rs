@@ -740,6 +740,7 @@ pub async fn update_all(
     let served = provider.map_or_else(|| Served::unserved(&host), Served::by);
     let any_wanted = scanned.iter().any(|file| !file.wanted.is_empty());
     let all_ignored = !any_wanted
+        && outcome.unresolvable.is_empty()
         && outcome
             .skipped
             .iter()
@@ -1505,6 +1506,39 @@ mod tests {
                 (&json!(2), &json!("ignored")),
                 (&json!(3), &json!("ignored"))
             ]
+        );
+        assert_eq!(fs::read_to_string(&workflow)?, content);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_all_resolves_the_target_when_an_invalid_ref_matches()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir_all(dir.path().join(".github/workflows"))?;
+        let workflow = dir.path().join(".github/workflows/ci.yml");
+        let content = "jobs:\n  b:\n    steps:\n      - uses: actions/checkout@v3\n      - uses: actions/checkout@\n";
+        fs::write(&workflow, content)?;
+        let root = Root::new(dir.path())?;
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(Resolving));
+        let mut config = Config::default();
+        config.scan.ignore = vec!["actions/checkout@v3".parse()?];
+        let mut args = update_all_args(None)?;
+        args.target_ref = "v9.9.9".to_owned();
+
+        let reply = update_all("t", &registry, &config, &root, &args)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (is_error, failed) = body(reply)?;
+        assert_eq!(is_error, Some(true));
+        assert_eq!(failed["status"], json!("unresolvable"));
+        assert!(
+            failed["error"]
+                .as_str()
+                .is_some_and(|error| error.contains("v9.9.9")),
+            "{failed}"
         );
         assert_eq!(fs::read_to_string(&workflow)?, content);
         Ok(())
