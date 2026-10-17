@@ -58,7 +58,8 @@ Mutators (write files; pass dryRun: true to plan without writing):
 - updateFile: replace the ref of named `uses:` values in one file. Every edit applies or none does, \
 and every edit names an action on the same host. \
 A trailing label comment names a version or the current ref (`@main # main note`). \
-It names a new tag written over a tag or branch and keeps its note; \
+A new ref that is a version token counts as a tag, and any other name except a SHA as a branch. \
+The label names a new tag written over a tag or branch and keeps its note; \
 a new branch, a new SHA, or a tag written over a SHA pin drops the label and keeps the note. \
 Any other trailing comment stays as written. \
 It also replaces an invalid ref when the rewritten value parses, and refuses a value without `@`.

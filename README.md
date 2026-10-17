@@ -500,15 +500,16 @@ matching `uses:` value that is not a valid reference under `unresolvable` with
 its `error`, leaves it unchanged and reports status `unresolvable`. `updateFile`
 replaces the ref of such a value when the rewritten value parses, and refuses a
 value without `@`. A trailing label comment names a version or the current ref,
-as in `@v4 # v4.0.0 note` or `@main # main note`. The label names the new ref
-when `updateFile` writes a tag over a tag or branch. It drops the label when
-`updateFile` writes a branch, a SHA, or a tag over a SHA pin. Each keeps the
-note, and any other comment stays. `getLatest` adds `refKind` (`tag`, `branch`
-or `sha`) when the version list names `currentRef`, and `sameCommit` (the target
-version) when the target sits on the commit that `currentRef` already points at.
-`getVersions` and `getLatest` add `stale`, shaped like the CLI field, when their
-versions come from an expired cache entry, and the server answers the next call
-afresh.
+as in `@v4 # v4.0.0 note` or `@main # main note`. `updateFile` writes a new ref
+that is a version token as a tag, and any other name except a SHA as a branch.
+The label names the new ref when `updateFile` writes a tag over a tag or branch.
+It drops the label when `updateFile` writes a branch, a SHA, or a tag over a SHA
+pin. Each keeps the note, and any other comment stays. `getLatest` adds
+`refKind` (`tag`, `branch` or `sha`) when the version list names `currentRef`,
+and `sameCommit` (the target version) when the target sits on the commit that
+`currentRef` already points at. `getVersions` and `getLatest` add `stale`,
+shaped like the CLI field, when their versions come from an expired cache entry,
+and the server answers the next call afresh.
 
 ## Exit Codes
 

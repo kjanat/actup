@@ -409,9 +409,10 @@ fn remote_values(format: SourceFormat, content: &str) -> Vec<(UsesLocation, Acti
 
 /// The edit that writes `reference` over the ref at `loc`, if the rewritten value parses.
 ///
-/// A label comment names a version or the current ref. A tag written over a
-/// tag or branch takes the place of the label. A branch, a SHA, or a tag over a
-/// SHA pin drops the label. Each keeps the note.
+/// A label comment names a version or the current ref. A `reference` that is a
+/// version token counts as a tag, and any other name except a SHA as a branch.
+/// A tag written over a tag or branch takes the place of the label. A branch, a
+/// SHA, or a tag over a SHA pin drops the label. Each keeps the note.
 fn ref_edit(
     loc: &UsesLocation,
     current_is_sha: bool,
