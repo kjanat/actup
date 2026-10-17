@@ -563,17 +563,11 @@ pub fn in_unit(value: u64, smaller: &[(u64, &str)], largest: (u64, &str)) -> Str
     let (t, name) = smaller
         .iter()
         .zip(next)
-        .map(|(&(divisor, name), next)| {
-            (
-                tenths(value, divisor),
-                name,
-                u128::from(next / divisor) * 10,
-            )
-        })
-        .find(|&(t, _, limit)| t < limit)
+        .map(|(&(divisor, name), next)| (tenths(value, divisor), name, divisor, next))
+        .find(|&(t, _, divisor, next)| t * u128::from(divisor) < u128::from(next) * 10)
         .map_or_else(
             || (tenths(value, largest.0), largest.1),
-            |(t, name, _)| (t, name),
+            |(t, name, _, _)| (t, name),
         );
     format!("{}.{} {name}", t / 10, t % 10)
 }
@@ -864,6 +858,13 @@ mod tests {
     use actup_core::{Config, DiscoveredFile, FileKind, patch::PendingEdit, provider};
 
     use super::*;
+
+    #[test]
+    fn in_unit_compares_against_a_next_unit_that_is_no_multiple() {
+        assert_eq!(in_unit(1200, &[(1000, "k")], (1500, "M")), "1.2 k");
+        assert_eq!(in_unit(1449, &[(1000, "k")], (1500, "M")), "1.4 k");
+        assert_eq!(in_unit(1500, &[(1000, "k")], (1500, "M")), "1.0 M");
+    }
 
     // ErrorTally tests
 
