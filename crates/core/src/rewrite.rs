@@ -71,11 +71,13 @@ fn comment_start(rest: &str) -> usize {
     let mut escaped = false;
     let mut after_space = false;
     let mut last = None;
-    for (i, c) in rest.char_indices() {
+    let mut chars = rest.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
         match quote {
             _ if i == 0 && matches!(c, '"' | '\'') => {}
             Some('"') if escaped => escaped = false,
             Some('"') if c == '\\' => escaped = true,
+            Some('\'') if c == '\'' && chars.next_if(|&(_, n)| n == '\'').is_some() => {}
             Some(q) if c == q => quote = None,
             None if c == '#' && after_space => return i,
             None if matches!(c, '"' | '\'') && matches!(last, Some('{' | '[' | ',' | ':')) => {
@@ -557,6 +559,16 @@ mod tests {
                 "  - { uses: a/b@v1, with: { a: it's, b: 'x # v9' } }",
                 ", with: { a: it's, b: 'x # v9' } }",
                 Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: 'it''s # v9' } }",
+                ", with: { b: 'it''s # v9' } }",
+                Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: 'it''s # x' } } # v1.0.0",
+                ", with: { b: 'it''s # x' } } ",
+                VERSION,
             ),
         ] {
             let ref_end = line.find("@v1").map_or(0, |at| at + 3);
