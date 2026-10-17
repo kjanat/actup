@@ -277,6 +277,13 @@ fn classify(
         return classify_non_semver(ref_str, policy.branch, versions);
     }
 
+    if !versions.has_exact_tag(ref_str) && versions.branch_sha(ref_str).is_some() {
+        return (
+            status_for_non_semver(ref_str, policy.branch, versions),
+            None,
+        );
+    }
+
     let Some(target) = find_best_target(versions, &current, policy) else {
         return (status_for_no_target(&current), None);
     };
@@ -2377,6 +2384,50 @@ mod tests {
             }
         );
         assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_semver_shaped_branch_follows_branch_policy() {
+        let versions = with_branch(prerelease_set(&["v4.2.0", "v4.2.1"]), "v4.2");
+        let action = make_action_ref("actions", "checkout", "v4.2");
+        for (branch, want) in [
+            (policy::Branch::Ignore, CheckStatus::UpToDate),
+            (
+                policy::Branch::Warn,
+                CheckStatus::Floating {
+                    ref_name: "v4.2".to_string(),
+                },
+            ),
+            (
+                policy::Branch::Update,
+                CheckStatus::PinBranch {
+                    ref_name: "v4.2".to_string(),
+                    sha: "b".repeat(40),
+                },
+            ),
+        ] {
+            let config = branch_config(branch);
+            assert_eq!(
+                check_action(&action, &versions, &config).status(),
+                &want,
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&action, &versions, &config, Resolve::Missing).await,
+                want,
+                "{branch}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_semver_tag_wins_over_branch_of_the_same_name() {
+        let versions = with_branch(prerelease_set(&["v4.2", "v4.2.0"]), "v4.2");
+        let action = make_action_ref("actions", "checkout", "v4.2");
+        assert_eq!(
+            check_action(&action, &versions, &branch_config(policy::Branch::Warn)).status(),
+            &CheckStatus::UpToDate
+        );
     }
 
     #[test]
