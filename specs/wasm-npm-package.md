@@ -87,18 +87,18 @@ packages/
 
 ## Scope & Deliverables
 
-| #   | Deliverable                                 | Effort | Depends On |
-| --- | ------------------------------------------- | ------ | ---------- |
-| D1  | `Clock` trait + thread into call sites      | S      | -          |
-| D2  | `Serialize`/`Deserialize` on bridge types   | S      | -          |
-| D3  | `Send` bound audit / `MaybeSend` for WASM   | S      | -          |
-| D4  | `actup-wasm` crate (parse — pure, sync)     | M      | D1, D2     |
-| D5  | `JsProviderAdapter` bridge + `check_refs`   | M      | D3, D4     |
-| D6  | npm package `actup-wasm` + TS types         | M      | D5         |
-| D7  | Default `fetch()`-based GitHub provider     | S      | D6         |
-| D8  | VS Code web extension (direct WASM, no LSP) | L      | D6, D7     |
-| D9  | Wire into Zed extension (embed vs shim)     | L      | D5         |
-| D10 | WASM-based MCP server                       | L      | D6, D7     |
+| #   | Deliverable                                        | Effort | Depends On |
+| --- | -------------------------------------------------- | ------ | ---------- |
+| D1  | `Clock` trait + thread into call sites             | S      | -          |
+| D2  | `Serialize`/`Deserialize` on bridge types          | S      | -          |
+| D3  | `Send` bound audit / `MaybeSend` for WASM          | S      | -          |
+| D4  | `actup-wasm` crate (parse — pure, sync)            | M      | D1, D2     |
+| D5  | `JsProviderAdapter` bridge + `check_refs`          | M      | D3, D4     |
+| D6  | npm package `actup-wasm` + TS types                | M      | D5         |
+| D7  | Default `fetch()`-based GitHub provider            | S      | D6         |
+| D8  | VS Code web extension (direct WASM, no LSP)        | L      | D6, D7     |
+| D9  | Zed extension launches `actup-lsp` and `actup-mcp` | L      | D5         |
+| D10 | WASM-based MCP server                              | L      | D6, D7     |
 
 ## Non-Goals
 
@@ -377,12 +377,12 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 
 ## Risks & Mitigations
 
-| Risk                              | Likelihood | Impact | Mitigation                                                                            |
-| --------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------- |
-| `saphyr-parser` bloats WASM       | Medium     | M      | `packages/actup-wasm/scripts/build-wasm.ts` caps the gzip size; profile with `twiggy` |
-| `SystemTime` in `Set::fetched_at` | Low        | S      | `#[serde(skip)]` — WASM consumer won't use cache timestamps                           |
-| Async executor mismatch in WASM   | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4                                  |
-| Zed wasip2 needs different build  | Medium     | L      | D9 shipped: `extensions/zed` builds for `wasm32-wasip2`                               |
+| Risk                              | Likelihood | Impact | Mitigation                                                                                                    |
+| --------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------- |
+| `saphyr-parser` bloats WASM       | Medium     | M      | `packages/actup-wasm/scripts/build-wasm.ts` caps the gzip size; profile with `twiggy`                         |
+| `SystemTime` in `Set::fetched_at` | Low        | S      | `#[serde(skip)]` — WASM consumer won't use cache timestamps                                                   |
+| Async executor mismatch in WASM   | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4                                                          |
+| Zed wasip2 needs different build  | Medium     | L      | `extensions/zed` builds for `wasm32-wasip2`, launches `actup-lsp` and `actup-mcp`, and embeds no `actup-core` |
 
 ## Trade-offs Made
 
