@@ -57,7 +57,6 @@ const SEARCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
 /// the document version for staleness checks, and any cached diagnostics
 /// from the most recent analysis pass.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields read by future diagnostic/code-action tasks
 pub struct DocumentState {
     /// Full document text (replaced on every change notification).
     pub text: String,

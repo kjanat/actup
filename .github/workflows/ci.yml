@@ -104,16 +104,15 @@ jobs:
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo doc --workspace --all-features --no-deps
-  shear:
+  machete:
     name: Unused Dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: rustup toolchain install
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
-          tool: cargo-shear
-      - run: cargo shear
+          tool: cargo-machete
+      - run: cargo machete
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
@@ -243,7 +242,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, test-platforms, doc, shear, deny, msrv, coverage, check-extensions, wasm, action, self-check]
+    needs: [fmt, clippy, test, test-platforms, doc, machete, deny, msrv, coverage, check-extensions, wasm, action, self-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
@@ -253,7 +252,7 @@ jobs:
           TEST: ${{ needs.test.result }}
           TEST_PLATFORMS: ${{ needs.test-platforms.result }}
           DOC: ${{ needs.doc.result }}
-          SHEAR: ${{ needs.shear.result }}
+          MACHETE: ${{ needs.machete.result }}
           DENY: ${{ needs.deny.result }}
           MSRV: ${{ needs.msrv.result }}
           COVERAGE: ${{ needs.coverage.result }}
@@ -267,7 +266,7 @@ jobs:
              [[ "${TEST}" != "success" ]] || \
              [[ "${TEST_PLATFORMS}" != "success" ]] || \
              [[ "${DOC}" != "success" ]] || \
-             [[ "${SHEAR}" != "success" ]] || \
+             [[ "${MACHETE}" != "success" ]] || \
              [[ "${DENY}" != "success" ]] || \
              [[ "${MSRV}" != "success" ]] || \
              [[ "${COVERAGE}" != "success" ]] || \
