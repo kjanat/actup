@@ -7,7 +7,7 @@ description            = "Language Server Protocol implementation for actup"
 homepage.workspace     = true
 repository.workspace   = true
 license.workspace      = true
-publish                = false
+publish.workspace      = true
 
 [[bin]]
 name = "actup-lsp"

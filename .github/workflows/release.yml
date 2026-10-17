@@ -198,15 +198,15 @@ jobs:
       - name: Package and build every crate in publish order
         id: package
         env:
-          CRATES: tree-sitter-github-actions actup-core actup-providers actup-provider-github actup-provider-gitlab actup-provider-gitea actup
+          CRATES: tree-sitter-github-actions actup-core actup-providers actup-provider-github actup-provider-gitlab actup-provider-gitea actup actup-lsp actup-mcp
         run: |
           read -ra crates <<<"${CRATES}"
+          echo "crates=$(jq -cn '$ARGS.positional' --args "${crates[@]}")" >>"${GITHUB_OUTPUT}"
           args=()
           for crate in "${crates[@]}"; do
             args+=(-p "${crate}")
           done
           cargo package --locked "${args[@]}"
-          echo "crates=$(jq -cn '$ARGS.positional' --args "${crates[@]}")" >>"${GITHUB_OUTPUT}"
 
   publish:
     name: Publish ${{ matrix.crate }} to crates.io

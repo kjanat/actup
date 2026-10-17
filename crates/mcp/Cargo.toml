@@ -7,7 +7,7 @@ description            = "Model Context Protocol server for actup"
 homepage.workspace     = true
 repository.workspace   = true
 license.workspace      = true
-publish                = false
+publish.workspace      = true
 
 [lib]
 name = "actup_mcp"

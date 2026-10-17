@@ -60,7 +60,7 @@ while true; do
 	if grep -Eq 'status 429 Too Many Requests' <<<"${output}"; then
 		wait="${retry_wait}"
 		reason="rate limited"
-	elif grep -Eiq 'no matching package named' <<<"${output}"; then
+	elif grep -Eq 'no matching package named|failed to select a version for the requirement' <<<"${output}"; then
 		wait="${propagation_wait}"
 		reason="a dependency is not in the index yet"
 	else

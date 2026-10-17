@@ -20,6 +20,7 @@ case "$1" in
 			ok) echo "Uploaded actup-core v1.2.3" ;;
 			429) echo "error: the remote server responded with an error (status 429 Too Many Requests)"; exit 101 ;;
 			missing) echo "error: no matching package named \`actup-core\` found"; exit 101 ;;
+			unselected) echo "error: failed to select a version for the requirement \`actup-core = \"^1.2.3\"\`"; exit 101 ;;
 			exists) echo "error: crate version \`1.2.3\` is already uploaded"; exit 101 ;;
 			indexed) echo "error: crate actup-core@1.2.3 already exists on crates.io index"; exit 101 ;;
 			lookalike) echo "Packaged 12 files, 429.1KiB"; echo "error[E0429]: \`self\` imports are only allowed within a { } list"; exit 101 ;;
@@ -82,8 +83,8 @@ else
 	fail "a version missing from the index is published"
 fi
 
-if publish "429 missing ok" "" \
-	&& [[ "$(calls)" == "https://index.crates.io/ac/tu/actup-core;publish -p actup-core --locked;sleep 600;publish -p actup-core --locked;sleep 30;publish -p actup-core --locked;" ]]; then
+if publish "429 missing unselected ok" "" MAX_RETRIES=4 \
+	&& [[ "$(calls)" == "https://index.crates.io/ac/tu/actup-core;publish -p actup-core --locked;sleep 600;publish -p actup-core --locked;sleep 30;publish -p actup-core --locked;sleep 30;publish -p actup-core --locked;" ]]; then
 	pass "a rate limit and a missing dependency are retried after their waits"
 else
 	fail "a rate limit and a missing dependency are retried after their waits"
