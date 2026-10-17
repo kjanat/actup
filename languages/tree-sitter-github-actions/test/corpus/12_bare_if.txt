@@ -1446,3 +1446,87 @@ jobs:
                                 (or))
                               (string
                                 (string_content)))))))))))))))))
+
+============================================================================
+Bare if: repeated negation leading a call argument
+============================================================================
+jobs:
+  build:
+    if: fromJSON(!!a)
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (not)
+                              (not)
+                              (context
+                                (identifier)))))))))))))))))
+
+============================================================================
+Bare if: repeated negation after an operator in a call argument
+============================================================================
+jobs:
+  build:
+    if: contains(a, b || !!c)
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (context
+                                (identifier))
+                              (context
+                                (identifier))
+                              (operator
+                                (or))
+                              (not)
+                              (not)
+                              (context
+                                (identifier)))))))))))))))))

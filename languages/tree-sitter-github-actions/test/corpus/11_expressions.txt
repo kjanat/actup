@@ -1198,3 +1198,63 @@ Spaced colon after an expression value is an error
 k: ${{ a }} : b
 
 ----------------------------------------------------------------------------
+
+============================================================================
+Delimited expression: repeated negation leading a call argument
+============================================================================
+if: ${{ fromJSON(!!a) }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (function_call
+                  function: (identifier)
+                  arguments: (arguments
+                    (not)
+                    (not)
+                    (context
+                      (identifier))))))))))))
+
+============================================================================
+Delimited expression: repeated negation after an operator in a call argument
+============================================================================
+if: ${{ contains(a, b || !!c) }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (function_call
+                  function: (identifier)
+                  arguments: (arguments
+                    (context
+                      (identifier))
+                    (context
+                      (identifier))
+                    (operator
+                      (or))
+                    (not)
+                    (not)
+                    (context
+                      (identifier))))))))))))
