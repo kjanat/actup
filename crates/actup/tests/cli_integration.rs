@@ -1235,6 +1235,37 @@ mod cli_runs {
     }
 
     #[test]
+    fn empty_cli_flag_variables_count_as_unset() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::create_dir(repo.path().join(".git"))?;
+        for var in [
+            "ACTUP_CONFIG",
+            "ACTUP_VERBOSE",
+            "ACTUP_FORMAT",
+            "ACTUP_STRICT",
+        ] {
+            for args in [&["config"][..], &["check"][..]] {
+                let output = actup(repo.path())
+                    .env(var, "")
+                    .args(args)
+                    .arg(repo.path())
+                    .output()?;
+                let stderr = String::from_utf8(output.stderr)?;
+                assert_eq!(output.status.code(), Some(0), "{var} {args:?}: {stderr}");
+                assert!(!stderr.contains("a value is required"), "{var}: {stderr}");
+                let stdout = String::from_utf8(output.stdout)?;
+                let expected = if args == ["config"] {
+                    "Configuration"
+                } else {
+                    "No workflow files found"
+                };
+                assert!(stdout.contains(expected), "{var} {args:?}: {stdout}");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_with_invalid_config_exits_2() -> Result<(), Box<dyn std::error::Error>> {
         let repo = broken_repo()?;
         let output = actup(repo.path()).arg("check").arg(repo.path()).output()?;

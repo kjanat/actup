@@ -55,12 +55,14 @@ pub struct LatestArgs {
 
 impl Cli {
     /// Parse `args` and reject top-level arguments given on the command line next to a subcommand.
+    ///
+    /// An empty `ACTUP_*` flag variable counts as unset.
     pub fn try_parse_args<I, T>(args: I) -> Result<Self, Error>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        let mut command = Self::command();
+        let mut command = ignore_empty_env(Self::command());
         let mut matches = command.try_get_matches_from_mut(args)?;
         if let Some(subcommand) = matches.subcommand_name() {
             let conflicts: Vec<String> = command
@@ -102,6 +104,18 @@ impl Cli {
             _ => None,
         }
     }
+}
+
+fn ignore_empty_env(command: clap::Command) -> clap::Command {
+    command
+        .mut_args(|arg| {
+            let empty = arg
+                .get_env()
+                .and_then(std::env::var_os)
+                .is_some_and(|value| value.is_empty());
+            if empty { arg.env(None::<&str>) } else { arg }
+        })
+        .mut_subcommands(ignore_empty_env)
 }
 
 #[derive(Subcommand)]

@@ -206,6 +206,8 @@ file, the explicit file and the `ACTUP_*` variables that set config keys.
 - `ACTUP_FORMAT` - Default output format (`human`, `json`, `toml`)
 - `ACTUP_STRICT` - Enable strict mode for `check`
 
+An empty value of one of these variables counts as unset.
+
 **Config overrides:**
 
 Every other `ACTUP_*` variable sets a config key over every config file. The
