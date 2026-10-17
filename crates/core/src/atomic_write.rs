@@ -31,20 +31,39 @@ pub fn write_atomic(path: &Path, contents: &[u8]) -> io::Result<()> {
     replace(&target, contents, Write::write_all)
 }
 
-/// Read the UTF-8 file at `path`, pass its text to `edit`, and replace the file with the result.
+/// Resolve `path` through symlinks and return it when it lies inside `root` or is `root`.
+///
+/// # Errors
+///
+/// Returns a [`io::ErrorKind::PermissionDenied`] error naming `root` for a
+/// path outside it, or the I/O error of resolving either path.
+pub fn resolve_within(root: &Path, path: &Path) -> io::Result<PathBuf> {
+    let target = resolve(path)?;
+    if target.starts_with(fs::canonicalize(root)?) {
+        Ok(target)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("resolves outside {}", root.display()),
+        ))
+    }
+}
+
+/// Read the UTF-8 file at `path` inside `root`, pass its text to `edit`, and replace the file with the result.
 ///
 /// The read and the write happen under the lock for the file. A byte order
 /// mark that starts the old text also starts the new one.
 ///
 /// # Errors
 ///
-/// Returns the error of `edit`, or the I/O error of the read or the write.
-/// The file is then unchanged.
+/// Returns the error of [`resolve_within`] or `edit`, or the I/O error of the
+/// read or the write. The file is then unchanged.
 pub fn rewrite_atomic<E: From<io::Error>>(
+    root: &Path,
     path: &Path,
     edit: impl FnOnce(&str) -> Result<String, E>,
 ) -> Result<(), E> {
-    let target = resolve(path)?;
+    let target = resolve_within(root, path)?;
     let lock = lock_for(&target);
     let _guard = lock.lock().unwrap_or_else(PoisonError::into_inner);
     let current = fs::read_to_string(&target)?;
@@ -243,7 +262,7 @@ mod tests {
         let path = dir.path().join("ci.yml");
         fs::write(&path, [0xff, 0xfe, 0x00])?;
 
-        let result = rewrite_atomic(&path, |text| Ok::<_, io::Error>(text.to_string()));
+        let result = rewrite_atomic(dir.path(), &path, |text| Ok::<_, io::Error>(text.to_string()));
 
         assert_eq!(
             result.err().map(|e| e.kind()),
@@ -260,7 +279,7 @@ mod tests {
         fs::write(&path, "original")?;
 
         let result: Result<(), io::Error> =
-            rewrite_atomic(&path, |_| Err(io::Error::other("refused")));
+            rewrite_atomic(dir.path(), &path, |_| Err(io::Error::other("refused")));
 
         assert!(result.is_err());
         assert_eq!(fs::read_to_string(&path)?, "original");
@@ -274,17 +293,44 @@ mod tests {
         let path = dir.path().join("ci.yml");
         fs::write(&path, "\u{feff}uses: a/b@v1\n")?;
 
-        rewrite_atomic(&path, |text| {
+        rewrite_atomic(dir.path(), &path, |text| {
             Ok::<_, io::Error>(text.trim_start_matches(BOM).replace("v1", "v2"))
         })?;
         assert_eq!(fs::read(&path)?, "\u{feff}uses: a/b@v2\n".as_bytes());
 
-        rewrite_atomic(&path, |text| Ok::<_, io::Error>(text.replace("v2", "v3")))?;
+        rewrite_atomic(dir.path(), &path, |text| Ok::<_, io::Error>(text.replace("v2", "v3")))?;
         assert_eq!(fs::read(&path)?, "\u{feff}uses: a/b@v3\n".as_bytes());
 
         fs::write(&path, "uses: a/b@v1\n")?;
-        rewrite_atomic(&path, |text| Ok::<_, io::Error>(text.replace("v1", "v2")))?;
+        rewrite_atomic(dir.path(), &path, |text| Ok::<_, io::Error>(text.replace("v1", "v2")))?;
         assert_eq!(fs::read(&path)?, b"uses: a/b@v2\n");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_atomic_refuses_a_symlink_that_leaves_the_root() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let target = outside.path().join("ci.yml");
+        fs::write(&target, "uses: a/b@v1\n")?;
+        let link = root.path().join("ci.yml");
+        std::os::unix::fs::symlink(&target, &link)?;
+
+        let result = rewrite_atomic(root.path(), &link, |text| {
+            Ok::<_, io::Error>(text.replace("v1", "v2"))
+        });
+
+        let Err(e) = result else {
+            panic!("a write outside the root must fail");
+        };
+        assert_eq!(e.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(
+            e.to_string(),
+            format!("resolves outside {}", root.path().display())
+        );
+        assert_eq!(fs::read_to_string(&target)?, "uses: a/b@v1\n");
+        assert_eq!(resolve_within(root.path(), root.path())?, fs::canonicalize(root.path())?);
         Ok(())
     }
 
@@ -336,9 +382,10 @@ mod tests {
         let workers: Vec<_> = [target.clone(), link]
             .into_iter()
             .map(|path| {
+                let root = dir.path().to_path_buf();
                 thread::spawn(move || {
                     (0..50).try_for_each(|_| {
-                        rewrite_atomic(&path, |text| Ok::<_, io::Error>(format!("{text}x")))
+                        rewrite_atomic(&root, &path, |text| Ok::<_, io::Error>(format!("{text}x")))
                     })
                 })
             })

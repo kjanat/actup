@@ -131,7 +131,7 @@ async fn edit(
             file_edits.add(edit, change);
         }
 
-        for (change, comment) in commit_file(file_edits, dry_run, &mut result) {
+        for (change, comment) in commit_file(file_edits, path, dry_run, &mut result) {
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",

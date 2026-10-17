@@ -31,7 +31,7 @@ pub mod version;
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};
 #[cfg(not(target_arch = "wasm32"))]
-pub use atomic_write::{rewrite_atomic, write_atomic};
+pub use atomic_write::{resolve_within, rewrite_atomic, write_atomic};
 pub use caching_provider::{CacheStats, CachingProvider};
 pub use clock::{Clock, SystemClock};
 pub use compat::{BoxFuture, MaybeSend, MaybeSync};
@@ -46,7 +46,7 @@ pub use config::{
     user_config_path,
     validation::{validate_api_base, validate_hostname, validate_provider_config},
 };
-pub use discovery::{DiscoveredFile, FileKind, discover_files};
+pub use discovery::{DiscoveredFile, ExtraPath, FileKind, discover_files, resolves_inside};
 pub use error::{Error, Result};
 pub use parser::{
     EditValidationError, UsesLocation, extract_uses_from_yaml, is_host_segment, line_spans,

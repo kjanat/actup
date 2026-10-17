@@ -24,8 +24,8 @@ Model Context Protocol server for AI agents, served over stdio with
 - Edits go through `actup_core::patch::FileEdits` and `retarget_edit`, so a
   `uses:` value that is escaped or spans lines is never rewritten, and the pin
   style follows `Style::writes_sha` as in `update`.
-- Writes go through `actup_core::rewrite_atomic`: the file is re-read under the
-  write lock, `Splices::apply` refuses a file whose edited lines changed since
+- Writes go through `actup_core::rewrite_atomic`: it refuses a file that
+  resolves outside the root, the file is re-read under the write lock, `Splices::apply` refuses a file whose edited lines changed since
   the scan, and `validate_edit` refuses invalid YAML or a changed `uses:` count
   unless `updateFile` passes `validateYaml: false`.
 - Every path argument resolves through `Root::file` / `Root::dir`, and every

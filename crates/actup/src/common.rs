@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
     UsesLocation, discover_files, extract_uses_from_yaml, parse_uses,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
-    provider, rewrite_atomic, validate_edit,
+    provider, resolve_within, rewrite_atomic, validate_edit,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -286,11 +286,13 @@ impl Change {
 ///
 /// The write re-reads the file and places the edits on it. A rewritten line
 /// that differs from the scan refuses the whole file, and so does an edited
-/// text that fails [`validate_edit`], in a dry run too. Returns each written
-/// change with its version comment, and records them in `result`. A refused or
-/// failed write records each change as an errored ref and returns nothing.
+/// text that fails [`validate_edit`] or a file that resolves outside `root`,
+/// in a dry run too. Returns each written change with its version comment, and
+/// records them in `result`. A refused or failed write records each change as
+/// an errored ref and returns nothing.
 pub fn commit_file(
     file_edits: FileEdits<Change>,
+    root: &Path,
     dry_run: bool,
     result: &mut EditResult,
 ) -> Vec<(Change, Option<String>)> {
@@ -310,9 +312,13 @@ pub fn commit_file(
         return written;
     }
     let outcome = if dry_run {
-        validate_edit(splices.scanned(), &splices.planned()).map_err(WriteRefusal::Invalid)
+        resolve_within(root, &path)
+            .map_err(WriteRefusal::Io)
+            .and_then(|_| {
+                validate_edit(splices.scanned(), &splices.planned()).map_err(WriteRefusal::Invalid)
+            })
     } else {
-        write_splices(&path, &splices)
+        write_splices(root, &path, &splices)
     };
     if let Err(refusal) = outcome {
         let message = refusal.message(&path);
@@ -371,8 +377,8 @@ impl From<std::io::Error> for WriteRefusal {
     }
 }
 
-fn write_splices(path: &Path, splices: &Splices) -> Result<(), WriteRefusal> {
-    rewrite_atomic(path, |current| {
+fn write_splices(root: &Path, path: &Path, splices: &Splices) -> Result<(), WriteRefusal> {
+    rewrite_atomic(root, path, |current| {
         let content = splices.apply(current).ok_or(WriteRefusal::Changed)?;
         validate_edit(current, &content).map_err(WriteRefusal::Invalid)?;
         Ok(content)
@@ -870,7 +876,7 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, false, &mut result);
+        let written = commit_file(fe, dir.path(), false, &mut result);
 
         assert_eq!(written.len(), 1);
         assert_eq!(written[0].1.as_deref(), Some(" # c"));
@@ -899,7 +905,7 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, false, &mut result);
+        let written = commit_file(fe, dir.path(), false, &mut result);
 
         assert_eq!(written.len(), 1);
         assert_eq!(fs::read(&path)?, "\u{feff}uses: a/b@v2\n".as_bytes());
@@ -920,7 +926,7 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, true, &mut result);
+        let written = commit_file(fe, dir.path(), true, &mut result);
 
         assert_eq!(written.len(), 1);
         assert_eq!(result.edited, [edited_ref(1, None)]);
@@ -931,7 +937,8 @@ mod tests {
     #[test]
     fn test_commit_file_write_failure_counts_nothing() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let path = dir.path().join("missing").join("ci.yml");
+        let path = dir.path().join("ci.yml");
+        fs::create_dir(&path)?;
         let mut fe = FileEdits::new(path.clone(), "uses: a/b@v1\n".to_string());
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()),
@@ -939,7 +946,7 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, false, &mut result);
+        let written = commit_file(fe, dir.path(), false, &mut result);
 
         assert!(written.is_empty());
         assert_eq!(result.edited, []);
@@ -948,7 +955,47 @@ mod tests {
         };
         assert_eq!((errored.site.line, errored.kind), (1, ErrorKind::Write));
         assert_eq!(result.errors.exit_code(), CliExitCode::EnvironmentError);
-        assert!(!path.exists());
+        assert!(path.is_dir());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_commit_file_refuses_a_file_swapped_for_an_outside_symlink()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let target = outside.path().join("ci.yml");
+        let content = "uses: a/b@v1\n";
+        fs::write(&target, content)?;
+        let path = root.path().join("ci.yml");
+        std::os::unix::fs::symlink(&target, &path)?;
+
+        for dry_run in [false, true] {
+            let mut fe = FileEdits::new(path.clone(), content.to_string());
+            fe.add(
+                PendingEdit::replace_range(1, 10..12, "v2".to_string()),
+                change(1, "v2", false),
+            );
+            let mut result = EditResult::default();
+            let written = commit_file(fe, root.path(), dry_run, &mut result);
+
+            assert!(written.is_empty());
+            assert_eq!(result.edited, []);
+            let [errored] = result.errored.as_slice() else {
+                panic!("expected one errored ref: {:?}", result.errored);
+            };
+            assert_eq!(errored.kind, ErrorKind::Write);
+            assert_eq!(
+                errored.message,
+                format!(
+                    "writing {} failed: resolves outside {}",
+                    path.display(),
+                    root.path().display()
+                )
+            );
+        }
+        assert_eq!(fs::read_to_string(&target)?, content);
         Ok(())
     }
 
@@ -967,7 +1014,7 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, false, &mut result);
+        let written = commit_file(fe, dir.path(), false, &mut result);
 
         assert!(written.is_empty());
         assert_eq!(result.edited, []);
@@ -998,7 +1045,7 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, false, &mut result);
+        let written = commit_file(fe, dir.path(), false, &mut result);
 
         assert_eq!(written.len(), 1);
         assert_eq!(result.errors.total(), 0);
@@ -1020,7 +1067,7 @@ mod tests {
             change(2, "v2", false),
         );
         let mut result = EditResult::default();
-        let written = commit_file(fe, dry_run, &mut result).len();
+        let written = commit_file(fe, dir, dry_run, &mut result).len();
         Ok((path, result, written))
     }
 

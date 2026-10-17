@@ -344,7 +344,7 @@
       "type": "object",
       "properties": {
         "extra_paths": {
-          "description": "Additional paths to scan (beyond defaults)\n\nBy default, actup scans:\n- `.github/workflows/**/*.{yml,yaml}` (workflows)\n- `.github/actions/**/action.{yml,yaml}` (composite actions)\n\nUse `extra_paths` to scan additional locations:\n\nExamples:\n- `\".gitea/workflows\"` - Gitea workflow directory\n- `\".woodpecker/*.yml\"` - Woodpecker CI pipelines\n- `\"ci/pipelines/**/*.yaml\"` - Custom CI directory\n- `\".drone.yml\"` - Specific Drone CI config file\n- `\"infra/terraform/github-actions.tf\"` - GitHub Actions in Terraform",
+          "description": "Additional paths to scan (beyond defaults)\n\nBy default, actup scans:\n- `.github/workflows/**/*.{yml,yaml}` (workflows)\n- `.github/actions/**/action.{yml,yaml}` (composite actions)\n\nUse `extra_paths` to scan additional locations:\n\nExamples:\n- `\".gitea/workflows\"` - Gitea workflow directory\n- `\".woodpecker/*.yml\"` - Woodpecker CI pipelines\n- `\"ci/pipelines/**/*.yaml\"` - Custom CI directory\n- `\".drone.yml\"` - Specific Drone CI config file\n- `\"infra/terraform/github-actions.tf\"` - GitHub Actions in Terraform\n\nEach entry is relative to the scan root. Absolute paths and `..`\nsegments are rejected, and matches that resolve outside the scan root\nthrough a symlink are skipped.",
           "type": "array",
           "default": [],
           "items": {

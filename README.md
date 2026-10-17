@@ -286,6 +286,11 @@ does.
 - `.github/workflows/**/*.yml` / `.yaml`
 - `.github/actions/**/action.yml` / `.yaml`
 - Reusable workflows: `uses: owner/repo/.github/workflows/foo.yml@ref`
+- `scan.extra_paths` globs, relative to the scan root
+
+actup rejects an `extra_paths` entry that is absolute or contains a `..`
+segment. It skips any match that resolves outside the scan root through a
+symlink, and `update` and `pin` refuse to write such a file.
 
 ## Crates
 

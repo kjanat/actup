@@ -7,8 +7,12 @@
 
 use std::{
     collections::HashSet,
+    fmt,
     path::{Path, PathBuf},
+    str::FromStr,
 };
+
+use serde::{Deserialize, Serialize};
 
 /// Default paths to scan for workflows
 pub const DEFAULT_WORKFLOW_PATTERNS: &[&str] =
@@ -30,6 +34,59 @@ pub const DEFAULT_ACTION_PATTERNS: &[&str] = &[
     ".github/actions/*/action.yml",
     ".github/actions/*/action.yaml",
 ];
+
+/// A `scan.extra_paths` glob, relative to the scan root and free of `..` segments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct ExtraPath(String);
+
+impl ExtraPath {
+    /// Return the glob as written.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for ExtraPath {
+    type Err = String;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        let bytes = raw.as_bytes();
+        let drive = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
+        if raw.starts_with(['/', '\\']) || drive || Path::new(raw).is_absolute() {
+            return Err(format!(
+                "`scan.extra_paths` entry `{raw}` is absolute; write it relative to the scan root"
+            ));
+        }
+        if raw.split(['/', '\\']).any(|segment| segment == "..") {
+            return Err(format!(
+                "`scan.extra_paths` entry `{raw}` contains `..`; it must stay inside the scan root"
+            ));
+        }
+        Ok(Self(raw.to_owned()))
+    }
+}
+
+impl TryFrom<String> for ExtraPath {
+    type Error = String;
+
+    fn try_from(raw: String) -> Result<Self, Self::Error> {
+        raw.parse()
+    }
+}
+
+impl From<ExtraPath> for String {
+    fn from(path: ExtraPath) -> Self {
+        path.0
+    }
+}
+
+impl fmt::Display for ExtraPath {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 /// A discovered file with its type
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,8 +152,10 @@ impl FileKind {
 /// - .github/workflows/*.yml and .yaml
 /// - .github/actions/*/action.yml and .yaml
 /// - Any `scan.extra_paths` from config
+///
+/// A match that resolves outside `root` after following symlinks is skipped.
 #[must_use]
-pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredFile> {
+pub fn discover_files(root: &Path, extra_patterns: &[ExtraPath]) -> Vec<DiscoveredFile> {
     let mut files = Vec::new();
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
 
@@ -109,39 +168,34 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
         return files;
     }
 
-    // Discover workflows
-    for pattern in DEFAULT_WORKFLOW_PATTERNS {
-        let full_pattern = root.join(pattern);
-        if let Some(pattern_str) = full_pattern.to_str() {
-            for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
-                if seen_paths.insert(entry.clone()) {
-                    files.push(DiscoveredFile::new(entry, FileKind::Workflow));
-                }
-            }
-        }
-    }
+    let Ok(canonical_root) = root.canonicalize() else {
+        return files;
+    };
 
-    // Discover composite actions
-    for pattern in DEFAULT_ACTION_PATTERNS {
-        let full_pattern = root.join(pattern);
-        if let Some(pattern_str) = full_pattern.to_str() {
-            for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
-                if seen_paths.insert(entry.clone()) {
-                    files.push(DiscoveredFile::new(entry, FileKind::CompositeAction));
-                }
-            }
-        }
-    }
+    let defaults = DEFAULT_WORKFLOW_PATTERNS
+        .iter()
+        .map(|p| (*p, FileKind::Workflow))
+        .chain(
+            DEFAULT_ACTION_PATTERNS
+                .iter()
+                .map(|p| (*p, FileKind::CompositeAction)),
+        );
+    let extras = extra_patterns
+        .iter()
+        .map(|p| (p.as_str(), FileKind::Custom));
 
-    // Discover from extra patterns
-    for pattern in extra_patterns {
+    for (pattern, kind) in defaults.chain(extras) {
         let full_pattern = root.join(pattern);
-        if let Some(pattern_str) = full_pattern.to_str() {
-            for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
-                // Skip if already discovered (O(1) hash lookup)
-                if seen_paths.insert(entry.clone()) {
-                    files.push(DiscoveredFile::new(entry, FileKind::Custom));
-                }
+        let Some(pattern_str) = full_pattern.to_str() else {
+            continue;
+        };
+        for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
+            if !canonical_inside(&canonical_root, &entry) {
+                tracing::debug!(path = %entry.display(), root = %root.display(), "skipping match outside the scan root");
+                continue;
+            }
+            if seen_paths.insert(entry.clone()) {
+                files.push(DiscoveredFile::new(entry, kind));
             }
         }
     }
@@ -149,6 +203,18 @@ pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredF
     // Sort for deterministic output
     files.sort_by(|a, b| a.path.cmp(&b.path));
     files
+}
+
+/// Return whether `path` resolves inside `root`, or to `root` itself, after following symlinks.
+#[must_use]
+pub fn resolves_inside(root: &Path, path: &Path) -> bool {
+    root.canonicalize()
+        .is_ok_and(|root| canonical_inside(&root, path))
+}
+
+fn canonical_inside(canonical_root: &Path, path: &Path) -> bool {
+    path.canonicalize()
+        .is_ok_and(|path| path.starts_with(canonical_root))
 }
 
 fn has_yaml_ext(path: &Path) -> bool {
@@ -276,6 +342,104 @@ mod tests {
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].path(), custom.as_path());
         assert_eq!(files[0].kind(), FileKind::Custom);
+
+        fs::remove_dir_all(temp)?;
+        Ok(())
+    }
+
+    #[test]
+    fn test_extra_path_rejects_escapes() {
+        for raw in [
+            "../../../etc/*.yml",
+            "ci/../../x.yml",
+            "..",
+            "ci\\..\\x.yml",
+        ] {
+            let Err(reason) = raw.parse::<ExtraPath>() else {
+                panic!("`{raw}` must be rejected");
+            };
+            assert_eq!(
+                reason,
+                format!(
+                    "`scan.extra_paths` entry `{raw}` contains `..`; it must stay inside the scan root"
+                )
+            );
+        }
+        for raw in [
+            "/etc/*.yml",
+            "\\\\server\\share\\x.yml",
+            "C:/ci/x.yml",
+            "c:x.yml",
+        ] {
+            let Err(reason) = raw.parse::<ExtraPath>() else {
+                panic!("`{raw}` must be rejected");
+            };
+            assert_eq!(
+                reason,
+                format!(
+                    "`scan.extra_paths` entry `{raw}` is absolute; write it relative to the scan root"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn test_extra_path_accepts_relative_globs() -> Result<(), String> {
+        for raw in [
+            ".gitea/workflows/*.yml",
+            "docs/**/*.md",
+            "a..b/x.yml",
+            "./ci.yml",
+        ] {
+            let path: ExtraPath = raw.parse()?;
+            assert_eq!(path.as_str(), raw);
+            assert_eq!(path.to_string(), raw);
+            assert_eq!(String::from(path), raw);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_discover_files_missing_root_finds_nothing() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = make_temp_dir()?;
+        assert_eq!(discover_files(&temp.join("absent"), &[]), []);
+        fs::remove_dir_all(temp)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_discover_files_skips_symlinks_out_of_the_root() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::os::unix::fs::symlink;
+
+        let temp = make_temp_dir()?;
+        let root = temp.join("repo");
+        let outside = temp.join("outside");
+        let workflows = root.join(".github/workflows");
+        fs::create_dir_all(&workflows)?;
+        fs::create_dir_all(&outside)?;
+        fs::write(outside.join("evil.yml"), "name: Evil")?;
+        fs::write(workflows.join("ci.yml"), "name: CI")?;
+        symlink(outside.join("evil.yml"), workflows.join("evil.yml"))?;
+        symlink(workflows.join("ci.yml"), workflows.join("alias.yml"))?;
+        symlink(&outside, root.join("linked"))?;
+
+        let extra = ["linked/*.yml".parse()?];
+        let found: Vec<_> = discover_files(&root, &extra)
+            .into_iter()
+            .map(|f| f.path().to_path_buf())
+            .collect();
+        assert_eq!(
+            found,
+            [workflows.join("alias.yml"), workflows.join("ci.yml")]
+        );
+        assert!(resolves_inside(&root, &workflows.join("alias.yml")));
+        assert!(!resolves_inside(&root, &workflows.join("evil.yml")));
+        assert!(!resolves_inside(
+            &temp.join("absent"),
+            &workflows.join("ci.yml")
+        ));
 
         fs::remove_dir_all(temp)?;
         Ok(())

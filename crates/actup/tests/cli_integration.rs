@@ -148,7 +148,7 @@ mod discovery_tests {
             "write custom workflow fixture",
         );
 
-        let extra = vec!["custom/*.yml".to_string()];
+        let extra = vec![ok_or_panic("custom/*.yml".parse(), "parse extra path")];
         let files = discover_files(temp.path(), &extra);
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].kind(), FileKind::Custom);

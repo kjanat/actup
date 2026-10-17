@@ -40,7 +40,7 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 
 pub use matching::ActionPattern;
 
-use crate::{ActionRef, Error, policy};
+use crate::{ActionRef, Error, discovery::ExtraPath, policy};
 
 /// # Actup configuration
 /// Configuration options for the GitHub Actions-like updater.
@@ -325,7 +325,12 @@ pub struct Scan {
     /// - `"ci/pipelines/**/*.yaml"` - Custom CI directory
     /// - `".drone.yml"` - Specific Drone CI config file
     /// - `"infra/terraform/github-actions.tf"` - GitHub Actions in Terraform
-    pub extra_paths: Vec<String>,
+    ///
+    /// Each entry is relative to the scan root. Absolute paths and `..`
+    /// segments are rejected, and matches that resolve outside the scan root
+    /// through a symlink are skipped.
+    #[schemars(with = "Vec<String>")]
+    pub extra_paths: Vec<ExtraPath>,
 }
 
 /// One `[[overrides]]` entry.
@@ -734,7 +739,7 @@ mod tests {
         assert_eq!(config.policy.branch, policy::Branch::Ignore);
         assert!(!config.policy.prerelease);
         assert_eq!(config.scan.ignore, Vec::<ActionPattern>::new());
-        assert_eq!(config.scan.extra_paths, Vec::<String>::new());
+        assert_eq!(config.scan.extra_paths, Vec::<ExtraPath>::new());
         assert_eq!(config.overrides, Vec::<Override>::new());
         assert!(config.loaded_from.is_none());
         assert!(config.default_host.is_none());
@@ -1404,7 +1409,13 @@ mod tests {
             .map(ActionPattern::as_str)
             .collect();
         assert_eq!(ignore, ["my-org/*", "owner/repo@v1.91.0"]);
-        assert_eq!(config.scan.extra_paths, [".gitea/workflows"]);
+        let extra: Vec<&str> = config
+            .scan
+            .extra_paths
+            .iter()
+            .map(ExtraPath::as_str)
+            .collect();
+        assert_eq!(extra, [".gitea/workflows"]);
         assert_eq!(config.overrides.len(), 2);
         assert_eq!(config.overrides[0].pattern.as_str(), "actions/*");
         assert_eq!(
@@ -1570,6 +1581,29 @@ mod tests {
     }
 
     #[test]
+    fn test_from_contents_rejects_escaping_extra_paths() {
+        for (entry, reason) in [
+            ("../../../etc/*.yml", "contains `..`"),
+            ("/etc/*.yml", "is absolute"),
+        ] {
+            let Err(Error::InvalidConfig { path, reason: got }) = Config::from_contents(
+                Some((
+                    Path::new("actup.toml"),
+                    &format!("[scan]\nextra_paths = [\"{entry}\"]\n"),
+                )),
+                EnvOverrides::default(),
+            ) else {
+                panic!("`{entry}` must be rejected");
+            };
+            assert_eq!(path, "actup.toml");
+            assert!(
+                got.contains(&format!("`scan.extra_paths` entry `{entry}` {reason}")),
+                "{got}"
+            );
+        }
+    }
+
+    #[test]
     fn test_from_contents_syntax_error_names_the_file() {
         let Err(Error::InvalidConfig { path, .. }) = Config::from_contents(
             Some((Path::new("actup.toml"), "[policy\n")),
@@ -1656,7 +1690,13 @@ mod tests {
         );
         let ignore: Vec<String> = config.scan.ignore.iter().map(ToString::to_string).collect();
         assert_eq!(ignore, ["a/b"]);
-        assert_eq!(config.scan.extra_paths, [".gitea/workflows"]);
+        let extra: Vec<&str> = config
+            .scan
+            .extra_paths
+            .iter()
+            .map(ExtraPath::as_str)
+            .collect();
+        assert_eq!(extra, [".gitea/workflows"]);
         let [entry] = config.overrides.as_slice() else {
             panic!("expected one override: {:?}", config.overrides);
         };

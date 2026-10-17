@@ -273,9 +273,14 @@ impl Refusal {
     }
 }
 
-fn write(path: &Path, planned: &Planned, validate: bool) -> Result<(String, String), Refusal> {
+fn write(
+    root: &Path,
+    path: &Path,
+    planned: &Planned,
+    validate: bool,
+) -> Result<(String, String), Refusal> {
     let mut texts = (String::new(), String::new());
-    rewrite_atomic(path, |current| -> Result<String, Refusal> {
+    rewrite_atomic(root, path, |current| -> Result<String, Refusal> {
         let content = planned.splices.apply(current).ok_or(Refusal::Changed)?;
         if validate {
             validate_edit(current, &content).map_err(Refusal::Invalid)?;
@@ -288,6 +293,7 @@ fn write(path: &Path, planned: &Planned, validate: bool) -> Result<(String, Stri
 
 fn commit(
     outcome: &mut Outcome,
+    root: &Root,
     path: &Path,
     shown: &str,
     original: &str,
@@ -302,7 +308,7 @@ fn commit(
     let (before, after) = if outcome.dry_run {
         (original.to_string(), planned.content.clone())
     } else {
-        match write(path, &planned, validate) {
+        match write(root.path(), path, &planned, validate) {
             Ok(texts) => texts,
             Err(refusal) => {
                 outcome.errors.push(FileError {
@@ -448,6 +454,7 @@ pub fn update_file(
     };
     commit(
         &mut outcome,
+        root,
         &path,
         &shown,
         &original,
@@ -531,7 +538,7 @@ impl Job<'_> {
             validate_edit(&original, &planned.content)
                 .map_err(|e| fail(format!("edit refused: {shown} after edit: {e}")))?;
         }
-        commit(outcome, &path, &shown, &original, planned, true);
+        commit(outcome, self.root, &path, &shown, &original, planned, true);
         Ok(())
     }
 }
@@ -730,7 +737,7 @@ mod tests {
         let path = dir.path().join("ci.yml");
         fs::write(&path, "steps:\n  - uses: a/b@v1\nname: renamed\n")?;
         let planned = planned("steps:\n  - uses: a/b@v1\nname: a\n", 14..16, "v2");
-        let Ok((before, after)) = write(&path, &planned, true) else {
+        let Ok((before, after)) = write(dir.path(), &path, &planned, true) else {
             panic!("write refused");
         };
         assert_eq!(before, "steps:\n  - uses: a/b@v1\nname: renamed\n");
@@ -746,7 +753,7 @@ mod tests {
         let changed = "steps:\n  - uses: a/b@main\n";
         fs::write(&path, changed)?;
         let planned = planned("steps:\n  - uses: a/b@v1\n", 14..16, "v2");
-        let Err(refusal) = write(&path, &planned, true) else {
+        let Err(refusal) = write(dir.path(), &path, &planned, true) else {
             panic!("write must refuse a changed line");
         };
         assert_eq!(
@@ -764,7 +771,7 @@ mod tests {
         let content = "steps:\n  - uses: a/b@v1\n";
         fs::write(&path, content)?;
         let planned = planned(content, 14..16, "v2\n  - [");
-        let Err(refusal) = write(&path, &planned, true) else {
+        let Err(refusal) = write(dir.path(), &path, &planned, true) else {
             panic!("write must refuse invalid YAML");
         };
         let message = refusal.message("ci.yml");
@@ -774,11 +781,36 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&path)?, content);
 
-        assert!(write(&path, &planned, false).is_ok());
+        assert!(write(dir.path(), &path, &planned, false).is_ok());
         assert_eq!(
             fs::read_to_string(&path)?,
             "steps:\n  - uses: a/b@v2\n  - [\n"
         );
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_refuses_a_symlink_that_leaves_the_root() -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let content = "steps:\n  - uses: a/b@v1\n";
+        let target = outside.path().join("ci.yml");
+        fs::write(&target, content)?;
+        let path = root.path().join("ci.yml");
+        std::os::unix::fs::symlink(&target, &path)?;
+        let planned = planned(content, 14..16, "v2");
+        let Err(refusal) = write(root.path(), &path, &planned, true) else {
+            panic!("write must refuse a file outside the root");
+        };
+        assert_eq!(
+            refusal.message("ci.yml"),
+            format!(
+                "writing ci.yml failed: resolves outside {}",
+                root.path().display()
+            )
+        );
+        assert_eq!(fs::read_to_string(&target)?, content);
         Ok(())
     }
 
@@ -787,7 +819,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("missing").join("ci.yml");
         let planned = planned("steps:\n  - uses: a/b@v1\n", 14..16, "v2");
-        let Err(refusal) = write(&path, &planned, true) else {
+        let Err(refusal) = write(dir.path(), &path, &planned, true) else {
             panic!("write into a missing directory must fail");
         };
         let message = refusal.message("ci.yml");
@@ -815,7 +847,8 @@ mod tests {
         edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), "v2"));
         let planned = plan(scanned, edits)?;
         let mut outcome = Outcome::default();
-        commit(&mut outcome, &path, "ci.yml", scanned, planned, true);
+        let root = Root::new(dir.path())?;
+        commit(&mut outcome, &root, &path, "ci.yml", scanned, planned, true);
         let [error] = outcome.errors.as_slice() else {
             panic!("expected one file error: {:?}", outcome.errors);
         };
