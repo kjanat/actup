@@ -1153,7 +1153,7 @@ fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) ->
 }
 
 fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResult {
-    let bad = "steps:\n  - uses: actions/checkout@a~1\n  - uses: actions/checkout@v1.lock\n  - uses: actions/checkout\n  - uses: actions/checkout@\n  - uses: other/repo@a~1\n";
+    let bad = "runs:\n  steps:\n  - uses: actions/checkout@a~1\n  - uses: actions/checkout@v1.lock\n  - uses: actions/checkout\n  - uses: actions/checkout@\n  - uses: other/repo@a~1\n  - uses: ./local\n    with:\n      uses: actions/checkout\n";
     ws.write(".github/workflows/bad.yml", bad)?;
 
     let all = client.call(
@@ -1175,10 +1175,10 @@ fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResu
     expect(
         unresolvable
             == [
-                (&path, &json!(2), &json!("actions/checkout@a~1")),
-                (&path, &json!(3), &json!("actions/checkout@v1.lock")),
-                (&path, &json!(4), &json!("actions/checkout")),
-                (&path, &json!(5), &json!("actions/checkout@")),
+                (&path, &json!(3), &json!("actions/checkout@a~1")),
+                (&path, &json!(4), &json!("actions/checkout@v1.lock")),
+                (&path, &json!(5), &json!("actions/checkout")),
+                (&path, &json!(6), &json!("actions/checkout@")),
             ],
         || format!("unresolvable: {}", a["unresolvable"]),
     )?;
@@ -1203,8 +1203,8 @@ fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResu
         json!({
             "path": ".github/workflows/bad.yml",
             "edits": [
-                { "line": 2, "action": "actions/checkout", "ref": "v4.2.0" },
-                { "line": 4, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 3, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 5, "action": "actions/checkout", "ref": "v4.2.0" },
             ],
         }),
     )?;
@@ -1212,7 +1212,7 @@ fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResu
         format!("an edit of a value without `@` must fail: {no_at}")
     })?;
     expect(
-        error_text(&no_at).contains("line 4: `actions/checkout` has no `@`"),
+        error_text(&no_at).contains("line 5: `actions/checkout` has no `@`"),
         || error_text(&no_at),
     )?;
     expect(ws.read(".github/workflows/bad.yml")? == bad, || {
@@ -1224,8 +1224,8 @@ fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResu
         json!({
             "path": ".github/workflows/bad.yml",
             "edits": [
-                { "line": 2, "action": "actions/checkout", "ref": "v4.2.0" },
                 { "line": 3, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 4, "action": "actions/checkout", "ref": "v4.2.0" },
             ],
         }),
     )?;
@@ -1242,8 +1242,8 @@ fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResu
     expect(
         changed
             == [
-                (&json!(2), &json!("a~1"), &json!("v4.2.0")),
-                (&json!(3), &json!("v1.lock"), &json!("v4.2.0")),
+                (&json!(3), &json!("a~1"), &json!("v4.2.0")),
+                (&json!(4), &json!("v1.lock"), &json!("v4.2.0")),
             ],
         || format!("changes: {}", f["changes"]),
     )?;

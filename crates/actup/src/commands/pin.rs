@@ -781,8 +781,7 @@ mod tests {
     async fn test_edit_reports_invalid_refs_as_user_errors()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let content =
-            "steps:\n  - uses: o/h@a~1\n  - uses: o/h@v1.lock\n  - uses: o/h\n  - uses: o/h@\n";
+        let content = "jobs:\n  b:\n    steps:\n      - uses: o/h@a~1\n      - uses: o/h@v1.lock\n      - uses: o/h\n      - uses: o/h@\n";
         let path = workflow(dir.path(), content)?;
 
         for mode in [Mode::Pin, Mode::Unpin] {
@@ -818,10 +817,10 @@ mod tests {
             assert_eq!(
                 errored,
                 [
-                    (2, "o/h@a~1", "unknown", ErrorKind::InvalidRef),
-                    (3, "o/h@v1.lock", "unknown", ErrorKind::InvalidRef),
-                    (4, "o/h@", "unknown", ErrorKind::InvalidRef),
-                    (5, "o/h@", "unknown", ErrorKind::InvalidRef),
+                    (4, "o/h@a~1", "unknown", ErrorKind::InvalidRef),
+                    (5, "o/h@v1.lock", "unknown", ErrorKind::InvalidRef),
+                    (6, "o/h@", "unknown", ErrorKind::InvalidRef),
+                    (7, "o/h@", "unknown", ErrorKind::InvalidRef),
                 ]
             );
             assert_eq!(result.edited, []);

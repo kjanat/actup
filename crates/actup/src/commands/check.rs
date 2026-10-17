@@ -1275,7 +1275,44 @@ mod tests {
         Ok(())
     }
 
-    const INVALID_REFS: &str = "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: a/b@v4\n      more\n  - uses: ./local\n";
+    const INVALID_REFS: &str = "jobs:\n  b:\n    steps:\n      - uses: o/r@a~1\n      - uses: o/r@v1.lock\n      - uses: o/r\n      - uses: o/r@\n      - uses: a/b@v4\n          more\n      - uses: ./local\n";
+
+    #[tokio::test]
+    async fn test_check_skips_uses_keys_outside_action_positions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        std::fs::write(
+            workflows.join("ci.yml"),
+            "env: { uses: x }\njobs:\n  b:\n    env: { uses: x }\n    steps:\n      - uses: ./local\n        with:\n          uses: lint\n",
+        )?;
+        let config = Config::default();
+        let registry = test_registry();
+        let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
+        let mut io_errors = ErrorTally::default();
+        let scan = Scan::collect(&scanner, &scanner.discover(), &mut io_errors);
+        let mut findings = Vec::new();
+
+        let collected = collect_actions(&scanner, &scan, &config, &mut findings);
+
+        assert!(collected.is_empty());
+        assert!(findings.is_empty(), "{findings:?}");
+        assert_eq!(
+            run(
+                dir.path(),
+                &[],
+                CheckFormat::Json,
+                false,
+                &config,
+                &registry,
+                &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
+            )
+            .await,
+            0
+        );
+        Ok(())
+    }
 
     #[tokio::test]
     async fn test_check_reports_invalid_refs_as_user_errors()
@@ -1301,11 +1338,11 @@ mod tests {
         assert_eq!(
             reported,
             [
-                (2, "o/r@a~1".to_string(), "unknown", "github.com"),
-                (3, "o/r@v1.lock".to_string(), "unknown", "github.com"),
-                (4, "o/r@".to_string(), "unknown", "github.com"),
-                (5, "o/r@".to_string(), "unknown", "github.com"),
-                (6, "a/b@v4 more".to_string(), "unknown", "github.com"),
+                (4, "o/r@a~1".to_string(), "unknown", "github.com"),
+                (5, "o/r@v1.lock".to_string(), "unknown", "github.com"),
+                (6, "o/r@".to_string(), "unknown", "github.com"),
+                (7, "o/r@".to_string(), "unknown", "github.com"),
+                (8, "a/b@v4 more".to_string(), "unknown", "github.com"),
             ]
         );
         for finding in &findings {

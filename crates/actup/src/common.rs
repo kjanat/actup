@@ -10,7 +10,7 @@ use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
     SourceFormat, Uses, UsesLocation,
     cache::Staleness,
-    classify_uses, discover_files,
+    discover_files,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
     provider, resolve_within, rewrite_atomic, sanitize_line, version,
 };
@@ -629,7 +629,7 @@ impl<'a> WorkflowScanner<'a> {
         format: SourceFormat,
     ) -> impl Iterator<Item = (UsesLocation, Remote)> + '_ {
         format.extract_uses(content).into_iter().filter_map(|loc| {
-            let remote = match classify_uses(loc.value()) {
+            let remote = match loc.classify()? {
                 Uses::Local => return None,
                 Uses::Action(action) => Remote::Valid(action),
                 Uses::Invalid { action, error } => Remote::Invalid(InvalidUses { action, error }),

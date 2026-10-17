@@ -8,7 +8,7 @@ use std::{collections::HashMap, env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
     ActionRef, CachingProvider, CheckResult, CheckStatus, Config, ConfigSource, RefKind, Uses,
-    UsesLocation, classify_uses,
+    UsesLocation,
     config::{EnvOverrides, repo_candidates},
     extract_uses_from_yaml,
 };
@@ -331,10 +331,10 @@ fn collect_refs(files: &[(String, String)]) -> Collected {
     };
     for (path, content) in files {
         for loc in extract_uses_from_yaml(content) {
-            match classify_uses(loc.value()) {
-                Uses::Local => {}
-                Uses::Action(parsed) => collected.refs.push((path.clone(), loc, parsed)),
-                Uses::Invalid { action, error } => {
+            match loc.classify() {
+                None | Some(Uses::Local) => {}
+                Some(Uses::Action(parsed)) => collected.refs.push((path.clone(), loc, parsed)),
+                Some(Uses::Invalid { action, error }) => {
                     let result = CheckResult::new(
                         action,
                         CheckStatus::Unresolvable {
@@ -1092,14 +1092,14 @@ mod tests {
     fn invalid_refs_are_unresolvable_user_errors() {
         let files = [(
             ".github/workflows/ci.yml".to_string(),
-            "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n  - uses: o/s@v1\n".to_string(),
+            "runs:\n  steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n    with:\n      uses: lint\n  - uses: o/s@v1\n".to_string(),
         )];
         let Collected { refs, results } = collect_refs(&files);
         let valid: Vec<(usize, String)> = refs
             .iter()
             .map(|(_, loc, action)| (loc.line(), action.to_string()))
             .collect();
-        assert_eq!(valid, [(7, "o/s@v1".to_string())]);
+        assert_eq!(valid, [(10, "o/s@v1".to_string())]);
         let invalid: Vec<(usize, &str, bool)> = results
             .iter()
             .map(|(_, loc, result)| match result.status() {
@@ -1117,16 +1117,16 @@ mod tests {
         assert_eq!(
             invalid,
             [
-                (2, "o/r@a~1", true),
-                (3, "o/r@v1.lock", true),
-                (4, "o/r", true),
-                (5, "o/r@", true),
+                (3, "o/r@a~1", true),
+                (4, "o/r@v1.lock", true),
+                (5, "o/r", true),
+                (6, "o/r@", true),
             ]
         );
         let text = format_check_output(&Config::default(), &results, &[], 1, 5);
         assert!(text.contains(" 1 unknown, 4 unresolvable\n"), "{text}");
         assert!(
-            text.contains("- `.github/workflows/ci.yml` line 2: `o/r@a~1` — invalid action reference 'o/r@a~1': ref `a~1` holds the character '~'\n"),
+            text.contains("- `.github/workflows/ci.yml` line 3: `o/r@a~1` — invalid action reference 'o/r@a~1': ref `a~1` holds the character '~'\n"),
             "{text}"
         );
     }

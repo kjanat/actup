@@ -395,7 +395,7 @@ fn remote_values(format: SourceFormat, content: &str) -> Vec<(UsesLocation, Acti
     format
         .extract_uses(content)
         .into_iter()
-        .filter_map(|loc| match classify_uses(loc.value()) {
+        .filter_map(|loc| match loc.classify()? {
             Uses::Local => None,
             Uses::Action(action) | Uses::Invalid { action, .. } => Some((loc, action)),
         })
@@ -575,10 +575,10 @@ impl Job<'_> {
         let format = SourceFormat::from_path(&path);
         let mut edits = FileEdits::new(path.clone(), original.clone(), format);
         for loc in format.extract_uses(&original) {
-            let (action, error) = match classify_uses(loc.value()) {
-                Uses::Local => continue,
-                Uses::Action(action) => (action, None),
-                Uses::Invalid { action, error } => (action, Some(error)),
+            let (action, error) = match loc.classify() {
+                None | Some(Uses::Local) => continue,
+                Some(Uses::Action(action)) => (action, None),
+                Some(Uses::Invalid { action, error }) => (action, Some(error)),
             };
             let id = action.to_repo_id();
             if !same_repo(&id, self.wanted, self.default_host)
@@ -779,6 +779,10 @@ mod tests {
         assert_eq!(
             edited("- uses: o/r", "v1"),
             Err("`o/r` has no `@`".to_string())
+        );
+        assert_eq!(
+            edited("- uses: ./x@a", "v1"),
+            Err("`./x@v1` names no remote action".to_string())
         );
         assert_eq!(
             edited("- uses: \"o/r@a\\x7e1\"", "v1"),

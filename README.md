@@ -184,7 +184,9 @@ A remote `uses:` value without `@`, with an empty ref, or with a ref that is not
 a git ref name (such as `o/r@a~1` or `o/r@v1.lock`) reaches no provider. `check`
 reports it as unresolvable, `update` and `pin` report it with kind
 `invalid_ref`, and all three exit 2. The language server marks it with an error
-diagnostic.
+diagnostic. This holds for a value under `jobs.<id>.uses`,
+`jobs.<id>.steps[*].uses` or `runs.steps[*].uses`. An invalid value under any
+other `uses` key, such as a step input, is skipped.
 
 An unresolvable ref that names no tag can get a suggested tag. A partial version
 names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). A

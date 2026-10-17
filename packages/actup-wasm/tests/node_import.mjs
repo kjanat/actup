@@ -711,7 +711,7 @@ const recordingProvider = {
 	},
 };
 const dottedYaml =
-	`jobs:\n  build:\n    steps:\n      - uses: o/r@../../x/y\n      - uses: o/r@./x\n      - uses: o/r@a/.b\n      - uses: o/r@a~1\n      - uses: o/r\n      - uses: o/r@\n`;
+	`jobs:\n  build:\n    steps:\n      - uses: o/r@../../x/y\n      - uses: o/r@./x\n      - uses: o/r@a/.b\n      - uses: o/r@a~1\n      - uses: o/r\n      - uses: o/r@\n      - uses: ./local\n        with:\n          uses: lint\n`;
 const invalidResults = await checkRefs(dottedYaml, recordingProvider);
 assert.deepEqual(
 	invalidResults.map((r) => [r.location.line, r.action_ref.owner, r.action_ref.repo, r.action_ref.ref_str]),

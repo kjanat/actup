@@ -323,30 +323,32 @@ fn walk_uses(content: &str) -> (Vec<UsesLocation>, Option<String>) {
         match event {
             Event::Scalar(value, style, _, _) => match classify_node(&mut stack) {
                 NodeRole::MapKey => {
-                    if let Some(Ctx::Map {
-                        pending_uses_key, ..
-                    }) = stack.last_mut()
-                    {
-                        *pending_uses_key = value.as_ref() == "uses";
+                    if let Some(Ctx::Map { key, .. }) = stack.last_mut() {
+                        *key = Some(value.to_string());
                     }
                 }
-                NodeRole::MapValue { key_was_uses: true } => {
+                NodeRole::MapValue(Some(key)) if key == "uses" => {
                     if let Some(loc) = build_location(&source, value.as_ref(), style, span) {
-                        results.push(loc);
+                        results.push(if names_action(&stack) {
+                            loc
+                        } else {
+                            loc.outside_action_key()
+                        });
                     }
                 }
-                NodeRole::MapValue { .. } | NodeRole::Item | NodeRole::Root => {}
+                NodeRole::MapValue(_) | NodeRole::Item | NodeRole::Root => {}
             },
             Event::MappingStart(..) => {
-                classify_node(&mut stack);
+                let slot = classify_node(&mut stack).slot();
                 stack.push(Ctx::Map {
+                    slot,
                     expect_key: true,
-                    pending_uses_key: false,
+                    key: None,
                 });
             }
             Event::SequenceStart(..) => {
-                classify_node(&mut stack);
-                stack.push(Ctx::Seq);
+                let slot = classify_node(&mut stack).slot();
+                stack.push(Ctx::Seq { slot });
             }
             Event::Alias(_) => {
                 classify_node(&mut stack);
@@ -368,47 +370,89 @@ fn walk_uses(content: &str) -> (Vec<UsesLocation>, Option<String>) {
 /// A collection context on the structural walk stack.
 enum Ctx {
     /// A YAML mapping. `expect_key` toggles between key and value positions;
-    /// `pending_uses_key` records whether the current key scalar was `uses`.
+    /// `key` holds the current scalar key.
     Map {
+        slot: Slot,
         expect_key: bool,
-        pending_uses_key: bool,
+        key: Option<String>,
     },
     /// A YAML sequence. Every child is an item; no key/value distinction.
-    Seq,
+    Seq { slot: Slot },
+}
+
+impl Ctx {
+    const fn slot(&self) -> &Slot {
+        match self {
+            Self::Map { slot, .. } | Self::Seq { slot } => slot,
+        }
+    }
+}
+
+/// Where a collection sits in its parent.
+enum Slot {
+    /// The document root.
+    Root,
+    /// The value of a scalar key.
+    Key(String),
+    /// A sequence item, a mapping key, or the value of a non-scalar key.
+    Other,
 }
 
 /// The structural role of the node currently being visited.
 enum NodeRole {
     /// A mapping key.
     MapKey,
-    /// A mapping value; `key_was_uses` is whether its key was the `uses` scalar.
-    MapValue { key_was_uses: bool },
+    /// A mapping value, with its key when the key was a scalar.
+    MapValue(Option<String>),
     /// An item inside a sequence.
     Item,
     /// A top-level node (no enclosing collection).
     Root,
 }
 
+impl NodeRole {
+    fn slot(self) -> Slot {
+        match self {
+            Self::Root => Slot::Root,
+            Self::MapValue(Some(key)) => Slot::Key(key),
+            Self::MapValue(None) | Self::MapKey | Self::Item => Slot::Other,
+        }
+    }
+}
+
 /// Classify the node about to be visited against its enclosing collection and
 /// advance that collection's key/value state.
-const fn classify_node(stack: &mut [Ctx]) -> NodeRole {
+fn classify_node(stack: &mut [Ctx]) -> NodeRole {
     match stack.last_mut() {
         Some(Ctx::Map {
-            expect_key,
-            pending_uses_key,
+            expect_key, key, ..
         }) => {
             if *expect_key {
                 *expect_key = false;
+                *key = None;
                 NodeRole::MapKey
             } else {
                 *expect_key = true;
-                let key_was_uses = *pending_uses_key;
-                *pending_uses_key = false;
-                NodeRole::MapValue { key_was_uses }
+                NodeRole::MapValue(key.take())
             }
         }
-        Some(Ctx::Seq) => NodeRole::Item,
+        Some(Ctx::Seq { .. }) => NodeRole::Item,
         None => NodeRole::Root,
+    }
+}
+
+/// Whether a `uses` key in the innermost mapping of `stack` names an action:
+/// `jobs.<id>.uses`, `jobs.<id>.steps[*].uses` or `runs.steps[*].uses`.
+fn names_action(stack: &[Ctx]) -> bool {
+    let is = |slot: &Slot, name: &str| matches!(slot, Slot::Key(key) if key == name);
+    let slots: Vec<&Slot> = stack.iter().map(Ctx::slot).collect();
+    match slots.as_slice() {
+        [Slot::Root, jobs, Slot::Key(_)] => is(jobs, "jobs"),
+        [Slot::Root, jobs, Slot::Key(_), steps, Slot::Other] => {
+            is(jobs, "jobs") && is(steps, "steps")
+        }
+        [Slot::Root, runs, steps, Slot::Other] => is(runs, "runs") && is(steps, "steps"),
+        _ => false,
     }
 }
 
@@ -537,6 +581,14 @@ pub struct UsesLocation {
     /// line end when the scalar continues on later lines. Present only for
     /// locations that [`extract_uses_from_yaml`] found.
     scalar_range: Option<RefRange>,
+    /// Whether GitHub reads the value as an action or reusable workflow:
+    /// `jobs.<id>.uses`, `jobs.<id>.steps[*].uses` or `runs.steps[*].uses`.
+    #[serde(default = "at_action_key")]
+    action_key: bool,
+}
+
+const fn at_action_key() -> bool {
+    true
 }
 
 impl UsesLocation {
@@ -562,6 +614,24 @@ impl UsesLocation {
             value_range,
             ref_range,
             scalar_range: None,
+            action_key: true,
+        }
+    }
+
+    const fn outside_action_key(mut self) -> Self {
+        self.action_key = false;
+        self
+    }
+
+    /// Sort the value like [`classify_uses`].
+    ///
+    /// Returns `None` for an invalid value under a `uses` key that GitHub does
+    /// not read as an action, such as a step input named `uses`.
+    #[must_use]
+    pub fn classify(&self) -> Option<Uses> {
+        match classify_uses(&self.value) {
+            Uses::Invalid { .. } if !self.action_key => None,
+            uses => Some(uses),
         }
     }
 
@@ -852,6 +922,31 @@ mod tests {
                 "{uses}: {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn classify_reports_invalid_values_only_at_action_keys() {
+        let reported = |yaml: &str| -> Vec<(usize, bool)> {
+            extract_uses_from_yaml(yaml)
+                .iter()
+                .map(|loc| (loc.line(), loc.classify().is_some()))
+                .collect()
+        };
+        let workflow = "jobs:\n  call:\n    uses: o/r@\n  b:\n    env: { uses: x }\n    steps:\n      - uses: o/r@\n        with:\n          uses: lint\n      - { uses: o/r@ }\n";
+        assert_eq!(
+            reported(workflow),
+            [(3, true), (5, false), (7, true), (9, false), (10, true)]
+        );
+        let composite =
+            "runs:\n  using: composite\n  steps:\n    - uses: o/r@\n      with: { uses: lint }\n";
+        assert_eq!(reported(composite), [(4, true), (5, false)]);
+        let stray = "steps:\n  - uses: o/r@\nother:\n  b:\n    uses: o/r@\n";
+        assert_eq!(reported(stray), [(2, false), (5, false)]);
+        let valid = "env:\n  uses: o/r@v1\n";
+        assert!(matches!(
+            extract_uses_from_yaml(valid)[0].classify(),
+            Some(Uses::Action(_))
+        ));
     }
 
     #[test]
@@ -1161,7 +1256,20 @@ jobs:
             json["ref_range"],
             serde_json::json!({ "start": 12, "end": 14 })
         );
+        assert_eq!(json["action_key"], serde_json::json!(true));
         assert_eq!(serde_json::from_value::<UsesLocation>(json)?, verbatim);
+
+        let [input] = extract_uses_from_yaml("env:\n  uses: x\n")
+            .try_into()
+            .map_err(|_| "one value")?;
+        let json = serde_json::to_value(&input)?;
+        assert_eq!(json["action_key"], serde_json::json!(false));
+        assert_eq!(serde_json::from_value::<UsesLocation>(json)?, input);
+        let mut legacy = serde_json::to_value(&verbatim)?;
+        if let Some(fields) = legacy.as_object_mut() {
+            fields.remove("action_key");
+        }
+        assert_eq!(serde_json::from_value::<UsesLocation>(legacy)?, verbatim);
 
         let escaped = UsesLocation::new(1, 10, "a/b@v10".into(), r#"  uses: "a/b@v1\x30""#.into());
         let json = serde_json::to_value(&escaped)?;

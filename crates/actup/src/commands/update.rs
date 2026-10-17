@@ -901,8 +901,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let workflows = dir.path().join(".github/workflows");
         std::fs::create_dir_all(&workflows)?;
-        let content =
-            "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n";
+        let content = "jobs:\n  b:\n    steps:\n      - uses: o/r@a~1\n      - uses: o/r@v1.lock\n      - uses: o/r\n      - uses: o/r@\n";
         std::fs::write(workflows.join("ci.yml"), content)?;
 
         let Some(result) = edit(
@@ -937,16 +936,16 @@ mod tests {
         assert_eq!(
             errored,
             [
-                (2, "o/r@a~1", "unknown", "github.com", ErrorKind::InvalidRef),
+                (4, "o/r@a~1", "unknown", "github.com", ErrorKind::InvalidRef),
                 (
-                    3,
+                    5,
                     "o/r@v1.lock",
                     "unknown",
                     "github.com",
                     ErrorKind::InvalidRef
                 ),
-                (4, "o/r@", "unknown", "github.com", ErrorKind::InvalidRef),
-                (5, "o/r@", "unknown", "github.com", ErrorKind::InvalidRef),
+                (6, "o/r@", "unknown", "github.com", ErrorKind::InvalidRef),
+                (7, "o/r@", "unknown", "github.com", ErrorKind::InvalidRef),
             ]
         );
         assert_eq!(result.edited, []);

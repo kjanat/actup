@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
-    check_action_with_provider, classify_uses, parse_uses, provider,
+    check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     rewrite::{Rewrite, Trailing, after_value, closer},
 };
@@ -255,10 +255,10 @@ fn locate_uses(
                 crate::position::byte_to_col(raw_line, r.end, encoding),
             )
         });
-        let action_ref = match classify_uses(loc.value()) {
-            Uses::Local => continue,
-            Uses::Action(action_ref) => action_ref,
-            Uses::Invalid { error, .. } => {
+        let action_ref = match loc.classify() {
+            None | Some(Uses::Local) => continue,
+            Some(Uses::Action(action_ref)) => action_ref,
+            Some(Uses::Invalid { error, .. }) => {
                 let (col_start, col_end) = ref_cols.unwrap_or((0, line_end_col));
                 let reason = match &error {
                     CoreError::InvalidRef { reason, .. } => reason.clone(),
@@ -1364,7 +1364,7 @@ jobs:
 
     #[test]
     fn a_plain_scalar_over_two_lines_is_an_invalid_ref() {
-        let yaml = "steps:\n  - uses: a/b@v4\n      more\n";
+        let yaml = "runs:\n  steps:\n  - uses: a/b@v4\n      more\n";
         assert!(
             extract_located_actions(
                 yaml,
@@ -1376,7 +1376,7 @@ jobs:
         assert_eq!(
             invalid_ref_errors(yaml),
             [(
-                1,
+                2,
                 0,
                 16,
                 "a/b@v4 more: ref `v4 more` holds the character ' '".to_string()
@@ -1385,8 +1385,15 @@ jobs:
     }
 
     #[test]
+    fn uses_keys_outside_action_positions_get_no_diagnostic() {
+        let yaml =
+            "jobs:\n  b:\n    steps:\n      - uses: ./local\n        with:\n          uses: lint\n";
+        assert_eq!(invalid_ref_errors(yaml), []);
+    }
+
+    #[test]
     fn invalid_git_refs_reach_no_provider() {
-        let yaml = "steps:\n  - uses: o/r@../../x/y\n  - uses: o/r@./x\n  - uses: o/r@a/.b\n  - uses: o/s@v1\n";
+        let yaml = "runs:\n  steps:\n  - uses: o/r@../../x/y\n  - uses: o/r@./x\n  - uses: o/r@a/.b\n  - uses: o/s@v1\n";
         let repos = extract_unique_repo_ids(
             yaml,
             SourceFormat::Yaml,
@@ -1397,14 +1404,14 @@ jobs:
             .into_iter()
             .map(|(line, start, end, _)| (line, start, end))
             .collect();
-        assert_eq!(lines, [(1, 14, 23), (2, 14, 17), (3, 14, 18)]);
+        assert_eq!(lines, [(2, 14, 23), (3, 14, 17), (4, 14, 18)]);
     }
 
     #[tokio::test]
     async fn invalid_refs_are_error_diagnostics() {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
-        let yaml = "steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n";
+        let yaml = "runs:\n  steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n";
         let result = compute_diagnostics(
             yaml,
             &Uri::from_file_path("/test/ci.yml").unwrap(),
@@ -1431,28 +1438,28 @@ jobs:
             found,
             [
                 (
-                    1,
+                    2,
                     14,
                     17,
                     Some(DiagnosticSeverity::ERROR),
                     "o/r@a~1: ref `a~1` holds the character '~'"
                 ),
                 (
-                    2,
+                    3,
                     14,
                     21,
                     Some(DiagnosticSeverity::ERROR),
                     "o/r@v1.lock: ref component `v1.lock` starts with `.` or ends with `.lock`"
                 ),
                 (
-                    3,
+                    4,
                     0,
                     13,
                     Some(DiagnosticSeverity::ERROR),
                     "o/r: missing '@' separator for version reference"
                 ),
                 (
-                    4,
+                    5,
                     14,
                     14,
                     Some(DiagnosticSeverity::ERROR),

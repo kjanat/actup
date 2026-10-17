@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, SourceFormat, Uses, UsesLocation, classify_uses,
+    ActionRef, SourceFormat, Uses, UsesLocation,
     config::{Config, EnvOverrides, repo_candidates},
     error::chain,
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
@@ -234,10 +234,10 @@ pub fn check_refs(
         let mut results: Vec<LocatedCheckResult> = Vec::with_capacity(locations.len());
 
         for loc in &locations {
-            let parsed = match classify_uses(loc.value()) {
-                Uses::Local => continue,
-                Uses::Action(parsed) => parsed,
-                Uses::Invalid { action, error } => {
+            let parsed = match loc.classify() {
+                None | Some(Uses::Local) => continue,
+                Some(Uses::Action(parsed)) => parsed,
+                Some(Uses::Invalid { action, error }) => {
                     let result = CheckResult::new(
                         action,
                         CheckStatus::Unresolvable {

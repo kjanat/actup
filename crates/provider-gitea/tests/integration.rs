@@ -642,6 +642,13 @@ async fn dot_segments_are_refused_before_any_request() -> TestResult {
             "{ref_name}: {result:?}"
         );
     }
+    for ref_name in ["..", "."] {
+        let result = provider.get_action_yml(&repo(), ref_name).await;
+        assert!(
+            matches!(result, Err(Error::InvalidRef { .. })),
+            "{ref_name}: {result:?}"
+        );
+    }
     assert_eq!(server.received_requests().await.map(|r| r.len()), Some(0));
     Ok(())
 }
