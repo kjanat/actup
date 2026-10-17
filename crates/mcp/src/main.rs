@@ -4,9 +4,14 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use actup_core::{Config, Retention, config::CONFIG_VAR, provider::Registry, user_config_path};
+use actup_core::{
+    Config, Retention,
+    config::{CONFIG_VAR, ignore_empty_env},
+    provider::Registry,
+    user_config_path,
+};
 use actup_mcp::{REGISTRATIONS, Root, Server, serve_stdio};
-use clap::Parser;
+use clap::{CommandFactory, FromArgMatches, Parser};
 use tracing_subscriber::EnvFilter;
 
 /// Model Context Protocol server for checking and updating GitHub Actions `uses:` refs.
@@ -24,7 +29,8 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let args = Args::parse();
+    let args = Args::from_arg_matches(&ignore_empty_env(Args::command()).get_matches())
+        .unwrap_or_else(|e| e.exit());
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("actup_mcp=info")),

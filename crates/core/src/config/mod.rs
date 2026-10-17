@@ -31,6 +31,8 @@ pub use discovery::{
     CONFIG_EXTENSIONS, Candidate, canonical_path, iter_config_candidates, repo_candidates,
     repo_search_dirs, user_config_path,
 };
+#[cfg(feature = "clap")]
+pub use env::ignore_empty_env;
 pub use env::{
     CLI_FLAG_VARS, COLOR_VAR, CONFIG_VAR, EnvOverrides, FORMAT_VAR, STRICT_VAR, VERBOSE_VAR,
 };

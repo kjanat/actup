@@ -1174,6 +1174,19 @@ fn binary_loads_the_config_from_flag_or_env(ws: &Workspace) -> TestResult {
     let mut env = binary(ws);
     env.env("ACTUP_CONFIG", "../custom.toml");
     expect_eq(&served_host(env)?, &json!("ghe.corp.com"), "ACTUP_CONFIG")?;
+    let user = ws.dir.path().join("actup");
+    fs::create_dir_all(&user)?;
+    fs::write(
+        user.join("config.toml"),
+        "default_host = \"ghe.user.com\"\n[hosts.\"ghe.user.com\"]\nkind = \"github\"\n",
+    )?;
+    let mut empty = binary(ws);
+    empty.env("ACTUP_CONFIG", "");
+    expect_eq(
+        &served_host(empty)?,
+        &json!("ghe.user.com"),
+        "empty ACTUP_CONFIG",
+    )?;
 
     let output = binary(ws)
         .arg("--root")

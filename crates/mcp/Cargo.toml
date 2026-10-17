@@ -23,7 +23,7 @@ name    = "stdio_contract"
 path    = "tests/stdio_contract.rs"
 
 [dependencies]
-actup-core            = { workspace = true }  # Core engine
+actup-core            = { workspace = true, features = ["clap"] }  # Core engine
 actup-provider-gitea  = { workspace = true }  # Gitea/Forgejo provider
 actup-provider-github = { workspace = true }  # GitHub provider
 actup-provider-gitlab = { workspace = true }  # GitLab provider

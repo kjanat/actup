@@ -10,6 +10,7 @@ license.workspace      = true
 publish.workspace      = true
 
 [dependencies]
+clap          = { workspace = true, optional = true }  # gated by `clap` feature
 dirs          = { workspace = true }  # Config discovery
 figment       = { workspace = true }  # Configuration parsing
 glob          = { workspace = true }  # File discovery (glob patterns)
@@ -36,6 +37,8 @@ tokio = { workspace = true }  # Full async runtime on native
 tokio = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
 
 [features]
+# Clap helpers shared by the `actup` and `actup-mcp` binaries.
+clap  = ["dep:clap"]
 # Opt-in TypeScript binding generation via tsify-next. Enabled by `actup-wasm`
 # for the npm package build (wasm32-unknown-unknown). NOT enabled by the Zed
 # extension (wasm32-wasip2) — wasm-bindgen's placeholder imports do not

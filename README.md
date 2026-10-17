@@ -422,9 +422,9 @@ cargo install --git https://github.com/kjanat/actup-v2 actup-mcp
 The server reads the user config and a repo config inside `--root` (default: its
 working directory). Its config search stops at that root. `-c, --config <path>`
 (or `ACTUP_CONFIG`) loads an explicit config file over the repo and user config.
-A relative path resolves against the working directory. A config that fails to
-load exits with code 2. The server refuses every path outside the root,
-including symlinks that point out of it.
+An empty `ACTUP_CONFIG` counts as unset. A relative path resolves against the
+working directory. A config that fails to load exits with code 2. The server
+refuses every path outside the root, including symlinks that point out of it.
 
 | Tool                     | Kind    | Purpose                                                 |
 | ------------------------ | ------- | ------------------------------------------------------- |

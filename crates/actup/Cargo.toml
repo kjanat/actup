@@ -14,7 +14,7 @@ name = "actup"
 path = "src/main.rs"
 
 [dependencies]
-actup-core            = { workspace = true }  # Core engine
+actup-core            = { workspace = true, features = ["clap"] }  # Core engine
 actup-provider-gitea  = { workspace = true, optional = true }  # Gitea/Forgejo provider
 actup-provider-github = { workspace = true }  # GitHub provider
 actup-provider-gitlab = { workspace = true, optional = true }  # GitLab provider

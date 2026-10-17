@@ -25,6 +25,21 @@ pub const COLOR_VAR: &str = "ACTUP_COLOR";
 /// Environment variables that set CLI flags and never set a config key.
 pub const CLI_FLAG_VARS: [&str; 5] = [CONFIG_VAR, VERBOSE_VAR, FORMAT_VAR, STRICT_VAR, COLOR_VAR];
 
+/// Detach the env source from every argument of `command` whose variable is set but empty, recursing into subcommands.
+#[cfg(feature = "clap")]
+#[must_use]
+pub fn ignore_empty_env(command: clap::Command) -> clap::Command {
+    command
+        .mut_args(|arg| {
+            let empty = arg
+                .get_env()
+                .and_then(std::env::var_os)
+                .is_some_and(|value| value.is_empty());
+            if empty { arg.env(None::<&str>) } else { arg }
+        })
+        .mut_subcommands(ignore_empty_env)
+}
+
 /// Config keys set by `ACTUP_*` environment variables.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvOverrides {
