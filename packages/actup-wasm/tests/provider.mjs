@@ -392,6 +392,7 @@ await test("getActionYml throws when neither exists", async () => {
 	} catch (err) {
 		assert(err instanceof GitHubProviderError, "GitHubProviderError instance");
 		assertEqual(err.status, 404, "status 404");
+		assertEqual(err.kind, "notFound", "kind notFound");
 		assert(err.message.includes("Neither action.yml nor action.yaml"), "message mentions both files");
 	}
 });
@@ -448,6 +449,7 @@ await test("throws GitHubProviderError on rate limit (429)", async () => {
 	} catch (err) {
 		assert(err instanceof GitHubProviderError, "GitHubProviderError");
 		assertEqual(err.status, 429, "status 429");
+		assertEqual(err.kind, "rateLimited", "kind rateLimited");
 		assertEqual(err.retryAfter, 60, "retryAfter from header");
 		assertEqual(err.rateLimitRemaining, 0, "remaining 0");
 	}
@@ -473,6 +475,7 @@ await test("throws GitHubProviderError on rate limit (403)", async () => {
 	} catch (err) {
 		assert(err instanceof GitHubProviderError, "GitHubProviderError");
 		assertEqual(err.status, 403, "status 403");
+		assertEqual(err.kind, "rateLimited", "kind rateLimited");
 		assert(err.retryAfter !== undefined && err.retryAfter > 0, "retryAfter from reset header");
 	}
 });
@@ -493,6 +496,33 @@ await test("throws GitHubProviderError on 401", async () => {
 	} catch (err) {
 		assert(err instanceof GitHubProviderError, "GitHubProviderError");
 		assertEqual(err.status, 401, "status 401");
+		assertEqual(err.kind, "auth", "kind auth");
+	}
+});
+
+// Test: other statuses carry their kind
+await test("sets kind from 403, 404 and 500 statuses", async () => {
+	for (const [status, kind] of [[403, "forbidden"], [404, "notFound"], [500, "network"]]) {
+		mockFetch([{ match: () => true, respond: () => jsonResponse({ message: "x" }, status) }]);
+		try {
+			await createGitHubProvider().getVersions("github.com", "o", "r");
+			throw new Error("Should have thrown");
+		} catch (err) {
+			assert(err instanceof GitHubProviderError, `GitHubProviderError for ${status}`);
+			assertEqual(err.kind, kind, `kind for ${status}`);
+		}
+	}
+});
+
+// Test: an unexpected body shape counts as a network failure
+await test("sets kind network for an unexpected tag listing", async () => {
+	mockFetch([{ match: () => true, respond: () => jsonResponse({ not: "a list" }) }]);
+	try {
+		await createGitHubProvider().getVersions("github.com", "o", "r");
+		throw new Error("Should have thrown");
+	} catch (err) {
+		assert(err instanceof GitHubProviderError, "GitHubProviderError");
+		assertEqual(err.kind, "network", "kind network");
 	}
 });
 

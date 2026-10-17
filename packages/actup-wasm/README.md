@@ -186,6 +186,20 @@ const myProvider: ActupProvider = {
 };
 ```
 
+A method that fails rejects with an object whose `kind` says why:
+
+| `kind`        | `checkRefs` result                                      |
+| ------------- | ------------------------------------------------------- |
+| `notFound`    | Unresolvable user error: repository or ref not found    |
+| `rateLimited` | Unresolvable environment error (`retryAfter` seconds)   |
+| `auth`        | Unresolvable environment error: authentication failed   |
+| `forbidden`   | Unresolvable environment error: permission denied       |
+| `network`     | Unresolvable environment error, as for a missing `kind` |
+
+`createGitHubProvider` rejects with a `GitHubProviderError` that sets `kind`
+from the HTTP status: 404 `notFound`, 401 `auth`, 403 `forbidden`, 429 or a 403
+with rate-limit headers `rateLimited`, any other failure `network`.
+
 ## Bundle Size
 
 |              | Size    |

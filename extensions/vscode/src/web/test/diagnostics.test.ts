@@ -62,6 +62,20 @@ describe("computeDiagnostics", () => {
 		expect(gone?.code).toBe("unresolvable");
 	});
 
+	test("marks a repository the provider reports missing as an error", async () => {
+		const missing: wasm.ActupProvider = {
+			...provider,
+			getVersions: () => Promise.reject(Object.assign(new Error("no repository"), { kind: "notFound" })),
+		};
+		const document = new FakeDocument("missing-repo.yml", "jobs:\n  ci:\n    uses: acme/gone/.github/workflows/ci.yml@v1.0.0\n");
+		await computeDiagnostics(document.uri, document.getText(), missing, createDiagnosticCollection());
+		const [gone] = vscode.languages.getDiagnostics(document.uri);
+
+		expect(gone?.severity).toBe(vscode.DiagnosticSeverity.Error);
+		expect(gone?.code).toBe("unresolvable");
+		expect(gone?.message).toBe("acme/gone/.github/workflows/ci.yml@v1.0.0: action not found: github.com/acme/gone");
+	});
+
 	test("covers the whole line when the line does not hold the value verbatim", async () => {
 		const { document, diagnostics } = await diagnose("whole-line.yml", workflow);
 		const escaped = diagnostics[3];

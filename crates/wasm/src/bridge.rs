@@ -4,6 +4,8 @@
 //! The JS side implements a simple async interface (`getVersions`, etc.)
 //! and the adapter handles serde round-trips across the WASM boundary.
 
+use std::time::Duration;
+
 use actup_core::{
     ActionRepoId, Provider,
     compat::BoxFuture,
@@ -135,19 +137,45 @@ impl std::fmt::Debug for JsProviderAdapter {
     }
 }
 
-/// Convert a `JsValue` error from `wasm_bindgen` into an `actup_core::Error`.
-fn js_err(val: &JsValue) -> actup_core::Error {
-    let msg = val
+/// Convert a provider rejection into the `actup_core::Error` its `kind` names.
+fn js_err(
+    val: &JsValue,
+    provider: Kind,
+    not_found: impl FnOnce() -> actup_core::Error,
+) -> actup_core::Error {
+    let field = |name: &str| js_sys::Reflect::get(val, &JsValue::from_str(name)).ok();
+    let message = val
         .as_string()
-        .or_else(|| {
-            js_sys::Reflect::get(val, &JsValue::from_str("message"))
-                .ok()
-                .and_then(|m| m.as_string())
-        })
+        .or_else(|| field("message").and_then(|m| m.as_string()))
         .unwrap_or_else(|| format!("{val:?}"));
-    actup_core::Error::Network {
-        operation: "js provider call".into(),
-        message: msg,
+    match field("kind").and_then(|k| k.as_string()).as_deref() {
+        Some("notFound") => not_found(),
+        Some("rateLimited") => actup_core::Error::RateLimited {
+            provider: provider.to_string(),
+            retry_after: field("retryAfter")
+                .and_then(|secs| secs.as_f64())
+                .and_then(|secs| Duration::try_from_secs_f64(secs).ok()),
+        },
+        Some("auth") => actup_core::Error::Auth {
+            provider: provider.to_string(),
+            reason: message,
+        },
+        Some("forbidden") => actup_core::Error::Forbidden {
+            provider: provider.to_string(),
+            reason: message,
+        },
+        _ => actup_core::Error::Network {
+            operation: "js provider call".into(),
+            message,
+        },
+    }
+}
+
+fn repo_not_found(host: &str, owner: &str, repo: &str) -> actup_core::Error {
+    actup_core::Error::NotFound {
+        owner: owner.to_owned(),
+        repo: repo.to_owned(),
+        host: Some(host.to_owned()),
     }
 }
 
@@ -179,7 +207,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_versions_js(&host, &owner, &repo_name)
                 .await
-                .map_err(|e| js_err(&e))?;
+                .map_err(|e| js_err(&e, self.kind, || repo_not_found(&host, &owner, &repo_name)))?;
             let js_set: VersionSet = serde_wasm_bindgen::from_value(js_val).map_err(|e| {
                 actup_core::Error::Internal {
                     context: "deserialize VersionSet from JS".into(),
@@ -204,7 +232,14 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .resolve_ref_to_sha_js(&host, &owner, &repo_name, &ref_name)
                 .await
-                .map_err(|e| js_err(&e))?;
+                .map_err(|e| {
+                    js_err(&e, self.kind, || actup_core::Error::RefNotFound {
+                        owner: owner.clone(),
+                        repo: repo_name.clone(),
+                        ref_name: ref_name.clone(),
+                        host: Some(host.clone()),
+                    })
+                })?;
             let sha_str: String = serde_wasm_bindgen::from_value(js_val).map_err(|e| {
                 actup_core::Error::Internal {
                     context: "deserialize SHA from JS".into(),
@@ -227,7 +262,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_default_branch_js(&host, &owner, &repo_name)
                 .await
-                .map_err(|e| js_err(&e))?;
+                .map_err(|e| js_err(&e, self.kind, || repo_not_found(&host, &owner, &repo_name)))?;
             serde_wasm_bindgen::from_value(js_val).map_err(|e| actup_core::Error::Internal {
                 context: "deserialize default branch from JS".into(),
                 message: e.to_string(),
@@ -249,7 +284,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_readme_js(&host, &owner, &repo_name, ref_name)
                 .await
-                .map_err(|e| js_err(&e))?;
+                .map_err(|e| js_err(&e, self.kind, || repo_not_found(&host, &owner, &repo_name)))?;
             if js_val.is_null() || js_val.is_undefined() {
                 return Ok(None);
             }
@@ -277,7 +312,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_action_yml_js(&host, &owner, &repo_name, &ref_name)
                 .await
-                .map_err(|e| js_err(&e))?;
+                .map_err(|e| js_err(&e, self.kind, || repo_not_found(&host, &owner, &repo_name)))?;
             serde_wasm_bindgen::from_value(js_val).map_err(|e| actup_core::Error::Internal {
                 context: "deserialize ActionYml from JS".into(),
                 message: e.to_string(),

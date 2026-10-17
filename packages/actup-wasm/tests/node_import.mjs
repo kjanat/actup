@@ -468,4 +468,90 @@ assert.equal(lookups, 0, "listed tags need no provider lookup");
 
 console.log("PASS: prereleases and non-semver tags follow core tag processing");
 
+// Test 19: the `kind` of a provider rejection picks the error class.
+const rejecting = (kind, extra = {}) => ({
+	...mockProvider,
+	async getVersions() {
+		throw Object.assign(new Error(`${kind} failure`), { kind, ...extra });
+	},
+});
+const unresolvable = async (provider, value = "o/r@v1") => {
+	const [checked] = await checkRefs(`steps:\n  - uses: ${value}\n`, provider);
+	assert.equal(statusName(checked.status), "Unresolvable", `${value}: ${JSON.stringify(checked.status)}`);
+	return checked.status.Unresolvable;
+};
+assert.deepEqual(await unresolvable(rejecting("notFound")), {
+	reason: "action not found: github.com/o/r",
+	is_environment_error: false,
+});
+assert.deepEqual(await unresolvable(rejecting("rateLimited", { retryAfter: 30 })), {
+	reason: "rate limited by github, retry after 30s",
+	is_environment_error: true,
+});
+assert.deepEqual(await unresolvable(rejecting("auth")), {
+	reason: "authentication failed for github: auth failure",
+	is_environment_error: true,
+});
+assert.deepEqual(await unresolvable(rejecting("forbidden")), {
+	reason: "permission denied by github: forbidden failure",
+	is_environment_error: true,
+});
+for (const provider of [rejecting("network"), rejecting(undefined), { ...mockProvider, getVersions: () => Promise.reject("offline") }]) {
+	const status = await unresolvable(provider);
+	assert.equal(status.is_environment_error, true, JSON.stringify(status));
+	assert.match(status.reason, /^network error during js provider call: /);
+}
+const missingRef = {
+	...mockProvider,
+	async resolveRefToSha() {
+		throw Object.assign(new Error("no such ref"), { kind: "notFound" });
+	},
+};
+assert.deepEqual(await unresolvable(missingRef, "actions/checkout@nope"), {
+	reason: "ref 'nope' not found",
+	is_environment_error: false,
+});
+
+console.log("PASS: provider rejection kinds pick the error class");
+
+// Test 20: the GitHub provider sets `kind` from the HTTP status.
+const realFetch = globalThis.fetch;
+const githubWith = async (respond) => {
+	globalThis.fetch = async (url) => respond(String(url));
+	try {
+		return await unresolvable(createGitHubProvider(), "o/r@nope");
+	} finally {
+		globalThis.fetch = realFetch;
+	}
+};
+const reply = (status, headers = {}) => new Response(JSON.stringify({ message: "x" }), { status, headers });
+const tagList = new Response(JSON.stringify([{ name: "v1.0.0", commit: { sha: "a".repeat(40) } }]));
+assert.deepEqual(await githubWith(() => reply(404)), {
+	reason: "action not found: github.com/o/r",
+	is_environment_error: false,
+});
+assert.deepEqual(
+	await githubWith((url) => (url.endsWith("/tags?per_page=100") ? tagList.clone() : reply(404))),
+	{ reason: "ref 'nope' not found", is_environment_error: false },
+);
+assert.deepEqual(await githubWith(() => reply(401)), {
+	reason: "authentication failed for github: GitHub API authentication failed (401)",
+	is_environment_error: true,
+});
+assert.deepEqual(await githubWith(() => reply(403)), {
+	reason: "permission denied by github: GitHub API forbidden (403)",
+	is_environment_error: true,
+});
+assert.deepEqual(await githubWith(() => reply(429, { "retry-after": "60" })), {
+	reason: "rate limited by github, retry after 60s",
+	is_environment_error: true,
+});
+assert.deepEqual(await githubWith(() => reply(403, { "x-ratelimit-remaining": "0" })), {
+	reason: "rate limited by github",
+	is_environment_error: true,
+});
+assert.match((await githubWith(() => reply(502))).reason, /^network error during js provider call: GitHub API error: 502/);
+
+console.log("PASS: GitHub provider statuses map to error classes");
+
 console.log("\nAll npm package integration tests PASSED");

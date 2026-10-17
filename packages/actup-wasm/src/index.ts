@@ -47,7 +47,7 @@ export type {
 } from "../wasm/actup_wasm.js";
 // Hand-maintained: only the behavioral provider interface. Everything else
 // is now driven by Rust.
-export type { ActupProvider } from "./types.ts";
+export type { ActupProvider, ProviderErrorKind } from "./types.ts";
 
 /**
  * Low-level wasm-bindgen bindings.

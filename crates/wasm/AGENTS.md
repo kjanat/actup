@@ -87,7 +87,9 @@ module. Lint the wasm32 build with `just clippy-wasm`.
 ## Conventions
 
 - `#![forbid(unsafe_code)]`
-- All JS errors converted to `actup_core::Error::Network` via `js_err()` helper
+- `js_err()` maps a provider rejection's `kind` (`notFound`, `rateLimited`,
+  `auth`, `forbidden`) to the matching `actup_core::Error`; any other rejection
+  becomes `actup_core::Error::Network`
 - SHA validation uses `Sha40::new()` from core
 - `JsClock` uses `js_sys::Date::now()` for `Clock` trait (needed by
   `version::Set::build_with_clock`)

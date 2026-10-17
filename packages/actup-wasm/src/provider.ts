@@ -9,7 +9,7 @@
  */
 
 import type { ActionYml, VersionSet } from "../wasm/actup_wasm.js";
-import type { ActupProvider } from "./types.ts";
+import type { ActupProvider, ProviderErrorKind } from "./types.ts";
 
 /** Options for {@link createGitHubProvider}. */
 export interface GitHubProviderOptions {
@@ -39,12 +39,14 @@ export interface GitHubProviderOptions {
 /** Structured error from the GitHub provider. */
 export class GitHubProviderError extends Error {
 	override readonly name = "GitHubProviderError";
+	readonly kind: ProviderErrorKind;
 	readonly status: number;
 	readonly rateLimitRemaining: number | undefined;
 	readonly retryAfter: number | undefined;
 
 	constructor(
 		message: string,
+		kind: ProviderErrorKind,
 		status: number,
 		options?: {
 			readonly rateLimitRemaining?: number | undefined;
@@ -52,6 +54,7 @@ export class GitHubProviderError extends Error {
 		},
 	) {
 		super(message);
+		this.kind = kind;
 		this.status = status;
 		this.rateLimitRemaining = options?.rateLimitRemaining;
 		this.retryAfter = options?.retryAfter;
@@ -213,7 +216,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function invalidShape(endpoint: string): GitHubProviderError {
-	return new GitHubProviderError(`Unexpected response shape from GitHub ${endpoint}`, 0);
+	return new GitHubProviderError(`Unexpected response shape from GitHub ${endpoint}`, "network", 0);
 }
 
 // -- Fetch helpers --
@@ -238,6 +241,7 @@ async function ghFetch(url: string, headers: Record<string, string>): Promise<Re
 	if (response.status === 429 || (response.status === 403 && rateLimitEvidence)) {
 		throw new GitHubProviderError(
 			`GitHub API rate limited (${response.status})`,
+			"rateLimited",
 			response.status,
 			{ rateLimitRemaining: remaining ?? undefined, retryAfter },
 		);
@@ -245,23 +249,24 @@ async function ghFetch(url: string, headers: Record<string, string>): Promise<Re
 
 	// Forbidden (no rate-limit evidence)
 	if (response.status === 403) {
-		throw new GitHubProviderError(`GitHub API forbidden (403)`, 403);
+		throw new GitHubProviderError(`GitHub API forbidden (403)`, "forbidden", 403);
 	}
 
 	// Auth
 	if (response.status === 401) {
-		throw new GitHubProviderError("GitHub API authentication failed (401)", 401);
+		throw new GitHubProviderError("GitHub API authentication failed (401)", "auth", 401);
 	}
 
 	// Not found
 	if (response.status === 404) {
-		throw new GitHubProviderError("GitHub API resource not found (404)", 404);
+		throw new GitHubProviderError("GitHub API resource not found (404)", "notFound", 404);
 	}
 
 	// Other
 	const body = await response.text().catch(() => "");
 	throw new GitHubProviderError(
 		`GitHub API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`,
+		"network",
 		response.status,
 	);
 }
@@ -513,6 +518,7 @@ async function getActionYml(
 
 	throw new GitHubProviderError(
 		`Neither action.yml nor action.yaml found in ${owner}/${repo}@${ref}`,
+		"notFound",
 		404,
 	);
 }
