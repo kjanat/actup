@@ -110,32 +110,12 @@ pub fn retarget_edit(
     }
 }
 
-/// Build an edit that pins a ref to the `target` commit SHA.
+/// Build an edit that pins a ref to the `target` commit SHA with a ` # <version>` comment.
 ///
-/// Keeps a `# vX.Y.Z` version comment accurate: a stale version is
-/// refreshed and the note after it kept, a missing comment is added after
-/// the value [`closer`], and a foreign comment or other text after the value
-/// is left untouched with no comment. Shared by `update` and `pin`.
+/// Shared by `update` and `pin`. See [`pin_edit`].
 #[must_use]
 pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<PendingEdit> {
-    let new_sha = target.sha();
-    let version = target.version().to_string();
-    let range = loc.ref_range()?;
-    let sha_only = PendingEdit::replace_range(loc.line(), range.clone(), new_sha.to_string());
-
-    Some(match Trailing::after(loc.raw_line(), range.end) {
-        Trailing::Version { note } => {
-            let comment = labeled_comment(&version, note);
-            let rewrite = Rewrite {
-                new_ref: new_sha.to_string(),
-                comment: Some(comment.clone()),
-                to_line_end: true,
-            };
-            rewrite_edit(loc, &rewrite)?.with_inline_comment(comment)
-        }
-        Trailing::None => sha_only.with_comment(labeled_comment(&version, "")),
-        Trailing::Foreign => sha_only,
-    })
+    pin_edit(loc, target.sha(), &target.version().to_string())
 }
 
 /// Build an edit that writes the tag `tag` over a SHA pin.
@@ -171,6 +151,32 @@ pub fn rewrite_edit(loc: &UsesLocation, rewrite: &Rewrite) -> Option<PendingEdit
         range.start..end,
         text,
     ))
+}
+
+/// Build an edit that pins the ref at `loc` to `sha` with a ` # <label>` comment.
+///
+/// A trailing version comment gets `label` in place of its version and keeps
+/// its note. A line with nothing after the value gets the comment after the
+/// value [`closer`]. A foreign comment or other text after the value is left
+/// untouched with no comment.
+#[must_use]
+pub fn pin_edit(loc: &UsesLocation, sha: &str, label: &str) -> Option<PendingEdit> {
+    let range = loc.ref_range()?;
+    let sha_only = PendingEdit::replace_range(loc.line(), range.clone(), sha.to_string());
+
+    Some(match Trailing::after(loc.raw_line(), range.end) {
+        Trailing::Version { note } => {
+            let comment = labeled_comment(label, note);
+            let rewrite = Rewrite {
+                new_ref: sha.to_string(),
+                comment: Some(comment.clone()),
+                to_line_end: true,
+            };
+            rewrite_edit(loc, &rewrite)?.with_inline_comment(comment)
+        }
+        Trailing::None => sha_only.with_comment(labeled_comment(label, "")),
+        Trailing::Foreign => sha_only,
+    })
 }
 
 /// Why a planned edit leaves an action reference unchanged.

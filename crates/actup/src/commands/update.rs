@@ -4,8 +4,8 @@ use anstream::println;
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
-    patch::{FileEdits, PendingEdit, SkipReason, retarget_edit},
+    ActionRef, CheckStatus, Config, check_action_with_provider,
+    patch::{FileEdits, SkipReason, pin_edit, retarget_edit},
     policy, provider, sanitize_line, version,
 };
 use owo_colors::OwoColorize;
@@ -18,11 +18,6 @@ use crate::{
     },
     scan::{Scan, versions_for},
 };
-
-fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
-    loc.ref_range()
-        .map(|range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()))
-}
 
 fn new_ref(action_ref: &ActionRef, target: &version::Info, style: policy::Style) -> String {
     if style.writes_sha(action_ref.is_sha()) {
@@ -39,11 +34,6 @@ fn target_display(action_ref: &ActionRef, target: &version::Info, style: policy:
     } else {
         target.version().to_string()
     }
-}
-
-/// Pin a branch or non-semver tag to its commit SHA with a `# <ref>` comment.
-fn pin_branch_edit(loc: &UsesLocation, ref_name: &str, sha: &str) -> Option<PendingEdit> {
-    ref_edit(loc, sha).map(|edit| edit.with_comment(format!(" # {ref_name}")))
 }
 
 pub async fn run(
@@ -109,7 +99,7 @@ async fn edit(
                     false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
-                    pin_branch_edit(loc, ref_name, sha),
+                    pin_edit(loc, sha, ref_name),
                     sha.clone(),
                     sha[..7.min(sha.len())].to_string(),
                     true,
@@ -150,8 +140,8 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use actup_core::{
-        ActionRepoId, BoxFuture, SourceFormat,
-        patch::EditOutcome,
+        ActionRepoId, BoxFuture, SourceFormat, UsesLocation,
+        patch::{EditOutcome, PendingEdit},
         provider::{ActionYml, Kind, Provider, Sha40},
     };
 
@@ -864,25 +854,22 @@ mod tests {
     }
 
     #[test]
-    fn test_ref_edit_replaces_only_the_ref() -> Result<(), Box<dyn std::error::Error>> {
-        let line = "      - uses: actions/checkout@v4";
-        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
-        let edit = ref_edit(&loc, "v5").ok_or("no edit")?;
-        assert_eq!(edit.line, 10);
-        assert_eq!(apply_at(line, edit)?, "      - uses: actions/checkout@v5");
-        Ok(())
-    }
-
-    #[test]
-    fn test_pin_branch_edit_pins_with_branch_comment() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_branch_pin_names_the_branch_in_its_comment() -> Result<(), Box<dyn std::error::Error>> {
         let sha = sha40('c');
-        let line = "      - uses: a/b@main";
-        let loc = sha_loc(line)?;
-        let edit = pin_branch_edit(&loc, "main", &sha).ok_or("no edit")?;
-        assert_eq!(
-            apply_at(line, edit)?,
-            format!("      - uses: a/b@{sha} # main")
-        );
+        for (tail, written) in [
+            ("", " # main"),
+            (" # v1.0.0", " # main"),
+            (" # v1.0.0 keep", " # main keep"),
+            (" # mine", " # mine"),
+        ] {
+            let line = format!("      - uses: a/b@main{tail}");
+            let edit = pin_edit(&sha_loc(&line)?, &sha, "main").ok_or("no edit")?;
+            assert_eq!(
+                apply_at(&line, edit)?,
+                format!("      - uses: a/b@{sha}{written}"),
+                "{tail}"
+            );
+        }
         Ok(())
     }
 
@@ -895,7 +882,7 @@ mod tests {
         let pinned = make_action_ref("actions", "checkout", &sha40('b'));
         assert!(retarget_edit(&loc, tag.is_sha(), &target, policy::Style::Preserve).is_none());
         assert!(retarget_edit(&loc, pinned.is_sha(), &target, policy::Style::Preserve).is_none());
-        assert!(pin_branch_edit(&loc, "v4", &sha40('c')).is_none());
+        assert!(pin_edit(&loc, &sha40('c'), "v4").is_none());
     }
 
     #[test]

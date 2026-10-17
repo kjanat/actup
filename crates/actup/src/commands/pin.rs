@@ -5,7 +5,7 @@ use std::{ops::Range, path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
-    patch::{FileEdits, PendingEdit, SkipReason, repin_sha_edit, rewrite_edit},
+    patch::{FileEdits, PendingEdit, SkipReason, pin_edit, repin_sha_edit, rewrite_edit},
     provider,
     rewrite::{PinMarker, Rewrite, after_value},
     sanitize_line, version,
@@ -148,10 +148,10 @@ async fn pin_action_edit(
                 (edit, sha, new_uses, false)
             }
             PinTarget::Named { sha } => {
-                let new_uses = format!("{prefix}@{sha}");
-                let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
-                    .with_comment(format!(" # {}", action_ref.ref_str()));
-                (edit, sha, new_uses, true)
+                let Some(edit) = pin_edit(loc, &sha, action_ref.ref_str()) else {
+                    return PinStep::Unplaceable;
+                };
+                (edit, sha.clone(), format!("{prefix}@{sha}"), true)
             }
         };
         let change = Change {
@@ -676,6 +676,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_pin_names_the_ref_in_a_version_comment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = "steps:\n  - uses: o/d@main # v1.0.0 keep\n  - uses: o/b@main # v1.0.0\n  - uses: o/f@main # 1st step\n";
+        let expected = format!(
+            "steps:\n  - uses: o/d@{} # main keep\n  - uses: o/b@{} # main\n  - uses: o/f@{} # 1st step\n",
+            sha('d'),
+            sha('c'),
+            sha('e')
+        );
+        assert_pin_writes(content, &expected).await
+    }
+
+    #[tokio::test]
     async fn test_run_pin_keeps_mixed_line_breaks_and_the_bom()
     -> Result<(), Box<dyn std::error::Error>> {
         let content = "\u{feff}on: push\r\njobs:\n  b:\r    runs-on: x\r\n    steps:\n      - uses: o/f@v1\r      - uses: \"o/h@v2\"\r\n      - uses: o/i@v3";
@@ -812,8 +825,8 @@ mod tests {
         .join("\n");
         let expected = [
             "steps:",
-            "  - { uses: actions/upload-pages-artifact@SHA, with: { path: dist } } # v4",
-            "  - { uses: actions/deploy-pages@SHA, id: deployment } # v4",
+            "  - { uses: actions/upload-pages-artifact@SHA, with: { path: dist } }",
+            "  - { uses: actions/deploy-pages@SHA, id: deployment }",
             "",
         ]
         .join("\n")
