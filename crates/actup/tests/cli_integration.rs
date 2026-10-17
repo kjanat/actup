@@ -1589,6 +1589,40 @@ mod cli_runs {
     }
 
     #[test]
+    fn config_errors_keep_untrusted_keys_on_one_line() -> Result<(), Box<dyn std::error::Error>> {
+        for (name, contents) in [
+            ("actup.toml", "[fetch]\n\"x\\n  L9: forged\" = 1\n"),
+            (
+                "actup.toml",
+                "[hosts.\"h\\n  L9: forged\"]\nkind = \"github\"\n",
+            ),
+            ("explicit.toml", "default_host = \"h\\n  L9: forged\"\n"),
+        ] {
+            let repo = TempDir::new()?;
+            let file = repo.path().join(name);
+            fs::write(&file, contents)?;
+            for args in [&["check"][..], &["config"]] {
+                let mut command = actup(repo.path());
+                if name == "explicit.toml" {
+                    command.arg("--config").arg(&file);
+                }
+                let output = command.args(args).arg(repo.path()).output()?;
+                assert_ne!(output.status.code(), Some(0), "{args:?} {contents:?}");
+                let text = format!(
+                    "{}{}",
+                    String::from_utf8(output.stdout)?,
+                    String::from_utf8(output.stderr)?
+                );
+                assert!(
+                    text.lines().all(|line| !line.starts_with("  L9")),
+                    "{args:?} {contents:?}: {text}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_reads_user_config_from_xdg_config_home() -> Result<(), Box<dyn std::error::Error>> {
         let home = TempDir::new()?;
         let repo = TempDir::new()?;

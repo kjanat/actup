@@ -17,7 +17,7 @@ use std::{process::ExitCode, sync::Arc};
 
 use actup_core::{
     Config, Registration, Retention, error::chain, neutralize_workflow_commands, provider,
-    sanitize_for_terminal, user_config_path, validate_no_duplicate_presets,
+    sanitize_line, user_config_path, validate_no_duplicate_presets,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -64,7 +64,7 @@ fn load_config(explicit: Option<&std::path::Path>, start_dir: &std::path::Path) 
             Some(config)
         }
         Err(e) => {
-            eprintln!("Error: {}", sanitize_for_terminal(&chain(&e)));
+            eprintln!("Error: {}", sanitize_line(&chain(&e)));
             None
         }
     }
@@ -186,7 +186,7 @@ fn start_dir(command: Option<&Command>) -> Result<std::path::PathBuf, CliExitCod
         Some(Command::Cache { .. }) | None => std::env::current_dir().map_err(|e| {
             eprintln!(
                 "Error reading current directory: {}",
-                sanitize_for_terminal(&e.to_string())
+                sanitize_line(&e.to_string())
             );
             CliExitCode::EnvironmentError
         }),
@@ -206,7 +206,7 @@ fn setup(
     let registry = build_registry(&config).map_err(|e| {
         eprintln!(
             "Error initializing providers: {}",
-            sanitize_for_terminal(&chain(&e))
+            sanitize_line(&chain(&e))
         );
         CliExitCode::EnvironmentError
     })?;

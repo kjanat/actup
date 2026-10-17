@@ -9,7 +9,7 @@ use std::{
 use actup_core::{
     Config,
     cache::{self, Cache},
-    sanitize_for_terminal, sanitize_line,
+    sanitize_line,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -262,11 +262,7 @@ fn path(format: OutputFormat, cache_dir: Option<&Path>) -> i32 {
 }
 
 fn report_failure(what: &str, error: &dyn std::fmt::Display) -> i32 {
-    eprintln!(
-        "{}: {}",
-        what.red(),
-        sanitize_for_terminal(&error.to_string())
-    );
+    eprintln!("{}: {}", what.red(), sanitize_line(&error.to_string()));
     3
 }
 

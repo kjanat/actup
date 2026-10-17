@@ -155,12 +155,12 @@ for piped output. `NO_COLOR` wins when both are set.
 
 Human output and LSP messages replace control characters other than tab and line
 feed, zero-width and bidi control characters, and the byte order mark with
-U+FFFD. In paths, `uses:` values, refs, versions and reasons they replace line
-feeds too. JSON and TOML output keep the raw text. Human output and logs replace
-the first colon of any line that starts with `::` with U+FFFD. A GitHub Actions
-runner then reads only `--github-annotations` lines as workflow commands.
-Annotations percent-encode `%`, CR and LF, and also `:` and `,` in the file
-name.
+U+FFFD. In paths, `uses:` values, refs, versions, reasons and error messages
+they replace line feeds too. JSON and TOML output keep the raw text. Human
+output and logs replace the first colon of any line that starts with `::` with
+U+FFFD. A GitHub Actions runner then reads only `--github-annotations` lines as
+workflow commands. Annotations percent-encode `%`, CR and LF, and also `:` and
+`,` in the file name.
 
 With `--format json` or `toml`, `check` prints one entry per finding and
 `update` and `pin` print a report with `dry_run` and the lists `edited`,

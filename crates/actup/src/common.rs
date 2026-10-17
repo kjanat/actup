@@ -12,7 +12,7 @@ use actup_core::{
     cache::Staleness,
     discover_files, parse_uses,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
-    provider, resolve_within, rewrite_atomic, sanitize_for_terminal, sanitize_line, version,
+    provider, resolve_within, rewrite_atomic, sanitize_line, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -425,7 +425,7 @@ pub fn commit_file(
     if let Err(refusal) = outcome {
         let message = refusal.message(path.display());
         let shown = refusal.message(sanitize_line(&path.display().to_string()));
-        eprintln!("{}: {}", "Error".red(), sanitize_for_terminal(&shown));
+        eprintln!("{}: {}", "Error".red(), sanitize_line(&shown));
         for (change, _) in written {
             if matches!(refusal, WriteRefusal::Invalid(_)) {
                 result.errors.record_user();
@@ -553,7 +553,7 @@ impl<'a> WorkflowScanner<'a> {
                     "{}: {} - {}",
                     "Warning".yellow(),
                     sanitize_line(&file.path().display().to_string()),
-                    sanitize_for_terminal(&e.to_string())
+                    sanitize_line(&e.to_string())
                 );
                 errors.record_env();
                 Err(format!("{}: {e}", file.path().display()))

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use actup_core::{
     Config, ConfigSource, Registration, effective_host, iter_config_candidates,
-    resolve_default_host, sanitize_for_terminal, sanitize_line,
+    resolve_default_host, sanitize_line,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -162,7 +162,7 @@ fn display_hosts(config: &Config, registrations: &[&'static Registration]) {
             println!(
                 "  default_host: {} {}",
                 "(error)".red(),
-                sanitize_for_terminal(&e.to_string())
+                sanitize_line(&e.to_string())
             );
             println!();
             return;
@@ -286,7 +286,7 @@ fn display_effective_host(
             println!(
                 "    {} {}{}",
                 "error:".red(),
-                sanitize_for_terminal(&e.to_string()),
+                sanitize_line(&e.to_string()),
                 entry_note
             );
         }
