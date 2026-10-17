@@ -29,6 +29,7 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 | `text`             | Sanitize text for terminal and editor output              | `sanitize_for_terminal`, `sanitize_line`               |
 | `url_path`         | Percent-encode the path and query parts of provider URLs  | `encode_path`, `encode_segment`                        |
 | `yaml`             | Load YAML config and `action.yml` with the runner's rules | `Dialect`, `from_str`, `Error`                         |
+| `yaml/`            | Unicode tables for `yaml`                                 | `SIMPLE_UPPER`                                         |
 
 ### Config Submodule (`config/`)
 
@@ -45,6 +46,12 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 `config/resolution.rs` handles the full provider config resolution algorithm:
 merging presets, inferring api_base, resolving token_env, validating host
 configs.
+
+### YAML Submodule (`yaml/`)
+
+| File              | Purpose                                                        |
+| ----------------- | -------------------------------------------------------------- |
+| `simple_upper.rs` | Unicode 15.0 simple uppercase table for `Dialect::Runner` keys |
 
 ## Where to Look
 

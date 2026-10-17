@@ -601,22 +601,42 @@ runs:
                 "duplicate key `token` at line 3, column 3",
             ),
             (
+                "inputs:\n  \u{1F88}: {}\n  \u{1F80}: {}\n",
+                "duplicate key `\u{1F80}` at line 3, column 3",
+            ),
+            (
                 "inputs:\n  t:\n    default: !!int \"1\"\n",
                 "tag `!!int` needs a plain scalar at line 3, column 20",
             ),
             (
-                "inputs:\n  t:\n    default: 0x80000000\n",
-                "`0x80000000` is outside the 32-bit signed integer range at line 3, column 14",
+                "inputs:\n  t:\n    default: 0x100000000\n",
+                "`0x100000000` does not fit in 32 bits at line 3, column 14",
             ),
             (
                 &format!("runs:\n  steps: {}x{}\n", "[".repeat(200), "]".repeat(200)),
-                "nest deeper than 128 levels at line 2, column 136",
+                "nest deeper than 100 levels at line 2, column 108",
             ),
         ] {
             let reason = rejected(yaml);
             assert!(reason.contains(needle), "{yaml:?}: {reason}");
             assert!(!reason.contains('\n'), "{reason}");
         }
+    }
+
+    #[test]
+    fn runner_rules_accept_what_the_runner_accepts()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let parsed = parse_action_yml(
+            "inputs: !custom\n  i: {}\n  \u{0131}: {}\n  s: {}\n  \u{017F}: {}\n  ${{ a }}: {}\n  ${{ A }}: {}\n",
+            "action.yml",
+        )?;
+        assert_eq!(parsed.inputs().len(), 6);
+        let parsed = parse_action_yml("inputs:\n  t:\n    default: 0xFFFFFFFF\n", "action.yml")?;
+        assert_eq!(
+            parsed.inputs().get("t").and_then(ActionInput::default),
+            Some("0xFFFFFFFF")
+        );
+        Ok(())
     }
 
     #[test]

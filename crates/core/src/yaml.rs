@@ -1,5 +1,7 @@
 //! Loads one YAML document under the YAML 1.2 core schema that the GitHub Actions runner reads.
 
+mod simple_upper;
+
 use std::{collections::HashMap, collections::HashSet, fmt};
 
 use saphyr_parser::{Event, Parser, ScalarStyle, Span, Tag};
@@ -11,16 +13,24 @@ use serde::de::{
 /// The most nodes that alias expansion may add to one document.
 pub const MAX_EXPANDED_NODES: usize = 10_000;
 
-/// The most sequences and mappings that may nest inside each other.
-pub const MAX_DEPTH: usize = 128;
-
 /// Which reader's rules the loader applies beyond the shared scalar rules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dialect {
-    /// actup config files: aliases expand up to [`MAX_EXPANDED_NODES`] nodes and keys compare exactly.
+    /// actup config files: aliases expand up to [`MAX_EXPANDED_NODES`] nodes, keys compare exactly and collection tags must be core tags.
     Config,
-    /// Files the actions runner reads: anchors are rejected and keys compare ignoring case.
+    /// Files the actions runner reads: anchors are rejected, keys compare as .NET `OrdinalIgnoreCase` and collection tags are ignored.
     Runner,
+}
+
+impl Dialect {
+    /// The most sequences and mappings that may nest inside each other.
+    #[must_use]
+    pub const fn max_depth(self) -> usize {
+        match self {
+            Self::Config => 128,
+            Self::Runner => 100,
+        }
+    }
 }
 
 /// A YAML load or deserialization error.
@@ -90,8 +100,8 @@ impl de::Error for Error {
 /// Returns [`Error`] for invalid YAML, a `<<` merge key, a duplicate or
 /// non-scalar mapping key, a tag outside the core schema, a second document,
 /// a tag on a quoted or block scalar other than `!!str`, a `0x` or `0o`
-/// integer outside the 32-bit signed range, nesting past [`MAX_DEPTH`], an
-/// anchor or key that `dialect` rejects, alias expansion past
+/// integer wider than 32 bits, nesting past [`Dialect::max_depth`], an
+/// anchor, key or tag that `dialect` rejects, alias expansion past
 /// [`MAX_EXPANDED_NODES`], or a document that does not fit `T`.
 pub fn from_str<T: DeserializeOwned>(text: &str, dialect: Dialect) -> Result<T, Error> {
     T::deserialize(&load(text, dialect)?)
@@ -195,7 +205,7 @@ fn load(text: &str, dialect: Dialect) -> Result<Node, Error> {
                 loader.push(node)?;
             }
             Event::SequenceStart(anchor, tag) => {
-                expect_tag(tag.as_deref(), CoreTag::Seq, mark)?;
+                loader.expect_tag(tag.as_deref(), CoreTag::Seq, mark)?;
                 loader.open(anchor, mark)?;
                 loader.stack.push(Frame::Seq {
                     mark,
@@ -204,7 +214,7 @@ fn load(text: &str, dialect: Dialect) -> Result<Node, Error> {
                 });
             }
             Event::MappingStart(anchor, tag) => {
-                expect_tag(tag.as_deref(), CoreTag::Map, mark)?;
+                loader.expect_tag(tag.as_deref(), CoreTag::Map, mark)?;
                 loader.open(anchor, mark)?;
                 loader.stack.push(Frame::Map {
                     mark,
@@ -236,13 +246,18 @@ impl Loader {
     }
 
     fn check_depth(&self, height: usize, mark: Mark) -> Result<(), Error> {
-        if self.stack.len().saturating_add(height) > MAX_DEPTH {
+        let max = self.dialect.max_depth();
+        if self.stack.len().saturating_add(height) > max {
             return Err(Error::at(
-                format!("sequences and mappings nest deeper than {MAX_DEPTH} levels"),
+                format!("sequences and mappings nest deeper than {max} levels"),
                 mark,
             ));
         }
         Ok(())
+    }
+
+    fn expect_tag(&self, tag: Option<&Tag>, kind: CoreTag, mark: Mark) -> Result<(), Error> {
+        expect_tag(self.dialect, tag, kind, mark)
     }
 
     fn open(&self, anchor: usize, mark: Mark) -> Result<(), Error> {
@@ -347,10 +362,11 @@ impl Loader {
                     return Err(Error::at("merge keys are not supported", node.mark));
                 }
                 let folded = match dialect {
-                    Dialect::Config => text.clone(),
-                    Dialect::Runner => fold_case(text),
+                    Dialect::Config => Some(text.clone()),
+                    Dialect::Runner if text.contains("${{") => None,
+                    Dialect::Runner => Some(fold_case(text)),
                 };
-                if !seen.insert(folded) {
+                if folded.is_some_and(|folded| !seen.insert(folded)) {
                     return Err(Error::at(format!("duplicate key `{text}`"), node.mark));
                 }
                 *key = Some(node);
@@ -391,7 +407,10 @@ fn tag_name(tag: &Tag) -> String {
     }
 }
 
-fn expect_tag(tag: Option<&Tag>, kind: CoreTag, mark: Mark) -> Result<(), Error> {
+fn expect_tag(dialect: Dialect, tag: Option<&Tag>, kind: CoreTag, mark: Mark) -> Result<(), Error> {
+    if dialect == Dialect::Runner {
+        return Ok(());
+    }
     match tag.map(|t| core_tag(t, mark)).transpose()? {
         Some(found) if found != kind => Err(Error::at(
             format!(
@@ -486,11 +505,12 @@ fn resolve(text: &str) -> Result<Scalar, String> {
         if let Some(body) = text.strip_prefix(prefix)
             && digits(body, radix)
         {
-            return i32::from_str_radix(body, radix)
-                .ok()
-                .and_then(|n| u64::try_from(n).ok())
-                .map(Scalar::Unsigned)
-                .ok_or_else(|| format!("`{text}` is outside the 32-bit signed integer range"));
+            let n = u32::from_str_radix(body, radix)
+                .map_err(|_| format!("`{text}` does not fit in 32 bits"))?
+                .cast_signed();
+            return Ok(
+                u64::try_from(n).map_or_else(|_| Scalar::Signed(i64::from(n)), Scalar::Unsigned)
+            );
         }
     }
     if digits(unsigned, 10) {
@@ -512,11 +532,11 @@ fn resolve(text: &str) -> Result<Scalar, String> {
 fn fold_case(text: &str) -> String {
     text.chars()
         .map(|c| {
-            let mut upper = c.to_uppercase();
-            match (upper.next(), upper.next()) {
-                (Some(u), None) => u,
-                _ => c,
-            }
+            simple_upper::SIMPLE_UPPER
+                .binary_search_by_key(&c, |&(lower, _)| lower)
+                .ok()
+                .and_then(|i| simple_upper::SIMPLE_UPPER.get(i))
+                .map_or(c, |&(_, upper)| upper)
         })
         .collect()
 }
@@ -659,6 +679,10 @@ mod tests {
             ("-0x1", Scalar::Str),
             ("0x7FFFFFFF", Scalar::Unsigned(2_147_483_647)),
             ("0o17777777777", Scalar::Unsigned(2_147_483_647)),
+            ("0x80000000", Scalar::Signed(-2_147_483_648)),
+            ("0xFFFFFFFF", Scalar::Signed(-1)),
+            ("0o37777777777", Scalar::Signed(-1)),
+            ("0x0000000000001", Scalar::Unsigned(1)),
             ("1_000", Scalar::Str),
             ("1.5", Scalar::Float(1.5)),
             ("-.5", Scalar::Float(-0.5)),
@@ -689,26 +713,27 @@ mod tests {
                 "{text}"
             );
         }
-        for text in ["0x80000000", "0o20000000000", "0x10000000000000000"] {
+        for text in ["0x100000000", "0o40000000000", "0x10000000000000000"] {
             assert_eq!(
                 resolve(text),
-                Err(format!(
-                    "`{text}` is outside the 32-bit signed integer range"
-                )),
+                Err(format!("`{text}` does not fit in 32 bits"))
             );
         }
     }
 
     #[test]
-    fn out_of_range_hex_fails_at_its_scalar() {
-        let Err(err) = from_str::<HashMap<String, u64>>("a: 1\nb: 0x80000000\n", Dialect::Config)
+    fn out_of_range_hex_fails_at_its_scalar() -> Result<(), Error> {
+        let wrapped: HashMap<String, i64> = from_str("a: 0xFFFFFFFF\n", Dialect::Runner)?;
+        assert_eq!(wrapped.get("a"), Some(&-1));
+        let Err(err) = from_str::<HashMap<String, i64>>("a: 1\nb: 0x100000000\n", Dialect::Config)
         else {
-            panic!("0x80000000 must be rejected");
+            panic!("0x100000000 must be rejected");
         };
         assert_eq!(
             err.to_string(),
-            "`0x80000000` is outside the 32-bit signed integer range at line 2, column 4"
+            "`0x100000000` does not fit in 32 bits at line 2, column 4"
         );
+        Ok(())
     }
 
     #[test]
@@ -721,22 +746,28 @@ mod tests {
                 + " x\n"
         };
         let flow = |depth: usize| format!("{}x{}", "[".repeat(depth), "]".repeat(depth));
-        from_str::<figment::value::Value>(&block(MAX_DEPTH), Dialect::Config)?;
-        from_str::<figment::value::Value>(&flow(MAX_DEPTH), Dialect::Config)?;
-        for (text, line, column) in [(block(MAX_DEPTH + 1), 129, 257), (flow(200), 1, 129)] {
-            let Err(err) = from_str::<figment::value::Value>(&text, Dialect::Config) else {
-                panic!("nesting past {MAX_DEPTH} must fail");
-            };
-            assert_eq!(
-                err.to_string(),
-                format!(
-                    "sequences and mappings nest deeper than 128 levels at line {line}, column {column}"
-                )
-            );
+        for (dialect, max) in [(Dialect::Config, 128), (Dialect::Runner, 100)] {
+            assert_eq!(dialect.max_depth(), max);
+            from_str::<figment::value::Value>(&block(max), dialect)?;
+            from_str::<figment::value::Value>(&flow(max), dialect)?;
+            for (text, line, column) in [
+                (block(max + 1), max + 1, 2 * max + 1),
+                (flow(200), 1, max + 1),
+            ] {
+                let Err(err) = from_str::<figment::value::Value>(&text, dialect) else {
+                    panic!("nesting past {max} must fail");
+                };
+                assert_eq!(
+                    err.to_string(),
+                    format!(
+                        "sequences and mappings nest deeper than {max} levels at line {line}, column {column}"
+                    )
+                );
+            }
         }
-        let aliased = format!("a: &a {}\nb: [*a]\n", flow(MAX_DEPTH - 1));
+        let aliased = format!("a: &a {}\nb: [*a]\n", flow(127));
         let Err(err) = from_str::<figment::value::Value>(&aliased, Dialect::Config) else {
-            panic!("an alias past {MAX_DEPTH} levels must fail");
+            panic!("an alias past 128 levels must fail");
         };
         assert!(
             err.to_string()
@@ -758,20 +789,58 @@ mod tests {
     }
 
     #[test]
-    fn runner_keys_compare_ignoring_case() -> Result<(), Error> {
+    fn runner_keys_compare_as_dotnet_ordinal_ignore_case() -> Result<(), Error> {
         let text = "Token: a\ntoken: b\n";
         let config: HashMap<String, String> = from_str(text, Dialect::Config)?;
         assert_eq!(config.len(), 2);
-        for text in [text, "é: a\nÉ: b\n"] {
-            let Err(err) = from_str::<HashMap<String, String>>(text, Dialect::Runner) else {
+        for (upper, lower) in [
+            ("Token", "token"),
+            ("É", "é"),
+            ("\u{1F88}", "\u{1F80}"),
+            ("\u{1FBC}", "\u{1FB3}"),
+            ("\u{1FCC}", "\u{1FC3}"),
+            ("\u{1FFC}", "\u{1FF3}"),
+            ("\u{01C4}", "\u{01C5}"),
+            ("\u{01C5}", "\u{01C6}"),
+            ("\u{10400}", "\u{10428}"),
+        ] {
+            let text = format!("{upper}: a\n{lower}: b\n");
+            let Err(err) = from_str::<HashMap<String, String>>(&text, Dialect::Runner) else {
                 panic!("{text:?} must be rejected");
             };
-            assert!(err.to_string().contains("at line 2, column 1"), "{err}");
+            assert!(
+                err.to_string()
+                    .ends_with(&format!("duplicate key `{lower}` at line 2, column 1")),
+                "{err}"
+            );
         }
-        assert_eq!(
-            from_str::<HashMap<String, String>>("ss: a\nß: b\n", Dialect::Runner)?.len(),
-            2
-        );
+        for (a, b) in [
+            ("ss", "ß"),
+            ("i", "\u{0131}"),
+            ("I", "\u{0131}"),
+            ("s", "\u{017F}"),
+            ("S", "\u{017F}"),
+            ("\u{10D50}", "\u{10D70}"),
+            ("\u{16EA0}", "\u{16EBB}"),
+            ("${{ a }}", "${{ a }}"),
+            ("x-${{ A }}", "x-${{ a }}"),
+        ] {
+            let text = format!("{a}: a\n{b}: b\n");
+            let loaded = from_str::<figment::value::Value>(&text, Dialect::Runner);
+            assert!(loaded.is_ok(), "{text:?}: {loaded:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn runner_ignores_tags_on_collections() -> Result<(), Error> {
+        for text in ["x: !custom {a: 1}\n", "x: !!str [1]\n", "x: !!seq {a: 1}\n"] {
+            from_str::<figment::value::Value>(text, Dialect::Runner)?;
+            let Err(err) = from_str::<figment::value::Value>(text, Dialect::Config) else {
+                panic!("{text:?} must be rejected in config");
+            };
+            assert!(err.to_string().contains("tag `"), "{err}");
+        }
         Ok(())
     }
 
@@ -920,7 +989,7 @@ mod tests {
             ),
         ] {
             let Err(err) =
-                from_str::<HashMap<String, figment::value::Value>>(text, Dialect::Runner)
+                from_str::<HashMap<String, figment::value::Value>>(text, Dialect::Config)
             else {
                 panic!("{text:?} must be rejected");
             };

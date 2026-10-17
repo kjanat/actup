@@ -2213,8 +2213,8 @@ mod tests {
                 "a mapping key must be a scalar at line 1, column 3",
             ),
             (
-                "fetch:\n  max_tags_per_repo: 0x80000000\n",
-                "`0x80000000` is outside the 32-bit signed integer range at line 2, column 22",
+                "fetch:\n  max_tags_per_repo: 0x100000000\n",
+                "`0x100000000` does not fit in 32 bits at line 2, column 22",
             ),
             (
                 "fetch:\n  max_tags_per_repo: !!int \"12\"\n",
