@@ -1973,6 +1973,50 @@ mod cli_runs {
         Ok(())
     }
 
+    fn clap_output_colored(
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let home = TempDir::new()?;
+        let mut cmd = actup(home.path());
+        cmd.args(args);
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let output = cmd.output()?;
+        assert!(
+            !output.stdout.is_empty() || !output.stderr.is_empty(),
+            "{args:?} {env:?}"
+        );
+        Ok(output.stdout.contains(&0x1b) || output.stderr.contains(&0x1b))
+    }
+
+    #[test]
+    fn help_and_usage_errors_follow_the_color_choice() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(!clap_output_colored(&["--help"], &[])?);
+        assert!(clap_output_colored(&["--color", "always", "--help"], &[])?);
+        assert!(clap_output_colored(&["--help", "--color=always"], &[])?);
+        assert!(clap_output_colored(
+            &["check", "-h", "--color", "always"],
+            &[]
+        )?);
+        assert!(clap_output_colored(
+            &["--help"],
+            &[("ACTUP_COLOR", "always")]
+        )?);
+        assert!(clap_output_colored(&["--color", "always", "--bogus"], &[])?);
+        assert!(clap_output_colored(&[], &[("ACTUP_COLOR", "always")])?);
+        assert!(!clap_output_colored(
+            &["--color", "never", "--help"],
+            &[("CLICOLOR_FORCE", "1")]
+        )?);
+        assert!(!clap_output_colored(
+            &["--color", "never", "--bogus"],
+            &[("CLICOLOR_FORCE", "1")]
+        )?);
+        Ok(())
+    }
+
     #[test]
     fn help_opens_with_the_program_description() -> Result<(), Box<dyn std::error::Error>> {
         let home = TempDir::new()?;

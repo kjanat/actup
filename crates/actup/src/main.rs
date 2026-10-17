@@ -83,7 +83,9 @@ async fn run(cli: Cli) -> i32 {
 
     // No subcommand and no positional action argument: print help
     if cli.command.is_none() && cli.latest.action.is_none() {
-        let _ = <Cli as clap::CommandFactory>::command().print_help();
+        let _ = <Cli as clap::CommandFactory>::command()
+            .color(cli.color)
+            .print_help();
         println!();
         return CliExitCode::Success.into();
     }

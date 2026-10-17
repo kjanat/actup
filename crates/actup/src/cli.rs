@@ -80,7 +80,8 @@ impl Cli {
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
     {
-        let mut command = ignore_empty_env(Self::command());
+        let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
+        let mut command = ignore_empty_env(Self::command()).color(Self::color_in(&args));
         let mut matches = command.try_get_matches_from_mut(args)?;
         if let Some(subcommand) = matches.subcommand_name() {
             let conflicts: Vec<String> = command
@@ -107,6 +108,25 @@ impl Cli {
             ));
         }
         Ok(cli)
+    }
+
+    /// The `--color` choice in `args` or the environment, read before the full parse so clap's own help and errors follow it.
+    fn color_in(args: &[OsString]) -> ColorChoice {
+        let mut given = None;
+        let mut rest = args.iter().skip(1).map(|arg| arg.to_str());
+        while let Some(arg) = rest.next() {
+            match arg {
+                Some("--") => break,
+                Some("--color") => given = rest.next().flatten().or(given),
+                Some(arg) => given = arg.strip_prefix("--color=").or(given),
+                None => {}
+            }
+        }
+        let env = std::env::var(config::COLOR_VAR).ok();
+        given
+            .or(env.as_deref())
+            .and_then(|value| ColorChoice::from_str(value, true).ok())
+            .unwrap_or_default()
     }
 
     /// The colour choice `--color` selects for stdout and stderr.
