@@ -429,7 +429,6 @@ function isNotFound(err: unknown): boolean {
 	return err instanceof GitHubProviderError && err.status === 404;
 }
 
-/** Matches `actup_core::version::is_short_sha`. */
 const SHORT_SHA = /^[0-9a-fA-F]{7,39}$/;
 
 async function resolveBranchOrCommit(

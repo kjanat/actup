@@ -56,13 +56,30 @@ pub enum RefKind {
     Sha,
 }
 
-impl std::fmt::Display for RefKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl RefKind {
+    /// The lowercase name of the kind, like `tag`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
             Self::Tag => "tag",
             Self::Branch => "branch",
             Self::Sha => "sha",
-        })
+        }
+    }
+
+    /// The name of `kind`, or `ref` when the version set does not list the ref.
+    #[must_use]
+    pub const fn noun(kind: Option<Self>) -> &'static str {
+        match kind {
+            Some(kind) => kind.as_str(),
+            None => "ref",
+        }
+    }
+}
+
+impl std::fmt::Display for RefKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -184,18 +201,16 @@ pub enum CheckStatus {
     },
     /// Action is in the ignore list
     Ignored,
-    /// Action references a floating branch (or non-semver tag) under `warn`
-    /// branch policy: the ref resolves, but it moves, so it is advisory only.
+    /// Action references a branch or non-semver tag under `warn` branch policy.
     Floating {
-        /// The branch or non-semver ref that floats
+        /// The branch or non-semver tag that floats
         ref_name: String,
     },
-    /// Action references a floating branch (or non-semver tag) under `update`
-    /// branch policy: it should be pinned to the ref's current commit SHA.
+    /// Action references a branch or non-semver tag under `update` branch policy.
     PinBranch {
-        /// The branch ref to pin (used for the `# branch` comment)
+        /// The ref to pin, named in the `# <ref>` comment
         ref_name: String,
-        /// The branch's current HEAD commit SHA to pin to
+        /// The commit the ref names
         sha: String,
     },
     /// Could not resolve version info
@@ -589,9 +604,6 @@ fn check_pinned_sha(
 }
 
 /// Handle a non-semver ref on `commit` based on branch policy.
-///
-/// Under [`policy::Branch::Update`] the ref pins to `commit`, and a `# ref`
-/// comment marks what was pinned.
 fn status_for_non_semver(
     ref_name: &str,
     branch_policy: policy::Branch,
@@ -1236,6 +1248,29 @@ mod tests {
             }
         );
         assert_eq!(result.ref_kind(), None);
+    }
+
+    #[tokio::test]
+    async fn test_update_pins_an_unlisted_v_major_ref_to_the_resolved_commit() {
+        let action = make_action_ref("denoland", "setup-deno", "v2");
+        let versions = prerelease_set(&["v2.0.4"]);
+        let provider = ResolveMockProvider::with(Resolve::Found);
+        let result = check_action_with_provider(
+            &action,
+            &versions,
+            &branch_config(policy::Branch::Update),
+            &provider,
+        )
+        .await;
+        assert_eq!(
+            result.status(),
+            &CheckStatus::PinBranch {
+                ref_name: "v2".to_string(),
+                sha: "a".repeat(40),
+            }
+        );
+        assert_eq!(result.ref_kind(), None);
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[test]
@@ -2396,6 +2431,13 @@ mod tests {
                 policy::Branch::Warn,
                 CheckStatus::Floating {
                     ref_name: "deadbee".to_string(),
+                },
+            ),
+            (
+                policy::Branch::Update,
+                CheckStatus::PinBranch {
+                    ref_name: "deadbee".to_string(),
+                    sha: "a".repeat(40),
                 },
             ),
         ] {

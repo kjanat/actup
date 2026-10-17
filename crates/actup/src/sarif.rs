@@ -1,6 +1,6 @@
 //! SARIF 2.1.0 output and GitHub Actions workflow-command annotations for `check`.
 
-use actup_core::{ActionRef, sanitize_for_terminal};
+use actup_core::{ActionRef, RefKind, sanitize_for_terminal};
 use serde_json::{Value, json};
 
 use crate::output::{Finding, FindingStatus, status_name};
@@ -128,11 +128,13 @@ fn describe(finding: &Finding) -> String {
             format!("{action}: pinned to {}{tag}", short(sha))
         }
         FindingStatus::Floating { ref_name } => {
-            format!("{action}: floating branch '{ref_name}', pin to a tag or SHA")
+            let kind = RefKind::noun(finding.ref_kind());
+            format!("{action}: floating {kind} '{ref_name}', pin to a tag or SHA")
         }
         FindingStatus::PinBranch { ref_name, sha } => {
+            let kind = RefKind::noun(finding.ref_kind());
             format!(
-                "{action}: pin branch '{ref_name}' to {} # {ref_name}",
+                "{action}: pin {kind} '{ref_name}' to {} # {ref_name}",
                 short(sha)
             )
         }
@@ -350,7 +352,8 @@ mod tests {
                 FindingStatus::Floating {
                     ref_name: "main".to_string(),
                 },
-            ),
+            )
+            .with_ref(Some(RefKind::Branch), None),
         ]
     }
 
@@ -510,7 +513,8 @@ mod tests {
                 ref_name: "main".to_string(),
                 sha: "c".repeat(40),
             },
-        );
+        )
+        .with_ref(Some(RefKind::Branch), None);
         let unknown = finding(
             "ci.yml",
             3,

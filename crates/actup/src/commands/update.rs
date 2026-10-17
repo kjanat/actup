@@ -38,7 +38,7 @@ fn target_display(action_ref: &ActionRef, target: &version::Info, style: policy:
     }
 }
 
-/// Pin a floating branch ref to its HEAD SHA, tagging it with a `# branch` comment.
+/// Pin a branch or non-semver tag to its commit SHA with a `# <ref>` comment.
 fn pin_branch_edit(loc: &UsesLocation, ref_name: &str, sha: &str) -> Option<PendingEdit> {
     ref_edit(loc, sha).map(|edit| edit.with_comment(format!(" # {ref_name}")))
 }

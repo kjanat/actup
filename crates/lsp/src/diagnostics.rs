@@ -434,6 +434,7 @@ fn status_to_diagnostic(
     edit: Option<OutdatedEdit>,
     ref_kind: Option<RefKind>,
 ) -> Option<Diagnostic> {
+    let kind = RefKind::noun(ref_kind);
     match status {
         CheckStatus::UpToDate | CheckStatus::Ignored => None,
 
@@ -501,7 +502,7 @@ fn status_to_diagnostic(
             code: Some(NumberOrString::String("floating".into())),
             source: Some(DIAGNOSTIC_SOURCE.into()),
             message: format!(
-                "{uses_value}: '{ref_name}' is a floating branch ref, pin to a tag or SHA"
+                "{uses_value}: '{ref_name}' is a floating {kind}, pin to a tag or SHA"
             ),
             ..Default::default()
         }),
@@ -512,8 +513,7 @@ fn status_to_diagnostic(
             code: Some(NumberOrString::String("pin-branch".into())),
             source: Some(DIAGNOSTIC_SOURCE.into()),
             message: format!(
-                "{uses_value}: pin {} '{ref_name}' to {} # {ref_name}",
-                ref_kind.map_or_else(|| "ref".to_string(), |k| k.to_string()),
+                "{uses_value}: pin {kind} '{ref_name}' to {} # {ref_name}",
                 sha.get(..7).unwrap_or(sha)
             ),
             ..Default::default()
@@ -1366,6 +1366,40 @@ jobs:
                 &DUMMY_SHA_2[..7]
             )
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn unlisted_ref_names_no_kind() -> Result<(), Box<dyn std::error::Error>> {
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@stable\n";
+        let cases = [
+            (
+                actup_core::policy::Branch::Update,
+                "pin-branch",
+                format!(
+                    "rust-lang/crates-io-auth-action@stable: pin ref 'stable' to {} # stable",
+                    &DUMMY_SHA[..7]
+                ),
+            ),
+            (
+                actup_core::policy::Branch::Warn,
+                "floating",
+                "rust-lang/crates-io-auth-action@stable: 'stable' is a floating ref, pin to a tag or SHA"
+                    .to_string(),
+            ),
+        ];
+        for (branch, code, message) in cases {
+            let policy = actup_core::config::Policy {
+                branch,
+                ..Default::default()
+            };
+            let diags = diagnostics_under(yaml, v1_versions(None, None), policy).await?;
+            let [diag] = diags.as_slice() else {
+                return Err(format!("expected one diagnostic, got {diags:?}").into());
+            };
+            assert_eq!(diag.code, Some(NumberOrString::String(code.into())));
+            assert_eq!(diag.message, message);
+        }
         Ok(())
     }
 

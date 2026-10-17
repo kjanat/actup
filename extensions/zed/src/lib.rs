@@ -7,7 +7,8 @@ mod provider;
 use std::{collections::HashMap, env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
-    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, ConfigSource, UsesLocation,
+    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, ConfigSource, RefKind,
+    UsesLocation,
     config::{EnvOverrides, repo_candidates},
     extract_uses_from_yaml,
 };
@@ -530,20 +531,21 @@ fn discover_workflow_files(worktree: &zed::Worktree) -> Vec<(String, String)> {
     files
 }
 
-/// Render the "Pin branch" section: branch refs to pin to their HEAD SHA.
+/// Render the "Pin" section: branches and non-semver tags to pin to their commit SHA.
 fn write_pin_branch_section(out: &mut String, pin_branch: &[&(String, UsesLocation, CheckResult)]) {
     if pin_branch.is_empty() {
         return;
     }
-    out.push_str("### Pin branch\n\n");
+    out.push_str("### Pin\n\n");
     for (path, uses_loc, result) in pin_branch {
         if let CheckStatus::PinBranch { ref_name, sha } = result.status() {
             let short = sha.get(..7).unwrap_or(sha);
             let _ = writeln!(
                 out,
-                "- `{path}` line {}: `{}` — pin `{ref_name}` to `{short}`",
+                "- `{path}` line {}: `{}` — pin {} `{ref_name}` to `{short}`",
                 uses_loc.line(),
                 uses_loc.value(),
+                RefKind::noun(result.ref_kind()),
             );
         }
     }
@@ -589,7 +591,7 @@ fn format_check_output(
     let unknown = ref_count.saturating_sub(results.len());
     let _ = writeln!(
         out,
-        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} branch refs to pin, {} ignored, {} unknown, {} unresolvable\n",
+        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} refs to pin, {} ignored, {} unknown, {} unresolvable\n",
         outdated.len(),
         up_to_date,
         pinned,
@@ -617,16 +619,17 @@ fn format_check_output(
         out.push('\n');
     }
 
-    // Floating branch refs
+    // Floating refs
     if !floating.is_empty() {
         out.push_str("### Floating\n\n");
         for (path, uses_loc, result) in &floating {
             if let CheckStatus::Floating { ref_name } = result.status() {
                 let _ = writeln!(
                     out,
-                    "- `{path}` line {}: `{}` — floating branch `{ref_name}`, pin to a tag or SHA",
+                    "- `{path}` line {}: `{}` — floating {} `{ref_name}`, pin to a tag or SHA",
                     uses_loc.line(),
                     uses_loc.value(),
+                    RefKind::noun(result.ref_kind()),
                 );
             }
         }
@@ -965,7 +968,15 @@ mod tests {
 
         let text = format_check_output(&loaded("actup.toml"), &results, &fetch_errors, 1, 9);
         assert!(
-            text.contains("**Summary:** 1 outdated, 1 up-to-date, 1 pinned, 1 floating, 1 branch refs to pin, 1 ignored, 2 unknown, 1 unresolvable\n"),
+            text.contains("**Summary:** 1 outdated, 1 up-to-date, 1 pinned, 1 floating, 1 refs to pin, 1 ignored, 2 unknown, 1 unresolvable\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("### Pin\n\n- `ci.yml` line 6: `o/r@v4` — pin ref `main` to `aaaaaaa`\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("line 5: `o/r@v4` — floating ref `dev`, pin to a tag or SHA\n"),
             "{text}"
         );
     }
@@ -1032,7 +1043,7 @@ mod tests {
         );
 
         assert!(
-            text.contains("**Summary:** 0 outdated, 1 up-to-date, 0 pinned, 0 floating, 0 branch refs to pin, 0 ignored, 3 unknown, 1 unresolvable\n"),
+            text.contains("**Summary:** 0 outdated, 1 up-to-date, 0 pinned, 0 floating, 0 refs to pin, 0 ignored, 3 unknown, 1 unresolvable\n"),
             "{text}"
         );
         assert!(

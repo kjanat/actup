@@ -279,10 +279,10 @@ pub enum FindingStatus {
     },
     /// Action is pinned to a specific SHA.
     Pinned { sha: String, tag: Option<String> },
-    /// Action references a floating branch under `warn` branch policy.
+    /// Action references a branch or non-semver tag under `warn` branch policy.
     Floating { ref_name: String },
-    /// Action references a floating branch under `update` branch policy, to be
-    /// pinned to the branch's current HEAD SHA.
+    /// Action references a branch or non-semver tag under `update` branch policy,
+    /// to be pinned to its commit SHA.
     PinBranch { ref_name: String, sha: String },
     /// Action ref exists but version comparison unavailable.
     ///
@@ -469,7 +469,7 @@ fn print_finding_line(finding: &Finding) {
                 "{}{}  {}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                format!("floating branch '{ref_name}' — pin to a tag or SHA").yellow()
+                floating_label(finding, &ref_name).yellow()
             );
         }
         FindingStatus::PinBranch { ref_name, sha } => {
@@ -525,10 +525,13 @@ fn kind_note(finding: &Finding) -> String {
         .map_or_else(String::new, |k| format!(" ({k})"))
 }
 
+fn floating_label(finding: &Finding, ref_name: &str) -> String {
+    let kind = RefKind::noun(finding.ref_kind());
+    format!("floating {kind} '{ref_name}' — pin to a tag or SHA")
+}
+
 fn pin_label(finding: &Finding, ref_name: &str, sha: &str) -> String {
-    let kind = finding
-        .ref_kind()
-        .map_or_else(|| "ref".to_string(), |k| k.to_string());
+    let kind = RefKind::noun(finding.ref_kind());
     format!(
         "pin {kind} '{ref_name}' -> {} # {ref_name}",
         sha.get(..7).unwrap_or(sha)
@@ -657,7 +660,7 @@ fn summary_line(findings: &[Finding]) -> String {
     let sha_pinned = findings.iter().filter(|f| f.action_ref().is_sha()).count();
 
     format!(
-        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {same_commit} same commit, {pinned} pinned, {floating} floating, {to_pin} branch refs to pin, {unknown} unknown, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
+        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {same_commit} same commit, {pinned} pinned, {floating} floating, {to_pin} refs to pin, {unknown} unknown, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
         if total == 1 { "" } else { "s" }
     )
 }
@@ -877,6 +880,31 @@ mod tests {
     }
 
     #[test]
+    fn floating_label_names_the_ref_kind() {
+        let finding = |kind| {
+            make_finding(
+                "ci.yml",
+                3,
+                make_action_ref("dtolnay", "rust-toolchain", "nightly"),
+                FindingStatus::Floating {
+                    ref_name: "nightly".to_string(),
+                },
+            )
+            .with_ref(kind, None)
+        };
+        let label = |kind| floating_label(&finding(kind), "nightly");
+        assert_eq!(
+            label(Some(RefKind::Tag)),
+            "floating tag 'nightly' — pin to a tag or SHA"
+        );
+        assert_eq!(
+            label(Some(RefKind::Branch)),
+            "floating branch 'nightly' — pin to a tag or SHA"
+        );
+        assert_eq!(label(None), "floating ref 'nightly' — pin to a tag or SHA");
+    }
+
+    #[test]
     fn same_commit_label_on_a_less_specific_target_offers_no_pin() {
         let finding = make_finding(
             "ci.yml",
@@ -900,7 +928,7 @@ mod tests {
         let findings = vec![same_commit_finding(), bump_finding()];
         assert_eq!(
             summary_line(&findings),
-            "Scanned 2 actions: 0 up to date, 0 ignored, 1 outdated, 1 same commit, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 2 SHA-pinned"
+            "Scanned 2 actions: 0 up to date, 0 ignored, 1 outdated, 1 same commit, 0 pinned, 0 floating, 0 refs to pin, 0 unknown, 0 unresolvable; 0 of 2 SHA-pinned"
         );
         print_human(&findings);
     }
@@ -1570,7 +1598,7 @@ mod tests {
         print_summary(&findings);
         assert_eq!(
             summary_line(&findings),
-            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 same commit, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 1 SHA-pinned"
+            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 same commit, 0 pinned, 0 floating, 0 refs to pin, 0 unknown, 0 unresolvable; 0 of 1 SHA-pinned"
         );
     }
 
@@ -1630,7 +1658,7 @@ mod tests {
 
         assert_eq!(
             summary_line(&findings),
-            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 0 same commit, 1 pinned, 0 floating, 1 branch refs to pin, 0 unknown, 1 unresolvable; 1 of 6 SHA-pinned"
+            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 0 same commit, 1 pinned, 0 floating, 1 refs to pin, 0 unknown, 1 unresolvable; 1 of 6 SHA-pinned"
         );
     }
 
@@ -1693,7 +1721,7 @@ mod tests {
         assert_eq!(counts.total(), findings.len());
         assert_eq!(
             summary_line(&findings),
-            "Scanned 9 actions: 1 up to date, 1 ignored, 1 outdated, 0 same commit, 1 pinned, 1 floating, 1 branch refs to pin, 1 unknown, 2 unresolvable; 0 of 9 SHA-pinned"
+            "Scanned 9 actions: 1 up to date, 1 ignored, 1 outdated, 0 same commit, 1 pinned, 1 floating, 1 refs to pin, 1 unknown, 2 unresolvable; 0 of 9 SHA-pinned"
         );
     }
 
@@ -1702,7 +1730,7 @@ mod tests {
         let findings: Vec<Finding> = vec![];
         assert_eq!(
             summary_line(&findings),
-            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 same commit, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 0 SHA-pinned"
+            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 same commit, 0 pinned, 0 floating, 0 refs to pin, 0 unknown, 0 unresolvable; 0 of 0 SHA-pinned"
         );
     }
 

@@ -246,6 +246,7 @@ fn repo_link(action_ref: &ActionRef, default_host: Option<&str>) -> String {
 
 /// Format version status information for hover display.
 fn format_version_status(status: &CheckStatus, ref_kind: Option<RefKind>) -> String {
+    let kind = RefKind::noun(ref_kind);
     match status {
         CheckStatus::UpToDate => "Up to date".to_owned(),
         CheckStatus::Outdated { current, target } => {
@@ -267,12 +268,11 @@ fn format_version_status(status: &CheckStatus, ref_kind: Option<RefKind>) -> Str
         }
         CheckStatus::Ignored => "Ignored by config".to_owned(),
         CheckStatus::Floating { ref_name } => {
-            format!("**Floating branch** `{ref_name}` — pin to a tag or SHA")
+            format!("**Floating {kind}** `{ref_name}` — pin to a tag or SHA")
         }
         CheckStatus::PinBranch { ref_name, sha } => {
             format!(
-                "**Pin {}** `{ref_name}` -> `{}` # {ref_name}",
-                ref_kind.map_or_else(|| "ref".to_string(), |k| k.to_string()),
+                "**Pin {kind}** `{ref_name}` -> `{}` # {ref_name}",
                 sha.get(..12).unwrap_or(sha)
             )
         }
@@ -763,6 +763,20 @@ mod tests {
         );
         assert!(pin(Some(RefKind::Branch)).starts_with("**Pin branch** `nightly`"));
         assert!(pin(None).starts_with("**Pin ref** `nightly`"));
+    }
+
+    #[test]
+    fn format_version_status_floating_names_the_ref_kind() {
+        let status = CheckStatus::Floating {
+            ref_name: "nightly".into(),
+        };
+        let floating = |kind| format_version_status(&status, kind);
+        assert_eq!(
+            floating(Some(RefKind::Tag)),
+            "**Floating tag** `nightly` — pin to a tag or SHA"
+        );
+        assert!(floating(Some(RefKind::Branch)).starts_with("**Floating branch** `nightly`"));
+        assert!(floating(None).starts_with("**Floating ref** `nightly`"));
     }
 
     #[test]
