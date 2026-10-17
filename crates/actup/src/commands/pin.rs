@@ -252,15 +252,21 @@ async fn edit(
         Mode::Pin => true,
         Mode::Unpin => marked_pin(action_ref, loc).is_some(),
     };
+    let all_edits: Vec<FileEdits<Change>> = scan
+        .files
+        .iter()
+        .map(|file| FileEdits::new(file.path.clone(), file.content.clone(), file.format))
+        .collect();
     let versions = scan
         .fetch(&scanner, config, registry, cache, |r| {
-            wanted(&r.action_ref, &r.loc)
+            all_edits
+                .get(r.file)
+                .is_some_and(|edits| wanted(&r.action_ref, &edits.writable(&r.loc)))
         })
         .await;
 
-    for (index, file) in scan.files.iter().enumerate() {
+    for ((index, file), mut file_edits) in scan.files.iter().enumerate().zip(all_edits) {
         let relative = &file.relative;
-        let mut file_edits = FileEdits::new(file.path.clone(), file.content.clone(), file.format);
 
         for bad in scan.invalid_in(index) {
             report_invalid(
@@ -1813,6 +1819,38 @@ mod tests {
         assert_eq!(result.edited, []);
         assert_eq!(result.errored, []);
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unpin_fetches_nothing_for_a_marker_cut_from_plain_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("gen.py");
+        let content = format!("f.write(\"  - uses: o/a@{} # v4.1.0\\n\")\n", sha('a'));
+        std::fs::write(&file, &content)?;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(UnfetchableProvider));
+
+        let Some(result) = edit(
+            &file,
+            Mode::Unpin,
+            false,
+            OutputFormat::Json,
+            &uncached(),
+            &registry,
+            &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
+        )
+        .await
+        else {
+            panic!("no file found");
+        };
+
+        assert_eq!(result.edited, []);
+        assert_eq!(result.errored, []);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
     }
 
