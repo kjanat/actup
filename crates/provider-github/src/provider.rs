@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn test_process_tags_empty() {
-        let result = process_tags(vec![] as Vec<GitHubTag>);
+        let result = process_tags(Vec::<GitHubTag>::new());
         assert_eq!(result.semver_tags(), []);
         assert!(result.latest().is_none());
         assert!(result.latest_per_major().is_empty());
