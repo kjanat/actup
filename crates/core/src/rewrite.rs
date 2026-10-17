@@ -117,15 +117,36 @@ pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
     &rest[comment_start(rest)..]
 }
 
+/// What may stand between a value and the label comment that [`label_span`] reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gap {
+    /// Spaces only.
+    Spaces,
+    /// One closing quote and any `}`, `]`, `,` and spaces.
+    Closer,
+}
+
+impl Gap {
+    /// [`Gap::Closer`] after the only `uses:` value of a [`SourceFormat::Text`] line, else [`Gap::Spaces`].
+    #[must_use]
+    pub fn after(format: SourceFormat, values_on_line: usize) -> Self {
+        if format == SourceFormat::Text && values_on_line == 1 {
+            Self::Closer
+        } else {
+            Self::Spaces
+        }
+    }
+}
+
 /// The length of the `# <label> [<word>]` comment that starts `rest`, the text after a value, or 0.
 ///
-/// On a [`SourceFormat::Text`] line the comment may follow one closing quote
-/// and any `}`, `]`, `,` and spaces. It needs whitespace before its `#`. A word ends at whitespace, a quote, a
-/// backslash, a bracket, `<`, `>`, `;` or `,`, and the word after the label is
-/// read as its note. A writer reads this span on a line that takes no new
-/// comment and leaves the rest of the line as written.
+/// The comment follows `gap` and needs whitespace before its `#`. A word ends
+/// at whitespace, a quote, a backslash, a bracket, `<`, `>`, `;` or `,`, and
+/// the word after the label is read as its note. A writer reads this span on
+/// a line that takes no new comment and leaves the rest of the line as
+/// written.
 #[must_use]
-pub fn label_span(format: SourceFormat, rest: &str) -> usize {
+pub fn label_span(gap: Gap, rest: &str) -> usize {
     let is_word = |c: char| {
         !c.is_whitespace()
             && !matches!(
@@ -142,10 +163,9 @@ pub fn label_span(format: SourceFormat, rest: &str) -> usize {
         rest.get(from..)
             .map_or(from, |tail| from + tail.len() - tail.trim_start().len())
     };
-    let closing = |c: char| {
-        c.is_whitespace() || (format == SourceFormat::Text && matches!(c, '}' | ']' | ','))
-    };
-    let quote = usize::from(format == SourceFormat::Text && rest.starts_with(['"', '\'']));
+    let closing =
+        |c: char| c.is_whitespace() || (gap == Gap::Closer && matches!(c, '}' | ']' | ','));
+    let quote = usize::from(gap == Gap::Closer && rest.starts_with(['"', '\'']));
     let hash = rest
         .get(quote..)
         .and_then(|tail| tail.find(|c: char| !closing(c)))
@@ -171,12 +191,12 @@ pub fn label_span(format: SourceFormat, rest: &str) -> usize {
     }
 }
 
-/// `raw_line` up to the end of the value at byte offset `value_end` and its [`label_span`].
+/// `raw_line` up to the end of the value at byte offset `value_end` and its [`label_span`] after `gap`.
 #[must_use]
-pub fn labeled_head(format: SourceFormat, raw_line: &str, value_end: usize) -> &str {
+pub fn labeled_head(gap: Gap, raw_line: &str, value_end: usize) -> &str {
     raw_line
         .get(value_end..)
-        .and_then(|rest| raw_line.get(..value_end + label_span(format, rest)))
+        .and_then(|rest| raw_line.get(..value_end + label_span(gap, rest)))
         .unwrap_or(raw_line)
 }
 
@@ -582,7 +602,7 @@ mod tests {
     #[test]
     fn label_span_covers_the_label_and_one_note_word() {
         fn span(rest: &str) -> Option<&str> {
-            rest.get(..label_span(SourceFormat::Text, rest))
+            rest.get(..label_span(Gap::Closer, rest))
         }
         assert_eq!(span(" # v4.0.0\");"), Some(" # v4.0.0"));
         assert_eq!(span(" # v4.0.0 keep this\");"), Some(" # v4.0.0 keep"));
@@ -603,11 +623,20 @@ mod tests {
             "\"\" # v4",
             "\"}# v4",
         ] {
-            assert_eq!(label_span(SourceFormat::Text, rest), 0, "{rest:?}");
+            assert_eq!(label_span(Gap::Closer, rest), 0, "{rest:?}");
         }
-        assert_eq!(label_span(SourceFormat::Yaml, " # v4 keep x"), 10);
-        assert_eq!(label_span(SourceFormat::Yaml, " }] # v4"), 0);
-        assert_eq!(label_span(SourceFormat::Markdown, "\" # v4"), 0);
+        assert_eq!(label_span(Gap::Spaces, " # v4 keep x"), 10);
+        assert_eq!(label_span(Gap::Spaces, " }] # v4"), 0);
+        assert_eq!(label_span(Gap::Spaces, "\" # v4"), 0);
+        let gaps = [
+            (SourceFormat::Text, 1, Gap::Closer),
+            (SourceFormat::Text, 2, Gap::Spaces),
+            (SourceFormat::Yaml, 1, Gap::Spaces),
+            (SourceFormat::Markdown, 1, Gap::Spaces),
+        ];
+        for (format, values, gap) in gaps {
+            assert_eq!(Gap::after(format, values), gap, "{format:?} {values}");
+        }
     }
 
     #[test]

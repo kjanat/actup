@@ -9,7 +9,7 @@ use actup_core::{
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, RefKind, check_action_fetched},
-    rewrite::{Labels, Rewrite, Trailing, after_value, closer, comment_label, labeled_head},
+    rewrite::{Gap, Labels, Rewrite, Trailing, after_value, closer, comment_label, labeled_head},
     version,
 };
 use serde::{Deserialize, Serialize};
@@ -254,7 +254,7 @@ fn read_line(location: &UsesLocation, takes_comment: bool, ref_end: usize) -> &s
     if takes_comment {
         location.raw_line()
     } else {
-        labeled_head(SourceFormat::Yaml, location.raw_line(), ref_end)
+        labeled_head(Gap::Spaces, location.raw_line(), ref_end)
     }
 }
 

@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
     check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
-    rewrite::{Labels, Rewrite, Trailing, after_value, closer, labeled_head},
+    rewrite::{Gap, Labels, Rewrite, Trailing, after_value, closer, labeled_head},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -241,6 +241,10 @@ fn locate_uses(
 ) -> LocatedUses {
     let locations = format.extract_uses(text);
     let commentable = format.comment_lines(text);
+    let mut values_on_line: HashMap<usize, usize> = HashMap::new();
+    for loc in &locations {
+        *values_on_line.entry(loc.line()).or_insert(0) += 1;
+    }
     let mut located = LocatedUses {
         actions: Vec::with_capacity(locations.len()),
         invalid: Vec::new(),
@@ -298,7 +302,8 @@ fn locate_uses(
                 let read = if takes_comment {
                     raw_line
                 } else {
-                    labeled_head(format, raw_line, r.end)
+                    let values = values_on_line.get(&loc.line()).copied().unwrap_or(0);
+                    labeled_head(Gap::after(format, values), raw_line, r.end)
                 };
                 (
                     col_start,
@@ -2984,10 +2989,9 @@ jobs:
         .diagnostics)
     }
 
-    #[tokio::test]
-    async fn outdated_pin_in_a_text_file_rewrites_only_its_label()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let text = format!("run(\"uses: actions/checkout@{DUMMY_SHA_2} # v4.0.0 keep this\");\n");
+    async fn text_repins(
+        text: &str,
+    ) -> Result<Vec<(Option<String>, Option<u32>)>, Box<dyn std::error::Error>> {
         let latest = test_utils::make_version_info("v4.2.0", DUMMY_SHA);
         let old = test_utils::make_version_info("v4.0.0", DUMMY_SHA_2);
         let mut versions = version::Set::build(
@@ -2999,31 +3003,50 @@ jobs:
         versions.set_listing(version::Listing::Complete);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
-        let diags = diagnostics_at(provider, "/test/index.ts", &text).await?;
-        let data: Vec<Option<DiagnosticData>> = diags
+        let diags = diagnostics_at(provider, "/test/index.ts", text).await?;
+        diags
             .iter()
             .map(|d| {
-                d.data
+                match d
+                    .data
                     .clone()
                     .and_then(|data| serde_json::from_value(data).ok())
+                {
+                    Some(DiagnosticData::Outdated {
+                        target_ref,
+                        repin_comment,
+                        replace_end_col,
+                    }) if target_ref == DUMMY_SHA => Ok((repin_comment, replace_end_col)),
+                    _ => Err(format!("expected an outdated re-pin, got {d:?}").into()),
+                }
             })
-            .collect();
-        let [
-            Some(DiagnosticData::Outdated {
-                target_ref,
-                repin_comment,
-                replace_end_col,
-            }),
-        ] = data.as_slice()
-        else {
-            return Err(format!("expected one outdated diagnostic, got {diags:?}").into());
-        };
-        assert_eq!(target_ref, DUMMY_SHA);
-        assert_eq!(repin_comment.as_deref(), Some(" # v4.2.0 keep"));
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn outdated_pin_in_a_text_file_rewrites_only_its_label()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let col = |end: usize| u32::try_from(end).ok();
+        let noted = format!("run(\"uses: actions/checkout@{DUMMY_SHA_2} # v4.0.0 keep this\");\n");
         assert_eq!(
-            *replace_end_col,
-            text.find(" this").and_then(|end| u32::try_from(end).ok())
+            text_repins(&noted).await?,
+            [(
+                Some(" # v4.2.0 keep".to_string()),
+                noted.find(" this").and_then(col)
+            )]
         );
+        let closed = format!("{{\"uses\": \"actions/checkout@{DUMMY_SHA_2}\"}},  # v4.0.0 keep\n");
+        assert_eq!(
+            text_repins(&closed).await?,
+            [(
+                Some("\"}, # v4.2.0 keep".to_string()),
+                col(closed.len() - 1)
+            )]
+        );
+        let shared = format!(
+            "[{{\"uses\": \"actions/checkout@{DUMMY_SHA_2}\"}}, {{\"uses\": \"actions/checkout@{DUMMY_SHA_2}\"}}]  # v4.0.0\n"
+        );
+        assert_eq!(text_repins(&shared).await?, [(None, None), (None, None)]);
         Ok(())
     }
 

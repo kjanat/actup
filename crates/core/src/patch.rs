@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Labels, Named, Rewrite, Trailing, after_value, closer, labeled_head},
+    rewrite::{Gap, Labels, Named, Rewrite, Trailing, after_value, closer, labeled_head},
     version,
 };
 
@@ -335,7 +335,13 @@ impl<L> FileEdits<L> {
         let head = loc
             .value_range()
             .filter(|_| !self.comment_lines.contains(&loc.line()))
-            .map(|range| labeled_head(self.format, raw, range.end));
+            .map(|range| {
+                let values = match self.uses_by_line.get(&loc.line()) {
+                    Some(LineUses::One { .. }) => 1,
+                    Some(LineUses::Many) | None => 2,
+                };
+                labeled_head(Gap::after(self.format, values), raw, range.end)
+            });
         head.map_or_else(
             || loc.clone(),
             |head| {
@@ -1286,6 +1292,24 @@ mod tests {
                 "{content:?} {style}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_writable_keeps_a_comment_after_two_text_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (other, old, new) = (sha40('c'), sha40('a'), sha40('b'));
+        let target = version::Info::new(version::Version::parse("v4.2.0"), &new);
+        let line =
+            format!("[{{\"uses\": \"a/b@{other}\"}}, {{\"uses\": \"o/p@{old}\"}}]  # v4.0.0\n");
+        let locations = SourceFormat::Text.extract_uses(&line);
+        let [_, loc] = locations.as_slice() else {
+            return Err(format!("expected two `uses:`, got {locations:?}").into());
+        };
+        let mut fe = FileEdits::new(PathBuf::from("/test"), line.clone(), SourceFormat::Text);
+        let edit = repin_sha_edit(&fe.writable(loc), &target, &NO_REFS).ok_or("no edit")?;
+        fe.add(edit, ());
+        assert_eq!(fe.plan().content(), line.replace(&old, &new));
         Ok(())
     }
 
