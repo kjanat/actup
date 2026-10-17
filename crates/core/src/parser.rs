@@ -6,7 +6,7 @@
 //! - `host/owner/repo@ref` (explicit host)
 //! - `./path` (local, returned as None)
 
-use std::{net::Ipv6Addr, ops::Range};
+use std::{collections::BTreeSet, net::Ipv6Addr, ops::Range};
 
 use saphyr_parser::{Event, Parser, ScalarStyle, Span};
 
@@ -255,6 +255,21 @@ const fn classify_node(stack: &mut [Ctx]) -> NodeRole {
         Some(Ctx::Seq) => NodeRole::Item,
         None => NodeRole::Root,
     }
+}
+
+/// 1-indexed lines of `content` whose line break falls inside a scalar.
+#[must_use]
+pub fn lines_ending_in_scalars(content: &str) -> BTreeSet<usize> {
+    let body = content.strip_prefix('\u{feff}').unwrap_or(content);
+    let mut lines = BTreeSet::new();
+    for event in Parser::new_from_str(body) {
+        match event {
+            Ok((Event::Scalar(..), span)) => lines.extend(span.start.line()..span.end.line()),
+            Ok(_) => {}
+            Err(_) => break,
+        }
+    }
+    lines
 }
 
 /// Byte range of each line in `content`, excluding its `\r\n`, `\r` or `\n` break.
@@ -802,6 +817,25 @@ jobs:
     #[test]
     fn test_bom_before_a_flow_mapping() {
         assert_exact_ranges("\u{feff}{ uses: a/b@v1 }\r\n", &[(1, "a/b@v1", "v1")]);
+    }
+
+    #[test]
+    fn lines_ending_in_scalars_lists_lines_a_scalar_continues_past() {
+        let cases: [(&str, &[usize]); 6] = [
+            ("s:\n  - uses: a/b@v1\n", &[]),
+            (
+                "s:\n  - { uses: a/b@v1, name: \"multi\n    line\" }\n",
+                &[2],
+            ),
+            ("s:\n  - { uses: a/b@v1, name: multi\n    word }\n", &[2]),
+            ("s: [{ uses: a/b@v1 }, 'x\n  y\n  z']\n", &[1, 2]),
+            ("\u{feff}a: \"b\r\n  c\"\r\nd: e\r\n", &[1]),
+            ("s:\n  - { uses: a/b@v1, # c\n      id: x }\n", &[]),
+        ];
+        for (yaml, lines) in cases {
+            let found: Vec<usize> = lines_ending_in_scalars(yaml).into_iter().collect();
+            assert_eq!(found, lines, "{yaml:?}");
+        }
     }
 
     #[test]

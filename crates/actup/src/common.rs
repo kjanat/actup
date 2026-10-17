@@ -4,7 +4,7 @@
 //! discover -> read -> extract uses -> filter -> provider lookup -> (command-specific logic)
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs,
     ops::Range,
     path::{Path, PathBuf},
@@ -12,7 +12,7 @@ use std::{
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, UsesLocation, discover_files,
-    extract_uses_from_yaml, line_spans, parse_uses, provider, version,
+    extract_uses_from_yaml, line_spans, lines_ending_in_scalars, parse_uses, provider, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -260,6 +260,7 @@ pub struct FileEdits<L> {
     /// Original file content.
     content: String,
     uses_per_line: HashMap<usize, usize>,
+    lines_in_scalars: BTreeSet<usize>,
     edits: Vec<(PendingEdit, L)>,
 }
 
@@ -283,6 +284,7 @@ impl<L> FileEdits<L> {
         }
         Self {
             path,
+            lines_in_scalars: lines_ending_in_scalars(&content),
             content,
             uses_per_line,
             edits: Vec::new(),
@@ -299,7 +301,7 @@ impl<L> FileEdits<L> {
     /// An edit whose range overlaps an earlier edit (in source order) is
     /// skipped; edits that share a line without overlapping all apply. A
     /// comment is appended only when its line holds a single `uses:` value, no
-    /// `#`, and no other applied edit with a comment.
+    /// `#`, no other applied edit with a comment, and ends outside a scalar.
     #[must_use]
     pub fn plan(self) -> EditPlan<L> {
         let spans = line_spans(&self.content);
@@ -350,7 +352,8 @@ impl<L> FileEdits<L> {
             let sole_uses = self.uses_per_line.get(&edit.line).copied().unwrap_or(0) <= 1;
             let sole_comment = commented_per_line.get(&edit.line) == Some(&1);
             let uncommented = !self.content[span.clone()].contains('#');
-            if sole_uses && sole_comment && uncommented {
+            let ends_outside_scalar = !self.lines_in_scalars.contains(&edit.line);
+            if sole_uses && sole_comment && uncommented && ends_outside_scalar {
                 splices.push((span.end..span.end, true, comment));
                 outcomes[i] = EditOutcome::Applied {
                     comment: Some(comment.clone()),
@@ -669,7 +672,6 @@ impl EditResult {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::path::{Path, PathBuf};
 
@@ -767,20 +769,22 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_edit_replace_range() {
+    fn test_pending_edit_replace_range() -> Result<(), Box<dyn std::error::Error>> {
         let edit = PendingEdit::replace_range(1, 10..14, "v2.0.0".to_string());
         let line = "  - uses: actions/checkout@v1.0.0";
-        let result = apply_line(line, edit).unwrap();
+        let result = apply_line(line, edit).ok_or("edit did not apply")?;
         assert_eq!(result, "  - uses: v2.0.0ons/checkout@v1.0.0");
+        Ok(())
     }
 
     #[test]
-    fn test_pending_edit_replace_range_exact() {
+    fn test_pending_edit_replace_range_exact() -> Result<(), Box<dyn std::error::Error>> {
         // Replace just the ref portion
         let line = "  - uses: actions/checkout@v1";
         let edit = PendingEdit::replace_range(1, 27..29, "v2".to_string());
-        let result = apply_line(line, edit).unwrap();
+        let result = apply_line(line, edit).ok_or("edit did not apply")?;
         assert_eq!(result, "  - uses: actions/checkout@v2");
+        Ok(())
     }
 
     #[test]
@@ -791,22 +795,24 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_edit_with_comment() {
+    fn test_pending_edit_with_comment() -> Result<(), Box<dyn std::error::Error>> {
         let edit = PendingEdit::replace_range(1, 27..29, "abc123".to_string())
             .with_comment(" # v1".to_string());
         let line = "  - uses: actions/checkout@v1";
-        let result = apply_line(line, edit).unwrap();
+        let result = apply_line(line, edit).ok_or("edit did not apply")?;
         assert_eq!(result, "  - uses: actions/checkout@abc123 # v1");
+        Ok(())
     }
 
     #[test]
-    fn test_pending_edit_comment_not_added_if_exists() {
+    fn test_pending_edit_comment_not_added_if_exists() -> Result<(), Box<dyn std::error::Error>> {
         let edit = PendingEdit::replace_range(1, 27..29, "v2".to_string())
             .with_comment(" # pinned".to_string());
         let line = "  - uses: actions/checkout@v1 # existing comment";
-        let result = apply_line(line, edit).unwrap();
+        let result = apply_line(line, edit).ok_or("edit did not apply")?;
         // Comment not added because line already has one
         assert_eq!(result, "  - uses: actions/checkout@v2 # existing comment");
+        Ok(())
     }
 
     // repin_sha_edit tests
@@ -815,58 +821,67 @@ mod tests {
         byte.to_string().repeat(40)
     }
 
-    fn sha_loc(line_body: &str) -> UsesLocation {
+    fn sha_loc(line_body: &str) -> Result<UsesLocation, Box<dyn std::error::Error>> {
         let value = line_body
             .split("uses: ")
             .nth(1)
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap();
-        let column = line_body.find(value).unwrap() + 1;
-        UsesLocation::new(1, column, value.to_string(), line_body.to_string())
+            .and_then(|rest| rest.split_whitespace().next())
+            .ok_or("line has no `uses:` value")?;
+        let column = line_body.find(value).ok_or("value not in line")? + 1;
+        Ok(UsesLocation::new(
+            1,
+            column,
+            value.to_string(),
+            line_body.to_string(),
+        ))
     }
 
     #[test]
-    fn test_repin_sha_adds_version_comment() {
+    fn test_repin_sha_adds_version_comment() -> Result<(), Box<dyn std::error::Error>> {
         let old = sha40('a');
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old}");
-        let loc = sha_loc(&line);
+        let loc = sha_loc(&line)?;
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = apply_line(&line, repin_sha_edit(&loc, &target).unwrap()).unwrap();
+        let result = apply_line(&line, repin_sha_edit(&loc, &target).ok_or("no edit")?)
+            .ok_or("edit did not apply")?;
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
         );
+        Ok(())
     }
 
     #[test]
-    fn test_repin_sha_refreshes_stale_comment() {
+    fn test_repin_sha_refreshes_stale_comment() -> Result<(), Box<dyn std::error::Error>> {
         let old = sha40('a');
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old} # v7.0.0");
-        let loc = sha_loc(&line);
+        let loc = sha_loc(&line)?;
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = apply_line(&line, repin_sha_edit(&loc, &target).unwrap()).unwrap();
+        let result = apply_line(&line, repin_sha_edit(&loc, &target).ok_or("no edit")?)
+            .ok_or("edit did not apply")?;
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
         );
+        Ok(())
     }
 
     #[test]
-    fn test_repin_sha_preserves_foreign_comment() {
+    fn test_repin_sha_preserves_foreign_comment() -> Result<(), Box<dyn std::error::Error>> {
         let old = sha40('a');
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old} # managed by bot");
-        let loc = sha_loc(&line);
+        let loc = sha_loc(&line)?;
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = apply_line(&line, repin_sha_edit(&loc, &target).unwrap()).unwrap();
+        let result = apply_line(&line, repin_sha_edit(&loc, &target).ok_or("no edit")?)
+            .ok_or("edit did not apply")?;
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # managed by bot")
         );
+        Ok(())
     }
 
     #[test]
@@ -1075,6 +1090,34 @@ mod tests {
                 (2, EditOutcome::Applied { comment: None }),
             ]
         );
+    }
+
+    #[test]
+    fn test_file_edits_write_no_comment_where_a_scalar_continues() {
+        for content in [
+            "s:\n  - { uses: a/b@v1, name: \"multi\n    line\" }\n",
+            "s:\n  - { uses: a/b@v1, name: multi\n    word }\n",
+        ] {
+            let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+            fe.add(
+                PendingEdit::replace_range(2, 16..18, "v2".to_string())
+                    .with_comment(" # v2".into()),
+                (),
+            );
+
+            let plan = fe.plan();
+            assert_eq!(plan.content, content.replace("@v1", "@v2"), "{content:?}");
+            assert_eq!(
+                plan.entries,
+                [((), EditOutcome::Applied { comment: None })],
+                "{content:?}"
+            );
+            let refs: Vec<String> = extract_uses_from_yaml(&plan.content)
+                .iter()
+                .map(|loc| loc.value().to_string())
+                .collect();
+            assert_eq!(refs, ["a/b@v2"], "{content:?}");
+        }
     }
 
     #[test]
@@ -1294,12 +1337,13 @@ mod tests {
     }
 
     #[test]
-    fn test_workflow_scanner_relative_path_for_file_input() {
-        let temp = tempfile::tempdir().unwrap();
+    fn test_workflow_scanner_relative_path_for_file_input() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = tempfile::tempdir()?;
         let workflows_dir = temp.path().join(".github/workflows");
-        fs::create_dir_all(&workflows_dir).unwrap();
+        fs::create_dir_all(&workflows_dir)?;
         let path = workflows_dir.join("release.yml");
-        fs::write(&path, "name: test\n").unwrap();
+        fs::write(&path, "name: test\n")?;
         assert!(path.is_file());
 
         let config = Config::default();
@@ -1308,6 +1352,7 @@ mod tests {
         let file = DiscoveredFile::new(path.clone(), FileKind::Workflow);
 
         assert_eq!(scanner.relative_path(&file), path.display().to_string());
+        Ok(())
     }
 
     // EditResult tests
