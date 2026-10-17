@@ -340,3 +340,250 @@ ver: 1${{ steps.bump.outputs.minor }}
                   (property
                     (property_deref)
                     (identifier)))))))))))
+
+============================================================================
+Plain expression value in a step ends at its line
+============================================================================
+steps:
+  - if: ${{ always() }}
+    run: echo x
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_sequence
+              (block_sequence_item
+                (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (delimited_expression
+                            (expression_marker)
+                            (function_call
+                              function: (identifier))))))
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (string_scalar))))))))))))))
+
+============================================================================
+Plain expression value at top level ends at its line
+============================================================================
+k: ${{ a }}
+j: b
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar))))))))
+
+============================================================================
+Expression key on the line after an expression value
+============================================================================
+k: ${{ a }}
+${{ b }}: c
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar))))))))
+
+============================================================================
+Plain value with an expression continues on an indented line
+============================================================================
+f: ${{ a }}
+  more
+g: a ${{ x }}
+  more
+h: a
+  b ${{ x }} c
+j: b
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar))))))))
+
+============================================================================
+Flow plain value with an expression spans lines
+============================================================================
+k: [${{ a }}
+  , b]
+j: [x ${{ a }}
+  y]
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (flow_sequence
+              (flow_node
+                (plain_scalar
+                  (delimited_expression
+                    (expression_marker)
+                    (context
+                      (identifier)))))
+              (flow_node
+                (plain_scalar
+                  (string_scalar))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (flow_sequence
+              (flow_node
+                (plain_scalar
+                  (string_scalar)
+                  (delimited_expression
+                    (expression_marker)
+                    (context
+                      (identifier)))
+                  (string_scalar))))))))))
+
+============================================================================
+Expression key opens a mapping in a sequence item
+============================================================================
+x:
+- ${{ a }}: b
+  c: d
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_sequence
+              (block_sequence_item
+                (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (delimited_expression
+                            (expression_marker)
+                            (context
+                              (identifier)))))
+                      value: (flow_node
+                        (plain_scalar
+                          (string_scalar))))
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (string_scalar))))))))))))))

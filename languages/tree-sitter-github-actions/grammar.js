@@ -147,6 +147,9 @@ const base = grammar({
 
 		$._expr_bgn, // `${{` (GitHub Actions expression open) — emitted by scanner before scalar content
 		$._r_if_expr_bgn,
+		$._r_expr_bgn,
+		$._br_expr_bgn,
+		$._b_expr_bgn,
 	],
 
 	extras: $ => [$.comment],
@@ -192,32 +195,6 @@ const base = grammar({
 		// Trailing _expr_ws after the last argument vs. continuation of arguments list.
 		[$.arguments],
 		[$._format_arguments],
-
-		// Plain-scalar with embedded `delimited_expression` introduces ambiguity at
-		// every block-context entry point and between sgl/mtl variants. GLR resolves
-		// at runtime once `}}` (or content) commits one branch.
-		[$._r_blk_key_itm],
-		[$._br_blk_key_itm],
-		[$._b_blk_key_itm],
-		[$._r_blk_val_itm],
-		[$._br_blk_val_itm],
-		[$._b_blk_val_itm],
-		[$._r_blk_seq_itm],
-		[$._br_blk_seq_itm],
-		[$._b_blk_seq_itm],
-		[$._blk_imp_itm_tal],
-		[$._r_pln_blk_val, $._br_pln_blk_val, $._r_sgl_pln_blk, $._br_sgl_pln_blk],
-		[$._r_pln_flw_val, $._br_pln_flw_val, $._r_sgl_pln_flw, $._br_sgl_pln_flw],
-		[$._r_sgl_pln_blk, $._br_sgl_pln_blk, $._r_mtl_pln_blk, $._br_mtl_pln_blk],
-		[$._r_sgl_pln_flw, $._br_sgl_pln_flw, $._r_mtl_pln_flw, $._br_mtl_pln_flw],
-		[$._r_prp_val, $._r_blk_map_br_val, $._r_pln_blk_val],
-		[$._br_prp_val, $._br_blk_map_val, $._br_pln_blk_val],
-		[$._r_sgl_pln_blk, $._br_sgl_pln_blk],
-		[$._r_sgl_pln_flw, $._br_sgl_pln_flw],
-		[$._r_sgl_pln_blk, $._r_mtl_pln_blk],
-		[$._br_sgl_pln_blk, $._br_mtl_pln_blk],
-		[$._r_sgl_pln_flw, $._r_mtl_pln_flw],
-		[$._br_sgl_pln_flw, $._br_mtl_pln_flw],
 	],
 
 	inline: $ => [
@@ -677,7 +654,7 @@ const base = grammar({
 				$._r_sgl_pln_bol_blk,
 				$._r_sgl_pln_int_blk,
 				$._r_sgl_pln_flt_blk,
-				prec.right(repeat1(choice($._r_sgl_pln_str_blk, $.delimited_expression))),
+				prec.right(seq(choice($._r_sgl_pln_str_blk, $._r_dlm_expr), repeat(choice($._r_sgl_pln_str_blk, $._r_dlm_expr)))),
 			),
 		_br_sgl_pln_blk: $ =>
 			choice(
@@ -685,7 +662,7 @@ const base = grammar({
 				$._br_sgl_pln_bol_blk,
 				$._br_sgl_pln_int_blk,
 				$._br_sgl_pln_flt_blk,
-				prec.right(repeat1(choice($._br_sgl_pln_str_blk, $.delimited_expression))),
+				prec.right(seq(choice($._br_sgl_pln_str_blk, $._br_dlm_expr), repeat(choice($._r_sgl_pln_str_blk, $._r_dlm_expr)))),
 			),
 		_b_sgl_pln_blk: $ =>
 			choice(
@@ -693,7 +670,7 @@ const base = grammar({
 				$._b_sgl_pln_bol_blk,
 				$._b_sgl_pln_int_blk,
 				$._b_sgl_pln_flt_blk,
-				prec.right(repeat1(choice($._b_sgl_pln_str_blk, $.delimited_expression))),
+				prec.right(seq(choice($._b_sgl_pln_str_blk, $._b_dlm_expr), repeat(choice($._r_sgl_pln_str_blk, $._r_dlm_expr)))),
 			),
 		_r_sgl_pln_flw: $ =>
 			choice(
@@ -701,7 +678,7 @@ const base = grammar({
 				$._r_sgl_pln_bol_flw,
 				$._r_sgl_pln_int_flw,
 				$._r_sgl_pln_flt_flw,
-				prec.right(repeat1(choice($._r_sgl_pln_str_flw, $.delimited_expression))),
+				prec.right(seq(choice($._r_sgl_pln_str_flw, $._r_dlm_expr), repeat(choice($._r_sgl_pln_str_flw, $._r_dlm_expr)))),
 			),
 		_br_sgl_pln_flw: $ =>
 			choice(
@@ -709,13 +686,73 @@ const base = grammar({
 				$._br_sgl_pln_bol_flw,
 				$._br_sgl_pln_int_flw,
 				$._br_sgl_pln_flt_flw,
-				prec.right(repeat1(choice($._br_sgl_pln_str_flw, $.delimited_expression))),
+				prec.right(seq(choice($._br_sgl_pln_str_flw, $._br_dlm_expr), repeat(choice($._r_sgl_pln_str_flw, $._r_dlm_expr)))),
 			),
 
-		_r_mtl_pln_blk: $ => prec.right(repeat1(choice($._r_mtl_pln_str_blk, $.delimited_expression))),
-		_br_mtl_pln_blk: $ => prec.right(repeat1(choice($._br_mtl_pln_str_blk, $.delimited_expression))),
-		_r_mtl_pln_flw: $ => prec.right(repeat1(choice($._r_mtl_pln_str_flw, $.delimited_expression))),
-		_br_mtl_pln_flw: $ => prec.right(repeat1(choice($._br_mtl_pln_str_flw, $.delimited_expression))),
+		_r_mtl_pln_blk: $ =>
+			prec.right(
+				seq(
+					choice(
+						$._r_mtl_pln_str_blk,
+						seq(
+							choice($._r_sgl_pln_str_blk, $._r_dlm_expr),
+							repeat(choice($._r_sgl_pln_str_blk, $._r_dlm_expr)),
+							choice($._r_mtl_pln_str_blk, $._br_sgl_pln_str_blk, $._br_mtl_pln_str_blk, $._br_dlm_expr),
+						),
+					),
+					repeat(
+						choice($._r_sgl_pln_str_blk, $._r_mtl_pln_str_blk, $._br_sgl_pln_str_blk, $._br_mtl_pln_str_blk, $._r_dlm_expr, $._br_dlm_expr),
+					),
+				),
+			),
+		_br_mtl_pln_blk: $ =>
+			prec.right(
+				seq(
+					choice(
+						$._br_mtl_pln_str_blk,
+						seq(
+							choice($._br_sgl_pln_str_blk, $._br_dlm_expr),
+							repeat(choice($._r_sgl_pln_str_blk, $._r_dlm_expr)),
+							choice($._r_mtl_pln_str_blk, $._br_sgl_pln_str_blk, $._br_mtl_pln_str_blk, $._br_dlm_expr),
+						),
+					),
+					repeat(
+						choice($._r_sgl_pln_str_blk, $._r_mtl_pln_str_blk, $._br_sgl_pln_str_blk, $._br_mtl_pln_str_blk, $._r_dlm_expr, $._br_dlm_expr),
+					),
+				),
+			),
+		_r_mtl_pln_flw: $ =>
+			prec.right(
+				seq(
+					choice(
+						$._r_mtl_pln_str_flw,
+						seq(
+							choice($._r_sgl_pln_str_flw, $._r_dlm_expr),
+							repeat(choice($._r_sgl_pln_str_flw, $._r_dlm_expr)),
+							choice($._r_mtl_pln_str_flw, $._br_sgl_pln_str_flw, $._br_mtl_pln_str_flw, $._br_dlm_expr),
+						),
+					),
+					repeat(
+						choice($._r_sgl_pln_str_flw, $._r_mtl_pln_str_flw, $._br_sgl_pln_str_flw, $._br_mtl_pln_str_flw, $._r_dlm_expr, $._br_dlm_expr),
+					),
+				),
+			),
+		_br_mtl_pln_flw: $ =>
+			prec.right(
+				seq(
+					choice(
+						$._br_mtl_pln_str_flw,
+						seq(
+							choice($._br_sgl_pln_str_flw, $._br_dlm_expr),
+							repeat(choice($._r_sgl_pln_str_flw, $._r_dlm_expr)),
+							choice($._r_mtl_pln_str_flw, $._br_sgl_pln_str_flw, $._br_mtl_pln_str_flw, $._br_dlm_expr),
+						),
+					),
+					repeat(
+						choice($._r_sgl_pln_str_flw, $._r_mtl_pln_str_flw, $._br_sgl_pln_str_flw, $._br_mtl_pln_str_flw, $._r_dlm_expr, $._br_dlm_expr),
+					),
+				),
+			),
 
 		// alias
 
@@ -760,9 +797,12 @@ const base = grammar({
 					),
 				),
 			),
-		delimited_expression: $ =>
+		delimited_expression: $ => seq(alias($._expr_bgn, $.expression_marker), $._dlm_expr_tal),
+		_r_dlm_expr: $ => seq(alias($._r_expr_bgn, $.expression_marker), $._dlm_expr_tal),
+		_br_dlm_expr: $ => seq(alias($._br_expr_bgn, $.expression_marker), $._dlm_expr_tal),
+		_b_dlm_expr: $ => seq(alias($._b_expr_bgn, $.expression_marker), $._dlm_expr_tal),
+		_dlm_expr_tal: $ =>
 			seq(
-				alias($._expr_bgn, $.expression_marker),
 				optional($._expr_ws),
 				optional($.not),
 				optional($._expr_ws),
@@ -954,6 +994,7 @@ const aliasedSchema = global_alias(
 			"_r_sgl_pln_flw_val",
 			"_r_if_expr_val",
 		),
+		..._("delimited_expression", "_r_dlm_expr", "_br_dlm_expr", "_b_dlm_expr"),
 		..._("double_quote_scalar", "_r_dqt_str", "_br_dqt_str", "_r_sgl_dqt_str", "_br_sgl_dqt_str", "_b_sgl_dqt_str"),
 		..._("single_quote_scalar", "_r_sqt_str", "_br_sqt_str", "_r_sgl_sqt_str", "_br_sgl_sqt_str", "_b_sgl_sqt_str"),
 		..._(

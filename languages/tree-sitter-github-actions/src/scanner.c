@@ -65,6 +65,9 @@ typedef enum {
 
     EXPR_BGN,
     R_IF_EXPR_BGN,
+    R_EXPR_BGN,
+    BR_EXPR_BGN,
+    B_EXPR_BGN,
 } TokenType;
 
 // clang-format on
@@ -793,7 +796,7 @@ static bool scn_expr_bgn(Scanner *scanner, TSLexer *lexer) {
     }
     adv(scanner, lexer);
     mrk_end(scanner, lexer);
-    RET_SYM(EXPR_BGN);
+    return true;
 }
 
 static bool scn_dqt_str_cnt(Scanner *scanner, TSLexer *lexer, TSSymbol result_symbol) {
@@ -1126,8 +1129,17 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
     // GitHub Actions expression-open `${{` must be matched BEFORE scalar content
     // scanners, otherwise the `$` would be swallowed into the surrounding scalar.
     // scn_expr_bgn speculatively advances; tree-sitter rolls back if we fail.
-    if (valid_symbols[EXPR_BGN] && lexer->lookahead == '$' && scn_expr_bgn(scanner, lexer)) {
-        return true;
+    if (lexer->lookahead == '$') {
+        TSSymbol expr_sym = valid_symbols[R_EXPR_BGN] && is_r     ? R_EXPR_BGN
+                            : valid_symbols[BR_EXPR_BGN] && is_br ? BR_EXPR_BGN
+                            : valid_symbols[B_EXPR_BGN] && is_b   ? B_EXPR_BGN
+                                                                  : EXPR_BGN;
+        if ((expr_sym != EXPR_BGN || valid_symbols[EXPR_BGN]) && scn_expr_bgn(scanner, lexer)) {
+            if (expr_sym != EXPR_BGN) {
+                MAY_UPD_IMP_COL();
+            }
+            RET_SYM(expr_sym);
+        }
     }
 
     if (valid_symbols[R_IF_EXPR_BGN] && !valid_symbols[ERR_REC] && is_r && scanner->if_val &&
