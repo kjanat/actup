@@ -166,8 +166,8 @@ action.
 | `tag`      | `@v4.2.0`         | `@v4.2.0`                 |
 
 The `# vX.Y.Z` comment replaces an old version comment. It is added only where
-the line can take it: never next to another comment, and never on a line that
-holds other `uses:` values or ends inside a scalar.
+the line can take it: never next to another comment, never on a line that holds
+other `uses:` values or ends inside a scalar, and never in a plain-text file.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose
@@ -314,11 +314,13 @@ does.
 actup reads a file by its extension. It parses `.yml` and `.yaml` files as YAML,
 and Markdown files (`.md`, `.markdown`) through their fenced `yaml` or `yml`
 blocks. In every other file it reads `uses:` values that contain `@` line by
-line, and it never appends a version comment there.
+line. It never writes or rewrites a version comment on such a line, and it
+checks an edit there for an unchanged `uses:` count only.
 
 actup rejects an `extra_paths` entry that is absolute or contains a `..`
 segment. It skips any match that resolves outside the scan root through a
-symlink, and `update` and `pin` refuse to write such a file.
+symlink. `update`, `pin` and the `actup-mcp` mutators refuse to write a file
+that resolves outside the root.
 
 ## Crates
 
