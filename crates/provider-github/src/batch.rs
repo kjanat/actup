@@ -232,8 +232,11 @@ async fn fetch_fallback_repos<C: Cache>(
         } = served;
         match result {
             Ok(versions) => {
-                let entry = cache::Entry::new(versions.clone());
-                if let Err(e) = cache.set(&cache_key, entry).await {
+                if versions.stale().is_none()
+                    && let Err(e) = cache
+                        .set(&cache_key, cache::Entry::new(versions.clone()))
+                        .await
+                {
                     debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "failed to cache versions");
                 }
                 results.insert(repo, Ok(versions));
