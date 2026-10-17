@@ -13,7 +13,7 @@ use actup_core::{
 use owo_colors::OwoColorize;
 
 use crate::{
-    cli::OutputFormat,
+    cli::{CliExitCode, OutputFormat},
     common::{
         Change, EditResult, WorkflowScanner, commit_file, report_invalid, report_skipped,
         report_unwritable, writable_versions,
@@ -45,10 +45,10 @@ pub async fn run(
     config: &Config,
     registry: &provider::Registry,
     cache: &Arc<FileCache>,
-) -> i32 {
+) -> CliExitCode {
     let Some(result) = edit(path, dry_run, format, config, registry, cache).await else {
         EditResult::default().print_report(dry_run, format);
-        return 0;
+        return CliExitCode::Success;
     };
     result.print_summary(dry_run, "Updated", "Would update", format);
     result.exit_code(dry_run)
@@ -289,7 +289,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(code, i32::from(CliExitCode::Outdated));
+        assert_eq!(code, CliExitCode::Outdated);
         assert_eq!(
             std::fs::read_to_string(&file)?,
             content.replace("checkout@v4.0.0\n", "checkout@v4.2.0\n")
@@ -343,10 +343,7 @@ mod tests {
         assert_eq!(result.edited, []);
         let kinds: Vec<ErrorKind> = result.errored.iter().map(|e| e.kind).collect();
         assert_eq!(kinds, [ErrorKind::Changed]);
-        assert_eq!(
-            result.exit_code(false),
-            i32::from(CliExitCode::EnvironmentError)
-        );
+        assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         assert_eq!(std::fs::read_to_string(&file)?, changed);
         Ok(())
     }
@@ -407,7 +404,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
         let code = run(
@@ -419,7 +416,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
     }
@@ -459,7 +456,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         let written = std::fs::read_to_string(&file)?;
         for _ in 1..runs {
             let code = run(
@@ -471,7 +468,7 @@ mod tests {
                 &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(code, CliExitCode::Success);
             assert_eq!(std::fs::read_to_string(&file)?, written);
         }
         Ok(written)
@@ -813,7 +810,7 @@ mod tests {
                 &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(code, CliExitCode::Success);
             assert_eq!(std::fs::read(&file)?, expected.as_bytes());
         }
         Ok(())
@@ -902,10 +899,7 @@ mod tests {
                 (9, "ghe.corp.example/o/b@v1", ErrorKind::ProviderNotFound),
             ]
         );
-        assert_eq!(
-            result.exit_code(false),
-            i32::from(CliExitCode::EnvironmentError)
-        );
+        assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         Ok(())
     }
 
@@ -941,7 +935,7 @@ mod tests {
                 )),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(code, CliExitCode::Success);
             assert_eq!(std::fs::read_to_string(&readme)?, md_expected);
             assert_eq!(std::fs::read_to_string(&script)?, ts_expected);
         }
@@ -994,7 +988,7 @@ mod tests {
             [(2, "unknown", "ghe.corp.example", SkipCause::Ignored)]
         );
         assert_eq!(result.errored, []);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         for dry_run in [true, false] {
             let code = run(
                 dir.path(),
@@ -1005,7 +999,7 @@ mod tests {
                 &Arc::new(FileCache::disabled()),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(code, CliExitCode::Success);
         }
         assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
@@ -1047,7 +1041,7 @@ mod tests {
             .map(|s| (s.site.line, s.reason))
             .collect();
         assert_eq!(skipped, [(2, SkipCause::Ignored)]);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         assert_eq!(
             std::fs::read_to_string(&file)?,
             content.replace("o/b@v4.0.0", "o/b@v4.2.0")
@@ -1098,10 +1092,7 @@ mod tests {
                 "versions are stale (fetched 26h ago, rate limited); refusing to write"
             )]
         );
-        assert_eq!(
-            result.exit_code(false),
-            i32::from(CliExitCode::EnvironmentError)
-        );
+        assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         Ok(())
     }
 
@@ -1159,7 +1150,7 @@ mod tests {
             ]
         );
         assert_eq!(result.edited, []);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::UserError));
+        assert_eq!(result.exit_code(false), CliExitCode::UserError);
         assert_eq!(std::fs::read_to_string(workflows.join("ci.yml"))?, content);
         Ok(())
     }
@@ -1193,7 +1184,7 @@ mod tests {
                     &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
                 )
                 .await,
-                0
+                CliExitCode::Success
             );
         }
         Ok(())

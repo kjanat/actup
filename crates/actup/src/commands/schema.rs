@@ -6,16 +6,16 @@ use schemars::schema_for;
 
 use crate::cli::CliExitCode;
 
-pub fn run() -> i32 {
+pub fn run() -> CliExitCode {
     let schema = schema_for!(Config);
     match crate::structured::json_pretty(&schema) {
         Ok(json) => {
             println!("{json}");
-            CliExitCode::Success.into()
+            CliExitCode::Success
         }
         Err(e) => {
             eprintln!("Error serializing schema: {e}");
-            CliExitCode::EnvironmentError.into()
+            CliExitCode::EnvironmentError
         }
     }
 }

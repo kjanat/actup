@@ -33,7 +33,7 @@ pub fn run(
     format: OutputFormat,
     config: &Config,
     registrations: &[&'static Registration],
-) -> i32 {
+) -> CliExitCode {
     match format {
         OutputFormat::Human => {
             display_human(config, path, registrations);
@@ -43,7 +43,7 @@ pub fn run(
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error serializing config: {e}");
-                    return CliExitCode::EnvironmentError.into();
+                    return CliExitCode::EnvironmentError;
                 }
             };
             println!("{json}");
@@ -53,14 +53,14 @@ pub fn run(
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("Error serializing config: {e}");
-                    return CliExitCode::EnvironmentError.into();
+                    return CliExitCode::EnvironmentError;
                 }
             };
             println!("{toml}");
         }
     }
 
-    CliExitCode::Success.into()
+    CliExitCode::Success
 }
 
 fn display_human(config: &Config, path: &Path, registrations: &[&'static Registration]) {

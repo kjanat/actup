@@ -8,7 +8,7 @@ use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::{
-    cli::{CheckFormat, FailOn},
+    cli::{CheckFormat, CliExitCode, FailOn},
     sarif,
 };
 
@@ -720,7 +720,7 @@ fn trips(kind: FailOn, status: &FindingStatus) -> bool {
 /// - 1: A finding of a `fail_on` kind
 /// - 2: User error (bad ref, repo not found)
 /// - 3: Environment error (network, rate limit, auth), or a finding from an expired cache entry
-pub fn determine_exit_code(findings: &[Finding], fail_on: &[FailOn]) -> i32 {
+pub fn determine_exit_code(findings: &[Finding], fail_on: &[FailOn]) -> CliExitCode {
     let has_outdated = findings
         .iter()
         .any(|f| fail_on.iter().any(|&kind| trips(kind, f.status())));
@@ -746,11 +746,13 @@ pub fn determine_exit_code(findings: &[Finding], fail_on: &[FailOn]) -> i32 {
 
     // Priority: env errors (3) > user errors (2) > a fail_on kind (1) > success (0)
     if has_env_error {
-        3
+        CliExitCode::EnvironmentError
     } else if has_user_error {
-        2
+        CliExitCode::UserError
+    } else if has_outdated {
+        CliExitCode::Outdated
     } else {
-        i32::from(has_outdated)
+        CliExitCode::Success
     }
 }
 
@@ -931,18 +933,18 @@ mod tests {
         );
         assert_eq!(
             determine_exit_code(std::slice::from_ref(&up_to_date), &[FailOn::Outdated]),
-            0
+            CliExitCode::Success
         );
         assert_eq!(
             determine_exit_code(&[up_to_date.with_stale(stale(None))], &[]),
-            3
+            CliExitCode::EnvironmentError
         );
         assert_eq!(
             determine_exit_code(
                 &[bump_finding().with_stale(stale(None))],
                 &[FailOn::Outdated]
             ),
-            3
+            CliExitCode::EnvironmentError
         );
     }
 
@@ -1084,26 +1086,50 @@ mod tests {
             |findings: &[Finding], fail_on: &[FailOn]| determine_exit_code(findings, fail_on);
         let all = [FailOn::Outdated, FailOn::Major, FailOn::Floating];
 
-        assert_eq!(code(std::slice::from_ref(&minor), &[FailOn::Outdated]), 1);
-        assert_eq!(code(std::slice::from_ref(&minor), &[FailOn::Major]), 0);
-        assert_eq!(code(std::slice::from_ref(&minor), &[FailOn::Floating]), 0);
-        assert_eq!(code(std::slice::from_ref(&major), &[FailOn::Major]), 1);
+        assert_eq!(
+            code(std::slice::from_ref(&minor), &[FailOn::Outdated]),
+            CliExitCode::Outdated
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&minor), &[FailOn::Major]),
+            CliExitCode::Success
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&minor), &[FailOn::Floating]),
+            CliExitCode::Success
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&major), &[FailOn::Major]),
+            CliExitCode::Outdated
+        );
         assert_eq!(
             code(std::slice::from_ref(&pinned_major), &[FailOn::Major]),
-            1
+            CliExitCode::Outdated
         );
         assert_eq!(
             code(std::slice::from_ref(&floating), &[FailOn::Floating]),
-            1
+            CliExitCode::Outdated
         );
         assert_eq!(
             code(std::slice::from_ref(&floating), &[FailOn::Outdated]),
-            0
+            CliExitCode::Success
         );
-        assert_eq!(code(std::slice::from_ref(&to_pin), &[FailOn::Floating]), 1);
-        assert_eq!(code(std::slice::from_ref(&to_pin), &[FailOn::Outdated]), 1);
-        assert_eq!(code(std::slice::from_ref(&to_pin), &[FailOn::Major]), 0);
-        assert_eq!(code(&[minor, major, floating, to_pin], &[]), 0);
+        assert_eq!(
+            code(std::slice::from_ref(&to_pin), &[FailOn::Floating]),
+            CliExitCode::Outdated
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&to_pin), &[FailOn::Outdated]),
+            CliExitCode::Outdated
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&to_pin), &[FailOn::Major]),
+            CliExitCode::Success
+        );
+        assert_eq!(
+            code(&[minor, major, floating, to_pin], &[]),
+            CliExitCode::Success
+        );
 
         let broken = make_finding(
             "ci.yml",
@@ -1114,8 +1140,14 @@ mod tests {
                 is_environment_error: false,
             },
         );
-        assert_eq!(code(std::slice::from_ref(&broken), &[]), 2);
-        assert_eq!(code(std::slice::from_ref(&broken), &all), 2);
+        assert_eq!(
+            code(std::slice::from_ref(&broken), &[]),
+            CliExitCode::UserError
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&broken), &all),
+            CliExitCode::UserError
+        );
     }
 
     #[test]
@@ -1187,8 +1219,11 @@ mod tests {
             FindingStatus::UpToDate,
         )];
 
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Success
+        );
     }
 
     #[test]
@@ -1204,7 +1239,7 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
     }
 
     #[test]
@@ -1220,7 +1255,10 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 1);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Outdated
+        );
     }
 
     #[test]
@@ -1235,8 +1273,11 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, &[]), 2);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 2);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::UserError);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::UserError
+        );
     }
 
     #[test]
@@ -1251,8 +1292,14 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, &[]), 3);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 3);
+        assert_eq!(
+            determine_exit_code(&findings, &[]),
+            CliExitCode::EnvironmentError
+        );
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::EnvironmentError
+        );
     }
 
     #[test]
@@ -1290,7 +1337,10 @@ mod tests {
         ];
 
         // Env error (3) takes priority
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 3);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::EnvironmentError
+        );
     }
 
     #[test]
@@ -1318,14 +1368,20 @@ mod tests {
         ];
 
         // User error (2) takes priority over outdated (1)
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 2);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::UserError
+        );
     }
 
     #[test]
     fn test_determine_exit_code_empty() {
         let findings: Vec<Finding> = vec![];
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Success
+        );
     }
 
     #[test]
@@ -1341,8 +1397,11 @@ mod tests {
         )];
 
         // Pinned is not an error
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Success
+        );
     }
 
     // Finding construction tests
@@ -1385,8 +1444,11 @@ mod tests {
             FindingStatus::Ignored,
         )];
 
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Success
+        );
     }
 
     #[test]
@@ -1865,8 +1927,11 @@ mod tests {
         ];
 
         // Multiple outdated should still return 1 in strict mode
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 1);
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Outdated
+        );
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
     }
 
     #[test]
@@ -1893,8 +1958,14 @@ mod tests {
         ];
 
         // Env error (3) takes priority over user error (2)
-        assert_eq!(determine_exit_code(&findings, &[]), 3);
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 3);
+        assert_eq!(
+            determine_exit_code(&findings, &[]),
+            CliExitCode::EnvironmentError
+        );
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::EnvironmentError
+        );
     }
 
     #[test]
@@ -1934,8 +2005,11 @@ mod tests {
         ];
 
         // Only outdated matters in strict mode (no errors)
-        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 1);
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(
+            determine_exit_code(&findings, &[FailOn::Outdated]),
+            CliExitCode::Outdated
+        );
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
     }
 
     // Human output boundary tests
@@ -2084,7 +2158,7 @@ mod tests {
         ];
 
         // Non-strict should return 0 despite multiple outdated
-        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::Success);
     }
 
     /// Test `From<&Finding>` trait implementation for `JsonFinding`.

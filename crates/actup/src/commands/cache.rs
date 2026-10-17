@@ -14,7 +14,7 @@ use actup_core::{
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CacheAction, OutputFormat};
+use crate::cli::{CacheAction, CliExitCode, OutputFormat};
 
 /// Cache info for JSON output
 #[derive(Serialize)]
@@ -47,7 +47,7 @@ struct PathOutput {
 }
 
 /// Run the cache command
-pub async fn run(action: &CacheAction, format: OutputFormat, config: &Config) -> i32 {
+pub async fn run(action: &CacheAction, format: OutputFormat, config: &Config) -> CliExitCode {
     let dir = cache::dir(config.cache.path.as_deref());
     match action {
         CacheAction::Info => info(format, config, dir.as_deref()),
@@ -64,7 +64,7 @@ fn dir_text(dir: Option<&Path>) -> String {
 }
 
 /// Show cache info
-fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> i32 {
+fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> CliExitCode {
     let (entry_count, total_size) = match cache_dir.map_or(Ok((0, 0)), get_cache_stats) {
         Ok(stats) => stats,
         Err(e) => return report_failure("Error reading cache directory", &e),
@@ -104,7 +104,7 @@ fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> i32 
                 Ok(json) => println!("{json}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
-                    return 3; // Environment error
+                    return CliExitCode::EnvironmentError;
                 }
             }
         }
@@ -120,17 +120,17 @@ fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> i32 
                 Ok(toml) => println!("{toml}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
-                    return 3; // Environment error
+                    return CliExitCode::EnvironmentError;
                 }
             }
         }
     }
 
-    0
+    CliExitCode::Success
 }
 
 /// Clear the cache
-async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>) -> i32 {
+async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>) -> CliExitCode {
     let cache = match cache_dir {
         Some(dir) if config.cache.enabled => FileCache::with_path(dir, config.cache.ttl),
         dir => {
@@ -148,18 +148,18 @@ async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>
                     Ok(json) => println!("{json}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
-                        return 3;
+                        return CliExitCode::EnvironmentError;
                     }
                 },
                 OutputFormat::Toml => match crate::structured::toml(&output) {
                     Ok(toml) => println!("{toml}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
-                        return 3;
+                        return CliExitCode::EnvironmentError;
                     }
                 },
             }
-            return 0;
+            return CliExitCode::Success;
         }
     };
 
@@ -185,18 +185,18 @@ async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>
                 Ok(json) => println!("{json}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
-                    return 3;
+                    return CliExitCode::EnvironmentError;
                 }
             },
             OutputFormat::Toml => match crate::structured::toml(&output) {
                 Ok(toml) => println!("{toml}"),
                 Err(e) => {
                     eprintln!("{}: {}", "Error serializing output".red(), e);
-                    return 3;
+                    return CliExitCode::EnvironmentError;
                 }
             },
         }
-        return 0;
+        return CliExitCode::Success;
     }
 
     match cache.clear().await {
@@ -212,25 +212,25 @@ async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>
                     Ok(json) => println!("{json}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
-                        return 3;
+                        return CliExitCode::EnvironmentError;
                     }
                 },
                 OutputFormat::Toml => match crate::structured::toml(&output) {
                     Ok(toml) => println!("{toml}"),
                     Err(e) => {
                         eprintln!("{}: {}", "Error serializing output".red(), e);
-                        return 3;
+                        return CliExitCode::EnvironmentError;
                     }
                 },
             }
-            0
+            CliExitCode::Success
         }
         Err(e) => report_failure("Error clearing cache", &e),
     }
 }
 
 /// Print cache path
-fn path(format: OutputFormat, cache_dir: Option<&Path>) -> i32 {
+fn path(format: OutputFormat, cache_dir: Option<&Path>) -> CliExitCode {
     let output = PathOutput {
         path: cache_dir.map(|dir| dir.to_string_lossy().into_owned()),
     };
@@ -243,24 +243,24 @@ fn path(format: OutputFormat, cache_dir: Option<&Path>) -> i32 {
             Ok(json) => println!("{json}"),
             Err(e) => {
                 eprintln!("{}: {}", "Error serializing output".red(), e);
-                return 3; // Environment error
+                return CliExitCode::EnvironmentError;
             }
         },
         OutputFormat::Toml => match crate::structured::toml(&output) {
             Ok(toml) => println!("{toml}"),
             Err(e) => {
                 eprintln!("{}: {}", "Error serializing output".red(), e);
-                return 3; // Environment error
+                return CliExitCode::EnvironmentError;
             }
         },
     }
 
-    0
+    CliExitCode::Success
 }
 
-fn report_failure(what: &str, error: &dyn std::fmt::Display) -> i32 {
+fn report_failure(what: &str, error: &dyn std::fmt::Display) -> CliExitCode {
     eprintln!("{}: {}", what.red(), sanitize_line(&error.to_string()));
-    3
+    CliExitCode::EnvironmentError
 }
 
 /// Get the count and total size of the cache entry files in `cache_dir`.
@@ -345,11 +345,14 @@ mod tests {
         assert_eq!(get_cache_stats(temp.path())?.0, 2);
 
         for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
-            assert_eq!(info(format, &config, Some(temp.path())), 0);
+            assert_eq!(
+                info(format, &config, Some(temp.path())),
+                CliExitCode::Success
+            );
         }
         assert_eq!(
             clear(OutputFormat::Json, &config, Some(temp.path().to_path_buf())).await,
-            0
+            CliExitCode::Success
         );
 
         let mut names: Vec<_> = std::fs::read_dir(temp.path())?
@@ -367,10 +370,10 @@ mod tests {
         let mut off = Config::default();
         off.cache.enabled = false;
         for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
-            assert_eq!(info(format, &config, None), 0);
-            assert_eq!(path(format, None), 0);
-            assert_eq!(clear(format, &config, None).await, 0);
-            assert_eq!(clear(format, &off, None).await, 0);
+            assert_eq!(info(format, &config, None), CliExitCode::Success);
+            assert_eq!(path(format, None), CliExitCode::Success);
+            assert_eq!(clear(format, &config, None).await, CliExitCode::Success);
+            assert_eq!(clear(format, &off, None).await, CliExitCode::Success);
         }
         assert_eq!(dir_text(None), format!("none ({})", cache::NO_DIR_WARNING));
         assert_eq!(dir_text(Some(Path::new("/c/actup"))), "/c/actup");

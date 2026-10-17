@@ -46,10 +46,7 @@ async fn main() -> ExitCode {
         .with_ansi(anstream::AutoStream::choice(&std::io::stderr()) != anstream::ColorChoice::Never)
         .init();
 
-    let exit_code = run(cli).await;
-    // Exit codes 0-3 are safe to convert to u8
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    ExitCode::from(exit_code as u8)
+    run(cli).await.into()
 }
 
 fn load_config(explicit: Option<&std::path::Path>, start_dir: &std::path::Path) -> Option<Config> {
@@ -67,17 +64,17 @@ fn load_config(explicit: Option<&std::path::Path>, start_dir: &std::path::Path) 
     }
 }
 
-async fn run(cli: Cli) -> i32 {
+async fn run(cli: Cli) -> CliExitCode {
     // Handle completions early (no config/registry needed)
     if let Some(Command::Completions { shell }) = cli.command {
         let Some(shell) = shell.or_else(Cli::detect_shell) else {
             eprintln!(
                 "Could not detect shell from $SHELL. Specify one: bash, zsh, fish, elvish, powershell"
             );
-            return CliExitCode::EnvironmentError.into();
+            return CliExitCode::EnvironmentError;
         };
         Cli::print_completions(shell);
-        return CliExitCode::Success.into();
+        return CliExitCode::Success;
     }
 
     if matches!(cli.command, Some(Command::Schema)) {
@@ -90,13 +87,13 @@ async fn run(cli: Cli) -> i32 {
             .color(cli.color)
             .print_help();
         println!();
-        return CliExitCode::Success.into();
+        return CliExitCode::Success;
     }
 
     let (config, registry, cache) =
         match start_dir(cli.command.as_ref()).and_then(|start_dir| setup(&cli, &start_dir)) {
             Ok(setup) => setup,
-            Err(code) => return code.into(),
+            Err(code) => return code,
         };
 
     match cli.command {

@@ -117,10 +117,10 @@ pub async fn run(
     config: &Config,
     registry: &provider::Registry,
     cache: &Arc<FileCache>,
-) -> i32 {
+) -> CliExitCode {
     let Some(action_str) = args.action.as_deref() else {
         // No action provided — caller should have printed help already
-        return CliExitCode::Success.into();
+        return CliExitCode::Success;
     };
 
     let Some(query) = parse_action_query(action_str) else {
@@ -129,7 +129,7 @@ pub async fn run(
              Expected format: owner/repo or owner/repo@ref",
             sanitize_line(action_str)
         );
-        return CliExitCode::UserError.into();
+        return CliExitCode::UserError;
     };
 
     // Build a synthetic ActionRef for provider lookup
@@ -142,7 +142,7 @@ pub async fn run(
             |host| format!("host {host}"),
         );
         eprintln!("No provider configured for {host}");
-        return CliExitCode::EnvironmentError.into();
+        return CliExitCode::EnvironmentError;
     };
 
     let repo_id = action_ref.to_repo_id().without_subpath();
@@ -153,9 +153,9 @@ pub async fn run(
         Err(e) => {
             eprintln!("{}", sanitize_line(&actup_core::error::chain(&e)));
             return if e.is_environment_error() {
-                CliExitCode::EnvironmentError.into()
+                CliExitCode::EnvironmentError
             } else {
-                CliExitCode::UserError.into()
+                CliExitCode::UserError
             };
         }
     };
@@ -171,7 +171,7 @@ pub async fn run(
             query.owner, query.repo
         );
         eprintln!("{}", sanitize_line(&message));
-        return CliExitCode::UserError.into();
+        return CliExitCode::UserError;
     };
 
     let result = LookupResult {
@@ -209,7 +209,7 @@ pub async fn run(
         },
     }
 
-    CliExitCode::Success.into()
+    CliExitCode::Success
 }
 
 #[cfg(test)]
@@ -300,7 +300,7 @@ mod tests {
                 ))
             )
             .await,
-            i32::from(CliExitCode::EnvironmentError)
+            CliExitCode::EnvironmentError
         );
         Ok(())
     }
@@ -366,7 +366,7 @@ mod tests {
                 ))
             )
             .await,
-            i32::from(CliExitCode::Success)
+            CliExitCode::Success
         );
         let requests = server.received_requests().await.unwrap_or_default();
         assert!(

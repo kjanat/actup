@@ -811,18 +811,18 @@ impl EditResult {
 
     /// Determine exit code, considering skipped references and `dry_run` for outdated status.
     #[must_use]
-    pub fn exit_code(&self, dry_run: bool) -> i32 {
+    pub fn exit_code(&self, dry_run: bool) -> CliExitCode {
         // Errors take priority
         let base = self.errors.exit_code();
         if base != CliExitCode::Success {
-            return base.into();
+            return base;
         }
 
         if self.unwritable() > 0 || (dry_run && !self.edited.is_empty()) {
-            return CliExitCode::Outdated.into();
+            return CliExitCode::Outdated;
         }
 
-        CliExitCode::Success.into()
+        CliExitCode::Success
     }
 }
 
@@ -946,7 +946,7 @@ mod tests {
         report_skipped(site(3), SkipReason::Unplaceable, &mut result);
         assert_eq!(result.skipped, [skipped_ref(SkipReason::Unplaceable)]);
         assert_eq!(result.errors.total(), 0);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
+        assert_eq!(result.exit_code(false), CliExitCode::Outdated);
     }
 
     #[test]
@@ -1170,7 +1170,7 @@ mod tests {
                 ]
             );
             assert_eq!(result.errors.total(), 0);
-            assert_eq!(result.exit_code(dry_run), i32::from(CliExitCode::Outdated));
+            assert_eq!(result.exit_code(dry_run), CliExitCode::Outdated);
             assert_eq!(fs::read_to_string(&path)?, content);
         }
         Ok(())
@@ -1493,8 +1493,8 @@ mod tests {
     #[test]
     fn test_edit_result_exit_code_success() {
         let result = EditResult::default();
-        assert_eq!(result.exit_code(false), 0);
-        assert_eq!(result.exit_code(true), 0);
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
+        assert_eq!(result.exit_code(true), CliExitCode::Success);
         assert!(result.skipped_notice().is_none());
     }
 
@@ -1505,8 +1505,8 @@ mod tests {
             skipped: vec![skipped_ref(SkipReason::Unplaceable)],
             ..EditResult::default()
         };
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
-        assert_eq!(result.exit_code(true), i32::from(CliExitCode::Outdated));
+        assert_eq!(result.exit_code(false), CliExitCode::Outdated);
+        assert_eq!(result.exit_code(true), CliExitCode::Outdated);
         assert_eq!(
             result.skipped_notice().as_deref(),
             Some("Skipped 1 action reference(s); edit them by hand")
@@ -1518,8 +1518,8 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let mut result = EditResult::default();
         report_ignored(site(3), &mut result);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
-        assert_eq!(result.exit_code(true), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
+        assert_eq!(result.exit_code(true), CliExitCode::Success);
         assert!(result.skipped_notice().is_none());
         assert_eq!(
             result.ignored_notice().as_deref(),
@@ -1540,7 +1540,7 @@ mod tests {
             }])
         );
         report_skipped(site(4), SkipReason::Overlap, &mut result);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
+        assert_eq!(result.exit_code(false), CliExitCode::Outdated);
         assert_eq!(
             result.skipped_notice().as_deref(),
             Some("Skipped 1 action reference(s); edit them by hand")
@@ -1620,7 +1620,7 @@ mod tests {
             errors,
             ..EditResult::default()
         };
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::UserError));
+        assert_eq!(result.exit_code(false), CliExitCode::UserError);
     }
 
     #[test]
@@ -1629,8 +1629,8 @@ mod tests {
             edited: vec![edited_ref(1, None)],
             ..EditResult::default()
         };
-        assert_eq!(result.exit_code(false), 0); // Not dry run
-        assert_eq!(result.exit_code(true), 1); // Dry run = outdated
+        assert_eq!(result.exit_code(false), CliExitCode::Success); // Not dry run
+        assert_eq!(result.exit_code(true), CliExitCode::Outdated); // Dry run = outdated
     }
 
     #[test]
@@ -1644,6 +1644,6 @@ mod tests {
             ..EditResult::default()
         };
         // Env error takes priority over changes
-        assert_eq!(result.exit_code(true), 3);
+        assert_eq!(result.exit_code(true), CliExitCode::EnvironmentError);
     }
 }

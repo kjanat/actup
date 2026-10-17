@@ -13,7 +13,7 @@ use actup_core::{
 use owo_colors::OwoColorize;
 
 use crate::{
-    cli::OutputFormat,
+    cli::{CliExitCode, OutputFormat},
     common::{
         Change, EditResult, RefSite, Unwritable, WorkflowScanner, commit_file, report_invalid,
         report_skipped, report_unwritable, writable_versions,
@@ -218,10 +218,10 @@ pub async fn run(
     config: &Config,
     registry: &provider::Registry,
     cache: &Arc<FileCache>,
-) -> i32 {
+) -> CliExitCode {
     let Some(result) = edit(path, mode, dry_run, format, config, registry, cache).await else {
         EditResult::default().print_report(dry_run, format);
-        return 0;
+        return CliExitCode::Success;
     };
     let (verb, dry_verb) = match mode {
         Mode::Pin => ("Pinned", "Would pin"),
@@ -533,10 +533,7 @@ mod tests {
         assert_eq!(result.edited, []);
         let kinds: Vec<ErrorKind> = result.errored.iter().map(|e| e.kind).collect();
         assert_eq!(kinds, [ErrorKind::Changed]);
-        assert_eq!(
-            result.exit_code(false),
-            i32::from(CliExitCode::EnvironmentError)
-        );
+        assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         assert_eq!(std::fs::read_to_string(&file)?, changed);
         Ok(())
     }
@@ -600,7 +597,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
         let code = run(
@@ -613,7 +610,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
     }
@@ -659,7 +656,7 @@ mod tests {
                     )),
                 )
                 .await;
-                assert_eq!(code, i32::from(CliExitCode::Success), "{name}");
+                assert_eq!(code, CliExitCode::Success, "{name}");
                 assert_eq!(std::fs::read_to_string(&file)?, expected, "{name}");
             }
         }
@@ -686,7 +683,7 @@ mod tests {
                 &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(code, CliExitCode::Success);
             assert_eq!(std::fs::read(&file)?, expected.as_bytes());
         }
         Ok(())
@@ -820,10 +817,7 @@ mod tests {
             ]
         );
         assert_eq!(result.errored[1].site.provider, "unknown");
-        assert_eq!(
-            result.exit_code(false),
-            i32::from(CliExitCode::EnvironmentError)
-        );
+        assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         Ok(())
     }
 
@@ -874,7 +868,7 @@ mod tests {
                 ]
             );
             assert_eq!(result.edited, []);
-            assert_eq!(result.exit_code(false), i32::from(CliExitCode::UserError));
+            assert_eq!(result.exit_code(false), CliExitCode::UserError);
         }
         assert_eq!(std::fs::read_to_string(path)?, content);
         Ok(())
@@ -911,7 +905,7 @@ mod tests {
                     &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
                 )
                 .await,
-                0
+                CliExitCode::Success
             );
         }
         Ok(())
@@ -935,7 +929,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(code, i32::from(CliExitCode::Outdated));
+        assert_eq!(code, CliExitCode::Outdated);
         assert_eq!(
             std::fs::read_to_string(&file)?,
             content.replace("o/i@v3", &format!("o/i@{}", sha('1')))
@@ -1379,10 +1373,7 @@ mod tests {
                 .map(|line| (line, ErrorKind::Stale))
                 .collect();
             assert_eq!(errored, expected, "{mode:?}");
-            assert_eq!(
-                result.exit_code(false),
-                i32::from(CliExitCode::EnvironmentError)
-            );
+            assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         }
         Ok(())
     }
@@ -1476,7 +1467,7 @@ mod tests {
             .map(|s| (s.site.line, s.reason))
             .collect();
         assert_eq!(skipped, [(9, SkipCause::Ignored)]);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
         let code = run(
@@ -1489,7 +1480,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
     }
@@ -1592,10 +1583,7 @@ mod tests {
             .map(|e| (e.site.line, e.kind))
             .collect();
         assert_eq!(errored, [(2, ErrorKind::RateLimited)]);
-        assert_eq!(
-            result.exit_code(false),
-            i32::from(CliExitCode::EnvironmentError)
-        );
+        assert_eq!(result.exit_code(false), CliExitCode::EnvironmentError);
         assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
     }
@@ -1635,7 +1623,7 @@ mod tests {
         assert_eq!(result.edited, []);
         assert_eq!(result.skipped, []);
         assert_eq!(result.errored, []);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
     }
@@ -1686,7 +1674,7 @@ mod tests {
                 "{mode:?}"
             );
             assert_eq!(result.errored, [], "{mode:?}");
-            assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+            assert_eq!(result.exit_code(false), CliExitCode::Success);
             let code = run(
                 dir.path(),
                 mode,
@@ -1697,7 +1685,7 @@ mod tests {
                 &Arc::new(FileCache::disabled()),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success), "{mode:?}");
+            assert_eq!(code, CliExitCode::Success, "{mode:?}");
             assert_eq!(std::fs::read_to_string(&file)?, content);
         }
         Ok(())
@@ -1763,7 +1751,7 @@ mod tests {
             serde_json::to_value(result.report(false))?["skipped"][0]["reason"],
             "ignored"
         );
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
         let code = run(
@@ -1776,7 +1764,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
     }
@@ -1863,7 +1851,7 @@ mod tests {
 
         assert_eq!(result.edited, []);
         assert_eq!(result.errored, []);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         Ok(())
     }
 
@@ -1894,7 +1882,7 @@ mod tests {
 
         assert_eq!(result.edited, []);
         assert_eq!(result.errored, []);
-        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(false), CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
     }
@@ -1933,7 +1921,7 @@ mod tests {
                 )),
             )
             .await;
-            assert_eq!(code, i32::from(CliExitCode::Success), "{mode:?}");
+            assert_eq!(code, CliExitCode::Success, "{mode:?}");
             assert_eq!(&std::fs::read_to_string(&file)?, expected, "{mode:?}");
         }
         Ok(())
@@ -1957,7 +1945,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&uncached(), Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
     }

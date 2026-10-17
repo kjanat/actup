@@ -10,7 +10,7 @@ use actup_core::{
 use anstream::eprintln;
 
 use crate::{
-    cli::{CheckFormat, FailOn, OutputFormat},
+    cli::{CheckFormat, CliExitCode, FailOn, OutputFormat},
     common::{ErrorTally, InvalidUses, WorkflowScanner},
     output::{Finding, FindingStatus, Span, determine_exit_code, print_findings, print_summary},
     sarif,
@@ -132,7 +132,7 @@ pub async fn run(
     config: &Config,
     registry: &provider::Registry,
     cache: &Arc<FileCache>,
-) -> i32 {
+) -> CliExitCode {
     let scanner = WorkflowScanner::new(path, config, registry, format.messages());
     let discovered = scanner.discover();
 
@@ -141,7 +141,7 @@ pub async fn run(
         if !matches!(format.messages(), OutputFormat::Human) {
             print_findings(&[], format, &[]);
         }
-        return 0;
+        return CliExitCode::Success;
     }
 
     let mut findings = Vec::new();
@@ -172,8 +172,8 @@ pub async fn run(
 
     // I/O errors take priority over outdated status (env error = exit 3).
     let io_exit = io_errors.exit_code();
-    if io_exit != crate::cli::CliExitCode::Success {
-        return io_exit.into();
+    if io_exit != CliExitCode::Success {
+        return io_exit;
     }
 
     determine_exit_code(&findings, fail_on)
@@ -1001,7 +1001,10 @@ mod tests {
             "{:?}",
             short.status()
         );
-        assert_eq!(determine_exit_code(std::slice::from_ref(&short), &[]), 2);
+        assert_eq!(
+            determine_exit_code(std::slice::from_ref(&short), &[]),
+            CliExitCode::UserError
+        );
 
         let named = check_action_with_versions(
             &collected("deadbee"),
@@ -1292,7 +1295,7 @@ mod tests {
                     &Arc::new(FileCache::disabled())
                 )
                 .await,
-                i32::from(crate::cli::CliExitCode::Success)
+                CliExitCode::Success
             );
         }
         Ok(())
@@ -1371,7 +1374,7 @@ mod tests {
                 &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
             )
             .await,
-            0
+            CliExitCode::Success
         );
         Ok(())
     }
@@ -1420,7 +1423,7 @@ mod tests {
                 finding.status()
             );
         }
-        assert_eq!(determine_exit_code(&findings, &[]), 2);
+        assert_eq!(determine_exit_code(&findings, &[]), CliExitCode::UserError);
         for format in [CheckFormat::Human, CheckFormat::Json, CheckFormat::Toml] {
             assert_eq!(
                 run(
@@ -1433,7 +1436,7 @@ mod tests {
                     &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
                 )
                 .await,
-                2
+                CliExitCode::UserError
             );
         }
         Ok(())
@@ -1463,7 +1466,7 @@ mod tests {
                     &Arc::new(FileCache::from_config(&config, Access::ReadWrite))
                 )
                 .await,
-                0
+                CliExitCode::Success
             );
         }
         Ok(())

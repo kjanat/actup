@@ -204,7 +204,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(code, CliExitCode::Success);
 
         std::fs::write(
             &file,
@@ -220,7 +220,7 @@ mod tests {
             &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
         )
         .await;
-        assert_eq!(code, i32::from(CliExitCode::EnvironmentError));
+        assert_eq!(code, CliExitCode::EnvironmentError);
 
         for (action, expected) in [
             ("o/cached", CliExitCode::Success),
@@ -237,7 +237,7 @@ mod tests {
                 &Arc::new(FileCache::from_config(&config, Access::ReadWrite)),
             )
             .await;
-            assert_eq!(code, i32::from(expected), "{action}");
+            assert_eq!(code, expected, "{action}");
         }
         Ok(())
     }

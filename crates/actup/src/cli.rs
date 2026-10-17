@@ -387,7 +387,7 @@ pub enum FailOn {
 
 /// Exit codes per AGENTS.md specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(i32)]
+#[repr(u8)]
 pub enum CliExitCode {
     /// Success
     Success = 0,
@@ -399,9 +399,9 @@ pub enum CliExitCode {
     EnvironmentError = 3,
 }
 
-impl From<CliExitCode> for i32 {
+impl From<CliExitCode> for std::process::ExitCode {
     fn from(code: CliExitCode) -> Self {
-        code as Self
+        Self::from(code as u8)
     }
 }
 
