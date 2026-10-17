@@ -939,8 +939,10 @@ impl Provider for Deferred {
     }
 
     fn cache_namespace(&self) -> &str {
-        self.provider()
-            .map_or_else(|_| self.kind.cache_namespace(), <dyn Provider>::cache_namespace)
+        self.provider().map_or_else(
+            |_| self.kind.cache_namespace(),
+            <dyn Provider>::cache_namespace,
+        )
     }
 
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
@@ -1010,6 +1012,7 @@ mod tests {
     struct MockProvider {
         kind: Kind,
         host: String,
+        batch: bool,
     }
 
     impl MockProvider {
@@ -1017,6 +1020,7 @@ mod tests {
             Self {
                 kind,
                 host: host.to_string(),
+                batch: false,
             }
         }
     }
@@ -1024,6 +1028,18 @@ mod tests {
     impl Provider for MockProvider {
         fn kind(&self) -> Kind {
             self.kind
+        }
+
+        fn supports_batch_fetch(&self) -> bool {
+            self.batch
+        }
+
+        fn cache_namespace(&self) -> &str {
+            if self.batch {
+                "batched"
+            } else {
+                self.kind.cache_namespace()
+            }
         }
 
         fn host(&self) -> &str {
@@ -1321,6 +1337,7 @@ mod tests {
         Ok(Box::new(MockProvider {
             kind: Kind::GitHub,
             host: config.host,
+            batch: false,
         }))
     }
 
@@ -1356,6 +1373,7 @@ mod tests {
         Ok(Box::new(MockProvider {
             kind: config.kind.into(),
             host: config.host,
+            batch: true,
         }))
     }
 
@@ -1473,7 +1491,7 @@ mod tests {
             Ok(Search::Unsupported)
         ));
         assert!(gitlab.get_repo_state(&repo).await?.is_none());
-        assert_eq!(gitlab.cache_namespace(), "gitlab");
+        assert_eq!(gitlab.cache_namespace(), "batched");
 
         let codeberg = registry
             .find(Some("codeberg.org"))
@@ -1505,6 +1523,45 @@ mod tests {
             Err(Error::Auth { .. })
         ));
         assert_eq!(codeberg.cache_namespace(), "gitea");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_deferred_preset_forwards_to_its_provider() -> std::result::Result<(), Error> {
+        let registry = Registry::from_config(
+            &Config::default(),
+            &[
+                &MOCK_REGISTRATION,
+                &REST_ONLY_REGISTRATION,
+                &FAILING_PRESET_REGISTRATION,
+            ],
+            &Retention::Run,
+        )?;
+        let repo = ActionRepoId::simple("o", "r");
+        let found = |host: &str| {
+            registry.find(Some(host)).ok_or_else(|| Error::Internal {
+                context: "find".into(),
+                message: host.into(),
+                source: None,
+            })
+        };
+
+        let built = found("gitlab.com")?;
+        assert!(built.supports_batch_fetch());
+        assert_eq!(built.cache_namespace(), "batched");
+        assert_eq!(built.get_default_branch(&repo).await?, "main");
+        assert_eq!(built.get_readme(&repo, Some("v1")).await?, None);
+        built.get_action_yml(&repo, "v1").await?;
+
+        let failed = found("codeberg.org")?;
+        assert!(!failed.supports_batch_fetch());
+        assert_eq!(failed.cache_namespace(), "gitea");
+        let branch = failed.get_default_branch(&repo).await;
+        assert!(matches!(branch, Err(Error::Auth { .. })), "{branch:?}");
+        let readme = failed.get_readme(&repo, None).await;
+        assert!(matches!(readme, Err(Error::Auth { .. })), "{readme:?}");
+        let action = failed.get_action_yml(&repo, "v1").await;
+        assert!(matches!(action, Err(Error::Auth { .. })), "{action:?}");
         Ok(())
     }
 
