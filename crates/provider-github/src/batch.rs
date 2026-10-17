@@ -31,7 +31,7 @@ const FALLBACK_CONCURRENCY_LIMIT: usize = 50;
 
 struct RegistryFetchPlan {
     results: HashMap<ActionRepoId, actup_core::Result<version::Set>>,
-    github_hosts: HashMap<String, Vec<ActionRepoId>>,
+    github_hosts: HashMap<String, Vec<(ActionRepoId, String)>>,
     fallback_repos: Vec<(ActionRepoId, Option<cache::Entry>)>,
 }
 
@@ -110,17 +110,20 @@ async fn classify_repos_for_registry_fetch<C: Cache>(
             continue;
         };
 
+        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
         if provider.kind() == provider::Kind::GitHub && provider.supports_batch_fetch() {
             let host = repo
                 .host()
                 .or_else(|| registry.default_host())
                 .unwrap_or(crate::GITHUB_HOST)
                 .to_string();
-            plan.github_hosts.entry(host).or_default().push(repo);
+            plan.github_hosts
+                .entry(host)
+                .or_default()
+                .push((repo, cache_key));
             continue;
         }
 
-        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
         match read_cached(cache, &repo, &cache_key).await {
             Cached::Fresh(versions) => {
                 plan.results.insert(repo, Ok(versions));
@@ -133,12 +136,12 @@ async fn classify_repos_for_registry_fetch<C: Cache>(
 }
 
 async fn fetch_github_host_groups<C: Cache>(
-    github_hosts: HashMap<String, Vec<ActionRepoId>>,
+    github_hosts: HashMap<String, Vec<(ActionRepoId, String)>>,
     config: &Config,
     cache: Arc<C>,
     results: &mut HashMap<ActionRepoId, actup_core::Result<version::Set>>,
     progress: &dyn Progress,
-) -> Vec<ActionRepoId> {
+) -> Vec<(ActionRepoId, String)> {
     let github_registration = [&crate::REGISTRATION];
     let mut fallback_repos = Vec::new();
 
@@ -147,7 +150,9 @@ async fn fetch_github_host_groups<C: Cache>(
             Ok(provider_config) => {
                 match crate::create_batch_fetcher(&provider_config, Arc::clone(&cache)) {
                     Ok(fetcher) => {
-                        results.extend(fetcher.fetch_versions(&host_repos, progress).await);
+                        let repos: Vec<ActionRepoId> =
+                            host_repos.into_iter().map(|(repo, _)| repo).collect();
+                        results.extend(fetcher.fetch_versions(&repos, progress).await);
                     }
                     Err(e) => {
                         debug!(host = %host, error = %actup_core::error::chain(&e), "failed to build GitHub batch fetcher, falling back to provider fetches");
@@ -239,7 +244,7 @@ pub async fn fetch_versions_with_registry<C: Cache>(
         });
     }
 
-    for repo in fetch_github_host_groups(
+    for (repo, cache_key) in fetch_github_host_groups(
         github_hosts,
         config,
         Arc::clone(&cache),
@@ -248,10 +253,6 @@ pub async fn fetch_versions_with_registry<C: Cache>(
     )
     .await
     {
-        let Some(provider) = registry.find_for_repo(&repo) else {
-            continue;
-        };
-        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
         match read_cached(cache.as_ref(), &repo, &cache_key).await {
             Cached::Fresh(versions) => {
                 results.insert(repo, Ok(versions));
