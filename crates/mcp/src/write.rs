@@ -1345,6 +1345,118 @@ mod tests {
         }
     }
 
+    struct Refreshing {
+        versions: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        resolves: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Provider for Refreshing {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            self.versions
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            self.resolves
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let sha = Sha40::new("b".repeat(40)).ok_or_else(|| actup_core::Error::Internal {
+                context: "test".into(),
+                message: "sha".into(),
+                source: None,
+            });
+            Box::pin(async move { sha })
+        }
+
+        fn refresh_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            let sha = Sha40::new("c".repeat(40)).ok_or_else(|| actup_core::Error::Internal {
+                context: "test".into(),
+                message: "sha".into(),
+                source: None,
+            });
+            Box::pin(async move { sha })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn update_all_pins_the_freshly_resolved_target_sha()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir_all(dir.path().join(".github/workflows"))?;
+        let pinned = format!(
+            "steps:\n  - uses: actions/checkout@{} # v4.0.0\n",
+            "a".repeat(40)
+        );
+        fs::write(dir.path().join(".github/workflows/ci.yml"), &pinned)?;
+        let root = Root::new(dir.path())?;
+        let versions = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let resolves = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(Refreshing {
+            versions: std::sync::Arc::clone(&versions),
+            resolves: std::sync::Arc::clone(&resolves),
+        }));
+
+        let reply = update_all(
+            "t",
+            &registry,
+            &Config::default(),
+            &root,
+            &update_all_args(None)?,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let (is_error, body) = body(reply)?;
+        assert_ne!(is_error, Some(true));
+        assert_eq!(body["changes"][0]["to"], json!("c".repeat(40)));
+        assert_eq!(versions.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(resolves.load(std::sync::atomic::Ordering::SeqCst), 0);
+        Ok(())
+    }
+
     fn update_all_args(host: Option<&str>) -> Result<args::UpdateAll, serde_json::Error> {
         serde_json::from_value(json!({
             "workspaceRoot": ".",

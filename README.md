@@ -461,7 +461,8 @@ An empty `ACTUP_CONFIG` counts as unset. A relative path resolves against the
 working directory. A config that fails to load exits with code 2. The server
 refuses every path outside the root, including symlinks that point out of it.
 `getVersions` and `getLatest` read version sets through the disk cache that the
-CLI and the LSP use. `updateAllUsesToVersion` resolves `targetRef` from the
+CLI and the LSP use. `updateFile` and `updateAllUsesToVersion` read no version
+sets from that cache. `updateAllUsesToVersion` resolves `targetRef` from the
 provider on every call, also when no ref matches, and fails on a host that no
 provider serves. When `scan.ignore` matches every matching ref, it skips the
 provider and lists those refs as skipped.
