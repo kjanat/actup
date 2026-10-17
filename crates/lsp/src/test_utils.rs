@@ -242,6 +242,35 @@ impl Provider for MockProvider {
     }
 }
 
+/// A [`actup_core::Clock`] that moves only when a test moves it.
+#[derive(Debug)]
+pub struct StepClock(std::sync::Mutex<std::time::SystemTime>);
+
+impl StepClock {
+    /// Start at the Unix epoch.
+    pub const fn new() -> Self {
+        Self(std::sync::Mutex::new(std::time::SystemTime::UNIX_EPOCH))
+    }
+
+    /// Move the clock forward by `by`.
+    pub fn advance(&self, by: std::time::Duration) {
+        let mut now = self.0.lock().unwrap();
+        *now += by;
+    }
+
+    /// Move the clock back by `by`.
+    pub fn rewind(&self, by: std::time::Duration) {
+        let mut now = self.0.lock().unwrap();
+        *now -= by;
+    }
+}
+
+impl actup_core::Clock for StepClock {
+    fn now(&self) -> std::time::SystemTime {
+        *self.0.lock().unwrap()
+    }
+}
+
 /// Build a [`provider::Registry`] from a single mock provider.
 pub fn mock_registry(provider: MockProvider) -> provider::Registry {
     let host = provider.host().to_string();

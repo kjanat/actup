@@ -3,10 +3,15 @@
 //! Shows action metadata (name, description, author), version status,
 //! repository link, and deprecation warnings on hover over `uses:` lines.
 
-use std::{fmt::Write as _, sync::Arc};
+use std::{
+    fmt::Write as _,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use actup_core::{
-    ActionRef, Config, check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
+    ActionRef, Clock, Config, SystemClock, check_action_with_provider, extract_uses_from_yaml,
+    parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     version,
 };
@@ -76,11 +81,38 @@ impl ActionMetaCacheKey {
 /// A typical session might see 10–50 distinct actions, so memory impact
 /// is negligible. If this ever becomes a concern, an LRU wrapper could
 /// be added with minimal API change.
-pub type ActionMetaCache = DashMap<ActionMetaCacheKey, Arc<CachedActionMeta>>;
+pub struct ActionMetaCache {
+    entries: DashMap<ActionMetaCacheKey, (Arc<CachedActionMeta>, SystemTime)>,
+    clock: Arc<dyn Clock>,
+}
+
+impl ActionMetaCache {
+    fn with_clock(clock: Arc<dyn Clock>) -> Self {
+        Self {
+            entries: DashMap::new(),
+            clock,
+        }
+    }
+
+    /// The metadata stored under `key` at most `ttl` ago.
+    pub fn get(&self, key: &ActionMetaCacheKey, ttl: Duration) -> Option<Arc<CachedActionMeta>> {
+        let (meta, at) = self.entries.get(key)?.value().clone();
+        self.clock
+            .now()
+            .duration_since(at)
+            .is_ok_and(|age| age <= ttl)
+            .then_some(meta)
+    }
+
+    /// Store `meta` under `key`, dated now.
+    pub fn insert(&self, key: ActionMetaCacheKey, meta: Arc<CachedActionMeta>) {
+        self.entries.insert(key, (meta, self.clock.now()));
+    }
+}
 
 /// Create a new empty action metadata cache.
 pub fn new_action_meta_cache() -> ActionMetaCache {
-    DashMap::new()
+    ActionMetaCache::with_clock(Arc::new(SystemClock))
 }
 
 /// A parsed action located at a specific position in the document.
@@ -151,12 +183,13 @@ async fn get_action_meta(
     action_ref: &ActionRef,
     registry: &provider::Registry,
     cache: &ActionMetaCache,
+    ttl: Duration,
 ) -> Option<Arc<CachedActionMeta>> {
     let cache_key = ActionMetaCacheKey::from_action_ref(action_ref);
 
     // Check cache first.
-    if let Some(cached) = cache.get(&cache_key) {
-        return Some(Arc::clone(cached.value()));
+    if let Some(cached) = cache.get(&cache_key, ttl) {
+        return Some(cached);
     }
 
     // Fetch from provider.
@@ -380,7 +413,13 @@ pub async fn compute_hover(
         .and_then(|v| v.latest())
         .map(|info| info.version().to_string());
 
-    let meta = get_action_meta(&located.action_ref, ctx.registry, ctx.meta_cache).await;
+    let meta = get_action_meta(
+        &located.action_ref,
+        ctx.registry,
+        ctx.meta_cache,
+        ctx.config.cache.ttl,
+    )
+    .await;
     let content = build_hover_content(
         &located.action_ref,
         meta.as_deref(),
@@ -1005,8 +1044,46 @@ mod tests {
             runtime: None,
         });
         cache.insert(key.clone(), Arc::clone(&meta));
-        assert!(cache.get(&key).is_some());
-        assert_eq!(cache.get(&key).unwrap().name.as_deref(), Some("Checkout"));
+        let ttl = Duration::from_secs(60);
+        assert!(cache.get(&key, ttl).is_some());
+        assert_eq!(
+            cache.get(&key, ttl).unwrap().name.as_deref(),
+            Some("Checkout")
+        );
+    }
+
+    #[test]
+    fn action_meta_cache_expires_entries_after_the_ttl() {
+        let clock = Arc::new(crate::test_utils::StepClock::new());
+        let dyn_clock: Arc<dyn Clock> = clock.clone();
+        let cache = ActionMetaCache::with_clock(dyn_clock);
+        let key = ActionMetaCacheKey {
+            owner: "actions".into(),
+            repo: "checkout".into(),
+            ref_str: "main".into(),
+            host: None,
+        };
+        let ttl = Duration::from_secs(60);
+        cache.insert(key.clone(), cache_meta("Checkout"));
+
+        clock.advance(ttl);
+        assert!(cache.get(&key, ttl).is_some());
+        clock.advance(Duration::from_secs(1));
+        assert!(cache.get(&key, ttl).is_none());
+
+        cache.insert(key.clone(), cache_meta("Again"));
+        clock.rewind(Duration::from_secs(1));
+        assert!(cache.get(&key, ttl).is_none());
+    }
+
+    fn cache_meta(name: &str) -> Arc<CachedActionMeta> {
+        Arc::new(CachedActionMeta {
+            name: Some(name.into()),
+            description: None,
+            author: None,
+            deprecated_inputs: vec![],
+            runtime: None,
+        })
     }
 
     #[test]
@@ -1032,8 +1109,9 @@ mod tests {
             runtime: None,
         });
         cache.insert(key_v3.clone(), meta);
-        assert!(cache.get(&key_v3).is_some());
-        assert!(cache.get(&key_v4).is_none());
+        let ttl = Duration::from_secs(60);
+        assert!(cache.get(&key_v3, ttl).is_some());
+        assert!(cache.get(&key_v4, ttl).is_none());
     }
 
     #[test]
@@ -1094,7 +1172,8 @@ mod tests {
 
         cache.insert(key_github.clone(), Arc::clone(&meta));
 
-        assert!(cache.get(&key_github).is_some());
-        assert!(cache.get(&key_ghe).is_none());
+        let ttl = Duration::from_secs(60);
+        assert!(cache.get(&key_github, ttl).is_some());
+        assert!(cache.get(&key_ghe, ttl).is_none());
     }
 }

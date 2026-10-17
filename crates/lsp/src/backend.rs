@@ -2846,15 +2846,6 @@ mod tests {
         assert!(!hosts_differ(&a, &b));
     }
 
-    #[derive(Debug)]
-    struct StepClock(std::sync::Mutex<std::time::SystemTime>);
-
-    impl actup_core::Clock for StepClock {
-        fn now(&self) -> std::time::SystemTime {
-            *self.0.lock().unwrap()
-        }
-    }
-
     type Releases = Arc<std::sync::Mutex<actup_core::version::Set>>;
 
     struct ReleasingProvider(Releases);
@@ -2960,9 +2951,7 @@ mod tests {
         }
 
         let releases: Releases = Arc::new(std::sync::Mutex::new(released("v4.1.0", 'b')));
-        let clock = Arc::new(StepClock(std::sync::Mutex::new(
-            std::time::SystemTime::UNIX_EPOCH,
-        )));
+        let clock = Arc::new(crate::test_utils::StepClock::new());
         let dyn_clock: Arc<dyn actup_core::Clock + Send + Sync> = clock.clone();
         let ttl = Duration::from_secs(60);
         let mut registry = provider::Registry::new();
@@ -2984,11 +2973,11 @@ mod tests {
         assert_eq!(targets(&first, "-> v4.1.0"), 1, "{first:?}");
 
         *releases.lock().unwrap() = released("v4.2.0", 'c');
-        *clock.0.lock().unwrap() += ttl;
+        clock.advance(ttl);
         let cached = published_messages(backend, &mut socket, &uri, 2).await?;
         assert_eq!(cached, first);
 
-        *clock.0.lock().unwrap() += Duration::from_secs(1);
+        clock.advance(Duration::from_secs(1));
         let refreshed = published_messages(backend, &mut socket, &uri, 3).await?;
         assert_eq!(targets(&refreshed, "-> v4.2.0"), 1, "{refreshed:?}");
         Ok(())
