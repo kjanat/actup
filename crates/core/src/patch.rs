@@ -653,6 +653,30 @@ mod tests {
             applied(&line, repin_sha_edit(&loc, &target))?,
             line.replace(&old, &new)
         );
+
+        let line =
+            format!("      - {{ uses: actions/checkout@{old}, with: {{ x: 1 }} }} # v7.0.0\n");
+        let loc = quoted_loc(&line)?;
+        assert_eq!(
+            applied(&line, repin_sha_edit(&loc, &target))?,
+            format!("      - {{ uses: actions/checkout@{new}, with: {{ x: 1 }} }} # v7.0.1\n")
+        );
+        assert_eq!(
+            applied(&line, unpin_edit(&loc, "v7.0.0"))?,
+            "      - { uses: actions/checkout@v7.0.0, with: { x: 1 } }\n"
+        );
+
+        let line =
+            format!("      - {{ uses: actions/checkout@{old}, with: {{ x: 1 }} }} # v7.0.0 keep\n");
+        let loc = quoted_loc(&line)?;
+        assert_eq!(
+            applied(&line, repin_sha_edit(&loc, &target))?,
+            format!("      - {{ uses: actions/checkout@{new}, with: {{ x: 1 }} }} # v7.0.1 keep\n")
+        );
+        assert_eq!(
+            applied(&line, unpin_edit(&loc, "v7.0.0"))?,
+            "      - { uses: actions/checkout@v7.0.0, with: { x: 1 } } # keep\n"
+        );
         Ok(())
     }
 

@@ -159,7 +159,7 @@ impl LocatedAction {
     /// What follows the ref on its line, [`Trailing::Foreign`] on a line that takes no comment.
     pub fn trailing(&self) -> Trailing<'_> {
         if self.takes_comment {
-            Trailing::after(&self.tail, 0)
+            Trailing::of(&self.closer, &self.tail)
         } else {
             Trailing::Foreign
         }
@@ -1205,7 +1205,7 @@ jobs:
                 ("v4".to_string(), 1, 16, 18, Trailing::Foreign),
                 ("v1".to_string(), 2, 17, 19, Trailing::None),
                 ("v2".to_string(), 3, 30, 32, Trailing::None),
-                (sha, 4, 16, 56, Trailing::Foreign),
+                (sha, 4, 16, 56, Trailing::Version { note: "" }),
             ]
         );
     }

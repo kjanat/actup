@@ -5,59 +5,82 @@ use crate::{policy::Style, version};
 /// What follows a `uses:` ref on its line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Trailing<'a> {
-    /// Nothing but a [`closer`].
+    /// Nothing but a closing quote, flow `}`, `]` and `,`, and spaces.
     None,
-    /// A version comment like `# v8.1.0 pinned for node16`.
+    /// A version comment like `# v8.1.0 pinned for node16` at the end of the line.
     Version {
         /// The text after the version, trimmed, like `pinned for node16`.
         note: &'a str,
     },
-    /// A comment that is not a version comment, or text that is not a [`closer`].
+    /// Another comment, or other text such as more flow keys and no comment.
     Foreign,
 }
 
 impl<'a> Trailing<'a> {
     /// Classify the text of `raw_line` after the ref that ends at byte offset `ref_end`.
-    ///
-    /// The [`closer`] of the value is not part of that text.
     #[must_use]
     pub fn after(raw_line: &'a str, ref_end: usize) -> Self {
-        let tail = after_value(raw_line, ref_end).trim_start();
-        if tail.is_empty() {
-            Self::None
-        } else if is_version_comment(tail) {
-            Self::Version {
-                note: split_comment(tail).map_or("", |(_, note)| note),
-            }
-        } else {
-            Self::Foreign
+        Self::of(closer(raw_line, ref_end), after_value(raw_line, ref_end))
+    }
+
+    /// Classify a ref followed by `closer` and then `comment`, as [`closer`] and [`after_value`] split them.
+    #[must_use]
+    pub fn of(closer: &'a str, comment: &'a str) -> Self {
+        if !comment.is_empty() {
+            return if is_version_comment(comment) {
+                Self::Version {
+                    note: split_comment(comment).map_or("", |(_, note)| note),
+                }
+            } else {
+                Self::Foreign
+            };
         }
+        let bare = closer
+            .trim_start_matches(['"', '\''])
+            .chars()
+            .all(|c| c.is_whitespace() || matches!(c, '}' | ']' | ','));
+        if bare { Self::None } else { Self::Foreign }
     }
 }
 
-/// The text after the ref that ends at byte offset `ref_end` that closes its value.
+/// The text between the ref that ends at byte offset `ref_end` and the comment of its line.
 ///
-/// That is a closing quote, then flow `}`, `]` and `,` and spaces. A comment
-/// written after the ref goes after this text.
+/// That is the rest of the value and its flow mapping, such as a closing
+/// quote, `, with: { x: 1 } }` and spaces. A comment written after the ref
+/// goes after this text.
 #[must_use]
 pub fn closer(raw_line: &str, ref_end: usize) -> &str {
     let rest = raw_line.get(ref_end..).unwrap_or("");
-    let quote = rest
-        .chars()
-        .next()
-        .filter(|c| matches!(c, '"' | '\''))
-        .map_or(0, char::len_utf8);
-    let len = rest[quote..]
-        .find(|c: char| !(c.is_whitespace() || matches!(c, '}' | ']' | ',')))
-        .map_or(rest.len(), |at| quote + at);
-    &rest[..len]
+    &rest[..comment_start(rest)]
 }
 
-/// The text of `raw_line` after the [`closer`] of the ref that ends at byte offset `ref_end`.
+/// The comment of `raw_line` after the ref that ends at byte offset `ref_end`, or `""`.
 #[must_use]
 pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
     let rest = raw_line.get(ref_end..).unwrap_or("");
-    &rest[closer(raw_line, ref_end).len()..]
+    &rest[comment_start(rest)..]
+}
+
+/// The byte offset of the first `#` in `rest` that starts a YAML comment.
+///
+/// `rest` starts right after a ref, so a leading quote closes the value.
+fn comment_start(rest: &str) -> usize {
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut after_space = false;
+    for (i, c) in rest.char_indices() {
+        match quote {
+            _ if i == 0 && matches!(c, '"' | '\'') => {}
+            Some('"') if escaped => escaped = false,
+            Some('"') if c == '\\' => escaped = true,
+            Some(q) if c == q => quote = None,
+            None if c == '#' && after_space => return i,
+            None if matches!(c, '"' | '\'') => quote = Some(c),
+            Some(_) | None => {}
+        }
+        after_space = c.is_whitespace();
+    }
+    rest.len()
 }
 
 /// Whether a line fragment is a version comment like `# v1.2.3` or `# 1.2`.
@@ -497,7 +520,17 @@ mod tests {
             ("  - [{ uses: a/b@v1 }]  ", " }]  ", Trailing::None),
             (
                 "  - { uses: a/b@v1, with: { x: 1 } }",
-                ", ",
+                ", with: { x: 1 } }",
+                Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { x: 1 } } # v1.0.0 keep",
+                ", with: { x: 1 } } ",
+                Trailing::Version { note: "keep" },
+            ),
+            (
+                "  - { uses: \"a/b@v1\", with: { x: \"a #b\\\" #c\", y: 'd #e' } } # mine",
+                "\", with: { x: \"a #b\\\" #c\", y: 'd #e' } } ",
                 Trailing::Foreign,
             ),
             ("  - uses: a/b@v1 # v1.2.0", " ", VERSION),
@@ -506,6 +539,7 @@ mod tests {
                 "' ",
                 Trailing::Version { note: "keep me" },
             ),
+            ("  - uses: a/b@v1#x", "#x", Trailing::Foreign),
         ] {
             let ref_end = line.find("@v1").map_or(0, |at| at + 3);
             assert_eq!(closer(line, ref_end), closing, "{line}");
@@ -527,6 +561,12 @@ mod tests {
             (rewrite("v2", None, true), "\" ", "v2\"", true),
             (rewrite("S", Some(" # v2"), false), " ", "S # v2", false),
             (rewrite("S", Some(" # v2"), true), "", "S # v2", true),
+            (
+                rewrite("S", Some(" # v2"), true),
+                ", with: { x: 1 } } ",
+                "S, with: { x: 1 } } # v2",
+                true,
+            ),
         ] {
             assert_eq!(
                 rewrite.splice(closing),
