@@ -3,8 +3,6 @@
 //! All async methods in this module can return errors for network failures,
 //! rate limiting, authentication issues, or resource not found.
 
-#![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
-
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result, encode_segment};
