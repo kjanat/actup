@@ -10,8 +10,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, ErrorTally, FileEdits, PendingEdit, SkipReason, WorkflowScanner,
-        commit_file, repin_sha_edit, report_skipped,
+        Change, EditResult, FileEdits, PendingEdit, RefSite, SkipReason, WorkflowScanner,
+        commit_file, repin_sha_edit, report_error, report_skipped, report_unserved,
     },
 };
 
@@ -32,19 +32,10 @@ enum PinTarget {
 async fn resolve_sha(
     provider: &dyn actup_core::Provider,
     action_ref: &ActionRef,
-    errors: &mut ErrorTally,
-) -> Option<PinTarget> {
+) -> actup_core::Result<PinTarget> {
     let repo_id = action_ref.to_repo_id().without_subpath();
 
-    // Try to get versions first
-    let versions = match provider.get_versions(&repo_id).await {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
-            errors.record(&e);
-            return None;
-        }
-    };
+    let versions = provider.get_versions(&repo_id).await?;
 
     // Find version matching current ref
     if let Some(v) = versions
@@ -52,38 +43,31 @@ async fn resolve_sha(
         .iter()
         .find(|v| v.version().to_string() == action_ref.ref_str())
     {
-        return Some(PinTarget::Named {
+        return Ok(PinTarget::Named {
             sha: v.sha().to_string(),
         });
     }
 
     // Try to resolve the ref directly (might be a branch)
-    match provider
+    let sha = provider
         .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-        .await
-    {
-        Ok(sha40) => {
-            let sha = sha40.as_str().to_string();
-            Some(if action_ref.abbreviates(&sha) {
-                PinTarget::Expanded {
-                    tag: versions.tag_on(&sha).cloned(),
-                    sha,
-                }
-            } else {
-                PinTarget::Named { sha }
-            })
+        .await?
+        .as_str()
+        .to_string();
+    Ok(if action_ref.abbreviates(&sha) {
+        PinTarget::Expanded {
+            tag: versions.tag_on(&sha).cloned(),
+            sha,
         }
-        Err(e) => {
-            eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
-            errors.record(&e);
-            None
-        }
-    }
+    } else {
+        PinTarget::Named { sha }
+    })
 }
 
 enum PinStep {
     Edit(PendingEdit, Box<Change>),
     Unplaceable,
+    Failed(actup_core::Error),
     Nothing,
 }
 
@@ -97,17 +81,13 @@ async fn pin_action_edit(
     action_ref: &ActionRef,
     loc: &UsesLocation,
     config: &Config,
-    errors: &mut ErrorTally,
+    site: &RefSite,
 ) -> PinStep {
     if action_ref.is_sha() {
         let repo_id = action_ref.to_repo_id().without_subpath();
         let versions = match provider.get_versions(&repo_id).await {
             Ok(v) => v,
-            Err(e) => {
-                eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
-                errors.record(&e);
-                return PinStep::Nothing;
-            }
+            Err(e) => return PinStep::Failed(e),
         };
         let result = check_action_with_provider(action_ref, &versions, config, provider).await;
         let CheckStatus::Outdated { target, .. } = result.status() else {
@@ -118,9 +98,8 @@ async fn pin_action_edit(
         };
         let short = &target.sha()[..7.min(target.sha().len())];
         let change = Change {
-            action: action_ref.clone(),
-            provider: provider.kind().to_string(),
-            line: loc.line(),
+            site: site.clone(),
+            new_ref: target.sha().to_string(),
             target: format!("{} ({short})", target.version()),
             show_comment: false,
         };
@@ -130,10 +109,11 @@ async fn pin_action_edit(
         else {
             return PinStep::Unplaceable;
         };
-        let Some(pin) = resolve_sha(provider, action_ref, errors).await else {
-            return PinStep::Nothing;
+        let pin = match resolve_sha(provider, action_ref).await {
+            Ok(pin) => pin,
+            Err(e) => return PinStep::Failed(e),
         };
-        let (edit, target, show_comment) = match pin {
+        let (edit, new_ref, target, show_comment) = match pin {
             PinTarget::Expanded {
                 sha,
                 tag: Some(tag),
@@ -141,24 +121,24 @@ async fn pin_action_edit(
                 let Some(edit) = repin_sha_edit(loc, &tag) else {
                     return PinStep::Unplaceable;
                 };
-                (edit, format!("{prefix}@{sha} # {}", tag.version()), false)
+                let target = format!("{prefix}@{sha} # {}", tag.version());
+                (edit, sha, target, false)
             }
             PinTarget::Expanded { sha, tag: None } => {
                 let new_uses = format!("{prefix}@{sha}");
                 let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone());
-                (edit, new_uses, false)
+                (edit, sha, new_uses, false)
             }
             PinTarget::Named { sha } => {
                 let new_uses = format!("{prefix}@{sha}");
                 let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
                     .with_comment(format!(" # {}", action_ref.ref_str()));
-                (edit, new_uses, true)
+                (edit, sha, new_uses, true)
             }
         };
         let change = Change {
-            action: action_ref.clone(),
-            provider: provider.kind().to_string(),
-            line: loc.line(),
+            site: site.clone(),
+            new_ref,
             target,
             show_comment,
         };
@@ -174,12 +154,27 @@ pub async fn run(
     config: &Config,
     registry: &provider::Registry,
 ) -> i32 {
+    let Some(result) = edit(path, dry_run, format, config, registry).await else {
+        EditResult::default().print_report(dry_run, format);
+        return 0;
+    };
+    result.print_summary(dry_run, "Pinned", "Would pin", format);
+    result.exit_code(false)
+}
+
+async fn edit(
+    path: &Path,
+    dry_run: bool,
+    format: OutputFormat,
+    config: &Config,
+    registry: &provider::Registry,
+) -> Option<EditResult> {
     let scanner = WorkflowScanner::new(path, config, registry, format);
     let discovered = scanner.discover();
 
     if discovered.is_empty() {
         scanner.print_empty_message();
-        return 0;
+        return None;
     }
 
     let mut result = EditResult::default();
@@ -194,38 +189,33 @@ pub async fn run(
 
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             let Some(provider) = scanner.provider_for(&action_ref) else {
+                report_unserved(&scanner, &relative, loc.line(), &action_ref, &mut result);
                 continue;
             };
 
-            match pin_action_edit(provider, &action_ref, &loc, config, &mut result.errors).await {
+            let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
+            match pin_action_edit(provider, &action_ref, &loc, config, &site).await {
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
-                PinStep::Unplaceable => report_skipped(
-                    &relative,
-                    loc.line(),
-                    &action_ref,
-                    &provider.kind().to_string(),
-                    SkipReason::Unplaceable,
-                    &mut result,
-                ),
+                PinStep::Unplaceable => report_skipped(site, SkipReason::Unplaceable, &mut result),
+                PinStep::Failed(e) => report_error(site, &e, &mut result),
                 PinStep::Nothing => {}
             }
         }
 
-        for (change, comment) in commit_file(file_edits, &relative, dry_run, &mut result) {
+        for (change, comment) in commit_file(file_edits, dry_run, &mut result) {
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
-                    change.line,
-                    change.action.to_string().yellow(),
+                    change.site.line,
+                    change.site.action.yellow(),
                     change.written(comment.as_deref()).cyan()
                 );
             }
         }
     }
 
-    result.print_summary(dry_run, "Pinned", "Would pin", format);
-    result.exit_code(false)
+    Some(result)
 }
 
 #[cfg(test)]
@@ -239,7 +229,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{cli::CliExitCode, common::FileEdits};
+    use crate::{
+        cli::CliExitCode,
+        common::{ErrorKind, FileEdits},
+    };
 
     struct FixedShaProvider {
         sha: Sha40,
@@ -484,6 +477,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_edit_records_edited_and_errored_refs() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        workflow(
+            dir.path(),
+            "steps:\n  - uses: o/h@v2\n  - uses: o/unknown@v1\n  - uses: ghe.corp.example/o/b@v1\n",
+        )?;
+
+        let Some(result) = edit(
+            dir.path(),
+            true,
+            OutputFormat::Json,
+            &Config::default(),
+            &repo_sha_registry(),
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        let edited: Vec<(usize, &str, &str, String, Option<&str>)> = result
+            .edited
+            .iter()
+            .map(|e| {
+                (
+                    e.site.line,
+                    e.site.host.as_str(),
+                    e.site.reference.as_str(),
+                    e.to.clone(),
+                    e.comment.as_deref(),
+                )
+            })
+            .collect();
+        assert_eq!(edited, [(2, "github.com", "v2", sha('f'), Some("# v2"))]);
+        let errored: Vec<(usize, &str, ErrorKind)> = result
+            .errored
+            .iter()
+            .map(|e| (e.site.line, e.site.host.as_str(), e.kind))
+            .collect();
+        assert_eq!(
+            errored,
+            [
+                (3, "github.com", ErrorKind::InvalidRef),
+                (4, "ghe.corp.example", ErrorKind::ProviderNotFound),
+            ]
+        );
+        assert_eq!(result.errored[1].site.provider, "unknown");
+        assert_eq!(
+            result.exit_code(false),
+            i32::from(CliExitCode::EnvironmentError)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_without_workflows_reports_nothing_and_succeeds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let config = Config::default();
+        let registry = repo_sha_registry();
+        assert!(
+            edit(dir.path(), false, OutputFormat::Json, &config, &registry)
+                .await
+                .is_none()
+        );
+        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
+            assert_eq!(run(dir.path(), false, format, &config, &registry).await, 0);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_skips_an_unplaceable_value_without_a_user_error()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
@@ -534,14 +598,19 @@ mod tests {
         .replace("SHA", &sha);
 
         let config = Config::default();
-        let mut errors = ErrorTally::default();
         let mut file_edits =
             FileEdits::new(std::path::PathBuf::from("/pages.yml"), content.clone());
         let mut refs = Vec::new();
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             refs.push(action_ref.to_string());
-            let PinStep::Edit(edit, change) =
-                pin_action_edit(&provider, &action_ref, &loc, &config, &mut errors).await
+            let PinStep::Edit(edit, change) = pin_action_edit(
+                &provider,
+                &action_ref,
+                &loc,
+                &config,
+                &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
+            )
+            .await
             else {
                 panic!("pin produced no edit for {action_ref}");
             };
@@ -555,7 +624,6 @@ mod tests {
                 "actions/deploy-pages@v4"
             ]
         );
-        assert_eq!(errors.total(), 0);
         assert_eq!(file_edits.plan().content, expected);
     }
 
@@ -570,13 +638,18 @@ mod tests {
         let content = "steps:\n  - uses: GitHub.COM/actions/checkout@v4\n".to_string();
 
         let config = Config::default();
-        let mut errors = ErrorTally::default();
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
         let mut hosts = Vec::new();
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             hosts.push(action_ref.host().map(str::to_owned));
-            let PinStep::Edit(edit, change) =
-                pin_action_edit(&provider, &action_ref, &loc, &config, &mut errors).await
+            let PinStep::Edit(edit, change) = pin_action_edit(
+                &provider,
+                &action_ref,
+                &loc,
+                &config,
+                &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
+            )
+            .await
             else {
                 return Err("pin produced no edit".into());
             };
@@ -588,7 +661,6 @@ mod tests {
         }
 
         assert_eq!(hosts, [Some("github.com".to_owned())]);
-        assert_eq!(errors.total(), 0);
         assert_eq!(
             file_edits.plan().content,
             format!("steps:\n  - uses: GitHub.COM/actions/checkout@{sha} # v4\n")
@@ -627,11 +699,17 @@ mod tests {
         );
 
         let config = Config::default();
-        let mut errors = ErrorTally::default();
         let mut refs = Vec::new();
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             refs.push(action_ref.to_string());
-            let step = pin_action_edit(&provider, &action_ref, &loc, &config, &mut errors).await;
+            let step = pin_action_edit(
+                &provider,
+                &action_ref,
+                &loc,
+                &config,
+                &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
+            )
+            .await;
             assert!(matches!(step, PinStep::Unplaceable), "{action_ref}");
         }
 
@@ -642,7 +720,6 @@ mod tests {
                 format!("actions/cache@{old}")
             ]
         );
-        assert_eq!(errors.total(), 0);
         Ok(())
     }
 
@@ -668,7 +745,6 @@ mod tests {
         };
         let content = format!("steps:\n  - uses: actions/cache@{old}\n");
 
-        let mut errors = ErrorTally::default();
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             let PinStep::Edit(edit, change) = pin_action_edit(
@@ -676,7 +752,7 @@ mod tests {
                 &action_ref,
                 &loc,
                 &Config::default(),
-                &mut errors,
+                &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
             )
             .await
             else {
@@ -686,7 +762,6 @@ mod tests {
             file_edits.add(edit, *change);
         }
 
-        assert_eq!(errors.total(), 0);
         assert_eq!(
             file_edits.plan().content,
             format!("steps:\n  - uses: actions/cache@{new} # v4.2.0\n")
@@ -707,32 +782,47 @@ mod tests {
         })
     }
 
-    async fn pinned_line(provider: &FixedShaProvider, line: &str) -> Option<String> {
+    struct Pinned {
+        line: String,
+        new_ref: String,
+        comment: Option<String>,
+    }
+
+    async fn pinned_line(provider: &FixedShaProvider, line: &str) -> Option<Pinned> {
         let content = format!("steps:\n{line}\n");
         let (loc, action_ref) = WorkflowScanner::extract_actions(&content).next()?;
-        let mut errors = ErrorTally::default();
+        let site = RefSite::new("ci.yml", loc.line(), &action_ref, provider);
         let PinStep::Edit(edit, change) =
-            pin_action_edit(provider, &action_ref, &loc, &Config::default(), &mut errors).await
+            pin_action_edit(provider, &action_ref, &loc, &Config::default(), &site).await
         else {
             return None;
         };
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
         file_edits.add(edit, *change);
-        file_edits.plan().content.lines().nth(1).map(str::to_owned)
+        let plan = file_edits.plan();
+        let [(change, crate::common::EditOutcome::Applied { comment })] = plan.entries.as_slice()
+        else {
+            return None;
+        };
+        Some(Pinned {
+            line: plan.content.lines().nth(1)?.to_owned(),
+            new_ref: change.new_ref.clone(),
+            comment: comment.clone(),
+        })
     }
 
     #[tokio::test]
     async fn pin_expands_short_sha_with_tag_comment() -> Result<(), Box<dyn std::error::Error>> {
         let provider = pin_provider(&[("v4", FULL_SHA), ("v4.2.0", FULL_SHA)], FULL_SHA)
             .ok_or("fixture SHA must be valid")?;
-        assert_eq!(
-            pinned_line(&provider, "  - uses: o/r@abc1234").await,
-            Some(format!("  - uses: o/r@{FULL_SHA} # v4.2.0"))
-        );
-        assert_eq!(
-            pinned_line(&provider, "  - uses: o/r@abc1234 # v4.1.0").await,
-            Some(format!("  - uses: o/r@{FULL_SHA} # v4.2.0"))
-        );
+        for line in ["  - uses: o/r@abc1234", "  - uses: o/r@abc1234 # v4.1.0"] {
+            let pinned = pinned_line(&provider, line)
+                .await
+                .ok_or("pin produced no edit")?;
+            assert_eq!(pinned.line, format!("  - uses: o/r@{FULL_SHA} # v4.2.0"));
+            assert_eq!(pinned.new_ref, FULL_SHA);
+            assert_eq!(pinned.comment.as_deref(), Some(" # v4.2.0"));
+        }
         Ok(())
     }
 
@@ -742,10 +832,12 @@ mod tests {
         let other = "b".repeat(40);
         let provider =
             pin_provider(&[("v4.2.0", &other)], FULL_SHA).ok_or("fixture SHA must be valid")?;
-        assert_eq!(
-            pinned_line(&provider, "  - uses: o/r@abc1234").await,
-            Some(format!("  - uses: o/r@{FULL_SHA}"))
-        );
+        let pinned = pinned_line(&provider, "  - uses: o/r@abc1234")
+            .await
+            .ok_or("pin produced no edit")?;
+        assert_eq!(pinned.line, format!("  - uses: o/r@{FULL_SHA}"));
+        assert_eq!(pinned.new_ref, FULL_SHA);
+        assert_eq!(pinned.comment, None);
         Ok(())
     }
 
@@ -754,10 +846,12 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let other = "c".repeat(40);
         let provider = pin_provider(&[], &other).ok_or("fixture SHA must be valid")?;
-        assert_eq!(
-            pinned_line(&provider, "  - uses: o/r@deadbee").await,
-            Some(format!("  - uses: o/r@{other} # deadbee"))
-        );
+        let pinned = pinned_line(&provider, "  - uses: o/r@deadbee")
+            .await
+            .ok_or("pin produced no edit")?;
+        assert_eq!(pinned.line, format!("  - uses: o/r@{other} # deadbee"));
+        assert_eq!(pinned.new_ref, other);
+        assert_eq!(pinned.comment.as_deref(), Some(" # deadbee"));
         Ok(())
     }
 }

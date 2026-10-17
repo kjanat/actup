@@ -62,10 +62,16 @@ actup check --format toml   # TOML format
 actup check --format human  # Default, colored output
 ```
 
-With `--format json` or `toml`, `update` and `pin` print a report with `edited`,
-`dry_run` and a `skipped` list. Each skipped entry names the file, line, action,
-host (when written), provider and `reason` (`unplaceable`, `overlap` or
-`out_of_bounds`).
+With `--format json` or `toml`, `check` prints one entry per finding and
+`update` and `pin` print a report with `dry_run` and the lists `edited`,
+`skipped` and `errors`. Every entry names the file, line, action, owner, repo,
+host, provider and `reference` (the ref as found). `host` is the host of the
+provider serving the ref, or the default host when the ref names none. An
+`edited` entry adds `to` (the ref written) and `comment` when the line gets a
+version comment. A `skipped` entry adds `reason` (`unplaceable`, `overlap` or
+`out_of_bounds`). An `errors` entry adds `kind` (such as `not_found`,
+`rate_limited`, `provider_not_found` or `write`) and `message`. With no workflow
+files, the report has empty lists and `check` prints no findings.
 
 ## Configuration
 
@@ -168,7 +174,7 @@ actup completions powershell >> $PROFILE
 | 0    | Success / all up-to-date                                         |
 | 1    | Outdated refs found, or `update`/`pin` skipped a ref             |
 | 2    | User error: unresolvable refs, invalid config, invalid CLI input |
-| 3    | Network/auth/rate-limit error                                    |
+| 3    | Network/auth/rate-limit error, or no provider for a ref's host   |
 
 ## Files Scanned
 

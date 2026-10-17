@@ -16,8 +16,7 @@ struct JsonFinding {
     action: String,
     owner: String,
     repo: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    host: Option<String>,
+    host: String,
     provider: String,
     reference: String,
     status: String,
@@ -121,7 +120,7 @@ impl From<&Finding> for JsonFinding {
             action: f.action_ref().to_string(),
             owner: f.action_ref().owner().to_string(),
             repo: f.action_ref().repo().to_string(),
-            host: f.action_ref().host().map(String::from),
+            host: f.host().to_string(),
             provider: f.provider().to_string(),
             reference: f.action_ref().ref_str().to_string(),
             status: status.into(),
@@ -144,6 +143,8 @@ pub struct Finding {
     status: FindingStatus,
     /// Provider name (e.g., "github", "gitlab")
     provider: String,
+    /// Host of the provider serving the reference
+    host: String,
 }
 
 impl Finding {
@@ -155,6 +156,7 @@ impl Finding {
         action_ref: ActionRef,
         status: FindingStatus,
         provider: String,
+        host: String,
     ) -> Self {
         Self {
             file,
@@ -162,6 +164,7 @@ impl Finding {
             action_ref,
             status,
             provider,
+            host,
         }
     }
 
@@ -193,6 +196,12 @@ impl Finding {
     #[must_use]
     pub fn provider(&self) -> &str {
         &self.provider
+    }
+
+    /// Get the host of the provider serving the reference
+    #[must_use]
+    pub fn host(&self) -> &str {
+        &self.host
     }
 }
 
@@ -521,12 +530,14 @@ mod tests {
         action_ref: ActionRef,
         status: FindingStatus,
     ) -> Finding {
+        let host = action_ref.host().unwrap_or("github.com").to_string();
         Finding::new(
             file.to_string(),
             line,
             action_ref,
             status,
             "github".to_string(),
+            host,
         )
     }
 
@@ -1447,6 +1458,7 @@ mod tests {
             action_ref: make_action_ref("actions", "checkout", "v4"),
             status: FindingStatus::UpToDate,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1476,6 +1488,7 @@ mod tests {
                 exact_version: Some("v4.0.0".to_string()),
             },
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1500,6 +1513,7 @@ mod tests {
                 tag: Some("v4.1.0".to_string()),
             },
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1526,6 +1540,7 @@ mod tests {
                 tag: None,
             },
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1547,6 +1562,7 @@ mod tests {
             action_ref: make_action_ref("internal", "action", "main"),
             status: FindingStatus::Ignored,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1569,6 +1585,7 @@ mod tests {
                 is_environment_error: false,
             },
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1593,6 +1610,7 @@ mod tests {
                 is_environment_error: true,
             },
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1614,6 +1632,7 @@ mod tests {
                 tag: Some("v4.2.0".to_string()),
             },
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1634,6 +1653,7 @@ mod tests {
             action_ref: make_action_ref("actions", "checkout", "v4"),
             status: FindingStatus::UpToDate,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let json_finding = JsonFinding::from(&finding);

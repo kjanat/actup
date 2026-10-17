@@ -95,6 +95,7 @@ async fn check_action_with_versions(
         action.action_ref.clone(),
         status,
         action.provider.clone(),
+        action.host.clone(),
     )
 }
 
@@ -105,6 +106,7 @@ struct CollectedAction {
     action_ref: ActionRef,
     repo_id: ActionRepoId,
     provider: String,
+    host: String,
 }
 
 /// Scan workflows and report outdated actions across multiple providers.
@@ -120,6 +122,9 @@ pub async fn run(
 
     if discovered.is_empty() {
         scanner.print_empty_message();
+        if !matches!(format, OutputFormat::Human) {
+            print_findings(&[], format);
+        }
         return 0;
     }
 
@@ -169,18 +174,17 @@ fn collect_actions(
             // No provider configured for the ref's host is an environment
             // error: emit immediately so it doesn't block batch fetching.
             let Some(provider) = scanner.provider_for(&action_ref) else {
+                let host = scanner.host_for(&action_ref);
                 findings.push(Finding::new(
                     relative.clone(),
                     loc.line(),
                     action_ref.clone(),
                     FindingStatus::Unresolvable {
-                        reason: format!(
-                            "no provider for host: {}",
-                            action_ref.host().unwrap_or("github.com")
-                        ),
+                        reason: format!("no provider for host: {host}"),
                         is_environment_error: true,
                     },
                     "unknown".to_string(),
+                    host,
                 ));
                 continue;
             };
@@ -192,6 +196,7 @@ fn collect_actions(
                 action_ref,
                 repo_id,
                 provider: provider.kind().to_string(),
+                host: provider.host().to_string(),
             });
         }
     }
@@ -287,6 +292,7 @@ async fn resolve_fallback_refs(
                         reason: "ref exists but version comparison unavailable".to_string(),
                     },
                     action.provider,
+                    action.host,
                 );
             }
             Err(e) if e.is_environment_error() => {
@@ -307,6 +313,7 @@ async fn resolve_fallback_refs(
                         is_environment_error: true,
                     },
                     action.provider,
+                    action.host,
                 );
             }
             Err(_) => {}
@@ -672,6 +679,7 @@ mod tests {
             repo_id: action_ref.to_repo_id(),
             action_ref,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let finding =
@@ -703,6 +711,7 @@ mod tests {
             repo_id: action_ref.to_repo_id(),
             action_ref,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let finding = check_action_with_versions(&collected, None, &config, &registry).await;
@@ -745,6 +754,7 @@ mod tests {
             repo_id: action_ref.to_repo_id(),
             action_ref,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let finding =
@@ -787,6 +797,7 @@ mod tests {
             repo_id: action_ref.to_repo_id(),
             action_ref,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         let finding =
@@ -879,6 +890,7 @@ mod tests {
             repo_id: action_ref.to_repo_id(),
             action_ref,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         }
     }
 
@@ -945,6 +957,7 @@ mod tests {
             action_ref: action_ref.clone(),
             repo_id,
             provider: "github".to_string(),
+            host: "github.com".to_string(),
         };
 
         assert_eq!(collected.file, "workflow.yml");
@@ -952,6 +965,49 @@ mod tests {
         assert_eq!(collected.action_ref.repo(), "setup-node");
         assert_eq!(collected.repo_id.owner(), action_ref.owner());
         assert_eq!(collected.repo_id.repo(), action_ref.repo());
+    }
+
+    #[test]
+    fn test_collect_actions_records_the_resolved_host() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        std::fs::write(
+            workflows.join("ci.yml"),
+            "steps:\n  - uses: actions/checkout@v4\n  - uses: ghe.corp.example/o/r@v1\n",
+        )?;
+        let config = Config::default();
+        let registry = test_registry();
+        let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
+        let discovered = scanner.discover();
+        let mut io_errors = ErrorTally::default();
+        let mut findings = Vec::new();
+
+        let collected = collect_actions(&scanner, &discovered, &mut io_errors, &mut findings);
+
+        let hosts: Vec<(&str, &str)> = collected
+            .iter()
+            .map(|c| (c.action_ref.repo(), c.host.as_str()))
+            .collect();
+        assert_eq!(hosts, [("checkout", "github.com")]);
+        let unresolved: Vec<(&str, &str)> = findings
+            .iter()
+            .map(|f| (f.action_ref().repo(), f.host()))
+            .collect();
+        assert_eq!(unresolved, [("r", "ghe.corp.example")]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_without_workflows_succeeds_in_every_format()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let config = Config::default();
+        let registry = test_registry();
+        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
+            assert_eq!(run(dir.path(), false, format, &config, &registry).await, 0);
+        }
+        Ok(())
     }
 
     /// Test `FindingStatus::Unknown` is correctly created for fallback resolution.
@@ -973,6 +1029,7 @@ mod tests {
                 reason: "ref exists but version comparison unavailable".to_string(),
             },
             "github".to_string(),
+            "github.com".to_string(),
         );
 
         match finding.status() {

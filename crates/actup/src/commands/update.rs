@@ -10,8 +10,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, FileEdits, PendingEdit, SkipReason, WorkflowScanner, commit_file,
-        report_skipped,
+        Change, EditResult, FileEdits, PendingEdit, RefSite, SkipReason, WorkflowScanner,
+        commit_file, report_error, report_skipped, report_unserved,
     },
 };
 
@@ -36,6 +36,14 @@ fn build_edit(
     }
 }
 
+fn new_ref(action_ref: &ActionRef, target: &version::Info) -> String {
+    if action_ref.is_sha() {
+        target.sha().to_string()
+    } else {
+        target.version().to_string()
+    }
+}
+
 fn target_display(action_ref: &ActionRef, target: &version::Info) -> String {
     if action_ref.is_sha() {
         let short = &target.sha()[..7.min(target.sha().len())];
@@ -57,12 +65,27 @@ pub async fn run(
     config: &Config,
     registry: &provider::Registry,
 ) -> i32 {
+    let Some(result) = edit(path, dry_run, format, config, registry).await else {
+        EditResult::default().print_report(dry_run, format);
+        return 0;
+    };
+    result.print_summary(dry_run, "Updated", "Would update", format);
+    result.exit_code(dry_run)
+}
+
+async fn edit(
+    path: &Path,
+    dry_run: bool,
+    format: OutputFormat,
+    config: &Config,
+    registry: &provider::Registry,
+) -> Option<EditResult> {
     let scanner = WorkflowScanner::new(path, config, registry, format);
     let discovered = scanner.discover();
 
     if discovered.is_empty() {
         scanner.print_empty_message();
-        return 0;
+        return None;
     }
 
     let mut result = EditResult::default();
@@ -77,70 +100,64 @@ pub async fn run(
 
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             let Some(provider) = scanner.provider_for(&action_ref) else {
+                report_unserved(&scanner, &relative, loc.line(), &action_ref, &mut result);
                 continue;
             };
 
+            let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
             let repo_id = action_ref.to_repo_id().without_subpath();
             let versions = match provider.get_versions(&repo_id).await {
                 Ok(v) => v,
                 Err(e) => {
-                    eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
-                    result.errors.record(&e);
+                    report_error(site, &e, &mut result);
                     continue;
                 }
             };
 
             // Use core check_action to determine if update needed
             let check = check_action_with_provider(&action_ref, &versions, config, provider).await;
-            let (edit, target, show_comment) = match check.status() {
+            let (edit, new_ref, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
                     build_edit(&loc, &action_ref, target),
+                    new_ref(&action_ref, target),
                     target_display(&action_ref, target),
                     false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
                     pin_branch_edit(&loc, ref_name, sha),
+                    sha.clone(),
                     sha[..7.min(sha.len())].to_string(),
                     true,
                 ),
                 _ => continue, // Not actionable, skip
             };
             let Some(edit) = edit else {
-                report_skipped(
-                    &relative,
-                    loc.line(),
-                    &action_ref,
-                    &provider.kind().to_string(),
-                    SkipReason::Unplaceable,
-                    &mut result,
-                );
+                report_skipped(site, SkipReason::Unplaceable, &mut result);
                 continue;
             };
             let change = Change {
-                action: action_ref,
-                provider: provider.kind().to_string(),
-                line: loc.line(),
+                site,
+                new_ref,
                 target,
                 show_comment,
             };
             file_edits.add(edit, change);
         }
 
-        for (change, comment) in commit_file(file_edits, &relative, dry_run, &mut result) {
+        for (change, comment) in commit_file(file_edits, dry_run, &mut result) {
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
-                    change.line,
-                    change.action.ref_str().red(),
+                    change.site.line,
+                    change.site.reference.red(),
                     change.written(comment.as_deref()).green()
                 );
             }
         }
     }
 
-    result.print_summary(dry_run, "Updated", "Would update", format);
-    result.exit_code(dry_run)
+    Some(result)
 }
 
 #[cfg(test)]
@@ -153,7 +170,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{cli::CliExitCode, common::EditOutcome};
+    use crate::{
+        cli::CliExitCode,
+        common::{EditOutcome, ErrorKind},
+    };
 
     struct TagProvider {
         latest: &'static str,
@@ -170,8 +190,16 @@ mod tests {
 
         fn get_versions(
             &self,
-            _repo: &ActionRepoId,
+            repo: &ActionRepoId,
         ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            if repo.repo() == "missing" {
+                let err = actup_core::Error::NotFound {
+                    owner: repo.owner().to_string(),
+                    repo: repo.repo().to_string(),
+                    host: None,
+                };
+                return Box::pin(async move { Err(err) });
+            }
             let old = Arc::new(version::Info::new(
                 version::Version::parse("v4.0.0"),
                 sha40('a'),
@@ -354,6 +382,92 @@ mod tests {
         let expected = "\u{feff}on: push\r\njobs:\n  b:\r    runs-on: x\r\n    steps:\n      - uses: o/p@NEW # v4.2.0\r      - uses: o/q@v4.2.0\r\n      - uses: o/r@v4.2.0"
             .replace("NEW", &sha40('b'));
         assert_update_writes(&content, &expected).await
+    }
+
+    #[tokio::test]
+    async fn test_edit_records_edited_and_errored_refs() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let content = "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@v4.0.0\n      - uses: o/missing@v4.0.0\n      - uses: o/p@OLD # v4.0.0\n      - uses: ghe.corp.example/o/b@v1\n"
+            .replace("OLD", &sha40('a'));
+        std::fs::write(workflows.join("ci.yml"), &content)?;
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &Config::default(),
+            &registry("v4.2.0"),
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        let edited: Vec<(usize, &str, &str, &str, Option<&str>)> = result
+            .edited
+            .iter()
+            .map(|e| {
+                (
+                    e.site.line,
+                    e.site.host.as_str(),
+                    e.site.reference.as_str(),
+                    e.to.as_str(),
+                    e.comment.as_deref(),
+                )
+            })
+            .collect();
+        let old = sha40('a');
+        let new = sha40('b');
+        assert_eq!(
+            edited,
+            [
+                (6, "github.com", "v4.0.0", "v4.2.0", None),
+                (
+                    8,
+                    "github.com",
+                    old.as_str(),
+                    new.as_str(),
+                    Some("# v4.2.0")
+                ),
+            ]
+        );
+        assert!(result.edited.iter().all(|e| e.site.provider == "github"));
+        let errored: Vec<(usize, &str, ErrorKind)> = result
+            .errored
+            .iter()
+            .map(|e| (e.site.line, e.site.action.as_str(), e.kind))
+            .collect();
+        assert_eq!(
+            errored,
+            [
+                (7, "o/missing@v4.0.0", ErrorKind::NotFound),
+                (9, "ghe.corp.example/o/b@v1", ErrorKind::ProviderNotFound),
+            ]
+        );
+        assert_eq!(
+            result.exit_code(false),
+            i32::from(CliExitCode::EnvironmentError)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_without_workflows_reports_nothing_and_succeeds()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let config = Config::default();
+        let registry = registry("v4.2.0");
+        assert!(
+            edit(dir.path(), false, OutputFormat::Json, &config, &registry)
+                .await
+                .is_none()
+        );
+        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
+            assert_eq!(run(dir.path(), false, format, &config, &registry).await, 0);
+        }
+        Ok(())
     }
 
     fn apply_at(line_body: &str, edit: PendingEdit) -> Result<String, Box<dyn std::error::Error>> {

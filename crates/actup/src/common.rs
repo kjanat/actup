@@ -105,6 +105,8 @@ pub struct PendingEdit {
     pub kind: EditKind,
     /// Optional comment to append (for pin command).
     pub comment: Option<String>,
+    /// Version comment that `new` writes in place of an old one.
+    pub inline_comment: Option<String>,
 }
 
 impl PendingEdit {
@@ -115,6 +117,7 @@ impl PendingEdit {
             line,
             kind: EditKind::ReplaceRange { range, new },
             comment: None,
+            inline_comment: None,
         }
     }
 
@@ -122,6 +125,13 @@ impl PendingEdit {
     #[must_use]
     pub fn with_comment(mut self, comment: String) -> Self {
         self.comment = Some(comment);
+        self
+    }
+
+    /// Record the version comment that the replacement text ends with.
+    #[must_use]
+    pub fn with_inline_comment(mut self, comment: String) -> Self {
+        self.inline_comment = Some(comment);
         self
     }
 }
@@ -145,6 +155,7 @@ pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<Pend
             range.start..raw.len(),
             format!("{new_sha}{version_comment}"),
         )
+        .with_inline_comment(version_comment)
     } else {
         // `with_comment` adds the version note only when the line has none, so a
         // foreign comment is preserved.
@@ -175,9 +186,9 @@ impl SkipReason {
     }
 }
 
-/// An action reference that `update` or `pin` left unchanged.
+/// Where an action reference sits and which provider serves it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SkippedRef {
+pub struct RefSite {
     /// File path as displayed.
     pub file: String,
     /// Line number (1-indexed).
@@ -188,41 +199,160 @@ pub struct SkippedRef {
     pub owner: String,
     /// Repository or project.
     pub repo: String,
-    /// Host written in the reference, if any.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub host: Option<String>,
+    /// Host of the provider serving the reference.
+    pub host: String,
     /// Provider kind serving the reference.
     pub provider: String,
-    /// The ref after `@`.
+    /// The ref after `@` as found.
     pub reference: String,
-    /// Why the writer left it unchanged.
-    pub reason: SkipReason,
 }
 
-/// Warn that the writer leaves `action_ref` unchanged and record it as skipped.
-pub fn report_skipped(
-    relative: &str,
+impl RefSite {
+    /// Describe `action_ref` at `file:line`, served by `provider`.
+    #[must_use]
+    pub fn new(file: &str, line: usize, action_ref: &ActionRef, provider: &dyn Provider) -> Self {
+        Self {
+            file: file.to_string(),
+            line,
+            action: action_ref.to_string(),
+            owner: action_ref.owner().to_string(),
+            repo: action_ref.repo().to_string(),
+            host: provider.host().to_string(),
+            provider: provider.kind().to_string(),
+            reference: action_ref.ref_str().to_string(),
+        }
+    }
+}
+
+/// Record that no provider serves `action_ref`, with provider `unknown`.
+pub fn report_unserved(
+    scanner: &WorkflowScanner<'_>,
+    file: &str,
     line: usize,
     action_ref: &ActionRef,
-    provider: &str,
-    reason: SkipReason,
     result: &mut EditResult,
 ) {
-    eprintln!(
-        "{}: {relative}:{line}: {action_ref} - {}; edit it by hand",
-        "Warning".yellow(),
-        reason.describe()
-    );
-    result.skipped.push(SkippedRef {
-        file: relative.to_string(),
+    let host = scanner.host_for(action_ref);
+    let site = RefSite {
+        file: file.to_string(),
         line,
         action: action_ref.to_string(),
         owner: action_ref.owner().to_string(),
         repo: action_ref.repo().to_string(),
-        host: action_ref.host().map(String::from),
-        provider: provider.to_string(),
+        host: host.clone(),
+        provider: "unknown".to_string(),
         reference: action_ref.ref_str().to_string(),
-        reason,
+    };
+    report_error(site, &CoreError::ProviderNotFound { host }, result);
+}
+
+/// An action reference that `update` or `pin` left unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkippedRef {
+    /// The reference and its provider.
+    #[serde(flatten)]
+    pub site: RefSite,
+    /// Why the writer left it unchanged.
+    pub reason: SkipReason,
+}
+
+/// An action reference that `update` or `pin` changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct EditedRef {
+    /// The reference and its provider.
+    #[serde(flatten)]
+    pub site: RefSite,
+    /// The ref after `@` as written.
+    pub to: String,
+    /// The version comment written on the line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+/// The kind of error that left an action reference unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorKind {
+    /// The `uses:` reference is malformed.
+    InvalidRef,
+    /// The repository does not exist.
+    NotFound,
+    /// The ref does not exist in the repository.
+    RefNotFound,
+    /// The configuration is invalid.
+    InvalidConfig,
+    /// YAML parsing failed.
+    YamlParse,
+    /// A network request failed.
+    Network,
+    /// The provider rate limited the request.
+    RateLimited,
+    /// The provider denied access.
+    Forbidden,
+    /// Authentication failed or is missing.
+    Auth,
+    /// A cache operation failed.
+    Cache,
+    /// No provider serves the host.
+    ProviderNotFound,
+    /// An internal error occurred.
+    Internal,
+    /// Writing the file failed.
+    Write,
+}
+
+impl From<&CoreError> for ErrorKind {
+    fn from(err: &CoreError) -> Self {
+        match err {
+            CoreError::InvalidRef { .. } => Self::InvalidRef,
+            CoreError::NotFound { .. } => Self::NotFound,
+            CoreError::RefNotFound { .. } => Self::RefNotFound,
+            CoreError::InvalidConfig { .. } => Self::InvalidConfig,
+            CoreError::YamlParse { .. } => Self::YamlParse,
+            CoreError::Network { .. } => Self::Network,
+            CoreError::RateLimited { .. } => Self::RateLimited,
+            CoreError::Forbidden { .. } => Self::Forbidden,
+            CoreError::Auth { .. } => Self::Auth,
+            CoreError::Cache { .. } => Self::Cache,
+            CoreError::ProviderNotFound { .. } => Self::ProviderNotFound,
+            CoreError::Internal { .. } => Self::Internal,
+        }
+    }
+}
+
+/// An action reference that `update` or `pin` left unchanged after an error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ErroredRef {
+    /// The reference and its provider.
+    #[serde(flatten)]
+    pub site: RefSite,
+    /// The kind of error.
+    pub kind: ErrorKind,
+    /// The error message.
+    pub message: String,
+}
+
+/// Warn that the writer leaves `site` unchanged and record it as skipped.
+pub fn report_skipped(site: RefSite, reason: SkipReason, result: &mut EditResult) {
+    eprintln!(
+        "{}: {}:{}: {} - {}; edit it by hand",
+        "Warning".yellow(),
+        site.file,
+        site.line,
+        site.action,
+        reason.describe()
+    );
+    result.skipped.push(SkippedRef { site, reason });
+}
+
+/// Warn that `err` leaves `site` unchanged, count it, and record it as errored.
+pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
+    eprintln!("{}: {} - {err}", "Warning".yellow(), site.action);
+    result.errors.record(err);
+    result.errored.push(ErroredRef {
+        site,
+        kind: ErrorKind::from(err),
+        message: err.to_string(),
     });
 }
 
@@ -241,9 +371,10 @@ fn is_version_comment(tail: &str) -> bool {
 /// What the writer does with one edit of a [`FileEdits`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EditOutcome {
-    /// The edit is written, with `comment` appended at the end of its line when present.
+    /// The edit is written.
     Applied {
-        /// The appended comment, if one is written.
+        /// The version comment the edit writes, appended to its line or in
+        /// place of an old one.
         comment: Option<String>,
     },
     /// The edit is left out.
@@ -330,7 +461,9 @@ impl<L> FileEdits<L> {
             }
             let EditKind::ReplaceRange { new, .. } = &self.edits[i].0.kind;
             splices.push((range.clone(), false, new));
-            outcomes[i] = EditOutcome::Applied { comment: None };
+            outcomes[i] = EditOutcome::Applied {
+                comment: self.edits[i].0.inline_comment.clone(),
+            };
             applied.push(i);
             last = Some(range);
         }
@@ -395,16 +528,14 @@ fn absolute_range(
         .then_some(absolute)
 }
 
-/// One action reference change, for progress output.
+/// One action reference change, for progress output and the report.
 #[derive(Debug, Clone)]
 pub struct Change {
-    /// The action reference as found.
-    pub action: ActionRef,
-    /// Provider kind serving the reference.
-    pub provider: String,
-    /// Line number (1-indexed).
-    pub line: usize,
-    /// The written target, without any appended comment.
+    /// The reference and its provider.
+    pub site: RefSite,
+    /// The ref after `@` as written.
+    pub new_ref: String,
+    /// The written target for progress output, without any appended comment.
     pub target: String,
     /// Whether progress output shows the appended comment after `target`.
     pub show_comment: bool,
@@ -423,11 +554,11 @@ impl Change {
 
 /// Plan `file_edits`, report its skipped edits, and write it unless `dry_run`.
 ///
-/// Returns each written change with its appended comment, and counts them in
-/// `result`. A failed write records an environment error and returns nothing.
+/// Returns each written change with its version comment, and records them in
+/// `result`. A failed write records each change as an errored ref and returns
+/// nothing.
 pub fn commit_file(
     file_edits: FileEdits<Change>,
-    relative: &str,
     dry_run: bool,
     result: &mut EditResult,
 ) -> Vec<(Change, Option<String>)> {
@@ -440,16 +571,7 @@ pub fn commit_file(
     for (change, outcome) in entries {
         match outcome {
             EditOutcome::Applied { comment } => written.push((change, comment)),
-            EditOutcome::Skipped(reason) => {
-                report_skipped(
-                    relative,
-                    change.line,
-                    &change.action,
-                    &change.provider,
-                    reason,
-                    result,
-                );
-            }
+            EditOutcome::Skipped(reason) => report_skipped(change.site, reason, result),
         }
     }
     if written.is_empty() {
@@ -457,10 +579,23 @@ pub fn commit_file(
     }
     if !dry_run && let Err(e) = fs::write(&path, content) {
         eprintln!("{}: {} - {e}", "Error writing file".red(), path.display());
-        result.errors.record_env();
+        for (change, _) in written {
+            result.errors.record_env();
+            result.errored.push(ErroredRef {
+                site: change.site,
+                kind: ErrorKind::Write,
+                message: e.to_string(),
+            });
+        }
         return Vec::new();
     }
-    result.count += written.len();
+    result
+        .edited
+        .extend(written.iter().map(|(change, comment)| EditedRef {
+            site: change.site.clone(),
+            to: change.new_ref.clone(),
+            comment: comment.as_deref().map(|c| c.trim_start().to_string()),
+        }));
     written
 }
 
@@ -567,6 +702,16 @@ impl<'a> WorkflowScanner<'a> {
     pub fn provider_for(&self, action: &ActionRef) -> Option<&dyn Provider> {
         self.registry.find(action.host())
     }
+
+    /// The host an action resolves to: its written host, else the default host.
+    #[must_use]
+    pub fn host_for(&self, action: &ActionRef) -> String {
+        action
+            .host()
+            .or_else(|| self.registry.default_host())
+            .unwrap_or("github.com")
+            .to_string()
+    }
 }
 
 fn looks_like_yaml_input(path: &Path) -> bool {
@@ -579,21 +724,25 @@ fn looks_like_yaml_input(path: &Path) -> bool {
 /// Structured summary of an `update` or `pin` run.
 #[derive(Debug, Serialize)]
 pub struct EditReport<'a> {
-    /// Number of edited action references.
-    pub edited: usize,
     /// Whether the run left files unwritten.
     pub dry_run: bool,
-    /// Action references left unchanged.
+    /// Action references changed, or to be changed in a dry run.
+    pub edited: &'a [EditedRef],
+    /// Action references left unchanged by a writer limitation.
     pub skipped: &'a [SkippedRef],
+    /// Action references left unchanged by an error.
+    pub errors: &'a [ErroredRef],
 }
 
 /// Summary of edit operations.
 #[derive(Default)]
 pub struct EditResult {
-    /// Total number of edits applied.
-    pub count: usize,
+    /// Action references changed, or to be changed in a dry run.
+    pub edited: Vec<EditedRef>,
     /// Action references left unchanged by a writer limitation.
     pub skipped: Vec<SkippedRef>,
+    /// Action references left unchanged by an error.
+    pub errored: Vec<ErroredRef>,
     /// Error tally.
     pub errors: ErrorTally,
 }
@@ -601,19 +750,26 @@ pub struct EditResult {
 impl EditResult {
     /// Print the summary: text for human output, an [`EditReport`] for JSON and TOML.
     pub fn print_summary(&self, dry_run: bool, verb: &str, dry_verb: &str, format: OutputFormat) {
-        let structured = match format {
-            OutputFormat::Human => None,
+        match format {
+            OutputFormat::Human => self.print_human(dry_run, verb, dry_verb),
+            OutputFormat::Json | OutputFormat::Toml => self.print_report(dry_run, format),
+        }
+    }
+
+    /// Print the [`EditReport`] for JSON and TOML output; print nothing for human output.
+    pub fn print_report(&self, dry_run: bool, format: OutputFormat) {
+        let text = match format {
+            OutputFormat::Human => return,
             OutputFormat::Json => {
-                Some(serde_json::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string()))
+                serde_json::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string())
             }
             OutputFormat::Toml => {
-                Some(toml::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string()))
+                toml::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string())
             }
         };
-        match structured {
-            Some(Ok(text)) => println!("{text}"),
-            Some(Err(e)) => eprintln!("Error serializing edit report: {e}"),
-            None => self.print_human(dry_run, verb, dry_verb),
+        match text {
+            Ok(text) => println!("{text}"),
+            Err(e) => eprintln!("Error serializing edit report: {e}"),
         }
     }
 
@@ -621,18 +777,20 @@ impl EditResult {
     #[must_use]
     pub fn report(&self, dry_run: bool) -> EditReport<'_> {
         EditReport {
-            edited: self.count,
             dry_run,
+            edited: &self.edited,
             skipped: &self.skipped,
+            errors: &self.errored,
         }
     }
 
     fn print_human(&self, dry_run: bool, verb: &str, dry_verb: &str) {
         println!();
+        let count = self.edited.len();
         let msg = if dry_run {
-            format!("{dry_verb} {count} action reference(s)", count = self.count)
+            format!("{dry_verb} {count} action reference(s)")
         } else {
-            format!("{verb} {count} action reference(s)", count = self.count)
+            format!("{verb} {count} action reference(s)")
         };
         println!("{}", msg.bold());
 
@@ -663,7 +821,7 @@ impl EditResult {
             return base.into();
         }
 
-        if !self.skipped.is_empty() || (dry_run && self.count > 0) {
+        if !self.skipped.is_empty() || (dry_run && !self.edited.is_empty()) {
             return CliExitCode::Outdated.into();
         }
 
@@ -893,34 +1051,140 @@ mod tests {
         assert!(repin_sha_edit(&loc, &target).is_none());
     }
 
-    fn skipped_ref(reason: SkipReason) -> SkippedRef {
-        SkippedRef {
+    fn site(line: usize) -> RefSite {
+        RefSite {
             file: "ci.yml".to_string(),
-            line: 3,
+            line,
             action: "a/b@v4".to_string(),
             owner: "a".to_string(),
             repo: "b".to_string(),
-            host: None,
+            host: "github.com".to_string(),
             provider: "github".to_string(),
             reference: "v4".to_string(),
+        }
+    }
+
+    fn skipped_ref(reason: SkipReason) -> SkippedRef {
+        SkippedRef {
+            site: site(3),
             reason,
+        }
+    }
+
+    fn edited_ref(line: usize, comment: Option<&str>) -> EditedRef {
+        EditedRef {
+            site: site(line),
+            to: "v5".to_string(),
+            comment: comment.map(String::from),
         }
     }
 
     #[test]
     fn test_report_skipped_records_a_skip_and_no_user_error() {
         let mut result = EditResult::default();
-        report_skipped(
-            "ci.yml",
-            3,
-            &ActionRef::simple("a", "b", "v4"),
-            "github",
-            SkipReason::Unplaceable,
-            &mut result,
-        );
+        report_skipped(site(3), SkipReason::Unplaceable, &mut result);
         assert_eq!(result.skipped, [skipped_ref(SkipReason::Unplaceable)]);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
+    }
+
+    #[test]
+    fn test_report_error_records_the_kind_and_counts_the_error() {
+        let mut result = EditResult::default();
+        report_error(site(3), &not_found(), &mut result);
+        report_error(
+            site(4),
+            &CoreError::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            },
+            &mut result,
+        );
+        let kinds: Vec<(usize, ErrorKind)> = result
+            .errored
+            .iter()
+            .map(|errored| (errored.site.line, errored.kind))
+            .collect();
+        assert_eq!(
+            kinds,
+            [(3, ErrorKind::NotFound), (4, ErrorKind::RateLimited)]
+        );
+        assert_eq!(result.errored[0].message, not_found().to_string());
+        assert_eq!(result.errors.exit_code(), CliExitCode::EnvironmentError);
+    }
+
+    #[test]
+    fn test_error_kind_names_every_core_error() -> Result<(), Box<dyn std::error::Error>> {
+        let s = String::new;
+        let errors = [
+            CoreError::InvalidRef {
+                input: s(),
+                reason: s(),
+            },
+            not_found(),
+            CoreError::RefNotFound {
+                owner: s(),
+                repo: s(),
+                ref_name: s(),
+                host: None,
+            },
+            CoreError::InvalidConfig {
+                path: s(),
+                reason: s(),
+            },
+            CoreError::YamlParse {
+                path: s(),
+                reason: s(),
+            },
+            CoreError::Network {
+                operation: s(),
+                message: s(),
+            },
+            CoreError::RateLimited {
+                provider: s(),
+                retry_after: None,
+            },
+            CoreError::Forbidden {
+                provider: s(),
+                reason: s(),
+            },
+            CoreError::Auth {
+                provider: s(),
+                reason: s(),
+            },
+            CoreError::Cache {
+                operation: s(),
+                reason: s(),
+            },
+            CoreError::ProviderNotFound { host: s() },
+            CoreError::Internal {
+                context: s(),
+                message: s(),
+            },
+        ];
+        let names: Vec<serde_json::Value> = errors
+            .iter()
+            .map(|e| serde_json::to_value(ErrorKind::from(e)))
+            .collect::<Result<_, _>>()?;
+        assert_eq!(
+            names,
+            [
+                "invalid_ref",
+                "not_found",
+                "ref_not_found",
+                "invalid_config",
+                "yaml_parse",
+                "network",
+                "rate_limited",
+                "forbidden",
+                "auth",
+                "cache",
+                "provider_not_found",
+                "internal",
+            ]
+        );
+        assert_eq!(serde_json::to_value(ErrorKind::Write)?, "write");
+        Ok(())
     }
 
     #[test]
@@ -1227,9 +1491,8 @@ mod tests {
 
     fn change(line: usize, target: &str, show_comment: bool) -> Change {
         Change {
-            action: ActionRef::simple("a", "b", "v1"),
-            provider: "github".to_string(),
-            line,
+            site: site(line),
+            new_ref: "v5".to_string(),
             target: target.to_string(),
             show_comment,
         }
@@ -1266,11 +1529,11 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, "ci.yml", false, &mut result);
+        let written = commit_file(fe, false, &mut result);
 
         assert_eq!(written.len(), 1);
         assert_eq!(written[0].1.as_deref(), Some(" # c"));
-        assert_eq!(result.count, 1);
+        assert_eq!(result.edited, [edited_ref(1, Some("# c"))]);
         assert_eq!(result.skipped.len(), 1);
         assert_eq!(result.skipped[0].reason, SkipReason::Overlap);
         assert_eq!(result.errors.total(), 0);
@@ -1291,10 +1554,10 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, "ci.yml", true, &mut result);
+        let written = commit_file(fe, true, &mut result);
 
         assert_eq!(written.len(), 1);
-        assert_eq!(result.count, 1);
+        assert_eq!(result.edited, [edited_ref(1, None)]);
         assert_eq!(fs::read_to_string(&path)?, content);
         Ok(())
     }
@@ -1310,10 +1573,14 @@ mod tests {
         );
 
         let mut result = EditResult::default();
-        let written = commit_file(fe, "ci.yml", false, &mut result);
+        let written = commit_file(fe, false, &mut result);
 
         assert!(written.is_empty());
-        assert_eq!(result.count, 0);
+        assert_eq!(result.edited, []);
+        let [errored] = result.errored.as_slice() else {
+            panic!("expected one errored ref: {:?}", result.errored);
+        };
+        assert_eq!((errored.site.line, errored.kind), (1, ErrorKind::Write));
         assert_eq!(result.errors.exit_code(), CliExitCode::EnvironmentError);
         assert!(!path.exists());
         Ok(())
@@ -1368,9 +1635,9 @@ mod tests {
     #[test]
     fn test_edit_result_skipped_refs_exit_outdated() {
         let result = EditResult {
-            count: 2,
+            edited: vec![edited_ref(1, None), edited_ref(2, None)],
             skipped: vec![skipped_ref(SkipReason::Unplaceable)],
-            errors: ErrorTally::default(),
+            ..EditResult::default()
         };
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
         assert_eq!(result.exit_code(true), i32::from(CliExitCode::Outdated));
@@ -1381,34 +1648,64 @@ mod tests {
     }
 
     #[test]
-    fn test_edit_report_lists_skipped_refs() -> Result<(), Box<dyn std::error::Error>> {
-        let result = EditResult {
-            count: 2,
+    fn test_edit_report_lists_every_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let mut result = EditResult {
+            edited: vec![edited_ref(1, Some("# v5"))],
             skipped: vec![skipped_ref(SkipReason::Unplaceable)],
-            errors: ErrorTally::default(),
+            ..EditResult::default()
         };
-        let expected = serde_json::json!({
-            "edited": 2,
-            "dry_run": true,
-            "skipped": [{
+        report_error(site(5), &not_found(), &mut result);
+        let site_json = |line: usize| {
+            serde_json::json!({
                 "file": "ci.yml",
-                "line": 3,
+                "line": line,
                 "action": "a/b@v4",
                 "owner": "a",
                 "repo": "b",
+                "host": "github.com",
                 "provider": "github",
                 "reference": "v4",
-                "reason": "unplaceable",
-            }],
+            })
+        };
+        let with = |line: usize, extra: serde_json::Value| {
+            let mut entry = site_json(line);
+            if let (Some(entry), Some(extra)) = (entry.as_object_mut(), extra.as_object()) {
+                entry.extend(extra.clone());
+            }
+            entry
+        };
+        let expected = serde_json::json!({
+            "dry_run": true,
+            "edited": [with(1, serde_json::json!({ "to": "v5", "comment": "# v5" }))],
+            "skipped": [with(3, serde_json::json!({ "reason": "unplaceable" }))],
+            "errors": [with(5, serde_json::json!({
+                "kind": "not_found",
+                "message": not_found().to_string(),
+            }))],
         });
         assert_eq!(serde_json::to_value(result.report(true))?, expected);
-        assert_eq!(
-            toml::to_string_pretty(&result.report(false))?,
-            "edited = 2\ndry_run = false\n\n[[skipped]]\nfile = \"ci.yml\"\nline = 3\naction = \"a/b@v4\"\nowner = \"a\"\nrepo = \"b\"\nprovider = \"github\"\nreference = \"v4\"\nreason = \"unplaceable\"\n"
-        );
+        let toml_text = toml::to_string_pretty(&result.report(false))?;
+        let parsed: toml::Value = toml::from_str(&toml_text)?;
+        let mut expected_toml = serde_json::to_value(result.report(true))?;
+        expected_toml["dry_run"] = serde_json::json!(false);
+        assert_eq!(serde_json::to_value(parsed)?, expected_toml);
         for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
             result.print_summary(false, "Updated", "Would update", format);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_empty_edit_report_lists_no_refs() -> Result<(), Box<dyn std::error::Error>> {
+        let result = EditResult::default();
+        assert_eq!(
+            serde_json::to_value(result.report(false))?,
+            serde_json::json!({ "dry_run": false, "edited": [], "skipped": [], "errors": [] })
+        );
+        assert_eq!(
+            toml::to_string_pretty(&result.report(true))?,
+            "dry_run = true\nedited = []\nskipped = []\nerrors = []\n"
+        );
         Ok(())
     }
 
@@ -1417,9 +1714,9 @@ mod tests {
         let mut errors = ErrorTally::default();
         errors.record(&not_found());
         let result = EditResult {
-            count: 0,
             skipped: vec![skipped_ref(SkipReason::Overlap)],
             errors,
+            ..EditResult::default()
         };
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::UserError));
     }
@@ -1427,7 +1724,7 @@ mod tests {
     #[test]
     fn test_edit_result_exit_code_dry_run_with_changes() {
         let result = EditResult {
-            count: 5,
+            edited: vec![edited_ref(1, None)],
             ..EditResult::default()
         };
         assert_eq!(result.exit_code(false), 0); // Not dry run
@@ -1440,9 +1737,9 @@ mod tests {
         errors.record_env();
 
         let result = EditResult {
-            count: 5,
-            skipped: Vec::new(),
+            edited: vec![edited_ref(1, None)],
             errors,
+            ..EditResult::default()
         };
         // Env error takes priority over changes
         assert_eq!(result.exit_code(true), 3);
