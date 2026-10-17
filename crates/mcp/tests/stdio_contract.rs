@@ -1227,6 +1227,30 @@ fn update_all_rewrites_labels_after_named_refs(client: &mut Client, ws: &Workspa
     })
 }
 
+fn update_all_reports_a_failed_version_fetch(client: &mut Client, ws: &Workspace) -> TestResult {
+    let workflow =
+        "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: busy/x@v4.0.0 # v4.0.0\n";
+    ws.write(".github/workflows/busy.yml", workflow)?;
+    let result = client.call(
+        "updateAllUsesToVersion",
+        json!({
+            "workspaceRoot": ".",
+            "match": { "owner": "busy", "repo": "x" },
+            "targetRef": "v4.2.0",
+        }),
+    )?;
+    expect(is_error(&result), || format!("expected isError: {result}"))?;
+    expect_eq(&body(&result)["status"], &json!("rateLimited"), "status")?;
+    expect_eq(&body(&result)["provider"], &json!("github"), "provider")?;
+    expect_eq(&body(&result)["host"], &json!("github.com"), "host")?;
+    expect(body(&result)["error"].is_string(), || {
+        format!("no error message: {result}")
+    })?;
+    expect(ws.read(".github/workflows/busy.yml")? == workflow, || {
+        "a failed fetch wrote busy.yml".into()
+    })
+}
+
 fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) -> TestResult {
     fs::create_dir_all(ws.path("docs"))?;
     fs::create_dir_all(ws.path("infra"))?;
@@ -1551,7 +1575,7 @@ const BINARY_CASES: [(&str, BinaryCase); 4] = [
     ),
 ];
 
-const CASES: [(&str, Case); 14] = [
+const CASES: [(&str, Case); 15] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -1595,6 +1619,10 @@ const CASES: [(&str, Case); 14] = [
     (
         "update_all_rewrites_labels_after_named_refs",
         update_all_rewrites_labels_after_named_refs,
+    ),
+    (
+        "update_all_reports_a_failed_version_fetch",
+        update_all_reports_a_failed_version_fetch,
     ),
     (
         "mutators_read_markdown_and_text_files",
