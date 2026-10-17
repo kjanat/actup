@@ -132,6 +132,10 @@ fn extract_config_path(params: &InitializeParams) -> Option<PathBuf> {
     Some(PathBuf::from(path_str))
 }
 
+fn resolve_config_path(config_path: Option<&Path>, start_dir: &Path) -> Option<PathBuf> {
+    config_path.map(|p| start_dir.join(p))
+}
+
 /// Build the LSP [`ServerCapabilities`] advertised during `initialize`.
 ///
 /// Kept separate from the handler so each capability co-locates with a
@@ -414,7 +418,7 @@ impl LanguageServer for LspBackend {
         });
 
         let config = match Config::load(
-            config_path.as_deref(),
+            resolve_config_path(config_path.as_deref(), start_dir).as_deref(),
             self.user_config.as_deref(),
             start_dir,
         ) {
@@ -1192,7 +1196,7 @@ impl LspBackend {
             .await
             .clone()
             .unwrap_or_else(|| PathBuf::from("."));
-        let explicit = self.config_path.read().await.clone();
+        let explicit = resolve_config_path(self.config_path.read().await.as_deref(), &start_dir);
         WatchedConfigs {
             start_dir: std::path::absolute(start_dir).ok(),
             user: self.user_config.clone(),
@@ -1226,7 +1230,7 @@ impl LspBackend {
         let old_state = self.config.read().await.clone();
 
         let new_config = match Config::load(
-            config_path.as_deref(),
+            resolve_config_path(config_path.as_deref(), start_dir).as_deref(),
             self.user_config.as_deref(),
             start_dir,
         ) {

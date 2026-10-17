@@ -1005,6 +1005,64 @@ async fn invalid_config_path_beside_valid_repo_config_is_invalid()
 }
 
 #[tokio::test]
+async fn relative_config_path_resolves_against_workspace_root()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    let explicit = repo.join("custom.toml");
+    std::fs::write(&explicit, "[policy]\nbump = \"sideways\"\n")?;
+    let root = repo.to_str().ok_or("temp path is not UTF-8")?;
+    let explicit_str = explicit.to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness
+        .initialize_with(Some(root), Some(json!({ "configPath": "custom.toml" })))
+        .await;
+    assert!(
+        harness.error_shown(explicit_str).await,
+        "expected an error showMessage naming the resolved configPath"
+    );
+
+    let repo_uri = Uri::from_file_path(&repo).ok_or("bad uri")?;
+    let patterns = registered_relative_patterns(&harness.collected.lock().await.requests);
+    assert!(
+        patterns.contains(&(repo_uri.as_str().to_owned(), "custom.toml".to_owned())),
+        "missing workspace-relative configPath watcher in {patterns:?}"
+    );
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn missing_config_path_pauses_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    std::fs::write(temp.path().join("actup.toml"), "[cache]\nenabled = false\n")?;
+    let explicit = temp.path().join("deleted.toml");
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+    let explicit_str = explicit.to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness
+        .initialize_with(Some(root), Some(json!({ "configPath": explicit_str })))
+        .await;
+    assert!(
+        harness.error_shown(explicit_str).await,
+        "expected an error showMessage naming the missing configPath"
+    );
+
+    let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+    harness
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
+        .await;
+    harness.assert_paused(&uri).await;
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn unrelated_file_change_does_not_reload() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let config_file = temp.path().join("actup.toml");

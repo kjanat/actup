@@ -173,7 +173,7 @@ mod discovery_tests {
 }
 
 mod config_tests {
-    use std::fs;
+    use std::{fs, path::PathBuf};
 
     use actup_core::{ActionRef, Config, find_repo_config, iter_config_candidates, parse_uses};
     use tempfile::TempDir;
@@ -372,6 +372,51 @@ policy  = { bump = "patch" }
         let config = Config::load(None, Some(&temp.path().join("absent.toml")), temp.path())?;
         assert_eq!(config.loaded_from, Some(repo_config));
         assert!(!config.cache.enabled);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_missing_explicit_path_is_invalid() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = TempDir::new()?;
+        fs::write(temp.path().join("actup.toml"), "[cache]\nenabled = false\n")?;
+        let explicit = temp.path().join("deleted.toml");
+
+        match Config::load(Some(&explicit), None, temp.path()) {
+            Err(actup_core::Error::InvalidConfig { path, .. }) => {
+                assert_eq!(path, explicit.display().to_string());
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_relative_explicit_path_skips_ancestors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let cwd = std::env::current_dir()?;
+        let Some(name) = cwd.ancestors().skip(1).find_map(|dir| {
+            fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
+                let name = PathBuf::from(entry.file_name());
+                (dir.join(&name).is_file() && !cwd.join(&name).exists()).then_some(name)
+            })
+        }) else {
+            panic!(
+                "no ancestor of {} holds a file absent from it",
+                cwd.display()
+            );
+        };
+        let temp = TempDir::new()?;
+
+        match Config::load(Some(&name), None, temp.path()) {
+            Err(actup_core::Error::InvalidConfig { path, .. }) => {
+                assert_eq!(path, name.display().to_string());
+            }
+            other => panic!(
+                "expected InvalidConfig for {}, got {other:?}",
+                name.display()
+            ),
+        }
         Ok(())
     }
 

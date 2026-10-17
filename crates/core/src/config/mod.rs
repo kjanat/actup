@@ -538,13 +538,13 @@ impl Config {
     ///
     /// Precedence (highest to lowest):
     /// 1. Environment variables (ACTUP_*)
-    /// 2. Explicit `config_path` (if provided)
+    /// 2. Explicit `config_path` (if provided), relative to the process working directory
     /// 3. Repo config (searched upward from `start_dir`)
     /// 4. User config at `user_config`, usually [`user_config_path`] - fills gaps only
     /// 5. Defaults
     ///
     /// # Errors
-    /// Returns error if config file exists but is invalid.
+    /// Returns [`Error::InvalidConfig`] if a config file is invalid or `config_path` cannot be read.
     #[allow(clippy::option_if_let_else)] // Readability: mutating figment in if-let is clearer
     pub fn load(
         config_path: Option<&Path>,
@@ -608,18 +608,11 @@ impl Config {
 
     /// Merge a config file into figment based on extension
     fn merge_config_file(figment: Figment, path: &Path) -> Result<Figment, Error> {
-        Ok(match Format::from_path(path) {
-            Format::Yaml => figment.merge(Yaml::file(path)),
-            Format::Json => figment.merge(Json::file(path)),
-            Format::Jsonc => {
-                let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
-                    path: path.display().to_string(),
-                    reason: e.to_string(),
-                })?;
-                figment.merge(FileContents::new(path, &contents)?)
-            }
-            Format::Toml => figment.merge(Toml::file(path)),
-        })
+        let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
+            path: path.display().to_string(),
+            reason: e.to_string(),
+        })?;
+        Ok(figment.merge(FileContents::new(path, &contents)?))
     }
 
     /// Return the policy for `action`: `[policy]` with every matching override applied in order.

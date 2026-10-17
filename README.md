@@ -105,7 +105,9 @@ token_env = "GHE_TOKEN"
 
 ### Config Discovery
 
-1. `--config <path>` (explicit)
+1. `--config <path>` or LSP `configPath` (explicit). A relative path resolves
+   against the CLI working directory or the LSP workspace root. A missing file
+   is an error.
 2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`
 3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
