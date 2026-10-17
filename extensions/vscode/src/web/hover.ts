@@ -1,6 +1,7 @@
 import { parseUsesRefs } from "actup-wasm";
 import type { ActupProvider, CheckResult } from "actup-wasm";
 import * as vscode from "vscode";
+import { byteToColumn } from "./position.ts";
 
 export class ActupHoverProvider implements vscode.HoverProvider {
 	constructor(
@@ -85,7 +86,8 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		);
 
 		const line = loc.line - 1;
-		const range = new vscode.Range(line, loc.column - 1, line, loc.column - 1 + loc.value.length);
+		const start = byteToColumn(loc.raw_line, loc.column - 1);
+		const range = new vscode.Range(line, start, line, start + loc.value.length);
 		return new vscode.Hover(md, range);
 	}
 }

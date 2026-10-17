@@ -119,6 +119,75 @@ export enum LogLevel {
 	Error = 5,
 }
 
+export class MarkdownString {
+	value = "";
+	isTrusted?: boolean;
+
+	appendMarkdown(value: string): MarkdownString {
+		this.value += value;
+		return this;
+	}
+}
+
+export class Hover {
+	constructor(readonly contents: MarkdownString, readonly range?: Range) {}
+}
+
+interface UriLike {
+	toString(): string;
+}
+
+interface OpenDocument {
+	readonly uri: UriLike;
+	getText(): string;
+	lineAt(line: number): { readonly text: string };
+}
+
+class Workspace {
+	readonly documents: OpenDocument[] = [];
+	readonly appliedEdits: WorkspaceEdit[] = [];
+
+	findFiles(include: string): Promise<UriLike[]> {
+		const directory = include.includes("/workflows/") ? "/.github/workflows/" : "/.github/actions/";
+		return Promise.resolve(
+			this.documents.filter(document => document.uri.toString().includes(directory)).map(document => document.uri),
+		);
+	}
+
+	openTextDocument(uri: UriLike): Promise<OpenDocument> {
+		const document = this.documents.find(candidate => candidate.uri.toString() === uri.toString());
+		return document === undefined ? Promise.reject(new Error(`no document ${uri.toString()}`)) : Promise.resolve(document);
+	}
+
+	applyEdit(edit: WorkspaceEdit): Promise<boolean> {
+		this.appliedEdits.push(edit);
+		return Promise.resolve(true);
+	}
+}
+
+export const workspace = new Workspace();
+
+class Window {
+	readonly messages: string[] = [];
+
+	showInformationMessage(message: string): Promise<undefined> {
+		this.messages.push(message);
+		return Promise.resolve(undefined);
+	}
+
+	showWarningMessage(message: string): Promise<undefined> {
+		this.messages.push(message);
+		return Promise.resolve(undefined);
+	}
+
+	showErrorMessage(message: string): Promise<undefined> {
+		this.messages.push(message);
+		return Promise.resolve(undefined);
+	}
+}
+
+export const window = new Window();
+
 class DiagnosticCollection {
 	private readonly byUri = new Map<string, Diagnostic[]>();
 

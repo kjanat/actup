@@ -5,6 +5,7 @@ import { ActupCompletionProvider } from "./completion.ts";
 import { clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.ts";
 import { DocumentTracker } from "./documentTracker.ts";
 import { ActupHoverProvider } from "./hover.ts";
+import { byteToColumn } from "./position.ts";
 import { createVSCodeGitHubProvider } from "./provider.ts";
 import { ensureWasmInitialized } from "./wasmLoader.ts";
 
@@ -97,7 +98,7 @@ export async function activate(
 
 	// Commands
 	context.subscriptions.push(
-		vscode.commands.registerCommand("actup.fixAllInWorkspace", () => fixAllInWorkspace(ghProvider)),
+		vscode.commands.registerCommand("actup.fixAllInWorkspace", () => fixAllInWorkspace(ghProvider, outputChannel)),
 	);
 
 	outputChannel.info("actup web extension activated");
@@ -105,8 +106,9 @@ export async function activate(
 
 export function deactivate(): void {}
 
-async function fixAllInWorkspace(
+export async function fixAllInWorkspace(
 	provider: ActupProvider,
+	log: vscode.LogOutputChannel,
 ): Promise<void> {
 	const [workflowFiles, compositeFiles] = await Promise.all([
 		vscode.workspace.findFiles("**/.github/workflows/*.{yml,yaml}", "**/node_modules/**"),
@@ -134,7 +136,13 @@ async function fixAllInWorkspace(
 			const wsEdit = new vscode.WorkspaceEdit();
 			for (const edit of edits) {
 				const line = edit.line - 1;
-				const range = new vscode.Range(line, edit.refStart, line, edit.refEnd);
+				const lineText = doc.lineAt(line).text;
+				const range = new vscode.Range(
+					line,
+					byteToColumn(lineText, edit.refStart),
+					line,
+					byteToColumn(lineText, edit.refEnd),
+				);
 				wsEdit.replace(fileUri, range, edit.newRef);
 			}
 			await vscode.workspace.applyEdit(wsEdit);
@@ -142,7 +150,7 @@ async function fixAllInWorkspace(
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			failedFiles.push({ uri: fileUri, message });
-			outputChannel.error(`actup: failed to process ${fileUri.toString()}: ${message}`);
+			log.error(`actup: failed to process ${fileUri.toString()}: ${message}`);
 		}
 	}
 

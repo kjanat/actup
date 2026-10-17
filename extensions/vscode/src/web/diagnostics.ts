@@ -1,6 +1,7 @@
 import type { ActionRef, ActupProvider, UsesLocation } from "actup-wasm";
 import { checkRefs, type CheckResult, type CheckStatus, parseUsesRefs } from "actup-wasm";
 import * as vscode from "vscode";
+import { byteToColumn } from "./position.ts";
 
 const DIAGNOSTIC_SOURCE = "actup";
 
@@ -108,7 +109,7 @@ function statusToDiagnostic(
 	const line = loc.line - 1; // 1-indexed -> 0-indexed
 	const refRange = loc.ref_range ?? null;
 	const range = refRange !== null
-		? new vscode.Range(line, refRange.start, line, refRange.end)
+		? new vscode.Range(line, byteToColumn(loc.raw_line, refRange.start), line, byteToColumn(loc.raw_line, refRange.end))
 		: new vscode.Range(line, 0, line, loc.raw_line.length);
 
 	if (typeof status === "object" && "Outdated" in status) {
