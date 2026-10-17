@@ -129,13 +129,13 @@ fn create_batch_fetcher_with_token<C: Cache>(
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use std::{num::NonZeroU8, sync::Arc};
 
     use actup_core::{ApiMode, HostKind, cache, config::registration::ProviderConfig};
 
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn registration_kind_is_github() {
@@ -205,7 +205,7 @@ mod tests {
     }
 
     #[test]
-    fn create_produces_provider_with_valid_config() {
+    fn create_produces_provider_with_valid_config() -> TestResult {
         // No GITHUB_TOKEN env needed — provider runs unauthenticated
         let config = ProviderConfig {
             host: "github.com".into(),
@@ -213,24 +213,26 @@ mod tests {
             api_base: "https://api.github.com".into(),
             token_env: Some("_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(10).ok_or("zero")?,
         };
         let result = (REGISTRATION.create)(&config);
         assert!(result.is_ok(), "create should succeed without token");
+        Ok(())
     }
 
     #[test]
-    fn create_produces_provider_for_ghe() {
+    fn create_produces_provider_for_ghe() -> TestResult {
         let config = ProviderConfig {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
             token_env: Some("_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(20).ok_or("zero")?,
         };
         let result = (REGISTRATION.create)(&config);
         assert!(result.is_ok(), "create should succeed for GHE host");
+        Ok(())
     }
 
     #[test]
@@ -255,36 +257,37 @@ mod tests {
     }
 
     #[test]
-    fn create_batch_fetcher_uses_rest_mode_when_configured() {
+    fn create_batch_fetcher_uses_rest_mode_when_configured() -> TestResult {
         let config = ProviderConfig {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: Some("_ACTUP_TEST_BATCH_FETCHER_REST".into()),
             api_mode: ApiMode::Rest,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(10).ok_or("zero")?,
         };
 
-        let fetcher = create_batch_fetcher(&config, Arc::new(cache::Noop)).unwrap();
+        let fetcher = create_batch_fetcher(&config, Arc::new(cache::Noop))?;
 
         assert!(!fetcher.has_graphql());
+        Ok(())
     }
 
     #[test]
-    fn create_batch_fetcher_enables_graphql_when_token_present() {
+    fn create_batch_fetcher_enables_graphql_when_token_present() -> TestResult {
         let config = ProviderConfig {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
             token_env: Some("_ACTUP_UNUSED_TEST_TOKEN".into()),
             api_mode: ApiMode::Graphql,
-            max_tags_per_repo: NonZeroU8::new(10).unwrap(),
+            max_tags_per_repo: NonZeroU8::new(10).ok_or("zero")?,
         };
 
         let fetcher =
-            create_batch_fetcher_with_token(&config, Arc::new(cache::Noop), Some("test-token"))
-                .unwrap();
+            create_batch_fetcher_with_token(&config, Arc::new(cache::Noop), Some("test-token"))?;
 
         assert!(fetcher.has_graphql());
+        Ok(())
     }
 }

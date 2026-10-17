@@ -575,9 +575,10 @@ impl Provider for GitHubProvider {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
     use crate::types::{GitHubTag, TagCommit};
 
     // Helper to create a GitHubTag for testing
@@ -601,18 +602,24 @@ mod tests {
     }
 
     #[test]
-    fn test_process_tags_single_version() {
+    fn test_process_tags_single_version() -> TestResult {
         let tags = vec![make_tag("v1.0.0", "aaa111")];
         let result = process_tags(tags);
 
         assert_eq!(result.semver_tags().len(), 1);
         assert!(result.latest().is_some());
         assert_eq!(
-            result.latest().as_ref().unwrap().version().to_string(),
+            result
+                .latest()
+                .as_ref()
+                .ok_or("`result.latest().as_ref()` is None")?
+                .version()
+                .to_string(),
             "v1.0.0"
         );
         assert_eq!(result.latest_per_major().len(), 1);
         assert!(result.latest_per_major().contains_key(&1));
+        Ok(())
     }
 
     #[test]
@@ -632,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_tags_latest_tracking() {
+    fn test_process_tags_latest_tracking() -> TestResult {
         let tags = vec![
             make_tag("v1.0.0", "aaa"),
             make_tag("v2.0.0", "bbb"),
@@ -641,11 +648,19 @@ mod tests {
         let result = process_tags(tags);
 
         assert!(result.latest().is_some());
-        assert_eq!(result.latest().unwrap().version().to_string(), "v3.0.0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v3.0.0"
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_process_tags_latest_per_major() {
+    fn test_process_tags_latest_per_major() -> TestResult {
         let tags = vec![
             make_tag("v1.0.0", "a"),
             make_tag("v1.1.0", "b"),
@@ -660,7 +675,7 @@ mod tests {
             result
                 .latest_per_major()
                 .get(&1)
-                .unwrap()
+                .ok_or("`latest_per_major().get(..)` is None")?
                 .version()
                 .to_string(),
             "v1.2.0"
@@ -669,15 +684,16 @@ mod tests {
             result
                 .latest_per_major()
                 .get(&2)
-                .unwrap()
+                .ok_or("`latest_per_major().get(..)` is None")?
                 .version()
                 .to_string(),
             "v2.1.0"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_process_tags_includes_prereleases_in_tags() {
+    fn test_process_tags_includes_prereleases_in_tags() -> TestResult {
         let tags = vec![
             make_tag("v1.0.0", "aaa"),
             make_tag("v2.0.0-beta.1", "bbb"),
@@ -688,11 +704,19 @@ mod tests {
         // Prereleases are included in semver_tags (filtered at query time)
         assert_eq!(result.semver_tags().len(), 3);
         // But "latest" only tracks stable releases
-        assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v1.0.0"
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_process_tags_non_semver_ignored() {
+    fn test_process_tags_non_semver_ignored() -> TestResult {
         let tags = vec![
             make_tag("v1.0.0", "aaa"),
             make_tag("latest", "bbb"),
@@ -702,34 +726,40 @@ mod tests {
 
         // Non-semver should be ignored
         assert_eq!(result.semver_tags().len(), 1);
-        assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v1.0.0"
+        );
+        Ok(())
     }
 
     #[test]
-    fn git_base_follows_the_api_base() {
+    fn git_base_follows_the_api_base() -> TestResult {
         let base = |api_base: &str, host: &str| {
-            GitHubProvider::with_host(api_base, host, None)
-                .unwrap()
-                .git_base()
+            GitHubProvider::with_host(api_base, host, None).map(|provider| provider.git_base())
         };
         assert_eq!(
-            base("https://api.github.com", "github.com"),
+            base("https://api.github.com", "github.com")?,
             "https://github.com"
         );
         assert_eq!(
-            base("https://ghe.corp.com/api/v3", "ghe.corp.com"),
+            base("https://ghe.corp.com/api/v3", "ghe.corp.com")?,
             "https://ghe.corp.com"
         );
         assert_eq!(
-            base("http://127.0.0.1:8080/api/v3", "ghe.test"),
+            base("http://127.0.0.1:8080/api/v3", "ghe.test")?,
             "http://127.0.0.1:8080"
         );
         assert_eq!(
-            base("https://custom.corp.com/github", "custom.corp.com"),
+            base("https://custom.corp.com/github", "custom.corp.com")?,
             "https://custom.corp.com"
         );
         let provider =
-            GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None).unwrap();
+            GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None)?;
         assert_eq!(
             provider.clone_url(&ActionRepoId::simple("o", "r")).ok(),
             Some("https://ghe.corp.com/o/r.git".to_string())
@@ -738,34 +768,37 @@ mod tests {
             provider.clone_url(&ActionRepoId::simple("o", "r+x")).ok(),
             Some("https://ghe.corp.com/o/r%2Bx.git".to_string())
         );
+        Ok(())
     }
 
     #[test]
-    fn test_graphql_endpoint_public_github() {
-        let provider = GitHubProvider::new(None).unwrap();
+    fn test_graphql_endpoint_public_github() -> TestResult {
+        let provider = GitHubProvider::new(None)?;
         assert_eq!(provider.graphql_endpoint(), crate::GITHUB_GRAPHQL_URL);
+        Ok(())
     }
 
     #[test]
-    fn test_graphql_endpoint_ghe() {
+    fn test_graphql_endpoint_ghe() -> TestResult {
         let provider =
-            GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None).unwrap();
+            GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None)?;
 
         assert_eq!(
             provider.graphql_endpoint(),
             "https://ghe.corp.com/api/graphql"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_graphql_endpoint_ghe_nonstandard() {
+    fn test_graphql_endpoint_ghe_nonstandard() -> TestResult {
         let provider =
-            GitHubProvider::with_host("https://custom.corp.com/github", "custom.corp.com", None)
-                .unwrap();
+            GitHubProvider::with_host("https://custom.corp.com/github", "custom.corp.com", None)?;
 
         assert_eq!(
             provider.graphql_endpoint(),
             "https://custom.corp.com/github/api/graphql"
         );
+        Ok(())
     }
 }

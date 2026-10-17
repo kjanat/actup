@@ -564,33 +564,31 @@ impl<C: Cache> BatchFetcher<C> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use actup_core::config::DEFAULT_MAX_TAGS_PER_REPO;
 
     use super::*;
 
-    #[allow(dead_code, reason = "helper function for future tests")]
-    fn make_repo(owner: &str, repo: &str) -> ActionRepoId {
-        ActionRepoId::simple(owner, repo)
-    }
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     #[test]
-    fn test_rest_only_has_no_graphql() {
-        let provider = GitHubProvider::new(None).unwrap();
+    fn test_rest_only_has_no_graphql() -> TestResult {
+        let provider = GitHubProvider::new(None)?;
         let cache = Arc::new(cache::Noop);
         let fetcher = BatchFetcher::rest_only(provider, cache, DEFAULT_MAX_TAGS_PER_REPO);
 
         assert!(!fetcher.has_graphql());
+        Ok(())
     }
 
     #[test]
-    fn test_with_graphql_no_token() {
-        let provider = GitHubProvider::new(None).unwrap();
+    fn test_with_graphql_no_token() -> TestResult {
+        let provider = GitHubProvider::new(None)?;
         let cache = Arc::new(cache::Noop);
         let fetcher = BatchFetcher::with_graphql(provider, cache, None, DEFAULT_MAX_TAGS_PER_REPO);
 
         // No token = no GraphQL
         assert!(!fetcher.has_graphql());
+        Ok(())
     }
 }

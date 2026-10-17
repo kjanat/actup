@@ -1,7 +1,5 @@
 //! Integration tests for GitHub provider with mocked HTTP responses
 
-#![allow(clippy::expect_used, clippy::unwrap_used)]
-
 use std::num::NonZeroU8;
 
 use actup_core::{ActionRepoId, Provider};
@@ -11,12 +9,14 @@ use wiremock::{
     matchers::{method, path, query_param},
 };
 
+type TestResult = Result<(), Box<dyn std::error::Error>>;
+
 const TAGS_RESPONSE: &str = include_str!("fixtures/tags_response.json");
 const REPO_RESPONSE: &str = include_str!("fixtures/repo_response.json");
 const BRANCH_RESPONSE: &str = include_str!("fixtures/branch_response.json");
 
 #[tokio::test]
-async fn test_list_tags() {
+async fn test_list_tags() -> TestResult {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -25,13 +25,9 @@ async fn test_list_tags() {
         .mount(&mock_server)
         .await;
 
-    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
-        .expect("failed to create client");
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)?;
 
-    let tags = client
-        .list_tags("actions", "checkout", None)
-        .await
-        .expect("failed to list tags");
+    let tags = client.list_tags("actions", "checkout", None).await?;
 
     assert_eq!(tags.len(), 5);
     assert_eq!(tags[0].name, "v6.0.2");
@@ -39,10 +35,11 @@ async fn test_list_tags() {
         tags[0].commit.sha,
         "de0fac2e4500dabe0009e67214ff5f5447ce83dd"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_list_tags_limited_stops_after_requested_count() {
+async fn test_list_tags_limited_stops_after_requested_count() -> TestResult {
     let mock_server = MockServer::start().await;
     let next_url = format!(
         "{}/repos/actions/checkout/tags?per_page=2&page=2",
@@ -60,21 +57,20 @@ async fn test_list_tags_limited_stops_after_requested_count() {
         .mount(&mock_server)
         .await;
 
-    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
-        .expect("failed to create client");
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)?;
 
     let tags = client
         .list_tags_limited("actions", "checkout", NonZeroU8::MIN.saturating_add(1))
-        .await
-        .expect("failed to list limited tags");
+        .await?;
 
     assert_eq!(tags.len(), 2);
     assert_eq!(tags[0].name, "v6.0.2");
     assert_eq!(tags[1].name, "v6.0.1");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_get_repo() {
+async fn test_get_repo() -> TestResult {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -83,19 +79,16 @@ async fn test_get_repo() {
         .mount(&mock_server)
         .await;
 
-    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
-        .expect("failed to create client");
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)?;
 
-    let repo = client
-        .get_repo("actions", "checkout")
-        .await
-        .expect("failed to get repo");
+    let repo = client.get_repo("actions", "checkout").await?;
 
     assert_eq!(repo.default_branch, "main");
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_get_branch() {
+async fn test_get_branch() -> TestResult {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -104,22 +97,19 @@ async fn test_get_branch() {
         .mount(&mock_server)
         .await;
 
-    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
-        .expect("failed to create client");
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)?;
 
-    let branch = client
-        .get_branch("actions", "checkout", "main")
-        .await
-        .expect("failed to get branch");
+    let branch = client.get_branch("actions", "checkout", "main").await?;
 
     assert_eq!(
         branch.commit.sha,
         "0c366fd6a839edf440554fa01a7085ccba70ac98"
     );
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_not_found_error() {
+async fn test_not_found_error() -> TestResult {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -128,18 +118,18 @@ async fn test_not_found_error() {
         .mount(&mock_server)
         .await;
 
-    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
-        .expect("failed to create client");
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)?;
 
     let result = client.get_repo("nonexistent", "repo").await;
 
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = result.err().ok_or("`result` did not fail")?;
     assert!(matches!(err, actup_core::Error::NotFound { .. }));
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_rate_limit_error() {
+async fn test_rate_limit_error() -> TestResult {
     let mock_server = MockServer::start().await;
 
     Mock::given(method("GET"))
@@ -153,14 +143,14 @@ async fn test_rate_limit_error() {
         .mount(&mock_server)
         .await;
 
-    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)
-        .expect("failed to create client");
+    let client = GitHubClient::with_api_base(&mock_server.uri(), "github.com", None)?;
 
     let result = client.get_repo("actions", "checkout").await;
 
     assert!(result.is_err());
-    let err = result.unwrap_err();
+    let err = result.err().ok_or("`result` did not fail")?;
     assert!(matches!(err, actup_core::Error::RateLimited { .. }));
+    Ok(())
 }
 
 async fn serve_rest_versions(server: &MockServer, per_page: &str) {
