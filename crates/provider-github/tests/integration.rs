@@ -91,7 +91,6 @@ async fn test_get_repo() {
         .await
         .expect("failed to get repo");
 
-    assert_eq!(repo.full_name, "actions/checkout");
     assert_eq!(repo.default_branch, "main");
 }
 
@@ -113,7 +112,6 @@ async fn test_get_branch() {
         .await
         .expect("failed to get branch");
 
-    assert_eq!(branch.name, "main");
     assert_eq!(
         branch.commit.sha,
         "0c366fd6a839edf440554fa01a7085ccba70ac98"
@@ -1312,4 +1310,90 @@ mod stale {
         assert_eq!(latest(versions), Some("v1.0.0".to_string()));
         Ok(())
     }
+}
+
+async fn serve_body(server: &MockServer, url: &str, body: String) {
+    Mock::given(method("GET"))
+        .and(path(url.to_string()))
+        .respond_with(ResponseTemplate::new(200).set_body_string(body))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn minimal_rest_responses_parse() -> Result<(), Box<dyn std::error::Error>> {
+    let (tagged, tag_object, head) = ("a".repeat(40), "c".repeat(40), "d".repeat(40));
+    let server = MockServer::start().await;
+    serve_body(
+        &server,
+        "/repos/o/r/tags",
+        format!(r#"[{{"name": "v1.0.0", "commit": {{"sha": "{tagged}"}}}}]"#),
+    )
+    .await;
+    serve_body(
+        &server,
+        "/repos/o/r",
+        r#"{"default_branch": "main"}"#.into(),
+    )
+    .await;
+    serve_body(
+        &server,
+        "/repos/o/r/branches/main",
+        format!(r#"{{"commit": {{"sha": "{head}"}}}}"#),
+    )
+    .await;
+    serve_body(
+        &server,
+        "/repos/o/r/git/ref/tags/v1.0.0",
+        format!(r#"{{"object": {{"type": "tag", "sha": "{tag_object}"}}}}"#),
+    )
+    .await;
+    serve_body(
+        &server,
+        &format!("/repos/o/r/git/tags/{tag_object}"),
+        format!(r#"{{"object": {{"sha": "{tagged}"}}}}"#),
+    )
+    .await;
+    serve_body(
+        &server,
+        "/repos/o/r/contents/action.yml",
+        r#"{"content": "bmFtZTogTWluaW1hbAo=", "encoding": "base64"}"#.into(),
+    )
+    .await;
+    serve_body(
+        &server,
+        "/repos/o/r/commits/abc1234",
+        format!(r#"{{"sha": "{FULL_SHA}"}}"#),
+    )
+    .await;
+    mount_not_found(&server, "/repos/o/r/git/ref/tags/abc1234").await;
+    mount_not_found(&server, "/repos/o/r/branches/abc1234").await;
+    let provider = provider(&server)?;
+    let repo = ActionRepoId::simple("o", "r");
+
+    let set = provider.versions_via_rest(&repo).await?;
+    assert_eq!(set.tag_sha("v1.0.0"), Some(tagged.as_str()));
+    assert_eq!(
+        set.default_branch()
+            .map(actup_core::version::BranchInfo::sha),
+        Some(head.as_str())
+    );
+    assert_eq!(
+        provider.resolve_ref_to_sha(&repo, "v1.0.0").await?.as_str(),
+        tagged
+    );
+    assert_eq!(
+        provider.resolve_ref_to_sha(&repo, "main").await?.as_str(),
+        head
+    );
+    assert_eq!(
+        provider
+            .resolve_ref_to_sha(&repo, "abc1234")
+            .await?
+            .as_str(),
+        FULL_SHA
+    );
+    let action = provider.get_action_yml(&repo, "v1.0.0").await?;
+    assert_eq!(action.name(), Some("Minimal"));
+    Ok(())
 }

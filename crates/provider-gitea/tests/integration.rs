@@ -17,7 +17,6 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 const REPO: &str = "/api/v1/repos/o/r";
 const COMMIT_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const COMMIT_B: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-const TAG_OBJECT: &str = "cccccccccccccccccccccccccccccccccccccccc";
 const HEAD: &str = "dddddddddddddddddddddddddddddddddddddddd";
 
 fn repo() -> ActionRepoId {
@@ -37,44 +36,31 @@ async fn get(server: &MockServer, url: &str, status: u16, body: &str) {
 }
 
 fn tag(name: &str, commit: &str) -> String {
-    format!(
-        r#"{{"name": "{name}", "id": "{TAG_OBJECT}", "commit": {{"sha": "{commit}", "url": "u"}}, "message": "release", "tarball_url": null, "zipball_url": null}}"#
-    )
+    format!(r#"{{"name": "{name}", "commit": {{"sha": "{commit}"}}}}"#)
 }
 
 fn repository(default_branch: &str) -> String {
-    format!(
-        r#"{{"id": 1, "name": "r", "full_name": "o/r", "description": null, "empty": false, "private": false, "fork": false, "default_branch": "{default_branch}", "clone_url": "c", "ssh_url": "s", "html_url": "h"}}"#
-    )
+    format!(r#"{{"default_branch": "{default_branch}"}}"#)
 }
 
-fn branch(name: &str, commit: &str) -> String {
-    format!(
-        r#"{{"name": "{name}", "commit": {{"id": "{commit}", "url": "u"}}, "protected": false}}"#
-    )
+fn branch(commit: &str) -> String {
+    format!(r#"{{"commit": {{"id": "{commit}"}}}}"#)
 }
 
-fn content(name: &str, text: &str) -> String {
+fn content(text: &str) -> String {
     format!(
-        r#"{{"type": "file", "encoding": "base64", "size": {}, "name": "{name}", "path": "{name}", "content": "{}", "sha": "s", "url": "u", "html_url": "h", "git_url": "g", "download_url": null}}"#,
-        text.len(),
+        r#"{{"type": "file", "encoding": "base64", "content": "{}"}}"#,
         STANDARD.encode(text)
     )
 }
 
 fn commit(sha: &str) -> String {
-    format!(r#"{{"sha": "{sha}", "url": "u", "html_url": "h"}}"#)
+    format!(r#"{{"sha": "{sha}"}}"#)
 }
 
 async fn serve_repository(server: &MockServer) {
     get(server, REPO, 200, &repository("main")).await;
-    get(
-        server,
-        &format!("{REPO}/branches/main"),
-        200,
-        &branch("main", HEAD),
-    )
-    .await;
+    get(server, &format!("{REPO}/branches/main"), 200, &branch(HEAD)).await;
 }
 
 async fn versions_error(status: u16, body: &str) -> Result<Error, Box<dyn std::error::Error>> {
@@ -398,7 +384,7 @@ async fn resolve_a_branch_after_the_tag_lookup_misses() -> TestResult {
         &server,
         &format!("{REPO}/branches/release/v1"),
         200,
-        &branch("release/v1", HEAD),
+        &branch(HEAD),
     )
     .await;
 
@@ -417,14 +403,14 @@ async fn resolve_encodes_a_hash_in_the_ref() -> TestResult {
         &server,
         &format!("{REPO}/branches/feat%231"),
         200,
-        &branch("feat#1", HEAD),
+        &branch(HEAD),
     )
     .await;
     get(
         &server,
         &format!("{REPO}/branches/feat"),
         200,
-        &branch("feat", COMMIT_A),
+        &branch(COMMIT_A),
     )
     .await;
 
@@ -442,9 +428,7 @@ async fn get_action_yml_encodes_a_plus_in_the_ref() -> TestResult {
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/contents/action.yml")))
         .and(query_param("ref", "v1.0.0+build"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_string(content("action.yml", "name: Plus\n")),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_string(content("name: Plus\n")))
         .mount(&server)
         .await;
 
@@ -542,7 +526,7 @@ async fn get_readme_decodes_the_first_readme_found() -> TestResult {
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/contents/README.md")))
         .and(query_param("ref", "v1"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(content("README.md", "# Hi\n")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(content("# Hi\n")))
         .mount(&server)
         .await;
 
@@ -567,7 +551,7 @@ async fn get_action_yml_parses_action_yml() -> TestResult {
         &server,
         &format!("{REPO}/contents/action.yml"),
         200,
-        &content("action.yml", "name: Hello\ndescription: Says hello\n"),
+        &content("name: Hello\ndescription: Says hello\n"),
     )
     .await;
 
@@ -585,7 +569,7 @@ async fn get_action_yml_falls_back_to_action_yaml() -> TestResult {
         &server,
         &format!("{REPO}/contents/action.yaml"),
         200,
-        &content("action.yaml", "name: Yaml\n"),
+        &content("name: Yaml\n"),
     )
     .await;
 

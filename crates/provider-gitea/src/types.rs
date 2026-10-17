@@ -11,16 +11,8 @@ use serde::{Deserialize, Serialize};
 pub struct GiteaTag {
     /// Tag name (e.g., "v1.0.0")
     pub name: String,
-    /// Commit SHA this tag points to
-    pub id: String,
     /// Commit details
     pub commit: GiteaTagCommit,
-    /// Message associated with the tag (None for lightweight tags)
-    pub message: Option<String>,
-    /// Tarball download URL
-    pub tarball_url: Option<String>,
-    /// Zipball download URL
-    pub zipball_url: Option<String>,
 }
 
 impl TagLike for GiteaTag {
@@ -38,35 +30,13 @@ impl TagLike for GiteaTag {
 pub struct GiteaTagCommit {
     /// Commit SHA
     pub sha: String,
-    /// Commit URL
-    pub url: String,
 }
 
 /// Repository information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GiteaRepository {
-    /// Repository ID
-    pub id: u64,
-    /// Repository name
-    pub name: String,
-    /// Full name (owner/repo)
-    pub full_name: String,
-    /// Repository description
-    pub description: Option<String>,
-    /// Is this repo empty?
-    pub empty: bool,
-    /// Is this repo private?
-    pub private: bool,
-    /// Is this repo a fork?
-    pub fork: bool,
     /// Default branch name
     pub default_branch: String,
-    /// Clone URL (HTTPS)
-    pub clone_url: String,
-    /// SSH clone URL
-    pub ssh_url: String,
-    /// HTML URL
-    pub html_url: String,
 }
 
 /// The archive flag of a repository
@@ -80,13 +50,8 @@ pub struct GiteaArchive {
 /// Branch information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GiteaBranch {
-    /// Branch name
-    pub name: String,
     /// Latest commit on this branch
     pub commit: GiteaBranchCommit,
-    /// Is this branch protected?
-    #[serde(default)]
-    pub protected: bool,
 }
 
 /// Commit information in branch response
@@ -94,8 +59,6 @@ pub struct GiteaBranch {
 pub struct GiteaBranchCommit {
     /// Commit SHA
     pub id: String,
-    /// Commit URL
-    pub url: String,
 }
 
 /// File/directory content from repository
@@ -106,24 +69,8 @@ pub struct GiteaContent {
     pub content_type: String,
     /// Encoding (usually "base64" for files)
     pub encoding: Option<String>,
-    /// File size in bytes
-    pub size: u64,
-    /// File name
-    pub name: String,
-    /// Full path from repository root
-    pub path: String,
     /// File content (base64 encoded for files)
     pub content: Option<String>,
-    /// SHA of the content
-    pub sha: String,
-    /// API URL for this content
-    pub url: String,
-    /// HTML URL for this content
-    pub html_url: String,
-    /// Git URL
-    pub git_url: String,
-    /// Download URL
-    pub download_url: Option<String>,
 }
 
 /// Commit information (full)
@@ -131,10 +78,6 @@ pub struct GiteaContent {
 pub struct GiteaCommit {
     /// Commit SHA
     pub sha: String,
-    /// Commit URL
-    pub url: String,
-    /// HTML URL
-    pub html_url: String,
 }
 
 /// API error response
@@ -142,6 +85,4 @@ pub struct GiteaCommit {
 pub struct GiteaError {
     /// Error message
     pub message: Option<String>,
-    /// HTTP URL for more information
-    pub url: Option<String>,
 }

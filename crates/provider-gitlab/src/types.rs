@@ -30,35 +30,13 @@ impl TagLike for GitLabTag {
 pub struct GitLabCommit {
     /// Full commit SHA
     pub id: String,
-    /// Short commit SHA
-    pub short_id: String,
-    /// Commit title
-    pub title: String,
-    /// Commit message
-    pub message: String,
-    /// Author name
-    pub author_name: String,
-    /// Commit timestamp
-    pub created_at: String,
 }
 
 /// Project (repository) information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabProject {
-    /// Project ID
-    pub id: u64,
-    /// Project name
-    pub name: String,
-    /// Project path (slug)
-    pub path: String,
-    /// Full path including namespace
-    pub path_with_namespace: String,
     /// Default branch name
     pub default_branch: String,
-    /// Project description
-    pub description: Option<String>,
-    /// Web URL
-    pub web_url: String,
     /// Whether the project is archived
     #[serde(default)]
     pub archived: bool,
@@ -67,13 +45,8 @@ pub struct GitLabProject {
 /// Branch information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabBranch {
-    /// Branch name
-    pub name: String,
     /// Latest commit on this branch
     pub commit: GitLabBranchCommit,
-    /// Whether this is the default branch
-    #[serde(default)]
-    pub default: bool,
 }
 
 /// Simplified commit info in branch response
@@ -81,32 +54,15 @@ pub struct GitLabBranch {
 pub struct GitLabBranchCommit {
     /// Commit SHA
     pub id: String,
-    /// Short SHA
-    pub short_id: String,
-    /// Commit title
-    pub title: String,
 }
 
 /// File content from repository
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabFile {
-    /// File name
-    pub file_name: String,
-    /// File path
-    pub file_path: String,
-    /// File size in bytes
-    pub size: u64,
     /// Encoding (usually "base64")
     pub encoding: String,
     /// File content (base64 encoded)
     pub content: String,
-    /// Blob ID
-    pub blob_id: String,
-    /// Ref (branch/tag)
-    #[serde(rename = "ref")]
-    pub ref_name: String,
-    /// Commit ID
-    pub commit_id: String,
 }
 
 /// API error response

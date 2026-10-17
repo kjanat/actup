@@ -37,29 +37,20 @@ async fn get(server: &MockServer, url: &str, status: u16, body: &str) {
 }
 
 fn tag(name: &str, commit: &str) -> String {
-    format!(
-        r#"{{"name": "{name}", "target": "{TAG_OBJECT}", "commit": {{"id": "{commit}", "short_id": "{}", "title": "t", "message": "m", "author_name": "a", "created_at": "2026-01-01T00:00:00Z"}}, "release": {{"tag_name": 1}}}}"#,
-        &commit[..7]
-    )
+    format!(r#"{{"name": "{name}", "target": "{TAG_OBJECT}", "commit": {{"id": "{commit}"}}}}"#)
 }
 
 fn project(default_branch: &str) -> String {
-    format!(
-        r#"{{"id": 1, "name": "r", "path": "r", "path_with_namespace": "o/r", "default_branch": "{default_branch}", "description": null, "web_url": "https://gitlab.com/o/r"}}"#
-    )
+    format!(r#"{{"default_branch": "{default_branch}"}}"#)
 }
 
-fn branch(name: &str, commit: &str) -> String {
-    format!(
-        r#"{{"name": "{name}", "commit": {{"id": "{commit}", "short_id": "{}", "title": "t"}}, "default": true}}"#,
-        &commit[..7]
-    )
+fn branch(commit: &str) -> String {
+    format!(r#"{{"commit": {{"id": "{commit}"}}}}"#)
 }
 
-fn file(name: &str, text: &str) -> String {
+fn file(text: &str) -> String {
     format!(
-        r#"{{"file_name": "{name}", "file_path": "{name}", "size": {}, "encoding": "base64", "content": "{}", "blob_id": "b", "ref": "HEAD", "commit_id": "{HEAD}"}}"#,
-        text.len(),
+        r#"{{"encoding": "base64", "content": "{}"}}"#,
         STANDARD.encode(text)
     )
 }
@@ -70,7 +61,7 @@ async fn serve_project(server: &MockServer) {
         server,
         &format!("{PROJECT}/repository/branches/main"),
         200,
-        &branch("main", HEAD),
+        &branch(HEAD),
     )
     .await;
 }
@@ -334,7 +325,7 @@ async fn resolve_a_branch_to_its_head() -> TestResult {
         &server,
         &format!("{PROJECT}/repository/branches/main"),
         200,
-        &branch("main", HEAD),
+        &branch(HEAD),
     )
     .await;
 
@@ -434,7 +425,7 @@ async fn get_readme_decodes_the_first_readme_found() -> TestResult {
     Mock::given(method("GET"))
         .and(path(format!("{PROJECT}/repository/files/README.md")))
         .and(query_param("ref", "v1"))
-        .respond_with(ResponseTemplate::new(200).set_body_string(file("README.md", "# Hello\n")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(file("# Hello\n")))
         .mount(&server)
         .await;
 
@@ -459,7 +450,7 @@ async fn get_action_yml_parses_action_yml() -> TestResult {
         &server,
         &format!("{PROJECT}/repository/files/action.yml"),
         200,
-        &file("action.yml", "name: Hello\ndescription: Says hello\n"),
+        &file("name: Hello\ndescription: Says hello\n"),
     )
     .await;
 
@@ -484,7 +475,7 @@ async fn get_action_yml_falls_back_to_action_yaml_in_the_subpath() -> TestResult
         &server,
         &format!("{PROJECT}/repository/files/sub%2Faction.yaml"),
         200,
-        &file("action.yaml", "name: Nested\n"),
+        &file("name: Nested\n"),
     )
     .await;
 

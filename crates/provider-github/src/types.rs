@@ -61,9 +61,6 @@ pub struct GitHubOwner {
 /// Repository info from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubRepo {
-    /// Full name (owner/repo)
-    pub full_name: String,
-
     /// Default branch name
     pub default_branch: String,
 
@@ -79,9 +76,6 @@ pub struct GitHubRepo {
 /// A branch from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubBranch {
-    /// Branch name
-    pub name: String,
-
     /// Commit info
     pub commit: BranchCommit,
 }
@@ -103,10 +97,6 @@ pub struct GitHubCommit {
 /// A git reference from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubRef {
-    /// Ref name (e.g., "refs/tags/v1.0.0")
-    #[serde(rename = "ref")]
-    pub ref_name: String,
-
     /// Object info
     pub object: RefObject,
 }
@@ -125,33 +115,16 @@ pub struct RefObject {
 /// Content response from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubContent {
-    /// Content type
-    #[serde(rename = "type")]
-    pub content_type: String,
-
     /// Base64 encoded content (for files)
     pub content: Option<String>,
 
     /// Encoding (usually "base64")
     pub encoding: Option<String>,
-
-    /// File name
-    pub name: String,
-
-    /// File path
-    pub path: String,
-
-    /// SHA of the content
-    pub sha: String,
 }
 
 /// An annotated tag object from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubTagObject {
-    /// Tag name
-    pub tag: String,
-    /// Tag message
-    pub message: Option<String>,
     /// Object this tag points to
     pub object: TagObjectTarget,
 }
@@ -159,9 +132,6 @@ pub struct GitHubTagObject {
 /// Target of an annotated tag
 #[derive(Debug, Clone, Deserialize)]
 pub struct TagObjectTarget {
-    /// Object type (usually "commit")
-    #[serde(rename = "type")]
-    pub object_type: String,
     /// Object SHA
     pub sha: String,
 }
