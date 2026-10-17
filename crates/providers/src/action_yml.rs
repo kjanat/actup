@@ -243,12 +243,14 @@ fn build_action_yml(path: &str, source: &str, raw: RawActionYml) -> Result<Actio
 /// Returns error if the YAML content cannot be parsed or if `runs.using`
 /// invariants are violated (missing `main`/`image`/empty `steps` per type).
 pub fn parse_action_yml(raw: &str, path: &str) -> Result<ActionYml> {
-    let parsed: RawActionYml =
-        serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {
+    let options = serde_saphyr::options! { with_snippet: false };
+    let parsed: RawActionYml = serde_saphyr::from_str_with_options(raw, options).map_err(|e| {
+        actup_core::Error::YamlParse {
             path: path.into(),
             reason: String::new(),
             source: Some(std::sync::Arc::new(e)),
-        })?;
+        }
+    })?;
     build_action_yml(path, raw, parsed)
 }
 
@@ -502,5 +504,15 @@ runs:
             actup_core::error::chain(&err),
             format!("failed to parse YAML 'action.yml': {source}")
         );
+    }
+
+    #[test]
+    fn invalid_yaml_reports_the_line_on_one_line() {
+        let Err(err) = parse_action_yml("name: x\nruns: [unclosed\n", "action.yml") else {
+            panic!("expected a parse error");
+        };
+        let rendered = actup_core::error::chain(&err);
+        assert!(rendered.contains("line 2"), "{rendered}");
+        assert!(!rendered.contains('\n'), "{rendered}");
     }
 }
