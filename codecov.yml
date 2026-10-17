@@ -14,7 +14,7 @@ coverage:
 
 # Files excluded from both project and patch coverage.
 # - Binary entrypoints (`fn main`) are exercised by integration tests, not unit tests.
-# - `extensions/vscode` is TypeScript, outside the Cargo workspace.
+# - `extensions/vscode` holds TypeScript, and `bun run test` covers it outside `cargo llvm-cov`.
 ignore:
   - "**/main.rs"
   - "extensions/vscode/**"
