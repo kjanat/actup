@@ -9,6 +9,11 @@
 //!
 //! Trigger characters: `@` (for version completion after typing the `@`).
 
+use std::{
+    sync::atomic::{AtomicU64, Ordering},
+    time::Duration,
+};
+
 use actup_core::{
     ActionRepoId,
     provider::{self, Search},
@@ -229,8 +234,36 @@ fn last_uses_key(prefix: &str) -> Option<usize> {
     found
 }
 
-/// Shortest prefix that starts an action search.
 const MIN_SEARCH_CHARS: usize = 2;
+
+/// Waits out rapid typing before an action search and drops superseded searches.
+#[derive(Debug, Default)]
+pub struct SearchDebounce {
+    latest: AtomicU64,
+    delay: Duration,
+}
+
+impl SearchDebounce {
+    /// Debounce action searches by `delay`.
+    #[must_use]
+    pub const fn new(delay: Duration) -> Self {
+        Self {
+            latest: AtomicU64::new(0),
+            delay,
+        }
+    }
+
+    fn ticket(&self) -> u64 {
+        self.latest.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    async fn settled(&self, ticket: u64) -> bool {
+        if !self.delay.is_zero() {
+            tokio::time::sleep(self.delay).await;
+        }
+        self.latest.load(Ordering::SeqCst) == ticket
+    }
+}
 
 fn action_item(
     owner: &str,
@@ -276,20 +309,24 @@ fn action_completions(prefix: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
-/// Append the default host's action search results for `prefix` to `items`.
-///
-/// Returns whether the search answered.
 async fn add_search_results(
     prefix: &str,
     registry: &provider::Registry,
+    debounce: &SearchDebounce,
     items: &mut Vec<CompletionItem>,
 ) -> bool {
-    if prefix.chars().count() < MIN_SEARCH_CHARS {
+    if prefix.starts_with("./") || prefix.starts_with("docker://") {
         return false;
     }
     let Some(provider) = registry.find(None) else {
         return false;
     };
+    if prefix.chars().count() < MIN_SEARCH_CHARS {
+        return true;
+    }
+    if !debounce.settled(debounce.ticket()).await {
+        return true;
+    }
     let found = match provider.search_actions(prefix).await {
         Ok(Search::Found(found)) => found,
         Ok(Search::Unsupported) => return false,
@@ -438,18 +475,19 @@ pub async fn compute_completions(
     file_cache: &FileCache,
     document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
     encoding: crate::position::PositionEncoding,
+    debounce: &SearchDebounce,
 ) -> Option<CompletionResponse> {
     let context = detect_completion_context(text, position, encoding)?;
 
     match context {
         CompletionContext::ActionName { prefix } => {
             let mut items = action_completions(&prefix);
-            let searched = add_search_results(&prefix, registry, &mut items).await;
+            let incomplete = add_search_results(&prefix, registry, debounce, &mut items).await;
             if items.is_empty() {
                 None
             } else {
                 Some(CompletionResponse::List(CompletionList {
-                    is_incomplete: searched,
+                    is_incomplete: incomplete,
                     items,
                 }))
             }
@@ -620,8 +658,16 @@ mod tests {
             character: 32,
         };
 
-        let Some(CompletionResponse::List(list)) =
-            compute_completions(text, position, &registry, &file_cache, None, ENC).await
+        let Some(CompletionResponse::List(list)) = compute_completions(
+            text,
+            position,
+            &registry,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await
         else {
             panic!("expected a completion list");
         };
@@ -724,8 +770,16 @@ mod tests {
             character: 27,
         };
 
-        let Some(CompletionResponse::List(list)) =
-            compute_completions(text, position, &registry, &file_cache, None, ENC).await
+        let Some(CompletionResponse::List(list)) = compute_completions(
+            text,
+            position,
+            &registry,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await
         else {
             panic!("expected a completion list");
         };
@@ -853,7 +907,16 @@ mod tests {
             character: 14,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
+        let result = compute_completions(
+            text,
+            position,
+            &registry,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await;
         let response = result.unwrap();
         match response {
             CompletionResponse::List(list) => {
@@ -889,7 +952,17 @@ mod tests {
             line: 0,
             character: u32::try_from(text.trim_end().len())?,
         };
-        match compute_completions(&text, position, &registry, &file_cache, None, ENC).await {
+        match compute_completions(
+            &text,
+            position,
+            &registry,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await
+        {
             Some(CompletionResponse::List(list)) => Ok(list),
             other => Err(format!("expected a completion list, got {other:?}").into()),
         }
@@ -940,7 +1013,7 @@ mod tests {
         let provider = crate::test_utils::MockProvider::new("github.com").with_search(found);
         let searches = provider.search_count();
         let short = action_list("c", provider).await?;
-        assert!(!short.is_incomplete);
+        assert!(short.is_incomplete);
         assert_eq!(searches.load(Ordering::SeqCst), 0);
         assert!(short.items.iter().all(|i| i.label != "acme/cache"));
 
@@ -962,6 +1035,105 @@ mod tests {
         Ok(())
     }
 
+    fn uses_line(typed: &str) -> Result<(String, Position), std::num::TryFromIntError> {
+        let text = format!("      - uses: {typed}\n");
+        let character = u32::try_from(text.trim_end().len())?;
+        Ok((text, Position { line: 0, character }))
+    }
+
+    #[tokio::test]
+    async fn a_newer_request_supersedes_a_pending_search() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = crate::test_utils::MockProvider::new("github.com")
+            .with_search(Ok(Search::Found(vec![summary("acme", "cache", None)])));
+        let searches = provider.search_count();
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let debounce = SearchDebounce::new(Duration::from_millis(50));
+        let (first_text, first_at) = uses_line("cac")?;
+        let (second_text, second_at) = uses_line("cach")?;
+        let (first, second) = tokio::join!(
+            compute_completions(
+                &first_text,
+                first_at,
+                &registry,
+                &file_cache,
+                None,
+                ENC,
+                &debounce
+            ),
+            compute_completions(
+                &second_text,
+                second_at,
+                &registry,
+                &file_cache,
+                None,
+                ENC,
+                &debounce
+            ),
+        );
+        assert_eq!(searches.load(Ordering::SeqCst), 1);
+        let (Some(CompletionResponse::List(first)), Some(CompletionResponse::List(second))) =
+            (first, second)
+        else {
+            return Err("expected two completion lists".into());
+        };
+        assert!(first.is_incomplete);
+        assert!(first.items.iter().all(|i| i.label != "acme/cache"));
+        assert!(second.items.iter().any(|i| i.label == "acme/cache"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn local_docker_and_hostless_prefixes_skip_the_search()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let found = Ok(Search::Found(vec![summary("acme", "cache", None)]));
+        let provider =
+            crate::test_utils::MockProvider::new("github.com").with_search(found.clone());
+        let searches = provider.search_count();
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        for typed in ["./.github/actions/setup", "docker://alpine"] {
+            let (text, at) = uses_line(typed)?;
+            let result = compute_completions(
+                &text,
+                at,
+                &registry,
+                &file_cache,
+                None,
+                ENC,
+                &SearchDebounce::default(),
+            )
+            .await;
+            assert!(result.is_none(), "{typed}: {result:?}");
+        }
+        assert_eq!(searches.load(Ordering::SeqCst), 0);
+
+        let unhosted = crate::test_utils::MockProvider::new("github.com").with_search(found);
+        let unhosted_searches = unhosted.search_count();
+        let mut no_default = provider::Registry::new();
+        no_default.register(Box::new(unhosted));
+        let (text, at) = uses_line("cache")?;
+        let Some(CompletionResponse::List(list)) = compute_completions(
+            &text,
+            at,
+            &no_default,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await
+        else {
+            return Err("expected a completion list".into());
+        };
+        assert!(!list.is_incomplete);
+        assert_eq!(unhosted_searches.load(Ordering::SeqCst), 0);
+        let labels: Vec<&str> = list.items.iter().map(|i| i.label.as_str()).collect();
+        assert_eq!(labels, ["actions/cache"]);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn compute_completions_returns_none_for_non_uses_line() {
         let provider = crate::test_utils::MockProvider::new("github.com");
@@ -974,7 +1146,16 @@ mod tests {
             character: 15,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
+        let result = compute_completions(
+            text,
+            position,
+            &registry,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await;
         assert!(
             result.is_none(),
             "expected no completions for non-uses line"
@@ -997,7 +1178,16 @@ mod tests {
             character: 31,
         };
 
-        let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
+        let result = compute_completions(
+            text,
+            position,
+            &registry,
+            &file_cache,
+            None,
+            ENC,
+            &SearchDebounce::default(),
+        )
+        .await;
         let response = result.unwrap();
         match response {
             CompletionResponse::List(list) => {
@@ -1056,6 +1246,7 @@ mod tests {
             &file_cache,
             Some(&diagnostics.version_sets),
             ENC,
+            &SearchDebounce::default(),
         )
         .await;
 

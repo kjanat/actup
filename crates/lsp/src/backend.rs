@@ -49,6 +49,8 @@ const DID_CHANGE_WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
 /// edit arrives before the delay expires, the previous pending check is cancelled.
 const DEBOUNCE_DELAY: Duration = Duration::from_millis(300);
 
+const SEARCH_DEBOUNCE_DELAY: Duration = Duration::from_millis(250);
+
 /// State tracked per open document.
 ///
 /// Stores the full document text (since we use `TextDocumentSyncKind::FULL`),
@@ -239,6 +241,7 @@ pub struct LspBackend {
     /// Keyed by (owner, repo, ref) since `CachingProvider` does not cache
     /// `get_action_yml` calls. Shared across all hover requests.
     action_meta_cache: crate::hover::ActionMetaCache,
+    search_debounce: crate::completion::SearchDebounce,
     /// Session-scoped deduplicator for environment error notifications.
     ///
     /// Prevents spamming the user with repeated rate-limit or auth error
@@ -293,6 +296,7 @@ impl LspBackend {
             file_cache: Arc::new(RwLock::new(None)),
             in_flight: DashMap::new(),
             action_meta_cache: crate::hover::new_action_meta_cache(),
+            search_debounce: crate::completion::SearchDebounce::new(SEARCH_DEBOUNCE_DELAY),
             error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
             config_path: RwLock::new(None),
             user_config,
@@ -686,6 +690,7 @@ impl LanguageServer for LspBackend {
             &file_cache,
             Some(doc.version_sets.as_ref()),
             encoding,
+            &self.search_debounce,
         )
         .await;
 
