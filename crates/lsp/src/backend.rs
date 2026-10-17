@@ -2734,39 +2734,6 @@ mod tests {
         Ok(())
     }
 
-    #[derive(Clone, Default)]
-    struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
-
-    impl std::io::Write for LogBuffer {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0
-                .lock()
-                .map_err(|e| std::io::Error::other(e.to_string()))?
-                .extend_from_slice(buf);
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-
-    fn logged(config: &Config) -> std::result::Result<String, Box<dyn std::error::Error>> {
-        let buffer = LogBuffer::default();
-        let writer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .without_time()
-            .with_target(false)
-            .finish();
-        tracing::subscriber::with_default(subscriber, || {
-            log_config_sources(config, "loaded config");
-        });
-        let bytes = buffer.0.lock().map_err(|e| e.to_string())?.clone();
-        Ok(String::from_utf8(bytes)?)
-    }
-
     #[test]
     fn config_log_names_every_source() -> std::result::Result<(), Box<dyn std::error::Error>> {
         let config = Config {
@@ -2781,12 +2748,13 @@ mod tests {
             ..Config::default()
         };
         assert_eq!(
-            logged(&config)?,
+            actup_test_support::logged(|| log_config_sources(&config, "loaded config"))?.1,
             " INFO loaded config source=user config /home/u/.config/actup/config.toml\n \
              INFO loaded config source=environment ACTUP_POLICY__PIN\n"
         );
         assert_eq!(
-            logged(&Config::default())?,
+            actup_test_support::logged(|| log_config_sources(&Config::default(), "loaded config"))?
+                .1,
             " INFO loaded config from defaults\n"
         );
         Ok(())

@@ -281,10 +281,11 @@ impl Cache for FileCache {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use actup_test_support::logged;
     use tempfile::TempDir;
 
     use super::*;
-    use crate::{test_log::logged, version};
+    use crate::version;
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();

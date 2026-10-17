@@ -87,6 +87,7 @@ edits that pass on their own.
 - Integration tests in `src/integration_tests.rs` — `#[cfg(test)]` inside binary
   crate
 - Mock provider in `src/test_utils.rs` — `MockProvider` with builder pattern
+- `actup_test_support::logged` captures `tracing` output in unit tests
 - Custom `TestHarness` wrapping `LspService` with background socket drain
 - Test backends use
   `LspBackend::with_providers(.., test_utils::MOCK_PROVIDERS)`: mock providers

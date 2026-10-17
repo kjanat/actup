@@ -1101,8 +1101,9 @@ fn error_origin(error: &figment::Error, loaded_from: Option<&Path>) -> String {
 
 #[cfg(test)]
 mod tests {
+    use actup_test_support::logged;
+
     use super::*;
-    use crate::test_log::logged;
 
     fn action(uses: &str) -> ActionRef {
         let Ok(Some(action)) = crate::parse_uses(uses) else {

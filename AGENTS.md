@@ -46,6 +46,7 @@ crates/
   lsp/                # actup-lsp        — LSP server: diagnostics, code actions, hover, completion
   mcp/                # actup-mcp        — MCP server (stdio)
   wasm/               # actup-wasm       — WASM bindings (wasm32-only, excluded from default-members)
+  test-support/       # actup-test-support — unpublished test helpers (`tracing` log capture)
 extensions/
   vscode/             # VSCode extension — TypeScript, bun-based, wraps actup-lsp
   zed/                # Zed extension   — Rust WASM cdylib, slash command, tree-sitter grammar (separate workspace)
@@ -633,6 +634,7 @@ just self-check     # Run actup on this repo
 | `actup-lsp`             | Language Server Protocol implementation                                |
 | `actup-mcp`             | Model Context Protocol server for AI agents (stdio)                    |
 | `actup-wasm`            | WASM bindings for browser/Node.js (wasm32-only, excluded from default) |
+| `actup-test-support`    | Unpublished test helpers shared as a path dev-dependency               |
 
 ### Performance notes
 

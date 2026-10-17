@@ -31,8 +31,6 @@ pub mod resolution;
 pub mod rewrite;
 pub mod suggest;
 pub mod syntax;
-#[cfg(test)]
-mod test_log;
 pub mod text;
 pub mod url_path;
 pub mod version;

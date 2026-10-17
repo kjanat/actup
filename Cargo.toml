@@ -12,6 +12,7 @@ default-members = [
   "crates/provider-github",
   "crates/provider-gitlab",
   "crates/providers",
+  "crates/test-support",
   "extensions/zed",
   "languages/tree-sitter-github-actions",
 ]

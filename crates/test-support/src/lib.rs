@@ -1,3 +1,5 @@
+//! Test helpers shared by actup crates.
+
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
@@ -17,6 +19,10 @@ impl std::io::Write for Buffer {
     }
 }
 
+/// Run `run` under a `tracing` subscriber that writes plain lines without time or target, and return its value with the log text.
+///
+/// # Errors
+/// Returns an error if the log buffer lock is poisoned or the log is not UTF-8.
 pub fn logged<T>(run: impl FnOnce() -> T) -> Result<(T, String), Box<dyn std::error::Error>> {
     let buffer = Buffer::default();
     let writer = buffer.clone();
