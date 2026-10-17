@@ -609,11 +609,14 @@ async fn changed_since_scan(loaded: &LoadedFile, documents: &DashMap<Uri, Docume
 }
 
 fn relative_display(file: &DiscoveredFile, workspace_root: &Path) -> String {
-    file.path()
-        .strip_prefix(workspace_root)
-        .unwrap_or_else(|_| file.path())
-        .display()
-        .to_string()
+    let Ok(relative) = file.path().strip_prefix(workspace_root) else {
+        return file.path().display().to_string();
+    };
+    relative
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Report per-file progress to the client.
@@ -632,11 +635,7 @@ async fn report_file_progress(
     // a future tweak to the scaling can't introduce a silent overflow.
     let raw_pct = (5 + (files_completed * 90) / file_count).min(95);
     let pct = u32::try_from(raw_pct).unwrap_or(95);
-    let rel = file
-        .path()
-        .strip_prefix(workspace_root)
-        .unwrap_or_else(|_| file.path())
-        .display();
+    let rel = relative_display(file, workspace_root);
     let msg = if total_actions > 0 {
         format!(
             "Checking {rel}... ({total_actions} actions in {files_completed}/{file_count} files)"
@@ -1037,16 +1036,34 @@ mod tests {
         assert_eq!(file_edits[0].new_text, "v4");
     }
 
+    #[test]
+    fn relative_display_joins_parts_with_slashes() {
+        let root = std::path::PathBuf::from("ws");
+        let inside = DiscoveredFile::new(
+            root.join(".github").join("workflows").join("a.yml"),
+            actup_core::FileKind::Workflow,
+        );
+        let outside_path = std::path::PathBuf::from("other").join("b.yml");
+        let outside = DiscoveredFile::new(outside_path.clone(), actup_core::FileKind::Workflow);
+
+        assert_eq!(relative_display(&inside, &root), ".github/workflows/a.yml");
+        assert_eq!(
+            relative_display(&outside, &root),
+            outside_path.display().to_string()
+        );
+    }
+
     #[tokio::test]
-    async fn scan_files_refuses_a_disk_file_changed_since_scan() {
-        let temp = tempfile::TempDir::new().unwrap();
-        let workflows_dir = temp.path().join(".github/workflows");
-        std::fs::create_dir_all(&workflows_dir).unwrap();
+    async fn scan_files_refuses_a_disk_file_changed_since_scan()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::TempDir::new()?;
+        let workflows_dir = temp.path().join(".github").join("workflows");
+        std::fs::create_dir_all(&workflows_dir)?;
         let changed = workflows_dir.join("a.yml");
         let kept = workflows_dir.join("b.yml");
         let yaml = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v3\n";
-        std::fs::write(&changed, yaml).unwrap();
-        std::fs::write(&kept, yaml).unwrap();
+        std::fs::write(&changed, yaml)?;
+        std::fs::write(&kept, yaml)?;
         let edited = yaml.replace("@v3", "@main");
 
         let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
@@ -1079,10 +1096,11 @@ mod tests {
             )]
         );
         assert_eq!((result.files_changed, result.refs_updated), (1, 1));
-        let edit_map = result.edit.changes.unwrap();
+        let edit_map = result.edit.changes.ok_or("no changes")?;
         let uris: Vec<&Uri> = edit_map.keys().collect();
-        assert_eq!(uris, [&Uri::from_file_path(&kept).unwrap()]);
-        assert_eq!(std::fs::read_to_string(&changed).unwrap(), edited);
+        assert_eq!(uris, [&Uri::from_file_path(&kept).ok_or("no uri")?]);
+        assert_eq!(std::fs::read_to_string(&changed)?, edited);
+        Ok(())
     }
 
     #[tokio::test]
@@ -1119,19 +1137,27 @@ mod tests {
         assert_eq!(result.edit, WorkspaceEdit::default());
     }
 
+    fn test_uri() -> Uri {
+        let Some(uri) = Uri::from_file_path("/test/ci.yml") else {
+            panic!("/test/ci.yml has no file URI");
+        };
+        uri
+    }
+
     fn loaded(text: &str, version: Option<i32>) -> LoadedFile {
-        let path = std::path::PathBuf::from("/test/ci.yml");
         LoadedFile {
-            uri: Uri::from_file_path(&path).unwrap(),
-            file: DiscoveredFile::new(path, actup_core::FileKind::Workflow),
+            uri: test_uri(),
+            file: DiscoveredFile::new(
+                std::path::PathBuf::from("/test/ci.yml"),
+                actup_core::FileKind::Workflow,
+            ),
             text: text.to_string(),
             version,
         }
     }
 
     fn open_document(documents: &DashMap<Uri, DocumentState>, text: &str, version: i32) {
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
-        documents.insert(uri, DocumentState::new(text.to_string(), version));
+        documents.insert(test_uri(), DocumentState::new(text.to_string(), version));
     }
 
     fn text_edit(line: u32, start: u32, end: u32, new_text: &str) -> TextEdit {
@@ -1261,20 +1287,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn changed_since_scan_rereads_a_closed_file() {
-        let temp = tempfile::TempDir::new().unwrap();
+    async fn changed_since_scan_rereads_a_closed_file() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::TempDir::new()?;
         let path = temp.path().join("ci.yml");
-        std::fs::write(&path, "a").unwrap();
+        std::fs::write(&path, "a")?;
         let mut file = loaded("a", None);
         file.file = DiscoveredFile::new(path.clone(), actup_core::FileKind::Workflow);
-        file.uri = Uri::from_file_path(&path).unwrap();
+        file.uri = Uri::from_file_path(&path).ok_or("no uri")?;
         let documents = DashMap::new();
 
         assert!(!changed_since_scan(&file, &documents).await);
-        std::fs::write(&path, "b").unwrap();
+        std::fs::write(&path, "b")?;
         assert!(changed_since_scan(&file, &documents).await);
-        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_file(&path)?;
         assert!(changed_since_scan(&file, &documents).await);
+        Ok(())
     }
 
     #[tokio::test]

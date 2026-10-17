@@ -443,10 +443,15 @@ pub fn update_file(
     }
 
     let mut planned = plan(&original, edits).map_err(refused)?;
-    if let Some(skip) = planned.skipped.first() {
+    if !planned.skipped.is_empty() {
+        let skips: Vec<String> = planned
+            .skipped
+            .iter()
+            .map(|skip| format!("line {}: edit skipped ({:?})", skip.site.line, skip.reason))
+            .collect();
         return Err(refused(format!(
-            "line {}: edit skipped ({:?}); nothing was written",
-            skip.site.line, skip.reason
+            "{}; nothing was written",
+            skips.join("; ")
         )));
     }
     if args.validate_yaml && !planned.changes.is_empty() {
@@ -693,13 +698,19 @@ mod tests {
             label(site(), &second, &l, action.ref_str(), "v3"),
         );
         let planned = plan(content, edits)?;
-        assert_eq!(planned.changes.len(), 1);
+        assert!(planned.changes.is_empty());
         assert!(matches!(
             planned.skipped.as_slice(),
-            [Skipped {
-                reason: SkipCause::Overlap,
-                ..
-            }]
+            [
+                Skipped {
+                    reason: SkipCause::Overlap,
+                    ..
+                },
+                Skipped {
+                    reason: SkipCause::Overlap,
+                    ..
+                }
+            ]
         ));
 
         let breaking = PendingEdit::replace_range(1, 12..14, "v2\n".into());
@@ -866,6 +877,49 @@ mod tests {
         assert_eq!(outcome.written, Vec::<String>::new());
         assert!(outcome.changes.is_empty());
         assert_eq!(outcome.diff, "");
+        Ok(())
+    }
+
+    #[test]
+    fn commit_writes_nothing_when_edits_overlap() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let content = "steps:\n  - uses: a/b@v1\n  - uses: c/d@v1\n";
+        fs::write(&path, content)?;
+        let mut edits = FileEdits::new(path.clone(), content.to_string());
+        for (line, range, to) in [(2, 14..16, "v2"), (2, 15..16, "3"), (3, 14..16, "v2")] {
+            let (l, action) = loc(content.lines().nth(line - 1).ok_or("no line")?)?;
+            let site = Site {
+                path: "ci.yml".into(),
+                line,
+                provider: "github".into(),
+                host: "github.com".into(),
+                action: l.value().into(),
+            };
+            let edit = PendingEdit::replace_range(line, range, to.into());
+            edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), to));
+        }
+        let planned = plan(content, edits)?;
+        let mut outcome = Outcome::default();
+        commit(&mut outcome, &path, "ci.yml", content, planned, true);
+
+        let skipped: Vec<(usize, &str)> = outcome
+            .skipped
+            .iter()
+            .map(|skip| (skip.site.line, skip.site.action.as_str()))
+            .collect();
+        assert_eq!(skipped, [(2, "a/b@v1"), (2, "a/b@v1"), (3, "c/d@v1")]);
+        assert!(
+            outcome
+                .skipped
+                .iter()
+                .all(|skip| matches!(skip.reason, SkipCause::Overlap))
+        );
+        assert!(outcome.changes.is_empty());
+        assert_eq!(outcome.written, Vec::<String>::new());
+        assert!(outcome.errors.is_empty());
+        assert_eq!(outcome.diff, "");
+        assert_eq!(fs::read_to_string(&path)?, content);
         Ok(())
     }
 }

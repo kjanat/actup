@@ -145,7 +145,7 @@ pub fn unpin_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
 pub enum SkipReason {
     /// The `uses:` value is escaped or spans lines and has no in-place range.
     Unplaceable,
-    /// The edit's range overlaps the range of an earlier edit.
+    /// Two edits of the file overlap, and the writer leaves every edit of the file out.
     Overlap,
     /// The edit's range does not fit its line in the source text.
     OutOfBounds,
@@ -157,7 +157,7 @@ impl SkipReason {
     pub const fn describe(self) -> &'static str {
         match self {
             Self::Unplaceable => "`uses:` value is escaped or spans lines",
-            Self::Overlap => "edit overlaps another edit",
+            Self::Overlap => "edits in this file overlap",
             Self::OutOfBounds => "edit does not fit its line",
         }
     }
@@ -303,8 +303,9 @@ impl<L> FileEdits<L> {
 
     /// Place every edit on the original text and build the new content.
     ///
-    /// An edit whose range overlaps an earlier edit (in source order) is
-    /// skipped; edits that share a line without overlapping all apply. A
+    /// When any two placed edits overlap, every placed edit is skipped and
+    /// the text stays unchanged; edits that share a line without overlapping
+    /// all apply. A
     /// comment is appended only when its line holds a single `uses:` value, no
     /// `#`, no other applied edit with a comment, and is in
     /// [`SourceFormat::commentable_lines`].
@@ -321,26 +322,25 @@ impl<L> FileEdits<L> {
             .collect();
         placed.sort_by_key(|(i, range)| (range.start, range.end, *i));
 
+        let overlaps = placed.windows(2).any(|pair| {
+            let (prev, range) = (&pair[0].1, &pair[1].1);
+            let starts_inside = range.start < prev.end;
+            let shares_start = range.start == prev.start;
+            starts_inside || shares_start
+        });
         let mut splices: Vec<(Range<usize>, bool, &str)> = Vec::new();
         let mut applied: Vec<usize> = Vec::new();
-        let mut last: Option<Range<usize>> = None;
         for (i, range) in placed {
-            let overlaps = last.as_ref().is_some_and(|prev| {
-                let starts_inside = range.start < prev.end;
-                let shares_start = range.start == prev.start;
-                starts_inside || shares_start
-            });
             if overlaps {
                 outcomes[i] = EditOutcome::Skipped(SkipReason::Overlap);
                 continue;
             }
             let EditKind::ReplaceRange { new, .. } = &self.edits[i].0.kind;
-            splices.push((range.clone(), false, new));
+            splices.push((range, false, new));
             outcomes[i] = EditOutcome::Applied {
                 comment: self.edits[i].0.inline_comment.clone(),
             };
             applied.push(i);
-            last = Some(range);
         }
 
         let mut commented_per_line: HashMap<usize, usize> = HashMap::new();
@@ -690,7 +690,7 @@ mod tests {
             SkipReason::Unplaceable.describe(),
             "`uses:` value is escaped or spans lines"
         );
-        assert_eq!(SkipReason::Overlap.describe(), "edit overlaps another edit");
+        assert_eq!(SkipReason::Overlap.describe(), "edits in this file overlap");
         assert_eq!(
             SkipReason::OutOfBounds.describe(),
             "edit does not fit its line"
@@ -737,11 +737,11 @@ mod tests {
         fe.add(PendingEdit::replace_range(1, 4..5, "UNO".to_string()), 2);
 
         let plan = fe.plan();
-        assert_eq!(plan.content(), "lineONE\nline2\n");
+        assert_eq!(plan.content(), "line1\nline2\n");
         assert_eq!(
             plan.entries,
             [
-                (1, EditOutcome::Applied { comment: None }),
+                (1, EditOutcome::Skipped(SkipReason::Overlap)),
                 (2, EditOutcome::Skipped(SkipReason::Overlap)),
             ]
         );
@@ -770,7 +770,7 @@ mod tests {
     }
 
     #[test]
-    fn test_file_edits_reject_only_overlapping_edits() {
+    fn test_file_edits_apply_edits_that_touch() {
         let content = "abcdefghijkl\n";
         let mut fe = FileEdits::new(
             PathBuf::from("/test"),
@@ -783,16 +783,8 @@ mod tests {
             "first",
         );
         fe.add(
-            PendingEdit::replace_range(1, 4..8, "Y".to_string()),
-            "straddles",
-        );
-        fe.add(
             PendingEdit::replace_range(1, 6..6, "Z".to_string()),
             "touches",
-        );
-        fe.add(
-            PendingEdit::replace_range(1, 6..6, "W".to_string()),
-            "same point",
         );
         fe.add(
             PendingEdit::replace_range(1, 10..12, "Q".to_string()),
@@ -801,16 +793,58 @@ mod tests {
 
         let plan = fe.plan();
         assert_eq!(plan.content(), "abXZghijQ\n");
-        assert_eq!(
-            plan.entries,
-            [
-                ("first", EditOutcome::Applied { comment: None }),
-                ("straddles", EditOutcome::Skipped(SkipReason::Overlap)),
-                ("touches", EditOutcome::Applied { comment: None }),
-                ("same point", EditOutcome::Skipped(SkipReason::Overlap)),
-                ("later", EditOutcome::Applied { comment: None }),
-            ]
+        assert!(
+            plan.entries
+                .iter()
+                .all(|(_, outcome)| *outcome == EditOutcome::Applied { comment: None })
         );
+    }
+
+    #[test]
+    fn test_file_edits_refuse_the_batch_when_any_edits_overlap() {
+        let overlapping: [(usize, Range<usize>); 3] = [(1, 4..8), (1, 6..6), (2, 0..1)];
+        for (line, range) in overlapping {
+            let content = "abcdefghijkl\nmnop\n";
+            let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+            fe.add(
+                PendingEdit::replace_range(1, 2..6, "X".to_string()).with_comment(" # x".into()),
+                "first",
+            );
+            fe.add(
+                PendingEdit::replace_range(1, 6..6, "Z".to_string()),
+                "touches",
+            );
+            fe.add(
+                PendingEdit::replace_range(line, range.clone(), "Y".to_string()),
+                "overlaps",
+            );
+            fe.add(
+                PendingEdit::replace_range(2, 0..1, "M".to_string()),
+                "other line",
+            );
+            fe.add(
+                PendingEdit::replace_range(3, 0..9, "!".to_string()),
+                "out of bounds",
+            );
+
+            let plan = fe.plan();
+            assert_eq!(plan.content(), content, "{line}:{range:?}");
+            assert_eq!(plan.splices.apply(content), Some(content.to_string()));
+            assert_eq!(
+                plan.entries,
+                [
+                    ("first", EditOutcome::Skipped(SkipReason::Overlap)),
+                    ("touches", EditOutcome::Skipped(SkipReason::Overlap)),
+                    ("overlaps", EditOutcome::Skipped(SkipReason::Overlap)),
+                    ("other line", EditOutcome::Skipped(SkipReason::Overlap)),
+                    (
+                        "out of bounds",
+                        EditOutcome::Skipped(SkipReason::OutOfBounds)
+                    ),
+                ],
+                "{line}:{range:?}"
+            );
+        }
     }
 
     #[test]

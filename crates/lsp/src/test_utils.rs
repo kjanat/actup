@@ -186,8 +186,10 @@ impl Provider for MockProvider {
 
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<version::Set>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
-        if let Some((path, content)) = &self.rewrite {
-            std::fs::write(path, content).unwrap();
+        if let Some((path, content)) = &self.rewrite
+            && let Err(e) = std::fs::write(path, content)
+        {
+            panic!("rewriting {}: {e}", path.display());
         }
         let key = Self::repo_key(repo);
         let result = self.versions.get(&key).map_or_else(

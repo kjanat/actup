@@ -877,10 +877,6 @@ mod tests {
             PendingEdit::replace_range(1, 10..12, "v2".to_string()).with_comment(" # c".into()),
             change(1, "v2", true),
         );
-        fe.add(
-            PendingEdit::replace_range(1, 11..12, "3".to_string()),
-            change(1, "v3", false),
-        );
 
         let mut result = EditResult::default();
         let written = commit_file(fe, dir.path(), false, &mut result);
@@ -888,10 +884,50 @@ mod tests {
         assert_eq!(written.len(), 1);
         assert_eq!(written[0].1.as_deref(), Some(" # c"));
         assert_eq!(result.edited, [edited_ref(1, Some("# c"))]);
-        assert_eq!(result.skipped.len(), 1);
-        assert_eq!(result.skipped[0].reason, SkipReason::Overlap);
+        assert_eq!(result.skipped, []);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(fs::read_to_string(&path)?, "uses: a/b@v2 # c\n");
+        Ok(())
+    }
+
+    #[test]
+    fn test_commit_file_refuses_a_batch_with_overlapping_edits()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let content = "uses: a/b@v1\nuses: c/d@v1\n";
+        fs::write(&path, content)?;
+
+        for dry_run in [false, true] {
+            let mut fe = FileEdits::new(path.clone(), content.to_string());
+            for (line, range) in [(1, 10..12), (1, 11..12), (2, 10..12)] {
+                fe.add(
+                    PendingEdit::replace_range(line, range, "v2".to_string()),
+                    change(line, "v2", false),
+                );
+            }
+            let mut result = EditResult::default();
+            let written = commit_file(fe, dry_run, &mut result);
+
+            assert!(written.is_empty());
+            assert_eq!(result.edited, []);
+            let skipped: Vec<(usize, SkipReason)> = result
+                .skipped
+                .iter()
+                .map(|skip| (skip.site.line, skip.reason))
+                .collect();
+            assert_eq!(
+                skipped,
+                [
+                    (1, SkipReason::Overlap),
+                    (1, SkipReason::Overlap),
+                    (2, SkipReason::Overlap),
+                ]
+            );
+            assert_eq!(result.errors.total(), 0);
+            assert_eq!(result.exit_code(dry_run), i32::from(CliExitCode::Outdated));
+            assert_eq!(fs::read_to_string(&path)?, content);
+        }
         Ok(())
     }
 

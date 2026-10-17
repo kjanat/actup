@@ -698,6 +698,30 @@ fn update_file_dry_run_and_refusals_write_nothing(
         "a refused call wrote the file".into()
     })?;
 
+    let overlapping = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/ci.yml",
+            "edits": [
+                { "line": 7, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 8, "action": "actions/setup-node", "ref": "v5" },
+                { "line": 8, "action": "actions/setup-node", "ref": "v6" },
+            ],
+        }),
+    )?;
+    expect(is_error(&overlapping), || {
+        format!("overlapping edits must fail: {overlapping}")
+    })?;
+    expect(
+        error_text(&overlapping).contains(
+            "line 7: edit skipped (Overlap); line 8: edit skipped (Overlap); line 8: edit skipped (Overlap); nothing was written",
+        ),
+        || error_text(&overlapping),
+    )?;
+    expect(ws.read(".github/workflows/ci.yml")? == WORKFLOW, || {
+        "overlapping edits wrote the file".into()
+    })?;
+
     let broken = format!("{WORKFLOW}  bad: [unclosed\n");
     ws.write(".github/workflows/broken.yml", &broken)?;
     let edit = json!([{ "line": 7, "action": "actions/checkout", "ref": "v4.2.0" }]);
