@@ -56,11 +56,12 @@ pub fn process_tags<T: TagLike>(tags: impl IntoIterator<Item = T>) -> version::S
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::sync::Arc;
 
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     /// Simple tag type for testing
     struct TestTag {
@@ -96,18 +97,24 @@ mod tests {
     }
 
     #[test]
-    fn test_process_tags_single_version() {
+    fn test_process_tags_single_version() -> TestResult {
         let tags = vec![TestTag::new("v1.0.0", "aaa111")];
         let result = process_tags(tags);
 
         assert_eq!(result.semver_tags().len(), 1);
         assert!(result.latest().is_some());
         assert_eq!(
-            result.latest().as_ref().unwrap().version().to_string(),
+            result
+                .latest()
+                .as_ref()
+                .ok_or("`result.latest().as_ref()` is None")?
+                .version()
+                .to_string(),
             "v1.0.0"
         );
         assert_eq!(result.latest_per_major().len(), 1);
         assert!(result.latest_per_major().contains_key(&1));
+        Ok(())
     }
 
     #[test]
@@ -127,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_tags_latest_tracking() {
+    fn test_process_tags_latest_tracking() -> TestResult {
         let tags = vec![
             TestTag::new("v1.0.0", "aaa"),
             TestTag::new("v2.0.0", "bbb"),
@@ -136,11 +143,19 @@ mod tests {
         let result = process_tags(tags);
 
         assert!(result.latest().is_some());
-        assert_eq!(result.latest().unwrap().version().to_string(), "v3.0.0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v3.0.0"
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_process_tags_latest_per_major() {
+    fn test_process_tags_latest_per_major() -> TestResult {
         let tags = vec![
             TestTag::new("v1.0.0", "a"),
             TestTag::new("v1.1.0", "b"),
@@ -155,7 +170,7 @@ mod tests {
             result
                 .latest_per_major()
                 .get(&1)
-                .unwrap()
+                .ok_or("`latest_per_major().get(..)` is None")?
                 .version()
                 .to_string(),
             "v1.2.0"
@@ -164,15 +179,16 @@ mod tests {
             result
                 .latest_per_major()
                 .get(&2)
-                .unwrap()
+                .ok_or("`latest_per_major().get(..)` is None")?
                 .version()
                 .to_string(),
             "v2.1.0"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_process_tags_includes_prereleases_in_tags() {
+    fn test_process_tags_includes_prereleases_in_tags() -> TestResult {
         let tags = vec![
             TestTag::new("v1.0.0", "aaa"),
             TestTag::new("v2.0.0-beta.1", "bbb"),
@@ -183,7 +199,15 @@ mod tests {
         // Prereleases are included in semver_tags (filtered at query time)
         assert_eq!(result.semver_tags().len(), 3);
         // But "latest" only tracks stable releases
-        assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v1.0.0"
+        );
+        Ok(())
     }
 
     #[test]
@@ -263,7 +287,7 @@ mod tests {
     }
 
     #[test]
-    fn test_process_tags_non_semver_ignored() {
+    fn test_process_tags_non_semver_ignored() -> TestResult {
         let tags = vec![
             TestTag::new("v1.0.0", "aaa"),
             TestTag::new("latest", "bbb"),
@@ -272,15 +296,23 @@ mod tests {
         let result = process_tags(tags);
 
         assert_eq!(result.semver_tags().len(), 1);
-        assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v1.0.0"
+        );
         assert_eq!(result.other_tag_sha("latest"), Some("bbb"));
         assert_eq!(result.other_tag_sha("main"), Some("ccc"));
         assert_eq!(result.other_tag_sha("v1.0.0"), None);
         assert_eq!(result.listing(), version::Listing::Partial);
+        Ok(())
     }
 
     #[test]
-    fn test_process_tags_handles_major_only_tags() {
+    fn test_process_tags_handles_major_only_tags() -> TestResult {
         let tags = vec![
             TestTag::new("v1.0.0", "sha_v1_0_0"),
             TestTag::new("v2.1.0", "sha_v2_1_0"),
@@ -293,17 +325,39 @@ mod tests {
         assert_eq!(result.semver_tags().len(), 4);
 
         // Latest overall should be the highest stable version (v2.2.0)
-        assert_eq!(result.latest().unwrap().version().to_string(), "v2.2.0");
-        assert_eq!(result.latest().unwrap().sha(), "sha_v2_2_0");
+        assert_eq!(
+            result
+                .latest()
+                .ok_or("`result.latest()` is None")?
+                .version()
+                .to_string(),
+            "v2.2.0"
+        );
+        assert_eq!(
+            result.latest().ok_or("`result.latest()` is None")?.sha(),
+            "sha_v2_2_0"
+        );
 
         // major_tags should contain the major-only tag "v2"
         assert_eq!(result.major_tags().len(), 1);
         assert!(result.major_tags().contains_key(&2));
         assert_eq!(
-            result.major_tags().get(&2).unwrap().version().to_string(),
+            result
+                .major_tags()
+                .get(&2)
+                .ok_or("`result.major_tags().get(..)` is None")?
+                .version()
+                .to_string(),
             "v2"
         );
-        assert_eq!(result.major_tags().get(&2).unwrap().sha(), "sha_v2_major");
+        assert_eq!(
+            result
+                .major_tags()
+                .get(&2)
+                .ok_or("`result.major_tags().get(..)` is None")?
+                .sha(),
+            "sha_v2_major"
+        );
 
         // latest_per_major should track the highest stable version for major 2 (v2.2.0)
         assert_eq!(result.latest_per_major().len(), 2);
@@ -311,7 +365,7 @@ mod tests {
             result
                 .latest_per_major()
                 .get(&2)
-                .unwrap()
+                .ok_or("`latest_per_major().get(..)` is None")?
                 .version()
                 .to_string(),
             "v2.2.0"
@@ -320,10 +374,11 @@ mod tests {
             result
                 .latest_per_major()
                 .get(&1)
-                .unwrap()
+                .ok_or("`latest_per_major().get(..)` is None")?
                 .version()
                 .to_string(),
             "v1.0.0"
         );
+        Ok(())
     }
 }

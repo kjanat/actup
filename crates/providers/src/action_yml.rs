@@ -254,24 +254,26 @@ pub fn parse_action_yml(raw: &str, path: &str) -> Result<ActionYml> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn test_parse_action_yml_minimal() {
+    fn test_parse_action_yml_minimal() -> TestResult {
         let yaml = r"
 name: Test Action
 description: A test action
 ";
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert_eq!(result.name(), Some("Test Action"));
         assert_eq!(result.description(), Some("A test action"));
         assert!(result.author().is_none());
+        Ok(())
     }
 
     #[test]
-    fn test_parse_action_yml_with_inputs() {
+    fn test_parse_action_yml_with_inputs() -> TestResult {
         let yaml = r#"
 name: Test
 description: Test
@@ -284,21 +286,28 @@ inputs:
     required: false
     default: "30"
 "#;
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert_eq!(result.inputs().len(), 2);
 
-        let token = result.inputs().get("token").unwrap();
+        let token = result
+            .inputs()
+            .get("token")
+            .ok_or("`result.inputs().get(..)` is None")?;
         assert_eq!(token.description(), Some("The GitHub token"));
         assert!(token.required());
         assert!(token.default().is_none());
 
-        let timeout = result.inputs().get("timeout").unwrap();
+        let timeout = result
+            .inputs()
+            .get("timeout")
+            .ok_or("`result.inputs().get(..)` is None")?;
         assert!(!timeout.required());
         assert_eq!(timeout.default(), Some("30"));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_action_yml_with_outputs() {
+    fn test_parse_action_yml_with_outputs() -> TestResult {
         let yaml = r"
 name: Test
 description: Test
@@ -307,16 +316,20 @@ outputs:
     description: The result value
     value: ${{ steps.run.outputs.result }}
 ";
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert_eq!(result.outputs().len(), 1);
 
-        let output = result.outputs().get("result").unwrap();
+        let output = result
+            .outputs()
+            .get("result")
+            .ok_or("`result.outputs().get(..)` is None")?;
         assert_eq!(output.description(), Some("The result value"));
         assert!(output.value().is_some());
+        Ok(())
     }
 
     #[test]
-    fn test_parse_action_yml_node_action() {
+    fn test_parse_action_yml_node_action() -> TestResult {
         let yaml = r"
 name: Node Action
 description: A Node.js action
@@ -324,16 +337,17 @@ runs:
   using: node20
   main: dist/index.js
 ";
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert!(result.runs().is_some());
 
-        let runs = result.runs().unwrap();
+        let runs = result.runs().ok_or("`result.runs()` is None")?;
         assert_eq!(runs.using(), "node20");
         assert_eq!(runs.main(), Some("dist/index.js"));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_action_yml_composite_action() {
+    fn test_parse_action_yml_composite_action() -> TestResult {
         let yaml = r#"
 name: Composite Action
 description: A composite action
@@ -346,10 +360,10 @@ runs:
       run: echo "Hello"
       shell: bash
 "#;
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert!(result.runs().is_some());
 
-        let runs = result.runs().unwrap();
+        let runs = result.runs().ok_or("`result.runs()` is None")?;
         assert_eq!(runs.using(), "composite");
         assert_eq!(runs.steps().len(), 2);
 
@@ -359,10 +373,11 @@ runs:
         assert_eq!(runs.steps()[1].name(), Some("Run script"));
         assert_eq!(runs.steps()[1].run(), Some("echo \"Hello\""));
         assert_eq!(runs.steps()[1].shell(), Some("bash"));
+        Ok(())
     }
 
     #[test]
-    fn test_parse_action_yml_docker_action() {
+    fn test_parse_action_yml_docker_action() -> TestResult {
         let yaml = r"
 name: Docker Action
 description: A Docker action
@@ -370,12 +385,13 @@ runs:
   using: docker
   image: Dockerfile
 ";
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert!(result.runs().is_some());
 
-        let runs = result.runs().unwrap();
+        let runs = result.runs().ok_or("`result.runs()` is None")?;
         assert_eq!(runs.using(), "docker");
         assert_eq!(runs.image(), Some("Dockerfile"));
+        Ok(())
     }
 
     #[test]
@@ -412,10 +428,11 @@ runs:
     }
 
     #[test]
-    fn test_parse_action_yml_preserves_raw() {
+    fn test_parse_action_yml_preserves_raw() -> TestResult {
         let yaml = "name: Test\ndescription: Test";
-        let result = parse_action_yml(yaml, "action.yml").unwrap();
+        let result = parse_action_yml(yaml, "action.yml")?;
         assert_eq!(result.raw(), yaml);
+        Ok(())
     }
 
     #[test]
@@ -470,7 +487,7 @@ runs:
     }
 
     #[test]
-    fn test_yaml_err_uses_caller_supplied_path() {
+    fn test_yaml_err_uses_caller_supplied_path() -> TestResult {
         // Regression: yaml_err previously hardcoded "action.yml", so parsing
         // an action.yaml file would produce error messages claiming .yml.
         // Assert against the structured Error variant — comparing formatted
@@ -481,13 +498,16 @@ description: Bad
 runs:
   using: docker
 ";
-        let err = parse_action_yml(yaml, "action.yaml").unwrap_err();
+        let err = parse_action_yml(yaml, "action.yaml")
+            .err()
+            .ok_or("`parse_action_yml(..)` did not fail")?;
         match err {
             actup_core::Error::YamlParse { path, .. } => {
                 assert_eq!(path, "action.yaml", "error should carry the caller's path");
             }
             other => panic!("expected YamlParse error, got: {other:?}"),
         }
+        Ok(())
     }
 
     #[test]

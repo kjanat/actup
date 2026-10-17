@@ -283,11 +283,12 @@ fn classify_text(text: &str) -> Class {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
     use gix_hash::ObjectId;
 
     use super::*;
+
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
 
     fn oid(byte: u8) -> ObjectId {
         ObjectId::from_bytes_or_panic(&[byte; 20])
@@ -309,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn head_symref_becomes_the_default_branch() {
+    fn head_symref_becomes_the_default_branch() -> TestResult {
         let refs = vec![
             Ref::Symbolic {
                 full_ref_name: "HEAD".into(),
@@ -324,15 +325,23 @@ mod tests {
         ];
 
         let collected = collect(refs);
-        let branch = collected.default_branch().unwrap();
+        let branch = collected
+            .default_branch()
+            .ok_or("`collected.default_branch()` is None")?;
 
         assert_eq!(branch.name(), "main");
         assert_eq!(branch.sha(), oid(0x11).to_string());
-        assert_eq!(collected.resolve("main").unwrap(), oid(0x11).to_string());
+        assert_eq!(
+            collected
+                .resolve("main")
+                .ok_or("`collected.resolve(..)` is None")?,
+            oid(0x11).to_string()
+        );
+        Ok(())
     }
 
     #[test]
-    fn resolve_prefers_a_tag_over_a_branch_of_the_same_name() {
+    fn resolve_prefers_a_tag_over_a_branch_of_the_same_name() -> TestResult {
         let refs = vec![
             Ref::Direct {
                 full_ref_name: "refs/tags/v2".into(),
@@ -346,7 +355,13 @@ mod tests {
 
         let collected = collect(refs);
 
-        assert_eq!(collected.resolve("v2").unwrap(), oid(0x22).to_string());
+        assert_eq!(
+            collected
+                .resolve("v2")
+                .ok_or("`collected.resolve(..)` is None")?,
+            oid(0x22).to_string()
+        );
+        Ok(())
     }
 
     #[test]
@@ -355,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn version_set_carries_every_tag_and_the_default_branch() {
+    fn version_set_carries_every_tag_and_the_default_branch() -> TestResult {
         let refs = vec![
             Ref::Direct {
                 full_ref_name: "refs/tags/v2".into(),
@@ -381,13 +396,25 @@ mod tests {
 
         assert!(set.has_exact_tag("v2"));
         assert_eq!(set.major_tags().len(), 1);
-        assert_eq!(set.latest().unwrap().version().to_string(), "v2.83.2");
-        assert_eq!(set.default_branch().unwrap().name(), "main");
+        assert_eq!(
+            set.latest()
+                .ok_or("`set.latest()` is None")?
+                .version()
+                .to_string(),
+            "v2.83.2"
+        );
+        assert_eq!(
+            set.default_branch()
+                .ok_or("`set.default_branch()` is None")?
+                .name(),
+            "main"
+        );
         assert_eq!(
             set.other_tag_sha("cargo-hack"),
             Some(oid(0x02).to_string().as_str())
         );
         assert_eq!(set.listing(), version::Listing::Complete);
+        Ok(())
     }
 
     #[derive(Debug)]
