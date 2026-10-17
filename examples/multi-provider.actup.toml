@@ -3,11 +3,19 @@
 # Example configuration showing multi-provider setup
 # This demonstrates using GitHub, GitLab, and Gitea providers together
 
-update_policy    = "minor"
-ref_style        = "preserve"
-branch_policy    = "warn"
-allow_prerelease = false
-default_host     = "github.com"
+default_host = "github.com"
+
+[policy]
+bump       = "minor"
+pin        = "preserve"
+track      = "keep"
+branch     = "warn"
+prerelease = false
+
+# Pin every action from the enterprise host to a SHA
+[[overrides]]
+pattern = "github.enterprise.com/*/*"
+policy  = { pin = "sha" }
 
 [cache]
 ttl     = 86400

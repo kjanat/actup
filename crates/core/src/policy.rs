@@ -15,16 +15,16 @@ use serde::{
 /// # Workflow Examples
 ///
 /// ```yaml
-/// # With update_policy: patch (1.2.3 -> 1.2.4 only)
+/// # With bump = "patch" (1.2.3 -> 1.2.4 only)
 /// - uses: actions/checkout@v4.1.0  # stays at v4.1.x
 ///
-/// # With update_policy: minor (1.2.x -> 1.3.x)
+/// # With bump = "minor" (1.2.x -> 1.3.x)
 /// - uses: actions/checkout@v4.1.0  # can update to v4.2.0
 ///
-/// # With update_policy: major (1.x -> 2.x)
+/// # With bump = "major" (1.x -> 2.x)
 /// - uses: actions/checkout@v3      # can update to v4
 ///
-/// # With update_policy: latest (always newest)
+/// # With bump = "latest" (always newest)
 /// - uses: actions/checkout@v2      # updates to v4
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
@@ -37,7 +37,7 @@ pub enum Update {
     /// # Before:
     /// - uses: actions/checkout@v4.1.0
     ///
-    /// # After (update_policy: patch):
+    /// # After (bump = "patch"):
     /// - uses: actions/checkout@v4.1.1
     /// ```
     Patch,
@@ -48,7 +48,7 @@ pub enum Update {
     /// # Before:
     /// - uses: actions/checkout@v4.1.0
     ///
-    /// # After (update_policy: minor):
+    /// # After (bump = "minor"):
     /// - uses: actions/checkout@v4.2.0
     /// ```
     Minor,
@@ -59,7 +59,7 @@ pub enum Update {
     /// # Before:
     /// - uses: actions/checkout@v3
     ///
-    /// # After (update_policy: major):
+    /// # After (bump = "major"):
     /// - uses: actions/checkout@v4
     /// ```
     Major,
@@ -70,7 +70,7 @@ pub enum Update {
     /// # Before:
     /// - uses: actions/checkout@v2
     ///
-    /// # After (update_policy: latest):
+    /// # After (bump = "latest"):
     /// - uses: actions/checkout@v4
     /// ```
     #[default]
@@ -146,14 +146,14 @@ impl<'de> Deserialize<'de> for Update {
 /// # Workflow Examples
 ///
 /// ```yaml
-/// # With ref_style: preserve - keeps original format
+/// # With pin = "preserve" - keeps original format
 /// - uses: actions/checkout@v4      # stays as tag
 /// - uses: actions/checkout@abc123  # stays as SHA
 ///
-/// # With ref_style: tag - converts to version tags
+/// # With pin = "tag" - converts to version tags
 /// - uses: actions/checkout@v4.1.1  # always a tag
 ///
-/// # With ref_style: sha - pins to commit SHA (most secure)
+/// # With pin = "sha" - pins to commit SHA (most secure)
 /// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
@@ -165,7 +165,7 @@ pub enum Style {
     /// # Before:
     /// - uses: actions/checkout@v4
     ///
-    /// # After (ref_style: preserve):
+    /// # After (pin = "preserve"):
     /// - uses: actions/checkout@v4.2.0
     /// # Tag format preserved
     /// ```
@@ -178,7 +178,7 @@ pub enum Style {
     /// # Before:
     /// - uses: actions/checkout@abc1234...
     ///
-    /// # After (ref_style: tag):
+    /// # After (pin = "tag"):
     /// - uses: actions/checkout@v4.2.0
     /// # SHA converted to tag
     /// ```
@@ -190,7 +190,7 @@ pub enum Style {
     /// # Before:
     /// - uses: actions/checkout@v4
     ///
-    /// # After (ref_style: sha):
+    /// # After (pin = "sha"):
     /// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
     /// # Tag pinned to full SHA with comment
     /// ```
@@ -247,18 +247,57 @@ impl<'de> Deserialize<'de> for Style {
     }
 }
 
+/// Version granularity written for an updated tag ref.
+///
+/// # Workflow Examples
+///
+/// ```yaml
+/// # With track = "keep" - granularity follows the current ref
+/// - uses: actions/checkout@v4      # -> v6
+/// - uses: actions/checkout@v4.1.0  # -> v6.0.2
+///
+/// # With track = "major" - major-only tag when the repo has one
+/// - uses: actions/checkout@v4.1.0  # -> v6
+///
+/// # With track = "exact" - always the full version
+/// - uses: actions/checkout@v4      # -> v6.0.2
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Track {
+    /// Write a major-only tag for a major-only ref and a full version otherwise.
+    #[default]
+    Keep,
+
+    /// Write the major-only tag (`v6`) when the repo has one, else the full version.
+    Major,
+
+    /// Write the full version (`v6.0.2`).
+    Exact,
+}
+
+impl fmt::Display for Track {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Keep => write!(f, "keep"),
+            Self::Major => write!(f, "major"),
+            Self::Exact => write!(f, "exact"),
+        }
+    }
+}
+
 /// Branch handling policy.
 ///
 /// # Workflow Examples
 ///
 /// ```yaml
-/// # With branch_policy: ignore - branch refs skipped silently
+/// # With branch = "ignore" - branch refs skipped silently
 /// - uses: actions/checkout@main  # no warning, no update
 ///
-/// # With branch_policy: warn - warns but doesn't change
+/// # With branch = "warn" - warns but doesn't change
 /// - uses: actions/checkout@main  # warning: consider pinning to a tag
 ///
-/// # With branch_policy: update - pins branch to current HEAD SHA
+/// # With branch = "update" - pins branch to current HEAD SHA
 /// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
@@ -267,7 +306,7 @@ pub enum Branch {
     /// Ignore branch refs (don't flag as outdated).
     ///
     /// ```yaml
-    /// # With branch_policy: ignore
+    /// # With branch = "ignore"
     /// - uses: actions/checkout@main
     /// # No warning, no update - branch refs skipped
     /// ```
@@ -277,7 +316,7 @@ pub enum Branch {
     /// Warn about branch refs (recommend pinning to tag or SHA).
     ///
     /// ```yaml
-    /// # With branch_policy: warn
+    /// # With branch = "warn"
     /// - uses: actions/checkout@main
     /// # Warning: 'main' is a branch ref, consider pinning to a tag
     /// ```
@@ -289,7 +328,7 @@ pub enum Branch {
     /// # Before:
     /// - uses: actions/checkout@main
     ///
-    /// # After (branch_policy: update):
+    /// # After (branch = "update"):
     /// - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main
     /// # Branch pinned to current HEAD SHA
     /// ```
@@ -479,6 +518,22 @@ mod tests {
         let json = r#""UPDATE""#;
         let policy: Branch = serde_json::from_str(json).unwrap();
         assert_eq!(policy, Branch::Update);
+    }
+
+    #[test]
+    fn test_track_deserialize_and_display() -> Result<(), Box<dyn std::error::Error>> {
+        for (name, track) in [
+            ("keep", Track::Keep),
+            ("major", Track::Major),
+            ("exact", Track::Exact),
+        ] {
+            let parsed: Track = serde_json::from_str(&format!("\"{name}\""))?;
+            assert_eq!(parsed, track);
+            assert_eq!(track.to_string(), name);
+        }
+        assert_eq!(Track::default(), Track::Keep);
+        assert!(serde_json::from_str::<Track>("\"minor\"").is_err());
+        Ok(())
     }
 
     #[test]

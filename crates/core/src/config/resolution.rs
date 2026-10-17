@@ -292,6 +292,9 @@ fn validate_api_mode_capability(
     }
 }
 
+/// Host that bare `owner/repo` refs use when `default_host` is unset.
+pub const FALLBACK_DEFAULT_HOST: &str = "github.com";
+
 /// Resolve the effective default host for bare `owner/repo` refs.
 ///
 /// If `config.default_host` is `Some`, validates it resolves via [`effective_host`].
@@ -316,8 +319,8 @@ pub fn resolve_default_host(
     } else {
         // No explicit default_host — look for github.com preset
         let preset_index = build_preset_index(registrations);
-        if preset_index.contains_key("github.com") {
-            Ok("github.com".to_string())
+        if preset_index.contains_key(FALLBACK_DEFAULT_HOST) {
+            Ok(FALLBACK_DEFAULT_HOST.to_string())
         } else {
             Err(Error::InvalidConfig {
                 path: "default_host".to_string(),

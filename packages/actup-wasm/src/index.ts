@@ -31,6 +31,7 @@ export type {
 	ActionStep,
 	ActionYml,
 	ActupConfig,
+	ActupPolicy,
 	BranchInfo,
 	CheckResult,
 	CheckStatus,

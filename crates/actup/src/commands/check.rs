@@ -644,7 +644,10 @@ mod tests {
         );
 
         let config = Config {
-            update_policy: policy::Update::Major,
+            policy: actup_core::config::Policy {
+                bump: policy::Update::Major,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let registry = test_registry();

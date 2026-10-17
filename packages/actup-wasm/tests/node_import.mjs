@@ -189,4 +189,25 @@ assert.equal(outdatedEdits[0].original, "actions/checkout@v4.0.0", "edit preserv
 
 console.log("PASS: Outdated wire shape — current 'v4.0.0' -> target.version 'v4.2.0'");
 
+// Test 7: `policy.bump` in the config caps the bump level.
+const majorProvider = {
+	...mockProvider,
+	async getVersions() {
+		return {
+			semverTags: [
+				{ version: "v4.0.0", sha: "a".repeat(40) },
+				{ version: "v5.0.0", sha: "e".repeat(40) },
+			],
+		};
+	},
+};
+const [latestResult] = await checkRefs(outdatedYaml, majorProvider);
+assert.equal(statusName(latestResult.status), "Outdated", "default bump allows a new major");
+assert.equal(latestResult.status.Outdated.target.version, "v5.0.0", "default bump targets v5.0.0");
+
+const [minorResult] = await checkRefs(outdatedYaml, majorProvider, { policy: { bump: "minor" } });
+assert.equal(statusName(minorResult.status), "UpToDate", "policy.bump = minor stays on v4");
+
+console.log("PASS: config policy.bump = minor keeps v4.0.0 up to date");
+
 console.log("\nAll npm package integration tests PASSED");

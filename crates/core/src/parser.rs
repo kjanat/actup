@@ -109,7 +109,7 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
 }
 
 /// Check if a string looks like a hostname
-fn looks_like_host(s: &str) -> bool {
+pub(crate) fn looks_like_host(s: &str) -> bool {
     // Contains a dot (like github.com, ghe.corp.internal)
     if s.contains('.') {
         return true;

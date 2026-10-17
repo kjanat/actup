@@ -393,7 +393,7 @@ pub async fn fix_all_in_workspace(client: Client, ctx: &ScanContext<'_>) -> FixA
         Err(_) => None,
     };
 
-    let discovered = discover_files(ctx.workspace_root, &ctx.config.extra_paths);
+    let discovered = discover_files(ctx.workspace_root, &ctx.config.scan.extra_paths);
     let file_count = discovered.len();
 
     if file_count == 0 {

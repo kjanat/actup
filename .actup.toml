@@ -1,22 +1,24 @@
 #:schema schemas/actup-config.schema.json
 
-update_policy    = "latest"
-ref_style        = "preserve"
-branch_policy    = "ignore"
-allow_prerelease = false
-ignore           = ["dtolnay/rust-toolchain@1.91.0"]
-extra_paths      = []
-default_host     = "github.com"
+default_host = "github.com"
 
-# [actions]
-# [actions."dtolnay/rust-toolchain"]
-# update_policy = "patch"
+[policy]
+bump       = "latest"
+pin        = "preserve"
+track      = "keep"
+branch     = "ignore"
+prerelease = false
+
+[scan]
+ignore      = ["dtolnay/rust-toolchain@1.91.0"]
+extra_paths = []
+
+# [[overrides]]
+# pattern = "dtolnay/rust-toolchain"
+# policy  = { bump = "patch" }
 # TODO: `ignore.versions` would be nice. or to be able to specify what to ignore.
 # e.g. `ignore = ["1.91.0"]` or `ignore = ["1.91.0", "1.92.0"]`
 #       or `ignore = ["<1.92.0"]` or `ignore = [">=1.91.0, <1.92.0"]`
-#
-# [actions."dtolnay/rust-toolchain"]
-# ignore = true
 
 [cache]
 ttl     = 86400

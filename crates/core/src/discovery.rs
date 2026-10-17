@@ -23,7 +23,7 @@ pub const DEFAULT_WORKFLOW_PATTERNS: &[&str] =
 /// Note: GitHub allows `action.yml` in *any* subdirectory, but scanning
 /// `**/action.yml` would be slow and produce false positives (test fixtures,
 /// vendored deps, etc.). Users can add custom patterns via config's
-/// `extra_paths` if they use non-standard locations like `tools/my-action/`.
+/// `scan.extra_paths` if they use non-standard locations like `tools/my-action/`.
 pub const DEFAULT_ACTION_PATTERNS: &[&str] = &[
     "action.yml",
     "action.yaml",
@@ -94,7 +94,7 @@ impl FileKind {
 /// - action.yml and action.yaml in root
 /// - .github/workflows/*.yml and .yaml
 /// - .github/actions/*/action.yml and .yaml
-/// - Any `extra_paths` from config
+/// - Any `scan.extra_paths` from config
 #[must_use]
 pub fn discover_files(root: &Path, extra_patterns: &[String]) -> Vec<DiscoveredFile> {
     let mut files = Vec::new();

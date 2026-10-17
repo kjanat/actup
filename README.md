@@ -69,6 +69,27 @@ Create `actup.toml` or `.actup.toml` in your repo root:
 # Default host for bare owner/repo refs
 default_host = "github.com"
 
+[policy]
+bump       = "minor"  # patch | minor | major | latest
+pin        = "preserve"  # preserve | tag | sha
+track      = "keep"  # keep | major | exact
+branch     = "warn"  # ignore | warn | update
+prerelease = false
+
+[scan]
+ignore      = ["my-org/*", "dtolnay/rust-toolchain@1.91.0"]
+extra_paths = [".gitea/workflows"]
+
+# Ordered; for each policy key the last matching entry wins.
+# Patterns are `[host/]owner/repo[/subpath][@ref]` globs.
+[[overrides]]
+pattern = "my-org/*"
+policy  = { pin = "sha" }
+
+[[overrides]]
+pattern = "ghe.example.com/platform/*"
+policy  = { bump = "patch", track = "exact" }
+
 # API fallback, used only when a host refuses a git connection
 [fetch]
 api_mode          = "graphql"  # "graphql" or "rest"

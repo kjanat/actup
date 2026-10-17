@@ -103,8 +103,8 @@ Parses the YAML, resolves each non-local ref through the provider, and returns
 `CheckResult[]` with status: `"UpToDate"`, `{ Outdated: ... }`, or
 `{ Unresolvable: ... }`.
 
-Optional `config` accepts `{ default_host?, update_policy? }` where
-`update_policy` is `"patch"` | `"minor"` | `"major"` | `"latest"`.
+Optional `config` accepts `{ default_host?, policy?: { bump? } }` where `bump`
+is `"patch"` | `"minor"` | `"major"` | `"latest"`.
 
 ### `planUpdates(yaml, results)`
 

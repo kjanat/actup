@@ -166,7 +166,7 @@ Helix, Zed).
 **Phase:** 2 | **Effort:** S | **Depends on:** D3
 
 - Load `actup.toml` via `find_repo_config` on workspace open
-- Respect `update_policy`, `ignore_actions`, `pin_to`, `branch_policy`
+- Respect `[policy]`, `scan.ignore` and `[[overrides]]`
 - LSP init params can override config path
 
 **Acceptance:**

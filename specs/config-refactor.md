@@ -32,15 +32,20 @@ Original design had issues:
 ### TOML Example (full)
 
 ```toml
-# Policy (unchanged)
-update_policy    = "latest"
-ref_style        = "preserve"
-branch_policy    = "ignore"
-allow_prerelease = false
-ignore           = []
 # Default host for bare `owner/repo` refs (if unset: uses provider preset for "github.com" when available)
 # Same validation as host keys: lowercase, no scheme/path/port/whitespace
-default_host     = "github.com"
+default_host = "github.com"
+
+[policy]
+bump       = "latest"
+pin        = "preserve"
+track      = "keep"
+branch     = "ignore"
+prerelease = false
+
+[scan]
+ignore      = []
+extra_paths = []
 
 # Fetch settings
 [fetch]
@@ -80,14 +85,9 @@ token_env = "GHE_TOKEN"
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    // Policy (unchanged)
-    pub update_policy: Update,
-    pub ref_style: Style,
-    pub branch_policy: BranchPolicy,
-    pub allow_prerelease: bool,
-    pub ignore: Vec<String>,
-    pub extra_paths: Vec<PathBuf>,
-    pub actions: HashMap<String, ActionConfig>,
+    pub policy: Policy,
+    pub scan: Scan,
+    pub overrides: Vec<Override>,
     pub cache: CacheConfig,
 
     /// Default host for bare `owner/repo` refs.

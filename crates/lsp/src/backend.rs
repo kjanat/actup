@@ -446,8 +446,8 @@ impl LanguageServer for LspBackend {
 
     async fn initialized(&self, _params: InitializedParams) {
         let config = self.config.read().await;
-        let policy = config.update_policy;
-        let ignored = config.ignore.len();
+        let policy = config.policy;
+        let ignored = config.scan.ignore.len();
         drop(config);
 
         let has_registry = self.registry.read().await.is_some();
@@ -1282,19 +1282,15 @@ fn config_file_watchers() -> Vec<FileSystemWatcher> {
 
 /// Returns `true` if two configs differ in ways that affect diagnostic output.
 ///
-/// Compares policy-relevant fields: update policy, ref style, branch policy,
-/// prerelease setting, ignore list, per-action overrides, default host, and
-/// host configuration. Host changes affect provider resolution which changes
-/// what versions are fetched and thus which diagnostics are emitted.
+/// Compares policy-relevant fields: `[policy]`, the ignore list, `[[overrides]]`,
+/// default host, and host configuration. Host changes affect provider resolution
+/// which changes what versions are fetched and thus which diagnostics are emitted.
 fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
-    old.update_policy != new.update_policy
-        || old.ref_style != new.ref_style
-        || old.branch_policy != new.branch_policy
-        || old.allow_prerelease != new.allow_prerelease
-        || old.ignore != new.ignore
+    old.policy != new.policy
+        || old.scan.ignore != new.scan.ignore
+        || old.overrides != new.overrides
         || old.default_host != new.default_host
         || hosts_differ(&old.hosts, &new.hosts)
-        || action_overrides_differ(&old.action_overrides, &new.action_overrides)
 }
 
 /// Compare host config maps by serialized form since [`HostConfig`](actup_core::HostConfig) may
@@ -1306,21 +1302,6 @@ fn hosts_differ(
     if old.len() != new.len() {
         return true;
     }
-    let old_json = serde_json::to_string(old).unwrap_or_default();
-    let new_json = serde_json::to_string(new).unwrap_or_default();
-    old_json != new_json
-}
-
-/// Compare action override maps by serialized form since [`ActionOverride`](actup_core::config::ActionOverride)
-/// doesn't implement `PartialEq`.
-fn action_overrides_differ(
-    old: &std::collections::HashMap<String, actup_core::config::ActionOverride>,
-    new: &std::collections::HashMap<String, actup_core::config::ActionOverride>,
-) -> bool {
-    if old.len() != new.len() {
-        return true;
-    }
-    // Compare via JSON serialization (ActionOverride derives Serialize).
     let old_json = serde_json::to_string(old).unwrap_or_default();
     let new_json = serde_json::to_string(new).unwrap_or_default();
     old_json != new_json
@@ -1601,16 +1582,17 @@ mod tests {
     fn configs_differ_detects_policy_change() {
         let base = Config::default();
         let mut changed = base.clone();
-        changed.update_policy = actup_core::policy::Update::Major;
+        changed.policy.bump = actup_core::policy::Update::Major;
         assert!(configs_differ_for_diagnostics(&base, &changed));
     }
 
     #[test]
-    fn configs_differ_detects_ignore_change() {
+    fn configs_differ_detects_ignore_change() -> std::result::Result<(), String> {
         let base = Config::default();
         let mut changed = base.clone();
-        changed.ignore.push("actions/checkout".to_owned());
+        changed.scan.ignore.push("actions/checkout".parse()?);
         assert!(configs_differ_for_diagnostics(&base, &changed));
+        Ok(())
     }
 
     #[test]
@@ -1624,7 +1606,7 @@ mod tests {
     fn configs_differ_detects_prerelease_change() {
         let base = Config::default();
         let mut changed = base.clone();
-        changed.allow_prerelease = !base.allow_prerelease;
+        changed.policy.prerelease = !base.policy.prerelease;
         assert!(configs_differ_for_diagnostics(&base, &changed));
     }
 
@@ -1640,7 +1622,7 @@ mod tests {
     fn configs_differ_detects_ref_style_change() {
         let base = Config::default();
         let mut changed = base.clone();
-        changed.ref_style = actup_core::policy::Style::Sha;
+        changed.policy.pin = actup_core::policy::Style::Sha;
         assert!(configs_differ_for_diagnostics(&base, &changed));
     }
 
@@ -1649,7 +1631,7 @@ mod tests {
         let base = Config::default();
         let mut changed = base.clone();
         // Default is `Ignore`; change to `Warn` to trigger a diff.
-        changed.branch_policy = actup_core::policy::Branch::Warn;
+        changed.policy.branch = actup_core::policy::Branch::Warn;
         assert!(configs_differ_for_diagnostics(&base, &changed));
     }
 
@@ -1684,10 +1666,29 @@ mod tests {
     }
 
     #[test]
-    fn action_overrides_differ_empty_maps_equal() {
-        let a = std::collections::HashMap::new();
-        let b = std::collections::HashMap::new();
-        assert!(!action_overrides_differ(&a, &b));
+    fn configs_differ_detects_track_change() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.policy.track = actup_core::policy::Track::Exact;
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[test]
+    fn configs_differ_detects_override_change() -> std::result::Result<(), String> {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.overrides.push(actup_core::config::Override {
+            pattern: "actions/*".parse()?,
+            policy: actup_core::config::PolicyOverride {
+                bump: Some(actup_core::policy::Update::Patch),
+                ..Default::default()
+            },
+        });
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+        let mut edited = changed.clone();
+        edited.overrides[0].policy.bump = Some(actup_core::policy::Update::Minor);
+        assert!(configs_differ_for_diagnostics(&changed, &edited));
+        Ok(())
     }
 
     #[test]

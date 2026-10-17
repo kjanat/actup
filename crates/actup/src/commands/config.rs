@@ -48,11 +48,12 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     println!("{}", "Configuration".bold());
     println!();
 
-    println!("{}:", "Update Policy".bold());
-    println!("  update_policy:     {}", config.update_policy);
-    println!("  ref_style:         {}", config.ref_style);
-    println!("  branch_policy:     {}", config.branch_policy);
-    println!("  allow_prerelease:  {}", config.allow_prerelease);
+    println!("{}:", "Policy".bold());
+    println!("  bump:        {}", config.policy.bump);
+    println!("  pin:         {}", config.policy.pin);
+    println!("  track:       {}", config.policy.track);
+    println!("  branch:      {}", config.policy.branch);
+    println!("  prerelease:  {}", config.policy.prerelease);
     println!();
 
     println!("{}:", "Cache".bold());
@@ -81,26 +82,25 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
 
     display_hosts(config, registrations);
 
-    if !config.ignore.is_empty() {
+    if !config.scan.ignore.is_empty() {
         println!("{}:", "Ignored Actions".bold());
-        for action in &config.ignore {
+        for action in &config.scan.ignore {
             println!("  - {action}");
         }
         println!();
     }
 
-    if !config.action_overrides.is_empty() {
-        println!("{}:", "Action Overrides".bold());
-        println!(
-            "  {} actions with custom settings",
-            config.action_overrides.len()
-        );
+    if !config.overrides.is_empty() {
+        println!("{}:", "Overrides".bold());
+        for o in &config.overrides {
+            println!("  - {}", o.pattern);
+        }
         println!();
     }
 
-    if !config.extra_paths.is_empty() {
+    if !config.scan.extra_paths.is_empty() {
         println!("{}:", "Extra Paths".bold());
-        for p in &config.extra_paths {
+        for p in &config.scan.extra_paths {
             println!("  - {p}");
         }
         println!();

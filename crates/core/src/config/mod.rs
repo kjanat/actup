@@ -8,6 +8,7 @@
 //! 5. Defaults (lowest)
 
 pub mod discovery;
+pub mod matching;
 pub mod registration;
 pub mod resolution;
 pub mod validation;
@@ -30,7 +31,9 @@ use figment::{
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, policy};
+pub use matching::ActionPattern;
+
+use crate::{ActionRef, Error, policy};
 
 /// # Actup configuration
 /// Configuration options for the GitHub Actions-like updater.
@@ -41,9 +44,10 @@ use crate::{Error, policy};
 ///
 /// ```toml
 /// # .actup.toml - Conservative security-focused config
-/// update_policy = "patch"
-/// ref_style = "sha"
-/// branch_policy = "warn"
+/// [policy]
+/// bump   = "patch"
+/// pin    = "sha"
+/// branch = "warn"
 ///
 /// # Result in workflow:
 /// # Before:
@@ -54,9 +58,11 @@ use crate::{Error, policy};
 ///
 /// ```toml
 /// # .actup.toml - Permissive major-update config
-/// update_policy = "major"
-/// ref_style = "tag"
-/// allow_prerelease = true
+/// [policy]
+/// bump       = "major"
+/// pin        = "tag"
+/// track      = "exact"
+/// prerelease = true
 ///
 /// # Result in workflow:
 /// # Before:
@@ -66,76 +72,54 @@ use crate::{Error, policy};
 /// ```
 ///
 /// ```toml
-/// # .actup.toml - Selective ignore patterns
+/// # .actup.toml - Selective ignore patterns and overrides
+/// [scan]
 /// ignore = [
 ///   "actions/checkout",              # Ignore all refs of this action
 ///   "my-org/*",                      # Ignore all actions from my-org
 ///   "dtolnay/rust-toolchain@1.91.0", # Ignore specific MSRV version
 /// ]
 ///
+/// [[overrides]]
+/// pattern = "ghe.corp.com/platform/*"
+/// policy  = { pin = "sha", bump = "minor" }
+///
 /// # Result: dtolnay/rust-toolchain@stable is checked, @1.91.0 is ignored
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Config {
-    /// How far to bump outdated version refs.
-    ///
-    /// `patch` stays on `major.minor`, `minor` stays on `major`, `major`
-    /// allows a new major, `latest` takes the newest stable overall.
+    /// Update policy applied to every action unless an override matches.
     ///
     /// ```toml
-    /// update_policy = "minor"   # v1.2.3 -> v1.5.0, never v2
+    /// [policy]
+    /// bump  = "minor"
+    /// pin   = "sha"
+    /// track = "keep"
     /// ```
-    pub update_policy: policy::Update,
+    pub policy: Policy,
 
-    /// How a ref is written when updating.
-    ///
-    /// `preserve` keeps the current style (tag stays a tag, SHA stays a SHA),
-    /// `tag` rewrites to the version tag, `sha` pins to the commit SHA with a
-    /// `# vX.Y.Z` comment.
+    /// Which files and actions to scan.
     ///
     /// ```toml
-    /// ref_style = "sha"   # actions/checkout@v4 -> @<sha> # v4.2.0
+    /// [scan]
+    /// ignore      = ["my-org/*"]
+    /// extra_paths = [".gitea/workflows"]
     /// ```
-    pub ref_style: policy::Style,
+    pub scan: Scan,
 
-    /// How to handle floating branch refs like `@main` or `@v2`.
-    ///
-    /// `ignore` leaves them untouched (default), `warn` flags them as
-    /// floating, `update` pins the branch to its current HEAD SHA.
+    /// Ordered policy overrides; for each key, the last matching entry wins.
     ///
     /// ```toml
-    /// branch_policy = "warn"   # @main -> flagged, pin to a tag or SHA
+    /// [[overrides]]
+    /// pattern = "my-org/*"
+    /// policy  = { pin = "sha" }
+    ///
+    /// [[overrides]]
+    /// pattern = "my-org/legacy"
+    /// policy  = { bump = "patch" }
     /// ```
-    pub branch_policy: policy::Branch,
-
-    /// Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.
-    ///
-    /// ```toml
-    /// allow_prerelease = false   # skip -rc/-beta tags unless already on one
-    /// ```
-    pub allow_prerelease: bool,
-
-    /// Actions to ignore (supports owner/repo, owner/repo@ref, and owner/* patterns)
-    ///
-    /// Examples:
-    /// - `"actions/checkout"` - ignores all refs of this action
-    /// - `"actions/checkout@v2"` - ignores only the v2 ref
-    /// - `"my-org/*"` - ignores all actions from my-org
-    /// - `"tool/action@1.91.0"` - ignores specific version (e.g., MSRV pin)
-    pub ignore: Vec<String>,
-
-    /// Per-action policy overrides, keyed by `owner/repo`.
-    ///
-    /// Each entry can override `update_policy`, `ref_style`, `branch_policy`,
-    /// or `ignore` for just that action.
-    ///
-    /// ```toml
-    /// [actions."actions/checkout"]
-    /// update_policy = "patch"    # only patch-bump this one
-    /// ```
-    #[serde(default, rename = "actions")]
-    pub action_overrides: HashMap<String, ActionOverride>,
+    pub overrides: Vec<Override>,
 
     /// Version-cache settings (TTL, location, on/off).
     ///
@@ -176,6 +160,110 @@ pub struct Config {
     /// ```
     pub hosts: HashMap<String, HostConfig>,
 
+    /// Path this config was loaded from (if any)
+    #[serde(skip)]
+    pub loaded_from: Option<PathBuf>,
+}
+
+/// The `[policy]` table.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Policy {
+    /// How far to bump outdated version refs.
+    ///
+    /// `patch` stays on `major.minor`, `minor` stays on `major`, `major`
+    /// allows a new major, `latest` takes the newest stable overall.
+    ///
+    /// ```toml
+    /// bump = "minor"   # v1.2.3 -> v1.5.0, never v2
+    /// ```
+    pub bump: policy::Update,
+
+    /// How a ref is written when updating.
+    ///
+    /// `preserve` keeps the current style (tag stays a tag, SHA stays a SHA),
+    /// `tag` rewrites to the version tag, `sha` pins to the commit SHA with a
+    /// `# vX.Y.Z` comment.
+    ///
+    /// ```toml
+    /// pin = "sha"   # actions/checkout@v4 -> @<sha> # v4.2.0
+    /// ```
+    pub pin: policy::Style,
+
+    /// Version granularity of an updated tag ref.
+    ///
+    /// `keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),
+    /// `major` writes the major-only tag when the repo has one, `exact`
+    /// always writes the full version.
+    ///
+    /// ```toml
+    /// track = "exact"   # actions/checkout@v4 -> @v6.0.2
+    /// ```
+    pub track: policy::Track,
+
+    /// How to handle floating branch refs like `@main` or `@v2`.
+    ///
+    /// `ignore` leaves them untouched (default), `warn` flags them as
+    /// floating, `update` pins the branch to its current HEAD SHA.
+    ///
+    /// ```toml
+    /// branch = "warn"   # @main -> flagged, pin to a tag or SHA
+    /// ```
+    pub branch: policy::Branch,
+
+    /// Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.
+    ///
+    /// ```toml
+    /// prerelease = false   # skip -rc/-beta tags unless already on one
+    /// ```
+    pub prerelease: bool,
+}
+
+impl Policy {
+    /// Return this policy with every key that `partial` sets replaced.
+    #[must_use]
+    pub fn with(self, partial: &PolicyOverride) -> Self {
+        Self {
+            bump: partial.bump.unwrap_or(self.bump),
+            pin: partial.pin.unwrap_or(self.pin),
+            track: partial.track.unwrap_or(self.track),
+            branch: partial.branch.unwrap_or(self.branch),
+            prerelease: partial.prerelease.unwrap_or(self.prerelease),
+        }
+    }
+}
+
+/// A partial `[policy]` table used by `[[overrides]]`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct PolicyOverride {
+    /// Replaces `policy.bump`.
+    pub bump: Option<policy::Update>,
+    /// Replaces `policy.pin`.
+    pub pin: Option<policy::Style>,
+    /// Replaces `policy.track`.
+    pub track: Option<policy::Track>,
+    /// Replaces `policy.branch`.
+    pub branch: Option<policy::Branch>,
+    /// Replaces `policy.prerelease`.
+    pub prerelease: Option<bool>,
+}
+
+/// The `[scan]` table.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Scan {
+    /// Actions to skip, as `[host/]owner/repo[/subpath][@ref]` globs.
+    ///
+    /// Examples:
+    /// - `"actions/checkout"` - ignores all refs of this action
+    /// - `"actions/checkout@v2"` - ignores only the v2 ref
+    /// - `"my-org/*"` - ignores all actions from my-org
+    /// - `"ghe.corp.com/*/*"` - ignores every action on one host
+    /// - `"tool/action@1.91.0"` - ignores specific version (e.g., MSRV pin)
+    #[schemars(with = "Vec<String>")]
+    pub ignore: Vec<ActionPattern>,
+
     /// Additional paths to scan (beyond defaults)
     ///
     /// By default, actup scans:
@@ -191,59 +279,41 @@ pub struct Config {
     /// - `".drone.yml"` - Specific Drone CI config file
     /// - `"infra/terraform/github-actions.tf"` - GitHub Actions in Terraform
     pub extra_paths: Vec<String>,
-
-    /// Path this config was loaded from (if any)
-    #[serde(skip)]
-    pub loaded_from: Option<PathBuf>,
 }
 
-/// # Per-action override configuration.
+/// One `[[overrides]]` entry.
 ///
 /// ## Example
 /// ```toml
-/// # .actup.toml - Per-action overrides
-/// [actions."actions/checkout"]
-/// update_policy = "major"
+/// [[overrides]]
+/// pattern = "actions/*"
+/// policy  = { bump = "major" }
 ///
-/// [actions."actions/cache"]
-/// ignore = true
-///
-/// [actions."internal/action"]
-/// ref_style = "sha"
+/// [[overrides]]
+/// pattern = "ghe.corp.com/internal/*"
+/// policy  = { pin = "sha", track = "exact" }
 /// ```
-///
-/// ## Result in workflow:
-/// ```console
-/// # actions/checkout@v3 -> actions/checkout@v4 (major allowed)
-/// # actions/cache@v3 -> unchanged (ignored)
-/// # internal/action@v1 -> internal/action@abc123... # v1.2.0 (pinned to SHA)
-/// ```
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
-pub struct ActionOverride {
-    /// Override update policy for this action
-    pub update_policy: Option<policy::Update>,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Override {
+    /// Actions this entry applies to, as a `[host/]owner/repo[/subpath][@ref]` glob.
+    #[schemars(with = "String")]
+    pub pattern: ActionPattern,
 
-    /// Override ref style for this action
-    pub ref_style: Option<policy::Style>,
-
-    /// Override branch-ref handling for this action.
-    ///
-    /// Same values as the global `branch_policy`: `ignore` leaves branch refs
-    /// untouched, `warn` flags them as floating, `update` pins them to the
-    /// branch's current HEAD SHA.
-    ///
-    /// ```toml
-    /// branch_policy = "ignore"           # quiet everywhere by default
-    ///
-    /// [actions."kjanat/runner"]
-    /// branch_policy = "update"           # but pin this one to its master SHA
-    /// ```
-    pub branch_policy: Option<policy::Branch>,
-
-    /// Whether to completely ignore this action
-    pub ignore: bool,
+    /// Policy keys to replace for matching actions.
+    #[serde(default)]
+    pub policy: PolicyOverride,
 }
+
+const RENAMED_KEYS: [(&str, &str); 7] = [
+    ("update_policy", "policy.bump"),
+    ("ref_style", "policy.pin"),
+    ("branch_policy", "policy.branch"),
+    ("allow_prerelease", "policy.prerelease"),
+    ("ignore", "scan.ignore"),
+    ("extra_paths", "scan.extra_paths"),
+    ("actions", "[[overrides]]"),
+];
 
 /// Cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -454,6 +524,8 @@ impl Config {
         // Environment variables (highest precedence)
         figment = figment.merge(Env::prefixed("ACTUP_").split("_"));
 
+        reject_renamed_keys(&figment, loaded_from.as_deref())?;
+
         let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
             path: loaded_from
                 .as_ref()
@@ -502,92 +574,80 @@ impl Config {
         Self::load(None, start_dir).unwrap_or_default()
     }
 
-    /// Get the effective update policy for an action
+    /// Return the policy for `action`: `[policy]` with every matching override applied in order.
     #[must_use]
-    pub fn policy_for(&self, owner: &str, repo: &str) -> policy::Update {
-        let key = format!("{owner}/{repo}");
-        self.action_overrides
-            .get(&key)
-            .and_then(|o| o.update_policy)
-            .unwrap_or(self.update_policy)
+    pub fn policy_for(&self, action: &ActionRef) -> Policy {
+        let default_host = self.pattern_default_host();
+        self.overrides
+            .iter()
+            .filter(|o| o.pattern.matches(action, default_host))
+            .fold(self.policy, |policy, o| policy.with(&o.policy))
     }
 
-    /// Get the effective ref style for an action
+    /// Return whether `action` matches a `scan.ignore` pattern.
     #[must_use]
-    pub fn ref_style_for(&self, owner: &str, repo: &str) -> policy::Style {
-        let key = format!("{owner}/{repo}");
-        self.action_overrides
-            .get(&key)
-            .and_then(|o| o.ref_style)
-            .unwrap_or(self.ref_style)
+    pub fn should_ignore(&self, action: &ActionRef) -> bool {
+        let default_host = self.pattern_default_host();
+        self.scan
+            .ignore
+            .iter()
+            .any(|p| p.matches(action, default_host))
     }
 
-    /// Get the effective branch policy for an action
-    #[must_use]
-    pub fn branch_policy_for(&self, owner: &str, repo: &str) -> policy::Branch {
-        let key = format!("{owner}/{repo}");
-        self.action_overrides
-            .get(&key)
-            .and_then(|o| o.branch_policy)
-            .unwrap_or(self.branch_policy)
+    fn pattern_default_host(&self) -> &str {
+        self.default_host
+            .as_deref()
+            .unwrap_or(resolution::FALLBACK_DEFAULT_HOST)
     }
+}
 
-    /// Check if an action should be ignored.
-    ///
-    /// Supports multiple ignore patterns:
-    /// - `owner/repo` - ignores all refs for this action
-    /// - `owner/repo@ref` - ignores only this specific ref
-    /// - `owner/*` - ignores all repos from this owner
-    #[must_use]
-    pub fn should_ignore(&self, owner: &str, repo: &str, ref_str: &str) -> bool {
-        let full = format!("{owner}/{repo}");
-        let full_with_ref = format!("{owner}/{repo}@{ref_str}");
-
-        // Check explicit override
-        if let Some(ovr) = self.action_overrides.get(&full)
-            && ovr.ignore
-        {
-            return true;
-        }
-
-        // Check ignore list
-        self.ignore.iter().any(|pattern| {
-            // Match specific ref: owner/repo@ref
-            if pattern.contains('@') && pattern == &full_with_ref {
-                return true;
-            }
-
-            // Match repo (all refs): owner/repo
-            if pattern == &full {
-                return true;
-            }
-
-            // Match owner wildcard: owner/*
-            if let Some(owner_pattern) = pattern.strip_suffix("/*") {
-                return owner == owner_pattern;
-            }
-
-            false
-        })
-    }
+fn reject_renamed_keys(figment: &Figment, loaded_from: Option<&Path>) -> Result<(), Error> {
+    let Some((old, new)) = RENAMED_KEYS
+        .into_iter()
+        .find(|(old, _)| figment.contains(old))
+    else {
+        return Ok(());
+    };
+    let path = figment
+        .find_metadata(old)
+        .and_then(|m| m.source.as_ref())
+        .map(ToString::to_string)
+        .or_else(|| loaded_from.map(|p| p.display().to_string()))
+        .unwrap_or_else(|| "config".into());
+    Err(Error::InvalidConfig {
+        path,
+        reason: format!("`{old}` is no longer supported; use `{new}`"),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn action(uses: &str) -> ActionRef {
+        let Ok(Some(action)) = crate::parse_uses(uses) else {
+            panic!("bad uses: {uses}");
+        };
+        action
+    }
+
+    fn patterns(raw: &[&str]) -> Result<Vec<ActionPattern>, String> {
+        raw.iter().map(|p| p.parse()).collect()
+    }
+
     // Config defaults tests
 
     #[test]
     fn test_config_default() {
         let config = Config::default();
-        assert_eq!(config.update_policy, policy::Update::Latest);
-        assert_eq!(config.ref_style, policy::Style::Preserve);
-        assert_eq!(config.branch_policy, policy::Branch::Ignore);
-        assert!(!config.allow_prerelease);
-        assert_eq!(config.ignore, Vec::<String>::new());
-        assert!(config.action_overrides.is_empty());
-        assert_eq!(config.extra_paths, Vec::<String>::new());
+        assert_eq!(config.policy.bump, policy::Update::Latest);
+        assert_eq!(config.policy.pin, policy::Style::Preserve);
+        assert_eq!(config.policy.track, policy::Track::Keep);
+        assert_eq!(config.policy.branch, policy::Branch::Ignore);
+        assert!(!config.policy.prerelease);
+        assert_eq!(config.scan.ignore, Vec::<ActionPattern>::new());
+        assert_eq!(config.scan.extra_paths, Vec::<String>::new());
+        assert_eq!(config.overrides, Vec::<Override>::new());
         assert!(config.loaded_from.is_none());
         assert!(config.default_host.is_none());
         assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
@@ -598,118 +658,172 @@ mod tests {
     // should_ignore tests
 
     #[test]
-    fn test_should_ignore() {
+    fn test_should_ignore() -> Result<(), String> {
         let config = Config {
-            ignore: vec!["actions/checkout".to_string(), "my-org/*".to_string()],
+            scan: Scan {
+                ignore: patterns(&["actions/checkout", "my-org/*"])?,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
-        assert!(config.should_ignore("actions", "checkout", "v1"));
-        assert!(config.should_ignore("my-org", "anything", "v2"));
-        assert!(!config.should_ignore("other", "repo", "v1"));
+        assert!(config.should_ignore(&action("actions/checkout@v1")));
+        assert!(config.should_ignore(&action("my-org/anything@v2")));
+        assert!(!config.should_ignore(&action("other/repo@v1")));
+        Ok(())
     }
 
     #[test]
     fn test_should_ignore_empty() {
         let config = Config::default();
-        assert!(!config.should_ignore("any", "repo", "v1"));
+        assert!(!config.should_ignore(&action("any/repo@v1")));
     }
 
     #[test]
-    fn test_should_ignore_wildcard_only() {
+    fn test_should_ignore_specific_ref() -> Result<(), String> {
         let config = Config {
-            ignore: vec!["org/*".to_string()],
+            scan: Scan {
+                ignore: patterns(&["owner/repo@v1.91.0", "another/action@main"])?,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
-        assert!(config.should_ignore("org", "repo1", "v1"));
-        assert!(config.should_ignore("org", "repo2", "v2"));
-        assert!(!config.should_ignore("other-org", "repo1", "v1"));
+        assert!(config.should_ignore(&action("owner/repo@v1.91.0")));
+        assert!(config.should_ignore(&action("another/action@main")));
+        assert!(!config.should_ignore(&action("owner/repo@v2")));
+        assert!(!config.should_ignore(&action("owner/repo@stable")));
+        assert!(!config.should_ignore(&action("another/action@v1")));
+        Ok(())
     }
 
     #[test]
-    fn test_should_ignore_exact_match() {
-        let config = Config {
-            ignore: vec!["owner/exact-repo".to_string()],
+    fn test_should_ignore_host_qualified_uses_default_host() -> Result<(), String> {
+        let mut config = Config {
+            scan: Scan {
+                ignore: patterns(&["ghe.corp.com/platform/*"])?,
+                ..Default::default()
+            },
             ..Default::default()
         };
 
-        assert!(config.should_ignore("owner", "exact-repo", "v1"));
-        assert!(!config.should_ignore("owner", "other-repo", "v1"));
-    }
-
-    #[test]
-    fn test_should_ignore_specific_ref() {
-        let config = Config {
-            ignore: vec![
-                "owner/repo@v1.91.0".to_string(),
-                "another/action@main".to_string(),
-            ],
-            ..Default::default()
-        };
-
-        // Specific refs should be ignored
-        assert!(config.should_ignore("owner", "repo", "v1.91.0"));
-        assert!(config.should_ignore("another", "action", "main"));
-
-        // Other refs for the same repo should NOT be ignored
-        assert!(!config.should_ignore("owner", "repo", "v2"));
-        assert!(!config.should_ignore("owner", "repo", "stable"));
-        assert!(!config.should_ignore("another", "action", "v1"));
+        assert!(config.should_ignore(&action("ghe.corp.com/platform/ci@v1")));
+        assert!(!config.should_ignore(&action("platform/ci@v1")));
+        config.default_host = Some("ghe.corp.com".into());
+        assert!(config.should_ignore(&action("platform/ci@v1")));
+        Ok(())
     }
 
     // policy_for tests
 
-    #[test]
-    fn test_policy_override() {
-        let config = Config {
-            update_policy: policy::Update::Minor,
-            action_overrides: std::collections::HashMap::from([(
-                "special/action".to_string(),
-                ActionOverride {
-                    update_policy: Some(policy::Update::Patch),
-                    ..Default::default()
-                },
-            )]),
-            ..Default::default()
-        };
-
-        assert_eq!(config.policy_for("normal", "action"), policy::Update::Minor);
-        assert_eq!(
-            config.policy_for("special", "action"),
-            policy::Update::Patch
-        );
+    fn override_entry(pattern: &str, policy: PolicyOverride) -> Result<Override, String> {
+        Ok(Override {
+            pattern: pattern.parse()?,
+            policy,
+        })
     }
 
     #[test]
-    fn test_policy_for_uses_default_when_no_override() {
+    fn test_policy_for_uses_default_when_no_override_matches() -> Result<(), String> {
         let config = Config {
-            update_policy: policy::Update::Major,
+            policy: Policy {
+                bump: policy::Update::Major,
+                ..Default::default()
+            },
+            overrides: vec![override_entry(
+                "special/*",
+                PolicyOverride {
+                    bump: Some(policy::Update::Patch),
+                    ..Default::default()
+                },
+            )?],
             ..Default::default()
         };
 
-        assert_eq!(config.policy_for("any", "action"), policy::Update::Major);
+        assert_eq!(config.policy_for(&action("any/action@v1")), config.policy);
+        Ok(())
     }
 
     #[test]
-    fn test_policy_for_override_none_uses_default() {
+    fn test_policy_for_last_match_wins_per_key() -> Result<(), String> {
         let config = Config {
-            update_policy: policy::Update::Minor,
-            action_overrides: std::collections::HashMap::from([(
-                "special/action".to_string(),
-                ActionOverride {
-                    update_policy: None, // No override specified
-                    ..Default::default()
-                },
-            )]),
+            policy: Policy {
+                bump: policy::Update::Minor,
+                ..Default::default()
+            },
+            overrides: vec![
+                override_entry(
+                    "my-org/*",
+                    PolicyOverride {
+                        bump: Some(policy::Update::Major),
+                        pin: Some(policy::Style::Sha),
+                        ..Default::default()
+                    },
+                )?,
+                override_entry(
+                    "my-org/legacy",
+                    PolicyOverride {
+                        bump: Some(policy::Update::Patch),
+                        track: Some(policy::Track::Exact),
+                        ..Default::default()
+                    },
+                )?,
+                override_entry(
+                    "other/*",
+                    PolicyOverride {
+                        prerelease: Some(true),
+                        ..Default::default()
+                    },
+                )?,
+            ],
             ..Default::default()
         };
 
-        // Should use default since override is None
+        let legacy = config.policy_for(&action("my-org/legacy@v1"));
+        assert_eq!(legacy.bump, policy::Update::Patch);
+        assert_eq!(legacy.pin, policy::Style::Sha);
+        assert_eq!(legacy.track, policy::Track::Exact);
+        assert!(!legacy.prerelease);
+
+        let tool = config.policy_for(&action("my-org/tool@v1"));
+        assert_eq!(tool.bump, policy::Update::Major);
+        assert_eq!(tool.track, policy::Track::Keep);
+
+        let reordered = Config {
+            overrides: config.overrides.iter().rev().cloned().collect(),
+            ..config.clone()
+        };
         assert_eq!(
-            config.policy_for("special", "action"),
-            policy::Update::Minor
+            reordered.policy_for(&action("my-org/legacy@v1")).bump,
+            policy::Update::Major
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_policy_for_host_qualified_override() -> Result<(), String> {
+        let config = Config {
+            overrides: vec![override_entry(
+                "ghe.corp.com/platform/*",
+                PolicyOverride {
+                    branch: Some(policy::Branch::Warn),
+                    ..Default::default()
+                },
+            )?],
+            ..Default::default()
+        };
+
+        assert_eq!(
+            config
+                .policy_for(&action("ghe.corp.com/platform/ci@main"))
+                .branch,
+            policy::Branch::Warn
+        );
+        assert_eq!(
+            config.policy_for(&action("platform/ci@main")).branch,
+            policy::Branch::Ignore
+        );
+        Ok(())
     }
 
     // Cache tests
@@ -729,30 +843,6 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cache.ttl, Duration::from_hours(12));
-    }
-
-    // ActionOverride tests
-
-    #[test]
-    fn test_action_override_default() {
-        let override_cfg = ActionOverride::default();
-        assert!(override_cfg.update_policy.is_none());
-        assert!(override_cfg.ref_style.is_none());
-        assert!(!override_cfg.ignore);
-    }
-
-    #[test]
-    fn test_action_override_full() {
-        let override_cfg = ActionOverride {
-            update_policy: Some(policy::Update::Patch),
-            ref_style: Some(policy::Style::Sha),
-            branch_policy: Some(policy::Branch::Update),
-            ignore: true,
-        };
-        assert_eq!(override_cfg.update_policy, Some(policy::Update::Patch));
-        assert_eq!(override_cfg.ref_style, Some(policy::Style::Sha));
-        assert_eq!(override_cfg.branch_policy, Some(policy::Branch::Update));
-        assert!(override_cfg.ignore);
     }
 
     // HostKind tests
@@ -1184,5 +1274,137 @@ mod tests {
         assert_eq!(config.hosts.len(), 2);
         assert_eq!(config.hosts["ghe.corp.com"].api_mode, Some(ApiMode::Rest));
         assert_eq!(config.hosts["gitlab.internal"].kind, Some(HostKind::GitLab));
+    }
+
+    #[test]
+    fn test_config_toml_policy_scan_and_overrides() -> Result<(), Box<dyn std::error::Error>> {
+        let toml_str = r#"
+            [policy]
+            bump       = "minor"
+            pin        = "sha"
+            track      = "major"
+            branch     = "warn"
+            prerelease = true
+
+            [scan]
+            ignore      = ["my-org/*", "owner/repo@v1.91.0"]
+            extra_paths = [".gitea/workflows"]
+
+            [[overrides]]
+            pattern = "actions/*"
+            policy  = { bump = "patch", track = "exact" }
+
+            [[overrides]]
+            pattern = "ghe.corp.com/platform/ci"
+            policy  = { pin = "tag", branch = "update", prerelease = false }
+        "#;
+        let config: Config = toml::from_str(toml_str)?;
+        assert_eq!(
+            config.policy,
+            Policy {
+                bump: policy::Update::Minor,
+                pin: policy::Style::Sha,
+                track: policy::Track::Major,
+                branch: policy::Branch::Warn,
+                prerelease: true,
+            }
+        );
+        let ignore: Vec<&str> = config
+            .scan
+            .ignore
+            .iter()
+            .map(ActionPattern::as_str)
+            .collect();
+        assert_eq!(ignore, ["my-org/*", "owner/repo@v1.91.0"]);
+        assert_eq!(config.scan.extra_paths, [".gitea/workflows"]);
+        assert_eq!(config.overrides.len(), 2);
+        assert_eq!(config.overrides[0].pattern.as_str(), "actions/*");
+        assert_eq!(
+            config.overrides[0].policy,
+            PolicyOverride {
+                bump: Some(policy::Update::Patch),
+                track: Some(policy::Track::Exact),
+                ..Default::default()
+            }
+        );
+        assert_eq!(
+            config.overrides[1].policy,
+            PolicyOverride {
+                pin: Some(policy::Style::Tag),
+                branch: Some(policy::Branch::Update),
+                prerelease: Some(false),
+                ..Default::default()
+            }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_toml_rejects_bad_override() {
+        for toml_str in [
+            "[[overrides]]\npattern = \"checkout\"",
+            "[[overrides]]\npattern = \"a/b\"\npolicy = { update_policy = \"patch\" }",
+            "[[overrides]]\npattern = \"a/b\"\nignore = true",
+            "[[overrides]]\npolicy = { bump = \"patch\" }",
+            "[scan]\nignore = [\"checkout\"]",
+        ] {
+            assert!(toml::from_str::<Config>(toml_str).is_err(), "{toml_str}");
+        }
+    }
+
+    #[test]
+    fn test_config_serializes_new_shape() -> Result<(), Box<dyn std::error::Error>> {
+        let config: Config = toml::from_str(
+            "[scan]\nignore = [\"a/*\"]\n[[overrides]]\npattern = \"a/b\"\npolicy = { pin = \"sha\" }",
+        )?;
+        let back: Config = toml::from_str(&toml::to_string(&config)?)?;
+        assert_eq!(back.scan, config.scan);
+        assert_eq!(back.overrides, config.overrides);
+        assert_eq!(back.policy, config.policy);
+        Ok(())
+    }
+
+    #[test]
+    fn test_reject_renamed_keys_names_the_new_key() {
+        for (old, new, toml_str) in [
+            ("update_policy", "policy.bump", "update_policy = \"minor\""),
+            ("ref_style", "policy.pin", "ref_style = \"sha\""),
+            ("branch_policy", "policy.branch", "branch_policy = \"warn\""),
+            (
+                "allow_prerelease",
+                "policy.prerelease",
+                "allow_prerelease = true",
+            ),
+            ("ignore", "scan.ignore", "ignore = [\"a/b\"]"),
+            ("extra_paths", "scan.extra_paths", "extra_paths = []"),
+            (
+                "actions",
+                "[[overrides]]",
+                "[actions.\"a/b\"]\nignore = true",
+            ),
+        ] {
+            let figment = Figment::new()
+                .merge(Serialized::defaults(Config::default()))
+                .merge(Toml::string(toml_str));
+            match reject_renamed_keys(&figment, Some(Path::new("/repo/actup.toml"))) {
+                Err(Error::InvalidConfig { reason, .. }) => {
+                    assert_eq!(
+                        reason,
+                        format!("`{old}` is no longer supported; use `{new}`")
+                    );
+                }
+                other => panic!("{old}: expected InvalidConfig, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_reject_renamed_keys_accepts_new_shape() {
+        let figment = Figment::new()
+            .merge(Serialized::defaults(Config::default()))
+            .merge(Toml::string(
+                "[policy]\nbump = \"minor\"\n[scan]\nignore = [\"a/b\"]\nextra_paths = []",
+            ));
+        assert!(reject_renamed_keys(&figment, None).is_ok());
     }
 }

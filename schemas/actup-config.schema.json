@@ -1,27 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Actup configuration",
-  "description": "Configuration options for the GitHub Actions-like updater.\n\nMain configuration struct.\n\n# Example Configuration\n\n```toml\n# .actup.toml - Conservative security-focused config\nupdate_policy = \"patch\"\nref_style = \"sha\"\nbranch_policy = \"warn\"\n\n# Result in workflow:\n# Before:\n# - uses: actions/checkout@v4\n# After:\n# - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```\n\n```toml\n# .actup.toml - Permissive major-update config\nupdate_policy = \"major\"\nref_style = \"tag\"\nallow_prerelease = true\n\n# Result in workflow:\n# Before:\n# - uses: actions/checkout@v3\n# After:\n# - uses: actions/checkout@v4.2.0\n```\n\n```toml\n# .actup.toml - Selective ignore patterns\nignore = [\n  \"actions/checkout\",              # Ignore all refs of this action\n  \"my-org/*\",                      # Ignore all actions from my-org\n  \"dtolnay/rust-toolchain@1.91.0\", # Ignore specific MSRV version\n]\n\n# Result: dtolnay/rust-toolchain@stable is checked, @1.91.0 is ignored\n```",
+  "description": "Configuration options for the GitHub Actions-like updater.\n\nMain configuration struct.\n\n# Example Configuration\n\n```toml\n# .actup.toml - Conservative security-focused config\n[policy]\nbump   = \"patch\"\npin    = \"sha\"\nbranch = \"warn\"\n\n# Result in workflow:\n# Before:\n# - uses: actions/checkout@v4\n# After:\n# - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```\n\n```toml\n# .actup.toml - Permissive major-update config\n[policy]\nbump       = \"major\"\npin        = \"tag\"\ntrack      = \"exact\"\nprerelease = true\n\n# Result in workflow:\n# Before:\n# - uses: actions/checkout@v3\n# After:\n# - uses: actions/checkout@v4.2.0\n```\n\n```toml\n# .actup.toml - Selective ignore patterns and overrides\n[scan]\nignore = [\n  \"actions/checkout\",              # Ignore all refs of this action\n  \"my-org/*\",                      # Ignore all actions from my-org\n  \"dtolnay/rust-toolchain@1.91.0\", # Ignore specific MSRV version\n]\n\n[[overrides]]\npattern = \"ghe.corp.com/platform/*\"\npolicy  = { pin = \"sha\", bump = \"minor\" }\n\n# Result: dtolnay/rust-toolchain@stable is checked, @1.91.0 is ignored\n```",
   "type": "object",
   "properties": {
-    "actions": {
-      "description": "Per-action policy overrides, keyed by `owner/repo`.\n\nEach entry can override `update_policy`, `ref_style`, `branch_policy`,\nor `ignore` for just that action.\n\n```toml\n[actions.\"actions/checkout\"]\nupdate_policy = \"patch\"    # only patch-bump this one\n```",
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/ActionOverride"
-      },
-      "default": {}
-    },
-    "allow_prerelease": {
-      "description": "Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.\n\n```toml\nallow_prerelease = false   # skip -rc/-beta tags unless already on one\n```",
-      "type": "boolean",
-      "default": false
-    },
-    "branch_policy": {
-      "description": "How to handle floating branch refs like `@main` or `@v2`.\n\n`ignore` leaves them untouched (default), `warn` flags them as\nfloating, `update` pins the branch to its current HEAD SHA.\n\n```toml\nbranch_policy = \"warn\"   # @main -> flagged, pin to a tag or SHA\n```",
-      "$ref": "#/$defs/Branch",
-      "default": "ignore"
-    },
     "cache": {
       "description": "Version-cache settings (TTL, location, on/off).\n\n```toml\n[cache]\nttl = 86400        # re-check a repo at most once a day\nenabled = true\n```",
       "$ref": "#/$defs/Cache",
@@ -39,14 +21,6 @@
       ],
       "default": null
     },
-    "extra_paths": {
-      "description": "Additional paths to scan (beyond defaults)\n\nBy default, actup scans:\n- `.github/workflows/**/*.{yml,yaml}` (workflows)\n- `.github/actions/**/action.{yml,yaml}` (composite actions)\n\nUse `extra_paths` to scan additional locations:\n\nExamples:\n- `\".gitea/workflows\"` - Gitea workflow directory\n- `\".woodpecker/*.yml\"` - Woodpecker CI pipelines\n- `\"ci/pipelines/**/*.yaml\"` - Custom CI directory\n- `\".drone.yml\"` - Specific Drone CI config file\n- `\"infra/terraform/github-actions.tf\"` - GitHub Actions in Terraform",
-      "type": "array",
-      "default": [],
-      "items": {
-        "type": "string"
-      }
-    },
     "fetch": {
       "description": "API fallback settings, used only when the git protocol can't list a repo.\n\n```toml\n[fetch]\napi_mode = \"graphql\"       # or \"rest\"\nmax_tags_per_repo = 10\n```",
       "$ref": "#/$defs/FetchSettings",
@@ -63,74 +37,35 @@
       },
       "default": {}
     },
-    "ignore": {
-      "description": "Actions to ignore (supports owner/repo, owner/repo@ref, and owner/* patterns)\n\nExamples:\n- `\"actions/checkout\"` - ignores all refs of this action\n- `\"actions/checkout@v2\"` - ignores only the v2 ref\n- `\"my-org/*\"` - ignores all actions from my-org\n- `\"tool/action@1.91.0\"` - ignores specific version (e.g., MSRV pin)",
+    "overrides": {
+      "description": "Ordered policy overrides; for each key, the last matching entry wins.\n\n```toml\n[[overrides]]\npattern = \"my-org/*\"\npolicy  = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"my-org/legacy\"\npolicy  = { bump = \"patch\" }\n```",
       "type": "array",
       "default": [],
       "items": {
-        "type": "string"
+        "$ref": "#/$defs/Override"
       }
     },
-    "ref_style": {
-      "description": "How a ref is written when updating.\n\n`preserve` keeps the current style (tag stays a tag, SHA stays a SHA),\n`tag` rewrites to the version tag, `sha` pins to the commit SHA with a\n`# vX.Y.Z` comment.\n\n```toml\nref_style = \"sha\"   # actions/checkout@v4 -> @<sha> # v4.2.0\n```",
-      "$ref": "#/$defs/Style",
-      "default": "preserve"
+    "policy": {
+      "description": "Update policy applied to every action unless an override matches.\n\n```toml\n[policy]\nbump  = \"minor\"\npin   = \"sha\"\ntrack = \"keep\"\n```",
+      "$ref": "#/$defs/Policy",
+      "default": {
+        "branch": "ignore",
+        "bump": "latest",
+        "pin": "preserve",
+        "prerelease": false,
+        "track": "keep"
+      }
     },
-    "update_policy": {
-      "description": "How far to bump outdated version refs.\n\n`patch` stays on `major.minor`, `minor` stays on `major`, `major`\nallows a new major, `latest` takes the newest stable overall.\n\n```toml\nupdate_policy = \"minor\"   # v1.2.3 -> v1.5.0, never v2\n```",
-      "$ref": "#/$defs/Update",
-      "default": "latest"
+    "scan": {
+      "description": "Which files and actions to scan.\n\n```toml\n[scan]\nignore      = [\"my-org/*\"]\nextra_paths = [\".gitea/workflows\"]\n```",
+      "$ref": "#/$defs/Scan",
+      "default": {
+        "extra_paths": [],
+        "ignore": []
+      }
     }
   },
   "$defs": {
-    "ActionOverride": {
-      "title": "Per-action override configuration.",
-      "description": "## Example\n```toml\n# .actup.toml - Per-action overrides\n[actions.\"actions/checkout\"]\nupdate_policy = \"major\"\n\n[actions.\"actions/cache\"]\nignore = true\n\n[actions.\"internal/action\"]\nref_style = \"sha\"\n```\n\n## Result in workflow:\n```console\n# actions/checkout@v3 -> actions/checkout@v4 (major allowed)\n# actions/cache@v3 -> unchanged (ignored)\n# internal/action@v1 -> internal/action@abc123... # v1.2.0 (pinned to SHA)\n```",
-      "type": "object",
-      "properties": {
-        "branch_policy": {
-          "description": "Override branch-ref handling for this action.\n\nSame values as the global `branch_policy`: `ignore` leaves branch refs\nuntouched, `warn` flags them as floating, `update` pins them to the\nbranch's current HEAD SHA.\n\n```toml\nbranch_policy = \"ignore\"           # quiet everywhere by default\n\n[actions.\"kjanat/runner\"]\nbranch_policy = \"update\"           # but pin this one to its master SHA\n```",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Branch"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "ignore": {
-          "description": "Whether to completely ignore this action",
-          "type": "boolean",
-          "default": false
-        },
-        "ref_style": {
-          "description": "Override ref style for this action",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Style"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        },
-        "update_policy": {
-          "description": "Override update policy for this action",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Update"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null
-        }
-      }
-    },
     "ApiMode": {
       "description": "API mode for fetching versions",
       "oneOf": [
@@ -147,20 +82,20 @@
       ]
     },
     "Branch": {
-      "description": "Branch handling policy.\n\n# Workflow Examples\n\n```yaml\n# With branch_policy: ignore - branch refs skipped silently\n- uses: actions/checkout@main  # no warning, no update\n\n# With branch_policy: warn - warns but doesn't change\n- uses: actions/checkout@main  # warning: consider pinning to a tag\n\n# With branch_policy: update - pins branch to current HEAD SHA\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main\n```",
+      "description": "Branch handling policy.\n\n# Workflow Examples\n\n```yaml\n# With branch = \"ignore\" - branch refs skipped silently\n- uses: actions/checkout@main  # no warning, no update\n\n# With branch = \"warn\" - warns but doesn't change\n- uses: actions/checkout@main  # warning: consider pinning to a tag\n\n# With branch = \"update\" - pins branch to current HEAD SHA\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main\n```",
       "oneOf": [
         {
-          "description": "Ignore branch refs (don't flag as outdated).\n\n```yaml\n# With branch_policy: ignore\n- uses: actions/checkout@main\n# No warning, no update - branch refs skipped\n```",
+          "description": "Ignore branch refs (don't flag as outdated).\n\n```yaml\n# With branch = \"ignore\"\n- uses: actions/checkout@main\n# No warning, no update - branch refs skipped\n```",
           "type": "string",
           "const": "ignore"
         },
         {
-          "description": "Warn about branch refs (recommend pinning to tag or SHA).\n\n```yaml\n# With branch_policy: warn\n- uses: actions/checkout@main\n# Warning: 'main' is a branch ref, consider pinning to a tag\n```",
+          "description": "Warn about branch refs (recommend pinning to tag or SHA).\n\n```yaml\n# With branch = \"warn\"\n- uses: actions/checkout@main\n# Warning: 'main' is a branch ref, consider pinning to a tag\n```",
           "type": "string",
           "const": "warn"
         },
         {
-          "description": "Treat branch refs as updatable (pin to latest commit SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@main\n\n# After (branch_policy: update):\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main\n# Branch pinned to current HEAD SHA\n```",
+          "description": "Treat branch refs as updatable (pin to latest commit SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@main\n\n# After (branch = \"update\"):\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # main\n# Branch pinned to current HEAD SHA\n```",
           "type": "string",
           "const": "update"
         }
@@ -285,46 +220,207 @@
         }
       ]
     },
+    "Override": {
+      "description": "One `[[overrides]]` entry.\n\n## Example\n```toml\n[[overrides]]\npattern = \"actions/*\"\npolicy  = { bump = \"major\" }\n\n[[overrides]]\npattern = \"ghe.corp.com/internal/*\"\npolicy  = { pin = \"sha\", track = \"exact\" }\n```",
+      "type": "object",
+      "properties": {
+        "pattern": {
+          "description": "Actions this entry applies to, as a `[host/]owner/repo[/subpath][@ref]` glob.",
+          "type": "string"
+        },
+        "policy": {
+          "description": "Policy keys to replace for matching actions.",
+          "$ref": "#/$defs/PolicyOverride",
+          "default": {
+            "branch": null,
+            "bump": null,
+            "pin": null,
+            "prerelease": null,
+            "track": null
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pattern"
+      ]
+    },
+    "Policy": {
+      "description": "The `[policy]` table.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "description": "How to handle floating branch refs like `@main` or `@v2`.\n\n`ignore` leaves them untouched (default), `warn` flags them as\nfloating, `update` pins the branch to its current HEAD SHA.\n\n```toml\nbranch = \"warn\"   # @main -> flagged, pin to a tag or SHA\n```",
+          "$ref": "#/$defs/Branch",
+          "default": "ignore"
+        },
+        "bump": {
+          "description": "How far to bump outdated version refs.\n\n`patch` stays on `major.minor`, `minor` stays on `major`, `major`\nallows a new major, `latest` takes the newest stable overall.\n\n```toml\nbump = \"minor\"   # v1.2.3 -> v1.5.0, never v2\n```",
+          "$ref": "#/$defs/Update",
+          "default": "latest"
+        },
+        "pin": {
+          "description": "How a ref is written when updating.\n\n`preserve` keeps the current style (tag stays a tag, SHA stays a SHA),\n`tag` rewrites to the version tag, `sha` pins to the commit SHA with a\n`# vX.Y.Z` comment.\n\n```toml\npin = \"sha\"   # actions/checkout@v4 -> @<sha> # v4.2.0\n```",
+          "$ref": "#/$defs/Style",
+          "default": "preserve"
+        },
+        "prerelease": {
+          "description": "Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.\n\n```toml\nprerelease = false   # skip -rc/-beta tags unless already on one\n```",
+          "type": "boolean",
+          "default": false
+        },
+        "track": {
+          "description": "Version granularity of an updated tag ref.\n\n`keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),\n`major` writes the major-only tag when the repo has one, `exact`\nalways writes the full version.\n\n```toml\ntrack = \"exact\"   # actions/checkout@v4 -> @v6.0.2\n```",
+          "$ref": "#/$defs/Track",
+          "default": "keep"
+        }
+      }
+    },
+    "PolicyOverride": {
+      "description": "A partial `[policy]` table used by `[[overrides]]`.",
+      "type": "object",
+      "properties": {
+        "branch": {
+          "description": "Replaces `policy.branch`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Branch"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "bump": {
+          "description": "Replaces `policy.bump`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Update"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "pin": {
+          "description": "Replaces `policy.pin`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Style"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "prerelease": {
+          "description": "Replaces `policy.prerelease`.",
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": null
+        },
+        "track": {
+          "description": "Replaces `policy.track`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Track"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "Scan": {
+      "description": "The `[scan]` table.",
+      "type": "object",
+      "properties": {
+        "extra_paths": {
+          "description": "Additional paths to scan (beyond defaults)\n\nBy default, actup scans:\n- `.github/workflows/**/*.{yml,yaml}` (workflows)\n- `.github/actions/**/action.{yml,yaml}` (composite actions)\n\nUse `extra_paths` to scan additional locations:\n\nExamples:\n- `\".gitea/workflows\"` - Gitea workflow directory\n- `\".woodpecker/*.yml\"` - Woodpecker CI pipelines\n- `\"ci/pipelines/**/*.yaml\"` - Custom CI directory\n- `\".drone.yml\"` - Specific Drone CI config file\n- `\"infra/terraform/github-actions.tf\"` - GitHub Actions in Terraform",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "ignore": {
+          "description": "Actions to skip, as `[host/]owner/repo[/subpath][@ref]` globs.\n\nExamples:\n- `\"actions/checkout\"` - ignores all refs of this action\n- `\"actions/checkout@v2\"` - ignores only the v2 ref\n- `\"my-org/*\"` - ignores all actions from my-org\n- `\"ghe.corp.com/*/*\"` - ignores every action on one host\n- `\"tool/action@1.91.0\"` - ignores specific version (e.g., MSRV pin)",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
     "Style": {
-      "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With ref_style: preserve - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With ref_style: tag - converts to version tags\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With ref_style: sha - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",
+      "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With pin = \"preserve\" - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With pin = \"tag\" - converts to version tags\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With pin = \"sha\" - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",
       "oneOf": [
         {
-          "description": "Keep the original style (tag stays tag, SHA stays SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4\n\n# After (ref_style: preserve):\n- uses: actions/checkout@v4.2.0\n# Tag format preserved\n```",
+          "description": "Keep the original style (tag stays tag, SHA stays SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4\n\n# After (pin = \"preserve\"):\n- uses: actions/checkout@v4.2.0\n# Tag format preserved\n```",
           "type": "string",
           "const": "preserve"
         },
         {
-          "description": "Always use version tags (v1.2.3).\n\n```yaml\n# Before:\n- uses: actions/checkout@abc1234...\n\n# After (ref_style: tag):\n- uses: actions/checkout@v4.2.0\n# SHA converted to tag\n```",
+          "description": "Always use version tags (v1.2.3).\n\n```yaml\n# Before:\n- uses: actions/checkout@abc1234...\n\n# After (pin = \"tag\"):\n- uses: actions/checkout@v4.2.0\n# SHA converted to tag\n```",
           "type": "string",
           "const": "tag"
         },
         {
-          "description": "Always pin to full commit SHA (most secure).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4\n\n# After (ref_style: sha):\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n# Tag pinned to full SHA with comment\n```",
+          "description": "Always pin to full commit SHA (most secure).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4\n\n# After (pin = \"sha\"):\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n# Tag pinned to full SHA with comment\n```",
           "type": "string",
           "const": "sha"
         }
       ]
     },
-    "Update": {
-      "description": "Update policy determines what version bumps are allowed.\n\n# Workflow Examples\n\n```yaml\n# With update_policy: patch (1.2.3 -> 1.2.4 only)\n- uses: actions/checkout@v4.1.0  # stays at v4.1.x\n\n# With update_policy: minor (1.2.x -> 1.3.x)\n- uses: actions/checkout@v4.1.0  # can update to v4.2.0\n\n# With update_policy: major (1.x -> 2.x)\n- uses: actions/checkout@v3      # can update to v4\n\n# With update_policy: latest (always newest)\n- uses: actions/checkout@v2      # updates to v4\n```",
+    "Track": {
+      "description": "Version granularity written for an updated tag ref.\n\n# Workflow Examples\n\n```yaml\n# With track = \"keep\" - granularity follows the current ref\n- uses: actions/checkout@v4      # -> v6\n- uses: actions/checkout@v4.1.0  # -> v6.0.2\n\n# With track = \"major\" - major-only tag when the repo has one\n- uses: actions/checkout@v4.1.0  # -> v6\n\n# With track = \"exact\" - always the full version\n- uses: actions/checkout@v4      # -> v6.0.2\n```",
       "oneOf": [
         {
-          "description": "Only patch updates within same major.minor (1.2.3 -> 1.2.4).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4.1.0\n\n# After (update_policy: patch):\n- uses: actions/checkout@v4.1.1\n```",
+          "description": "Write a major-only tag for a major-only ref and a full version otherwise.",
           "type": "string",
-          "const": "patch"
+          "const": "keep"
         },
         {
-          "description": "Minor updates within same major (1.2.x -> 1.3.x).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4.1.0\n\n# After (update_policy: minor):\n- uses: actions/checkout@v4.2.0\n```",
-          "type": "string",
-          "const": "minor"
-        },
-        {
-          "description": "Major updates allowed (1.x -> 2.x).\n\n```yaml\n# Before:\n- uses: actions/checkout@v3\n\n# After (update_policy: major):\n- uses: actions/checkout@v4\n```",
+          "description": "Write the major-only tag (`v6`) when the repo has one, else the full version.",
           "type": "string",
           "const": "major"
         },
         {
-          "description": "Always update to absolute latest, regardless of major version.\n\n```yaml\n# Before:\n- uses: actions/checkout@v2\n\n# After (update_policy: latest):\n- uses: actions/checkout@v4\n```",
+          "description": "Write the full version (`v6.0.2`).",
+          "type": "string",
+          "const": "exact"
+        }
+      ]
+    },
+    "Update": {
+      "description": "Update policy determines what version bumps are allowed.\n\n# Workflow Examples\n\n```yaml\n# With bump = \"patch\" (1.2.3 -> 1.2.4 only)\n- uses: actions/checkout@v4.1.0  # stays at v4.1.x\n\n# With bump = \"minor\" (1.2.x -> 1.3.x)\n- uses: actions/checkout@v4.1.0  # can update to v4.2.0\n\n# With bump = \"major\" (1.x -> 2.x)\n- uses: actions/checkout@v3      # can update to v4\n\n# With bump = \"latest\" (always newest)\n- uses: actions/checkout@v2      # updates to v4\n```",
+      "oneOf": [
+        {
+          "description": "Only patch updates within same major.minor (1.2.3 -> 1.2.4).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4.1.0\n\n# After (bump = \"patch\"):\n- uses: actions/checkout@v4.1.1\n```",
+          "type": "string",
+          "const": "patch"
+        },
+        {
+          "description": "Minor updates within same major (1.2.x -> 1.3.x).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4.1.0\n\n# After (bump = \"minor\"):\n- uses: actions/checkout@v4.2.0\n```",
+          "type": "string",
+          "const": "minor"
+        },
+        {
+          "description": "Major updates allowed (1.x -> 2.x).\n\n```yaml\n# Before:\n- uses: actions/checkout@v3\n\n# After (bump = \"major\"):\n- uses: actions/checkout@v4\n```",
+          "type": "string",
+          "const": "major"
+        },
+        {
+          "description": "Always update to absolute latest, regardless of major version.\n\n```yaml\n# Before:\n- uses: actions/checkout@v2\n\n# After (bump = \"latest\"):\n- uses: actions/checkout@v4\n```",
           "type": "string",
           "const": "latest"
         }

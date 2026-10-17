@@ -137,7 +137,7 @@ for (const edit of edits) {
 }
 
 // Test with custom config (major policy — allows cross-major updates)
-const majorConfig = JSON.stringify({ update_policy: "major" });
+const majorConfig = JSON.stringify({ policy: { bump: "major" } });
 const majorResults = await checkRefs(yaml, mockProvider, majorConfig);
 
 console.log("PASS: checkRefs with major policy returned", majorResults.length, "results");

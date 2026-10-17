@@ -15,7 +15,7 @@ use crate::bridge::{JsProvider, JsProviderAdapter};
 ///
 /// JS code constructs an object matching this shape; `serde_wasm_bindgen`
 /// deserializes it directly. Wider config knobs ([`Cache`], [`HostConfig`],
-/// per-action overrides) aren't part of the WASM surface — those are
+/// `[[overrides]]`) aren't part of the WASM surface — those are
 /// repo-config concerns, not runtime arguments.
 ///
 /// [`Cache`]: actup_core::config::Cache
@@ -26,9 +26,17 @@ pub struct ActupConfig {
     /// Default host for bare `owner/repo` refs (e.g. `"github.com"`).
     #[serde(default)]
     pub default_host: Option<String>,
-    /// Global update policy.
+    /// Subset of the `[policy]` table.
     #[serde(default)]
-    pub update_policy: Option<policy::Update>,
+    pub policy: ActupPolicy,
+}
+
+/// Subset of the `[policy]` table passable from JS callers.
+#[derive(Debug, Default, Deserialize, tsify_next::Tsify)]
+pub struct ActupPolicy {
+    /// How far to bump outdated version refs (`policy.bump`).
+    #[serde(default)]
+    pub bump: Option<policy::Update>,
 }
 
 impl From<ActupConfig> for Config {
@@ -37,8 +45,8 @@ impl From<ActupConfig> for Config {
         if let Some(host) = value.default_host {
             config.default_host = Some(host);
         }
-        if let Some(policy) = value.update_policy {
-            config.update_policy = policy;
+        if let Some(bump) = value.policy.bump {
+            config.policy.bump = bump;
         }
         config
     }

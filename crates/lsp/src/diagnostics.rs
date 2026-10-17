@@ -1093,7 +1093,10 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config {
-            branch_policy: actup_core::policy::Branch::Ignore,
+            policy: actup_core::config::Policy {
+                branch: actup_core::policy::Branch::Ignore,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();

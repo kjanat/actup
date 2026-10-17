@@ -6,7 +6,7 @@
 commit they point to can change at any time. "Pin to SHA" converts them to
 immutable 40-char commit SHAs for supply-chain safety. The LSP has no code
 action for this. The CLI has `actup pin` but `actup update` ignores
-`ref_style = "sha"`.
+`policy.pin = "sha"`.
 
 **For whom?** Security-conscious teams, SOC2/FedRAMP compliance workflows,
 anyone who wants reproducible CI.
@@ -15,7 +15,7 @@ anyone who wants reproducible CI.
 
 - Users must manually run `actup pin` CLI then re-open files — breaks editor
   flow
-- `ref_style = "sha"` config is parsed but never honored by `update` — a silent
+- `policy.pin = "sha"` config is parsed but never honored by `update` — a silent
   lie
 - No "pin current ref" option in the editor; only "update to latest tag"
 
@@ -97,12 +97,12 @@ fixing a problem.
 comment = true  # default: true
 ```
 
-| Surface                                 | `comment = true`                     | `comment = false` |
-| --------------------------------------- | ------------------------------------ | ----------------- |
-| CLI `pin`                               | `@{sha} # {ref}` (existing behavior) | `@{sha}`          |
-| CLI `update` (with `ref_style = "sha"`) | `@{sha} # {tag}`                     | `@{sha}`          |
-| LSP code action                         | `@{sha} # {ref}`                     | `@{sha}`          |
-| MCP                                     | Follows config                       | Follows config    |
+| Surface                                  | `comment = true`                     | `comment = false` |
+| ---------------------------------------- | ------------------------------------ | ----------------- |
+| CLI `pin`                                | `@{sha} # {ref}` (existing behavior) | `@{sha}`          |
+| CLI `update` (with `policy.pin = "sha"`) | `@{sha} # {tag}`                     | `@{sha}`          |
+| LSP code action                          | `@{sha} # {ref}`                     | `@{sha}`          |
+| MCP                                      | Follows config                       | Follows config    |
 
 **Ghost text / inlay hints**: Out of scope for this spec. Complementary future
 feature — show tag for SHA refs via `textDocument/inlayHint`. Would replace the
@@ -266,13 +266,13 @@ insertion if one exists.
 For the LSP, the `ActionCheckEntry` already stores `ref_str` (the original ref),
 so the comment content is available.
 
-## CLI: Honor `ref_style` in `update`
+## CLI: Honor `policy.pin` in `update`
 
 Currently `update` always emits tag-style refs (`target.version().to_string()`).
-When `ref_style = "sha"` (global or per-action override):
+When `policy.pin = "sha"` (global or from a matching `[[overrides]]` entry):
 
 ```rust
-let new_ref = match config.ref_style_for(owner, repo) {
+let new_ref = match config.policy_for(&action_ref).pin {
     Style::Sha => {
         let sha = resolve_sha(&registry, &action_ref, target.sha()).await?;
         format_pin_ref(&sha, target.version(), config.pin.comment)
@@ -294,7 +294,7 @@ This reuses the existing `resolve_sha` logic from the `pin` command.
 | D5 | "Update & pin to SHA" diagnostic-based code action (Outdated refs)                                     | S      | D2         |
 | D6 | "Pin current to SHA" diagnostic-based code action (Outdated refs)                                      | S      | D2, D3     |
 | D7 | Config key `[pin] comment = true` + wire into code actions and CLI pin                                 | S      | —          |
-| D8 | CLI `update` honors `ref_style = "sha"`                                                                | M      | D1, D7     |
+| D8 | CLI `update` honors `policy.pin = "sha"`                                                               | M      | D1, D7     |
 | D9 | Tests: snapshot edits, code action generation, config interaction                                      | M      | D4-D8      |
 
 **Total effort: L** (1-2 days, cross-cutting across core + LSP + CLI)

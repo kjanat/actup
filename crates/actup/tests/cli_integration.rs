@@ -175,10 +175,14 @@ mod discovery_tests {
 mod config_tests {
     use std::fs;
 
-    use actup_core::{Config, find_repo_config, iter_config_candidates};
+    use actup_core::{ActionRef, Config, find_repo_config, iter_config_candidates, parse_uses};
     use tempfile::TempDir;
 
     use super::test_support::{ok_or_panic, some_or_panic};
+
+    fn action(uses: &str) -> ActionRef {
+        some_or_panic(ok_or_panic(parse_uses(uses), uses), uses)
+    }
 
     #[test]
     fn test_config_discovery_order() {
@@ -204,7 +208,7 @@ mod config_tests {
     fn test_find_repo_config_toml() {
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
-            fs::write(temp.path().join("actup.toml"), "update_policy = \"minor\""),
+            fs::write(temp.path().join("actup.toml"), "[policy]\nbump = \"minor\""),
             "write actup.toml fixture",
         );
 
@@ -218,7 +222,7 @@ mod config_tests {
         ok_or_panic(
             fs::write(
                 temp.path().join("actup.json"),
-                r#"{"update_policy": "minor"}"#,
+                r#"{"policy": {"bump": "minor"}}"#,
             ),
             "write actup.json fixture",
         );
@@ -233,7 +237,7 @@ mod config_tests {
         let config_dir = temp.path().join(".config");
         ok_or_panic(fs::create_dir_all(&config_dir), "create .config dir");
         ok_or_panic(
-            fs::write(config_dir.join("actup.toml"), "update_policy = \"patch\""),
+            fs::write(config_dir.join("actup.toml"), "[policy]\nbump = \"patch\""),
             "write .config actup.toml fixture",
         );
 
@@ -248,18 +252,56 @@ mod config_tests {
             fs::write(
                 temp.path().join("actup.toml"),
                 r#"
-update_policy = "minor"
+[policy]
+bump = "minor"
 
-[actions."special/action"]
-update_policy = "patch"
+[[overrides]]
+pattern = "special/*"
+policy  = { bump = "major", track = "exact" }
+
+[[overrides]]
+pattern = "special/action"
+policy  = { bump = "patch" }
 "#,
             ),
             "write actup.toml fixture",
         );
 
         let config = ok_or_panic(Config::load(None, temp.path()), "load config from fixture");
-        assert_eq!(config.policy_for("normal", "action").to_string(), "minor");
-        assert_eq!(config.policy_for("special", "action").to_string(), "patch");
+        let bump = |uses: &str| config.policy_for(&action(uses)).bump.to_string();
+        assert_eq!(bump("normal/action@v1"), "minor");
+        assert_eq!(bump("special/other@v1"), "major");
+        assert_eq!(bump("special/action@v1"), "patch");
+        assert_eq!(
+            config
+                .policy_for(&action("special/action@v1"))
+                .track
+                .to_string(),
+            "exact"
+        );
+    }
+
+    #[test]
+    fn test_config_load_rejects_renamed_key_naming_file() {
+        let temp = ok_or_panic(TempDir::new(), "create temp dir");
+        ok_or_panic(
+            fs::write(
+                temp.path().join("actup.toml"),
+                "[actions.\"a/b\"]\nupdate_policy = \"patch\"\n",
+            ),
+            "write actup.toml fixture",
+        );
+
+        match Config::load(None, temp.path()) {
+            Err(actup_core::Error::InvalidConfig { path, reason }) => {
+                assert!(path.ends_with("actup.toml"), "{path}");
+                assert_eq!(
+                    reason,
+                    "`actions` is no longer supported; use `[[overrides]]`"
+                );
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
     }
 
     #[test]
@@ -269,6 +311,7 @@ update_policy = "patch"
             fs::write(
                 temp.path().join("actup.toml"),
                 r#"
+[scan]
 ignore = ["internal/*", "deprecated/action"]
 "#,
             ),
@@ -276,9 +319,9 @@ ignore = ["internal/*", "deprecated/action"]
         );
 
         let config = ok_or_panic(Config::load(None, temp.path()), "load config from fixture");
-        assert!(config.should_ignore("internal", "anything", "v1"));
-        assert!(config.should_ignore("deprecated", "action", "v2"));
-        assert!(!config.should_ignore("external", "action", "v1"));
+        assert!(config.should_ignore(&action("internal/anything@v1")));
+        assert!(config.should_ignore(&action("deprecated/action@v2")));
+        assert!(!config.should_ignore(&action("external/action@v1")));
     }
 }
 
@@ -426,9 +469,13 @@ max_tags_per_repo = 25
             fs::write(
                 temp.path().join("actup.toml"),
                 r#"
-update_policy = "minor"
-ref_style = "sha"
 default_host = "github.com"
+
+[policy]
+bump = "minor"
+pin = "sha"
+
+[scan]
 ignore = ["internal/action"]
 
 [cache]
@@ -448,11 +495,15 @@ token_env = "GHE_TOKEN"
         );
 
         let config = ok_or_panic(Config::load(None, temp.path()), "load config");
-        assert_eq!(config.update_policy.to_string(), "minor");
+        assert_eq!(config.policy.bump.to_string(), "minor");
+        assert_eq!(config.policy.pin.to_string(), "sha");
         assert_eq!(config.default_host.as_deref(), Some("github.com"));
         assert_eq!(config.fetch.max_tags_per_repo.get(), 100);
         assert_eq!(config.hosts.len(), 1);
-        assert!(config.should_ignore("internal", "action", "v1"));
+        let Ok(Some(internal)) = actup_core::parse_uses("internal/action@v1") else {
+            panic!("parse internal/action@v1");
+        };
+        assert!(config.should_ignore(&internal));
     }
 
     #[test]
@@ -797,11 +848,29 @@ mod schema_tests {
         assert!(props.get("fetch").is_some(), "fetch property missing");
         assert!(props.get("hosts").is_some(), "hosts property missing");
 
+        assert!(props.get("policy").is_some(), "policy property missing");
+        assert!(props.get("scan").is_some(), "scan property missing");
+        assert!(
+            props.get("overrides").is_some(),
+            "overrides property missing"
+        );
+
         // Old field must be gone
         assert!(
             props.get("providers").is_none(),
             "providers property still present — old field not removed"
         );
+        for old in [
+            "update_policy",
+            "ref_style",
+            "branch_policy",
+            "allow_prerelease",
+            "ignore",
+            "extra_paths",
+            "actions",
+        ] {
+            assert!(props.get(old).is_none(), "{old} property still present");
+        }
     }
 
     #[test]

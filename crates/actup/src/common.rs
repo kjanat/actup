@@ -345,7 +345,7 @@ impl<'a> WorkflowScanner<'a> {
     /// Discover workflow files. Returns empty vec if none found.
     #[must_use]
     pub fn discover(&self) -> Vec<DiscoveredFile> {
-        discover_files(self.path, &self.config.extra_paths)
+        discover_files(self.path, &self.config.scan.extra_paths)
     }
 
     /// Print "no files found" message (human format only).
