@@ -880,7 +880,7 @@ impl Registry {
                 source: None,
             })?;
         let provider = match creation {
-            Creation::Eager => (registration.create)(provider_config)?,
+            Creation::Eager => (registration.create)(&provider_config)?,
             Creation::OnFirstUse => Box::new(Deferred::new(provider_config, registration.create)),
         };
         self.register(Box::new(CachingProvider::with_retention(
@@ -897,7 +897,7 @@ enum Creation {
     OnFirstUse,
 }
 
-type Create = fn(crate::ProviderConfig) -> Result<Box<dyn Provider>>;
+type Create = fn(&crate::ProviderConfig) -> Result<Box<dyn Provider>>;
 
 /// A provider that `create` builds on its first call.
 struct Deferred {
@@ -919,7 +919,7 @@ impl Deferred {
 
     fn provider(&self) -> std::result::Result<&dyn Provider, Error> {
         self.built
-            .get_or_init(|| (self.create)(self.config.clone()))
+            .get_or_init(|| (self.create)(&self.config))
             .as_ref()
             .map(AsRef::as_ref)
             .map_err(Clone::clone)
@@ -1338,17 +1338,17 @@ mod tests {
         assert_eq!(deserialized.outputs().len(), 1);
     }
 
-    fn create_mock(config: crate::ProviderConfig) -> Result<Box<dyn Provider>> {
+    fn create_mock(config: &crate::ProviderConfig) -> Result<Box<dyn Provider>> {
         if config.host == "broken.corp.com" {
             return Err(Error::Auth {
-                provider: config.host,
+                provider: config.host.clone(),
                 reason: "no token".into(),
                 source: None,
             });
         }
         Ok(Box::new(MockProvider {
             kind: Kind::GitHub,
-            host: config.host,
+            host: config.host.clone(),
             batch: false,
         }))
     }
@@ -1373,10 +1373,10 @@ mod tests {
         create: create_mock,
     };
 
-    fn create_rest_only(config: crate::ProviderConfig) -> Result<Box<dyn Provider>> {
+    fn create_rest_only(config: &crate::ProviderConfig) -> Result<Box<dyn Provider>> {
         if config.api_mode != crate::ApiMode::Rest {
             return Err(Error::InvalidConfig {
-                path: config.host,
+                path: config.host.clone(),
                 reason: format!("REST-only mock got {:?}", config.api_mode),
                 hint: None,
                 source: None,
@@ -1384,7 +1384,7 @@ mod tests {
         }
         Ok(Box::new(MockProvider {
             kind: config.kind.into(),
-            host: config.host,
+            host: config.host.clone(),
             batch: true,
         }))
     }
@@ -1450,9 +1450,9 @@ mod tests {
         Ok(())
     }
 
-    fn create_failing(config: crate::ProviderConfig) -> Result<Box<dyn Provider>> {
+    fn create_failing(config: &crate::ProviderConfig) -> Result<Box<dyn Provider>> {
         Err(Error::Auth {
-            provider: config.host,
+            provider: config.host.clone(),
             reason: "malformed token".into(),
             source: None,
         })

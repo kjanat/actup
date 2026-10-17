@@ -203,7 +203,7 @@ pub struct Registration {
     pub capabilities: Capabilities,
 
     /// Construct provider implementation.
-    pub create: fn(ProviderConfig) -> Result<Box<dyn Provider>>,
+    pub create: fn(&ProviderConfig) -> Result<Box<dyn Provider>>,
 }
 ```
 

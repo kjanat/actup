@@ -91,10 +91,10 @@ fn create_gitlab_provider(
         token_env,
         max_tags_per_repo,
         ..
-    }: ProviderConfig,
+    }: &ProviderConfig,
 ) -> actup_core::Result<Box<dyn Provider>> {
-    let token = token_env.and_then(|var| std::env::var(var).ok());
+    let token = token_env.as_deref().and_then(|var| std::env::var(var).ok());
     let provider =
-        GitLabProvider::with_host(&api_base, &host, token.as_deref())?.max_tags(max_tags_per_repo);
+        GitLabProvider::with_host(api_base, host, token.as_deref())?.max_tags(*max_tags_per_repo);
     Ok(Box::new(provider))
 }

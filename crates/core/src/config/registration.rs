@@ -91,7 +91,7 @@ pub struct Registration {
     pub capabilities: Capabilities,
 
     /// Construct a provider from fully-resolved config.
-    pub create: fn(ProviderConfig) -> crate::Result<Box<dyn Provider>>,
+    pub create: fn(&ProviderConfig) -> crate::Result<Box<dyn Provider>>,
 }
 
 impl std::fmt::Debug for Registration {
@@ -211,7 +211,7 @@ mod tests {
     }
 
     /// Mock `create` fn for testing `Registration` construction
-    fn mock_create(_config: ProviderConfig) -> crate::Result<Box<dyn Provider>> {
+    fn mock_create(_config: &ProviderConfig) -> crate::Result<Box<dyn Provider>> {
         Err(crate::Error::ProviderNotFound {
             host: "mock".into(),
         })
@@ -301,7 +301,7 @@ mod tests {
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
 
-        let result = (reg.create)(config);
+        let result = (reg.create)(&config);
         assert!(result.is_err());
     }
 
@@ -612,13 +612,15 @@ mod tests {
 
     #[test]
     fn registration_create_receives_correct_config() {
-        fn capturing_create(config: ProviderConfig) -> crate::Result<Box<dyn Provider>> {
+        fn capturing_create(config: &ProviderConfig) -> crate::Result<Box<dyn Provider>> {
             // Verify the config fields are passed through correctly
             assert_eq!(config.host, "github.com");
             assert_eq!(config.kind, HostKind::GitHub);
             assert_eq!(config.api_base, "https://api.github.com");
             assert_eq!(config.api_mode, ApiMode::Graphql);
-            Err(crate::Error::ProviderNotFound { host: config.host })
+            Err(crate::Error::ProviderNotFound {
+                host: config.host.clone(),
+            })
         }
 
         let reg = Registration {
@@ -643,7 +645,7 @@ mod tests {
         };
 
         // create fn receives the full ProviderConfig
-        let result = (reg.create)(config);
+        let result = (reg.create)(&config);
         assert!(result.is_err());
     }
 

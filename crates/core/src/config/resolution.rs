@@ -399,7 +399,7 @@ mod tests {
         registration::{Capabilities, Preset, Registration},
     };
 
-    fn mock_create(_config: ProviderConfig) -> crate::Result<Box<dyn crate::provider::Provider>> {
+    fn mock_create(_config: &ProviderConfig) -> crate::Result<Box<dyn crate::provider::Provider>> {
         Err(crate::Error::ProviderNotFound {
             host: "mock".into(),
         })

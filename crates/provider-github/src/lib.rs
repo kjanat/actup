@@ -76,8 +76,7 @@ fn infer_github_api_base(hostname: &str) -> Option<String> {
 /// runs unauthenticated (rate limits apply).
 ///
 /// Signature must match [`Registration::create`] fn pointer type.
-#[allow(clippy::needless_pass_by_value)]
-fn create_github_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
+fn create_github_provider(config: &ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
     let token = config
         .token_env
         .as_deref()
@@ -216,7 +215,7 @@ mod tests {
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
-        let result = (REGISTRATION.create)(config);
+        let result = (REGISTRATION.create)(&config);
         assert!(result.is_ok(), "create should succeed without token");
     }
 
@@ -230,7 +229,7 @@ mod tests {
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(20).unwrap(),
         };
-        let result = (REGISTRATION.create)(config);
+        let result = (REGISTRATION.create)(&config);
         assert!(result.is_ok(), "create should succeed for GHE host");
     }
 

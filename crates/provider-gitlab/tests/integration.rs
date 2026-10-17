@@ -109,7 +109,7 @@ fn registration_supports_rest_only() {
 
 #[test]
 fn registration_creates_a_provider_for_the_host() -> TestResult {
-    let provider = (REGISTRATION.create)(ProviderConfig {
+    let provider = (REGISTRATION.create)(&ProviderConfig {
         host: "gitlab.example.com".into(),
         kind: HostKind::GitLab,
         api_base: "https://gitlab.example.com/api/v4".into(),
@@ -226,7 +226,7 @@ async fn registration_passes_max_tags_per_repo() -> TestResult {
     let server = MockServer::start().await;
     serve_tag_page(&server, 1, "1", &["v2.0.0", "v1.0.0"]).await;
     serve_project(&server).await;
-    let provider = (REGISTRATION.create)(ProviderConfig {
+    let provider = (REGISTRATION.create)(&ProviderConfig {
         host: "gitlab.com".into(),
         kind: HostKind::GitLab,
         api_base: format!("{}/api/v4", server.uri()),

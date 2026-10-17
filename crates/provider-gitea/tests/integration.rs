@@ -115,7 +115,7 @@ fn registration_supports_rest_only() {
 
 #[test]
 fn registration_creates_a_provider_for_the_host() -> TestResult {
-    let provider = (REGISTRATION.create)(ProviderConfig {
+    let provider = (REGISTRATION.create)(&ProviderConfig {
         host: "forgejo.example.com".into(),
         kind: HostKind::Gitea,
         api_base: "https://forgejo.example.com/api/v1".into(),
@@ -278,7 +278,7 @@ async fn registration_passes_max_tags_per_repo() -> TestResult {
     )
     .await;
     serve_repository(&server).await;
-    let provider = (REGISTRATION.create)(ProviderConfig {
+    let provider = (REGISTRATION.create)(&ProviderConfig {
         host: "codeberg.org".into(),
         kind: HostKind::Gitea,
         api_base: format!("{}/api/v1", server.uri()),
