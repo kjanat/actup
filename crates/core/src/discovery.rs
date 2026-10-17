@@ -457,9 +457,11 @@ mod tests {
         let temp = make_temp_dir()?;
         let root = temp.join("repo[1]");
         for dir in [
-            ".github/workflows",
+            ".github/workflows/dir.yml",
             ".gitea/workflows/tool",
             ".gitea/workflows/deep/er",
+            ".gitea/workflows/dir.yaml",
+            ".gitea/workflows/y/action.yml",
             "ci/pipelines/lint",
         ] {
             fs::create_dir_all(root.join(dir))?;
@@ -479,6 +481,10 @@ mod tests {
             fs::write(root.join(file), "name: x")?;
         }
 
+        assert_eq!(
+            found(&root, &[])?,
+            [(".github/workflows/ci.yml".to_owned(), FileKind::Workflow)]
+        );
         assert_eq!(
             found(&root, &[".gitea/workflows", ".github/workflows"])?,
             [
