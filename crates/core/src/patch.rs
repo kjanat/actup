@@ -107,12 +107,6 @@ pub fn repin_sha_edit(
     pin_edit(loc, target.sha(), &target.version().to_string(), labels)
 }
 
-/// Build an edit that writes the tag `tag` over a SHA pin, keeping only the note of a label comment.
-#[must_use]
-pub fn unpin_edit(loc: &UsesLocation, tag: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
-    named_edit(loc, tag, Named::Tag, true, labels)
-}
-
 /// Build an edit that writes `sha` over the ref at `loc`, keeping only the note of a label comment.
 #[must_use]
 pub fn sha_edit(loc: &UsesLocation, sha: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
@@ -692,7 +686,10 @@ mod tests {
             );
             let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
             assert_eq!(
-                applied(&line, unpin_edit(&loc, "v7.0.1", &NO_REFS))?,
+                applied(
+                    &line,
+                    named_edit(&loc, "v7.0.1", Named::Tag, true, &NO_REFS)
+                )?,
                 at("v7.0.1", "")
             );
             let (line, loc) = wrap(at("v7.0.0", " # v7.0.0 keep"))?;
@@ -734,7 +731,10 @@ mod tests {
                 "{line}"
             );
             assert_eq!(
-                applied(&line, unpin_edit(&loc, "v7.0.0", &NO_REFS))?,
+                applied(
+                    &line,
+                    named_edit(&loc, "v7.0.0", Named::Tag, true, &NO_REFS)
+                )?,
                 at("v7.0.0", unpinned),
                 "{line}"
             );
@@ -1012,7 +1012,8 @@ mod tests {
             );
         }
         let bare = format!("      - uses: actions/checkout@{old} # v4.0.0");
-        let edit = unpin_edit(&sha_loc(&bare)?, "v4.2.0", &NO_REFS).ok_or("no edit")?;
+        let edit =
+            named_edit(&sha_loc(&bare)?, "v4.2.0", Named::Tag, true, &NO_REFS).ok_or("no edit")?;
         assert_eq!(
             apply_line(&bare, edit).ok_or("edit did not apply")?,
             "      - uses: actions/checkout@v4.2.0"
