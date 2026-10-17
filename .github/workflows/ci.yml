@@ -34,16 +34,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with: { components: rustfmt }
+      - run: rustup toolchain install
       - run: cargo fmt --all -- --check
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with: { components: clippy }
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
   test:
@@ -52,7 +50,7 @@ jobs:
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --workspace --all-features --profile ci
@@ -77,7 +75,7 @@ jobs:
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
       - run: cargo nextest run --workspace --all-features --profile ci
@@ -97,7 +95,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - run: cargo doc --workspace --all-features --no-deps
   deny:
@@ -109,20 +107,25 @@ jobs:
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
-    if: ${{ vars.RUN_MSRV == 'true' }}
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@1.91.0
+      - run: rustup toolchain install
+      - id: msrv
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("crates disagree on rust-version: \(.)") end')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: rustup toolchain install "$MSRV" --profile minimal
+        env: { MSRV: "${{ steps.msrv.outputs.version }}" }
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace --all-features
+      - run: cargo "+$MSRV" check --all-targets --all-features
+        env: { MSRV: "${{ steps.msrv.outputs.version }}" }
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with: { components: llvm-tools-preview }
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@cargo-llvm-cov
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
@@ -139,14 +142,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          # wasm32-unknown-unknown is needed because the VS Code extension's
-          # `actup-wasm` workspace dep resolves to fresh-built artifacts —
-          # without rebuilding, typecheck would run against missing/stale
-          # `.d.ts` and silently miss tsify-generated type drift.
-          targets: wasm32-wasip2, wasm32-unknown-unknown
-          components: clippy
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
       - name: Install wasm-pack
@@ -172,9 +168,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
+      - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
       - name: Install wasm-pack
@@ -196,7 +190,7 @@ jobs:
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, test-platforms, doc, deny, coverage, check-extensions, wasm]
+    needs: [fmt, clippy, test, test-platforms, doc, deny, msrv, coverage, check-extensions, wasm]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
@@ -208,6 +202,7 @@ jobs:
              [[ "${{ needs.test-platforms.result }}" == "failure" ]] || \
              [[ "${{ needs.doc.result }}" != "success" ]] || \
              [[ "${{ needs.deny.result }}" != "success" ]] || \
+             [[ "${{ needs.msrv.result }}" != "success" ]] || \
              [[ "${{ needs.coverage.result }}" != "success" ]] || \
              [[ "${{ needs.check-extensions.result }}" != "success" ]] || \
              [[ "${{ needs.wasm.result }}" != "success" ]]; then
