@@ -358,14 +358,9 @@ pub async fn version_completions(
         .take(MAX_SEMVER_COMPLETIONS)
         .collect();
     for (idx, info) in semver_tags.into_iter().enumerate() {
-        let detail = if versions.latest().is_some_and(|l| l == info) {
-            "latest"
-        } else {
-            "semver"
-        };
         items.push(version_completion_item(
             info.version().as_str(),
-            Some(detail),
+            Some("semver"),
             info.sha(),
             false,
             100 + idx,
@@ -982,6 +977,26 @@ mod tests {
         assert_eq!(
             labels("v1").await,
             ["v1.4.0", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.0"]
+        );
+
+        let details: Vec<_> = version_completions(
+            &repo_id,
+            "v4",
+            &registry,
+            &file_cache,
+            Some(&document_versions),
+        )
+        .await
+        .into_iter()
+        .map(|item| item.detail)
+        .collect();
+        let Some((first, rest)) = details.split_first() else {
+            panic!("no completions for v4");
+        };
+        assert_eq!(first.as_deref(), Some("latest"));
+        assert!(
+            rest.iter()
+                .all(|detail| detail.as_deref() == Some("semver"))
         );
     }
 
