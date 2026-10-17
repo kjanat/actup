@@ -53,10 +53,16 @@ impl From<ActupConfig> for Config {
 }
 
 fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
+    let not_object = || JsValue::from_str("invalid config: expected an object");
     let json = js_sys::JSON::stringify(value)?
         .as_string()
-        .ok_or_else(|| JsValue::from_str("invalid config: expected an object"))?;
-    serde_json::from_str::<ActupConfig>(&json)
+        .ok_or_else(not_object)?;
+    let object = match serde_json::from_str::<serde_json::Value>(&json) {
+        Ok(object @ serde_json::Value::Object(_)) => object,
+        Ok(_) => return Err(not_object()),
+        Err(e) => return Err(JsValue::from_str(&format!("invalid config: {e}"))),
+    };
+    ActupConfig::deserialize(object)
         .map(Config::from)
         .map_err(|e| JsValue::from_str(&format!("invalid config: {e}")))
 }

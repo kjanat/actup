@@ -225,4 +225,13 @@ await assert.rejects(
 
 console.log("PASS: function and Symbol configs are rejected");
 
+// Test 10: array configs are rejected.
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, []), /invalid config: expected an object/);
+await assert.rejects(
+	checkRefs(outdatedYaml, majorProvider, ["ghe.corp"]),
+	/invalid config: expected an object/,
+);
+
+console.log("PASS: array configs are rejected");
+
 console.log("\nAll npm package integration tests PASSED");

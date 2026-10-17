@@ -86,13 +86,14 @@ if (checkout.status !== "Outdated") {
 }
 console.log("PASS: checkout is outdated:", JSON.stringify(checkout.status));
 
-// Second result: actions/setup-node@v3 — could be outdated (v4.0.0 available)
-// depending on default policy (patch = same major, so v3.1.0 is target)
 const setupNode = results[1];
-console.log(
-	"PASS: setup-node status:",
-	JSON.stringify(setupNode.status),
-);
+const setupNodeTarget = setupNode?.status?.Outdated?.target?.version;
+if (setupNodeTarget !== "v4.0.0") {
+	throw new Error(
+		`Expected setup-node to target v4.0.0, got ${JSON.stringify(setupNode?.status)}`,
+	);
+}
+console.log("PASS: setup-node targets v4.0.0");
 
 // Test planUpdates
 const resultsJson = JSON.stringify(results);
