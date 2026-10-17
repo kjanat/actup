@@ -153,6 +153,45 @@ async fn test_rate_limit_error() -> TestResult {
     Ok(())
 }
 
+#[derive(Debug)]
+struct FixedClock(std::time::SystemTime);
+
+impl actup_core::Clock for FixedClock {
+    fn now(&self) -> std::time::SystemTime {
+        self.0
+    }
+}
+
+#[tokio::test]
+async fn rate_limit_reset_counts_from_the_injected_clock() -> TestResult {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-remaining", "0")
+                .insert_header("x-ratelimit-reset", "1000120")
+                .set_body_string(r#"{"message": "API rate limit exceeded"}"#),
+        )
+        .mount(&mock_server)
+        .await;
+    let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+    let client = GitHubClient::with_api_base_and_clock(
+        &mock_server.uri(),
+        "github.com",
+        None,
+        std::sync::Arc::new(FixedClock(now)),
+    )?;
+
+    let Err(actup_core::Error::RateLimited { retry_after, .. }) =
+        client.get_repo("actions", "checkout").await
+    else {
+        panic!("a 403 with no remaining requests must be a rate limit");
+    };
+    assert_eq!(retry_after, Some(std::time::Duration::from_secs(120)));
+    Ok(())
+}
+
 async fn serve_rest_versions(server: &MockServer, per_page: &str) {
     Mock::given(method("GET"))
         .and(path("/repos/actions/checkout/tags"))

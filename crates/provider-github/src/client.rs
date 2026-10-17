@@ -5,7 +5,12 @@
 
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
-use actup_core::{Error, Result, encode_path, error::Source};
+use actup_core::{
+    Error, Result,
+    clock::{self, Clock},
+    encode_path,
+    error::Source,
+};
 use actup_providers::{
     DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
 };
@@ -57,6 +62,7 @@ pub struct GitHubClient {
     max_retries: u32,
     /// Base delay in ms for exponential backoff
     retry_base_delay_ms: u64,
+    clock: Arc<dyn Clock>,
 }
 
 impl GitHubClient {
@@ -75,6 +81,20 @@ impl GitHubClient {
     ///
     /// Returns an error if the HTTP client cannot be created or token is invalid.
     pub fn with_api_base(api_host: &str, host: &str, token: Option<&str>) -> Result<Self> {
+        Self::with_api_base_and_clock(api_host, host, token, Arc::new(clock::System))
+    }
+
+    /// Create a client for a custom API endpoint that reads time from `clock`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the HTTP client cannot be created or token is invalid.
+    pub fn with_api_base_and_clock(
+        api_host: &str,
+        host: &str,
+        token: Option<&str>,
+        clock: Arc<dyn Clock>,
+    ) -> Result<Self> {
         let mut headers = HeaderMap::new();
         headers.insert(
             ACCEPT,
@@ -135,6 +155,7 @@ impl GitHubClient {
             host: host.to_string(),
             max_retries: DEFAULT_MAX_RETRIES,
             retry_base_delay_ms: DEFAULT_RETRY_BASE_DELAY_MS,
+            clock,
         })
     }
 
@@ -682,7 +703,7 @@ impl GitHubClient {
             }),
             StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited {
                 provider: "github".to_string(),
-                retry_after: retry_after(response.headers(), std::time::SystemTime::now()),
+                retry_after: retry_after(response.headers(), self.clock.now()),
             }),
             StatusCode::UNAUTHORIZED => Err(Error::Auth {
                 provider: "github".to_string(),

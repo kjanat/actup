@@ -138,11 +138,13 @@ Call sites that take a `Clock`:
 - `version.rs:599` — building a `Set` stamps `fetched_at`
 - `caching_provider.rs:51`, `:61` — `Retention::Expiring` stamps and ages
   in-memory provider answers
-- `provider-github/src/graphql.rs:227` — rate limit reset time comparison
+- `provider-github/src/graphql.rs:227` — GraphQL rate limit reset time
+  comparison
+- `provider-github/src/client.rs:706` — REST rate limit reset time comparison
 
 These native paths still read the system clock directly: `Entry::renewed`
-(`cache.rs:95`), `Entry::is_expired` and `Entry::age` (`cache.rs:56`, `:63`),
-and the GitHub REST rate limit reset (`provider-github/src/client.rs:685`).
+(`cache.rs:95`), and `Entry::is_expired` and `Entry::age` (`cache.rs:56`,
+`:63`).
 
 ### JS ↔ Rust bridge types
 
