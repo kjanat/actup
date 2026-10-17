@@ -49,7 +49,7 @@ crates/
   test-support/       # actup-test-support — unpublished test helpers (`tracing` log capture)
 extensions/
   vscode/             # VSCode extension — TypeScript, bun-based, wraps actup-lsp
-  zed/                # Zed extension   — Rust WASM cdylib: launches actup-lsp, declares the actup-mcp context server; tree-sitter grammar (workspace member)
+  zed/                # Zed extension   — Rust WASM cdylib: launches actup-lsp, finds actup-mcp on PATH for its context server; tree-sitter grammar (workspace member)
 packages/
   actup-wasm/         # npm package      — TypeScript wrapper around crates/wasm WASM output
 schemas/              # JSON Schema for config

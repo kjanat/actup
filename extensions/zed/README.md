@@ -63,10 +63,13 @@ If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings
 
 ### `actup-mcp` context server
 
-The extension registers `actup-mcp` as a context server for Zed's agent and
-starts it from `PATH`. Install it from the repo root with
-`cargo install --path crates/mcp`. To run another binary or pass arguments, set
-the server's command in your settings. Zed then starts that command itself:
+The extension registers `actup-mcp` as a context server for Zed's agent. It
+finds the binary on `PATH` with `sh -c "command -v actup-mcp"` on macOS and
+Linux, or `where.exe actup-mcp` on Windows, and starts the absolute path that
+lookup prints. Install it from the repo root with
+`cargo install --path crates/mcp`. When the lookup finds nothing, or to run
+another binary or pass arguments, set the server's command in your settings. Zed
+then starts that command itself:
 
 <!--dprint-ignore-start-->
 
