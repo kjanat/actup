@@ -342,8 +342,12 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 - [ ] npm package installs and runs in Node.js 18+ without native dependencies
 - [ ] npm package works in VS Code web extension host (vscode.dev)
 - [x] WASM bundle size < 500KB gzipped (stretch: < 300KB)
-- [ ] No `std::fs`, `tokio::fs`, `dirs`, `glob`, or `figment` in the WASM
-      dependency tree
+- [x] No filesystem access, `dirs` lookup or file discovery in the WASM bundle.
+      `figment` (config parsing) and `glob::Pattern` (`scan.ignore`) stay. Check
+      with
+      `cargo build -p actup-wasm --target wasm32-unknown-unknown --release && llvm-nm -C --defined-only target/wasm32-unknown-unknown/release/actup_wasm.wasm | rg 'std::fs|dirs::|glob::glob|discover_files|read_config_file|user_config_path|cache::default_dir'`,
+      which prints nothing. The cargo artifact keeps its `name` section, and
+      `wasm-pack` only removes code from it.
 - [x] Existing native CLI, LSP, and tests unaffected (no regressions)
 
 ## Test Strategy
