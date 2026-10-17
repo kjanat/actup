@@ -3,7 +3,7 @@ import { describe, expect, mock, test } from "bun:test";
 import * as vscode from "vscode";
 import { checkResultsByUri, clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
 import { ActupHoverProvider } from "../hover.ts";
-import { FakeDocument, fakeProvider, rangeOf } from "./fixtures.ts";
+import { FakeDocument, fakeProvider, hoverStatusRows, rangeOf } from "./fixtures.ts";
 
 const tags = [
 	{ version: "v1.0.0", sha: "a".repeat(40) },
@@ -27,7 +27,7 @@ function rows(hover: vscode.Hover | undefined): string[] {
 }
 
 async function statusRows(document: FakeDocument): Promise<string[]> {
-	return rows(await hoverAt(document, 3, 20)).filter(row => row.startsWith("$("));
+	return hoverStatusRows(await hoverAt(document, 3, 20));
 }
 
 describe("hover status from computed diagnostics", () => {
@@ -35,7 +35,7 @@ describe("hover status from computed diagnostics", () => {
 		const document = new FakeDocument("hover-status.yml", workflow("v1.0.0"));
 		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());
 
-		expect(await statusRows(document)).toEqual(["$(warning) Outdated: `v1.0.0` → `v1.2.0`"]);
+		expect(await statusRows(document)).toEqual(["**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"]);
 	});
 
 	test("shows the status of the latest computation", async () => {
@@ -45,7 +45,7 @@ describe("hover status from computed diagnostics", () => {
 		const current = new FakeDocument("hover-recompute.yml", workflow("v1.2.0"));
 		await computeDiagnostics(current.uri, current.getText(), provider, collection);
 
-		expect(await statusRows(current)).toEqual(["$(check) Up to date at `v1.2.0`"]);
+		expect(await statusRows(current)).toEqual(["Up to date"]);
 	});
 
 	async function computeSameCommit(ref: string, track: "major" | "exact"): Promise<FakeDocument> {
@@ -72,13 +72,13 @@ describe("hover status from computed diagnostics", () => {
 	test("shows a pin of the same commit like the LSP", async () => {
 		const document = await computeSameCommit("v1", "exact");
 
-		expect(await statusRows(document)).toEqual(["$(info) Pin available, same commit: tag v1 = v1.0.5 (eeeeeee)"]);
+		expect(await statusRows(document)).toEqual(["**Pin available**, same commit: tag `v1` = v1.0.5 (`eeeeeee`)"]);
 	});
 
 	test("offers no pin for a less specific target on the same commit", async () => {
 		const document = await computeSameCommit("v1.0.5", "major");
 
-		expect(await statusRows(document)).toEqual(["$(info) Same commit: tag v1.0.5 = v1 (eeeeeee)"]);
+		expect(await statusRows(document)).toEqual(["**Same commit**: tag `v1.0.5` = v1 (`eeeeeee`)"]);
 	});
 
 	test("shows no status for a ref edited since the last computation", async () => {
@@ -131,13 +131,19 @@ describe("hover status like the LSP hover", () => {
 		getVersions: () => Promise.resolve({ semverTags: tags, defaultBranch: { name: "main", sha: head } }),
 	};
 
-	async function hoverRows(name: string, ref: string, policy = ""): Promise<string[]> {
+	async function computed(name: string, ref: string, using: wasm.ActupProvider): Promise<FakeDocument> {
+		const document = new FakeDocument(name, workflow(ref));
+		await computeDiagnostics(document.uri, document.getText(), using, createDiagnosticCollection());
+		return document;
+	}
+
+	async function hoverRows(name: string, ref: string, policy = "", using = branchProvider): Promise<string[]> {
 		const document = new FakeDocument(name, workflow(ref));
 		const config = wasm.parseConfig("actup.toml", policy);
 		await computeDiagnostics(
 			document.uri,
 			document.getText(),
-			branchProvider,
+			using,
 			createDiagnosticCollection(),
 			() => Promise.resolve({ kind: "loaded", path: "actup.toml", config }),
 		);
@@ -166,6 +172,24 @@ describe("hover status like the LSP hover", () => {
 		);
 	});
 
+	test("names an unresolvable ref", async () => {
+		const missing: wasm.ActupProvider = {
+			...provider,
+			getVersions: () => Promise.reject(Object.assign(new Error("no repository"), { kind: "notFound" })),
+		};
+		expect(hoverStatusRows(await hoverAt(await computed("hover-unresolvable.yml", "v1.0.0", missing), 3, 20)))
+			.toEqual(["**Unresolvable**: action not found: github.com/actions/checkout"]);
+	});
+
+	test("names a check that failed on the network", async () => {
+		const offline: wasm.ActupProvider = {
+			...provider,
+			getVersions: () => Promise.reject(Object.assign(new Error("offline"), { kind: "network" })),
+		};
+		expect(hoverStatusRows(await hoverAt(await computed("hover-offline.yml", "v1.0.0", offline), 3, 20)))
+			.toEqual(["Check failed: network error during js provider call: offline"]);
+	});
+
 	test("names an ignored ref", async () => {
 		expect(await hoverRows("hover-ignored.yml", "v1.0.0", "[scan]\nignore = [\"actions/checkout\"]\n")).toContain(
 			"Ignored by config",
@@ -189,7 +213,7 @@ describe("hover range", () => {
 		const hover = await hoverAt(document, 3, 20);
 
 		expect(hover?.range).toEqual(rangeOf(document, 3, "\"actions/checkout@v1.0.\\x30\""));
-		expect(rows(hover)).toContain("$(warning) Outdated: `v1.0.0` → `v1.2.0`");
+		expect(rows(hover)).toContain("**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)");
 	});
 
 	test("describes the escaped value under the cursor on a line with two escaped values", async () => {
@@ -200,9 +224,9 @@ describe("hover range", () => {
 		const second = await hoverAt(document, 2, line.indexOf("setup-node"));
 
 		expect(first?.range).toEqual(rangeOf(document, 2, "\"actions/checkout@v1.0.\\x30\""));
-		expect(rows(first)).toEqual(expect.arrayContaining(["**actions/checkout**", "$(warning) Outdated: `v1.0.0` → `v1.2.0`"]));
+		expect(rows(first)).toEqual(expect.arrayContaining(["**actions/checkout**", "**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"]));
 		expect(second?.range).toEqual(rangeOf(document, 2, "\"actions/setup-node@v1.2.\\x30\""));
-		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "$(check) Up to date at `v1.2.0`"]));
+		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "Up to date"]));
 		expect(await hoverAt(document, 2, line.indexOf("steps"))).toBeUndefined();
 		expect(await hoverAt(document, 2, line.indexOf("}, {"))).toBeUndefined();
 	});
@@ -215,9 +239,9 @@ describe("hover range", () => {
 		const second = await hoverAt(document, 2, line.indexOf("setup-node"));
 
 		expect(first?.range).toEqual(rangeOf(document, 2, "actions/checkout@v1.0.0"));
-		expect(rows(first)).toEqual(expect.arrayContaining(["**actions/checkout**", "$(warning) Outdated: `v1.0.0` → `v1.2.0`"]));
+		expect(rows(first)).toEqual(expect.arrayContaining(["**actions/checkout**", "**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"]));
 		expect(second?.range).toEqual(rangeOf(document, 2, "actions/setup-node@v1.2.0"));
-		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "$(check) Up to date at `v1.2.0`"]));
+		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "Up to date"]));
 	});
 
 	test("shows nothing for a local action or a docker image", async () => {

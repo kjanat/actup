@@ -4,7 +4,7 @@ import { noConfig } from "../config.ts";
 import { checkResultsByUri, computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
 import { fixAllInWorkspace } from "../extension.ts";
 import { ActupHoverProvider } from "../hover.ts";
-import { FakeDocument, FakeLogOutputChannel, fakeProvider, rangeOf } from "./fixtures.ts";
+import { FakeDocument, FakeLogOutputChannel, fakeProvider, hoverStatusRows, rangeOf } from "./fixtures.ts";
 import { window as mockWindow, workspace as mockWorkspace } from "./vscode.ts";
 
 const provider = fakeProvider({
@@ -27,10 +27,6 @@ const text = [
 	"",
 ].join("\n");
 
-function hoverText(hover: vscode.Hover | undefined): string {
-	return (hover?.contents ?? []).map(content => typeof content === "string" ? content : content.value).join("");
-}
-
 describe("results matched to located actions", () => {
 	test("give every outdated remote ref its own diagnostic", async () => {
 		const document = new FakeDocument("matching.yml", text);
@@ -49,16 +45,15 @@ describe("results matched to located actions", () => {
 		await computeDiagnostics(document.uri, text, provider, createDiagnosticCollection());
 		const hover = new ActupHoverProvider(provider, checkResultsByUri);
 		const statusByLine = new Map([
-			[4, "$(warning) Outdated: `v1.0.0` → `v1.2.0`"],
-			[5, "$(warning) Outdated: `v1.0.0` → `v1.2.0`"],
-			[6, "$(check) Up to date at `v1.2.0`"],
-			[7, "$(warning) Outdated: `v1.0.0` → `v1.2.0`"],
-			[8, "$(warning) Outdated: `v1.0.0` → `v1.2.0`"],
+			[4, "**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"],
+			[5, "**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"],
+			[6, "Up to date"],
+			[7, "**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"],
+			[8, "**Outdated**: v1.0.0 -> v1.2.0 (`bbbbbbb`)"],
 		]);
 
 		for (const [line, status] of statusByLine) {
-			const shown = hoverText(await hover.provideHover(document, new vscode.Position(line, 20)));
-			expect(shown.split("\n").filter(row => row.startsWith("$("))).toEqual([status]);
+			expect(hoverStatusRows(await hover.provideHover(document, new vscode.Position(line, 20)))).toEqual([status]);
 		}
 	});
 

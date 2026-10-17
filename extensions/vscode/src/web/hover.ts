@@ -1,7 +1,6 @@
 import { parseUses, parseUsesRefs } from "actup-wasm";
 import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from "actup-wasm";
 import * as vscode from "vscode";
-import { sameCommitDetail } from "./diagnostics.ts";
 import { byteToColumn } from "./position.ts";
 
 const DEFAULT_HOST = "github.com";
@@ -67,17 +66,21 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		// Version status
 		if (matchingResult !== undefined) {
 			const status = matchingResult.status;
-			const sameCommit = sameCommitDetail(matchingResult);
-			if (sameCommit !== undefined) {
-				const lead = matchingResult.same_commit_pins ? "Pin available, same commit" : "Same commit";
-				md.appendMarkdown(`$(info) ${lead}: ${sameCommit}\n`);
+			const sameCommit = matchingResult.same_commit;
+			if (sameCommit !== null) {
+				const kind = matchingResult.ref_kind === null ? "" : `${matchingResult.ref_kind} `;
+				const lead = matchingResult.same_commit_pins ? "**Pin available**, same commit" : "**Same commit**";
+				md.appendMarkdown(
+					`${lead}: ${kind}\`${ref.ref_str}\` = ${sameCommit.version} (\`${sameCommit.sha.slice(0, 7)}\`)\n`,
+				);
 			} else if (status === "UpToDate") {
-				md.appendMarkdown(`$(check) Up to date at \`${ref.ref_str}\`\n`);
+				md.appendMarkdown("Up to date\n");
 			} else if (typeof status === "object" && "Outdated" in status) {
-				const target = status.Outdated.target.version;
-				md.appendMarkdown(`$(warning) Outdated: \`${ref.ref_str}\` → \`${target}\`\n`);
+				const { current, target } = status.Outdated;
+				md.appendMarkdown(`**Outdated**: ${current} -> ${target.version} (\`${target.sha.slice(0, 7)}\`)\n`);
 			} else if (typeof status === "object" && "Unresolvable" in status) {
-				md.appendMarkdown(`$(error) ${status.Unresolvable.reason}\n`);
+				const { reason, is_environment_error } = status.Unresolvable;
+				md.appendMarkdown(is_environment_error ? `Check failed: ${reason}\n` : `**Unresolvable**: ${reason}\n`);
 			} else if (status === "Ignored") {
 				md.appendMarkdown("Ignored by config\n");
 			} else if (typeof status === "object" && "Pinned" in status) {
