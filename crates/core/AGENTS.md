@@ -31,15 +31,15 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 
 ### Config Submodule (`config/`)
 
-| File              | Purpose                                            |
-| ----------------- | -------------------------------------------------- |
-| `mod.rs`          | `Config` struct, figment-based loading             |
-| `registration.rs` | Provider `Registration` statics, preset matching   |
-| `resolution.rs`   | Host resolution, api_base inference, token_env     |
-| `validation.rs`   | Hostname, api_base, config validation              |
-| `discovery.rs`    | Config file path search                            |
-| `env.rs`          | `ACTUP_*` variables and the CLI flag variables     |
-| `matching.rs`     | Action globs for `scan.ignore` and `[[overrides]]` |
+| File              | Purpose                                               |
+| ----------------- | ----------------------------------------------------- |
+| `mod.rs`          | `Config` struct, figment-based loading                |
+| `registration.rs` | `Preset`/`Registration` types, duplicate-preset check |
+| `resolution.rs`   | Host resolution, api_base inference, token_env        |
+| `validation.rs`   | Hostname, api_base, config validation                 |
+| `discovery.rs`    | Config file path search                               |
+| `env.rs`          | `ACTUP_*` variables and the CLI flag variables        |
+| `matching.rs`     | Action globs for `scan.ignore` and `[[overrides]]`    |
 
 `config/resolution.rs` handles the full provider config resolution algorithm:
 merging presets, inferring api_base, resolving token_env, validating host
@@ -55,7 +55,7 @@ configs.
 | Change resolution logic | `resolution.rs` → `check_action`                           |
 | Add policy type         | `policy.rs` → `Update` enum                                |
 | Modify config schema    | `config/mod.rs` + root `schemas/`                          |
-| Add provider preset     | `config/registration.rs`                                   |
+| Add provider preset     | `REGISTRATION` static in the provider crate's `lib.rs`     |
 | Change host resolution  | `config/resolution.rs`                                     |
 | Add config validation   | `config/validation.rs`                                     |
 
@@ -71,7 +71,7 @@ configs.
 ## Conventions
 
 - `Error::NotFound`/`InvalidRef` = user error (bad input)
-- `Error::Network`/`RateLimit`/`Auth` = environment error (actionable)
+- `Error::Network`/`RateLimited`/`Auth` = environment error (actionable)
 - A foreign error goes in the variant's `source`; show errors with
   `error::chain`, which appends every cause
 - Tests use `#[allow(clippy::unwrap_used)]` in `#[cfg(test)]` blocks
