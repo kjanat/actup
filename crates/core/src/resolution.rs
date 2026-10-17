@@ -1962,6 +1962,50 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_flow_style_major_ref_sees_newer_major() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let v4 = make_version_info("v4", &"4".repeat(40));
+        let v5 = make_version_info("v5", &"5".repeat(40));
+        let versions = make_version_set(
+            vec![
+                v4.clone(),
+                make_version_info("v4.0.0", &"4".repeat(40)),
+                v5.clone(),
+                make_version_info("v5.0.0", &"5".repeat(40)),
+            ],
+            None,
+            HashMap::new(),
+            HashMap::from([(4, v4), (5, v5)]),
+        );
+        let config = Config::default();
+        let provider = ResolveMockProvider::new(false);
+
+        let yaml = "steps:\n  - { uses: actions/deploy-pages@v4, id: deployment }\n";
+        let locations = crate::extract_uses_from_yaml(yaml);
+        let [uses] = locations.as_slice() else {
+            return Err(format!("expected one `uses:`, got {locations:?}").into());
+        };
+        let Some(action) = crate::parse_uses(uses.value())? else {
+            return Err("expected a remote ref".into());
+        };
+        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+        assert!(
+            matches!(
+                result.status(),
+                CheckStatus::Outdated { current, target }
+                    if current == "v4" && target.version().as_str() == "v5"
+            ),
+            "got {:?}",
+            result.status()
+        );
+
+        let comma = make_action_ref("actions", "deploy-pages", "v4,");
+        let result = check_action_with_provider(&comma, &versions, &config, &provider).await;
+        assert_eq!(result.status(), &unresolvable("ref 'v4,' not found", false));
+        Ok(())
+    }
+
     #[test]
     fn test_check_result_serde_round_trip_up_to_date() {
         let result = CheckResult::new(
