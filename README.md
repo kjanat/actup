@@ -73,12 +73,13 @@ With `--format json` or `toml`, `check` prints one entry per finding and
 host, provider and `reference` (the ref as found). `host` is the ref's own host,
 or the default host for a ref without one. An `edited` entry adds `to` (the ref
 written) and `comment` when the line gets a version comment. A `skipped` entry
-adds `reason` (`unplaceable`, `overlap` or `out_of_bounds`). When two edits of a
-file overlap, every edit of that file is skipped with `overlap` and the file
-stays unchanged. An `errors` entry adds `kind` (such as `not_found`,
-`rate_limited`, `provider_not_found`, `write`, `changed` or `invalid_edit`) and
-`message`. With no workflow files, the report has empty lists and `check` prints
-no findings.
+adds `reason`: `ignored` when `scan.ignore` matches the ref, or `unplaceable`,
+`overlap` or `out_of_bounds` when the writer cannot edit it. Only the last three
+make `update` and `pin` exit 1. When two edits of a file overlap, every edit of
+that file is skipped with `overlap` and the file stays unchanged. An `errors`
+entry adds `kind` (such as `not_found`, `rate_limited`, `provider_not_found`,
+`write`, `changed` or `invalid_edit`) and `message`. With no workflow files, the
+report has empty lists and `check` prints no findings.
 
 An unresolvable ref that names no tag can get a suggested tag. A partial version
 names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). Any

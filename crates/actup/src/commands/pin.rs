@@ -13,8 +13,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_skipped,
-        report_unserved,
+        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_ignored,
+        report_skipped, report_unserved,
     },
 };
 
@@ -168,17 +168,15 @@ async fn pin_action_edit(
 
 /// Build the unpin step for one action.
 ///
-/// Only a SHA pin that `scan.ignore` leaves in, followed by a pin marker
-/// naming a fetched tag on the pinned commit, is rewritten. The marker's note
-/// stays as the comment.
+/// Only a SHA pin followed by a pin marker naming a fetched tag on the pinned
+/// commit is rewritten. The marker's note stays as the comment.
 async fn unpin_action_edit(
     provider: &dyn actup_core::Provider,
     action_ref: &ActionRef,
     loc: &UsesLocation,
-    config: &Config,
     site: &RefSite,
 ) -> PinStep {
-    if !action_ref.is_sha() || config.should_ignore(action_ref) {
+    if !action_ref.is_sha() {
         return PinStep::Nothing;
     }
     let (Some(range), Some((prefix, _))) = (loc.ref_range(), loc.value().split_once('@')) else {
@@ -264,9 +262,13 @@ async fn edit(
             };
 
             let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
+            if config.should_ignore(&action_ref) {
+                report_ignored(site, &mut result);
+                continue;
+            }
             let step = match mode {
                 Mode::Pin => pin_action_edit(provider, &action_ref, &loc, config, &site).await,
-                Mode::Unpin => unpin_action_edit(provider, &action_ref, &loc, config, &site).await,
+                Mode::Unpin => unpin_action_edit(provider, &action_ref, &loc, &site).await,
             };
             match step {
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
@@ -303,7 +305,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{cli::CliExitCode, common::ErrorKind};
+    use crate::{
+        cli::CliExitCode,
+        common::{ErrorKind, SkipCause},
+    };
 
     struct FixedShaProvider {
         sha: Sha40,
@@ -1164,6 +1169,12 @@ mod tests {
             .map(|e| (e.site.line, e.to.as_str()))
             .collect();
         assert_eq!(edited, [(2, "v4.1.0"), (3, "v4")]);
+        let skipped: Vec<(usize, SkipCause)> = result
+            .skipped
+            .iter()
+            .map(|s| (s.site.line, s.reason))
+            .collect();
+        assert_eq!(skipped, [(9, SkipCause::Ignored)]);
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
@@ -1316,6 +1327,79 @@ mod tests {
         assert_eq!(result.errored, []);
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, content);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pin_leaves_every_ignored_ref_kind_and_reports_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let content = [
+            "steps:",
+            "  - uses: skip/tag@v4.1.0",
+            "  - uses: skip/branch@main",
+            "  - uses: skip/short@aaaaaaa",
+            "  - uses: skip/full@AAA",
+            "  - uses: o/kept@v4.1.0",
+            "",
+        ]
+        .join("\n")
+        .replace("AAA", &sha('a'));
+        let expected = content.replace("o/kept@v4.1.0", &format!("o/kept@{} # v4.1.0", sha('a')));
+        let file = workflow(dir.path(), &content)?;
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = unpin_registry()?;
+
+        let Some(result) = edit(
+            dir.path(),
+            Mode::Pin,
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        let edited: Vec<usize> = result.edited.iter().map(|e| e.site.line).collect();
+        assert_eq!(edited, [6]);
+        let skipped: Vec<(usize, SkipCause)> = result
+            .skipped
+            .iter()
+            .map(|s| (s.site.line, s.reason))
+            .collect();
+        assert_eq!(
+            skipped,
+            [
+                (2, SkipCause::Ignored),
+                (3, SkipCause::Ignored),
+                (4, SkipCause::Ignored),
+                (5, SkipCause::Ignored),
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(result.report(false))?["skipped"][0]["reason"],
+            "ignored"
+        );
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, expected);
+
+        let code = run(
+            dir.path(),
+            Mode::Pin,
+            true,
+            OutputFormat::Human,
+            &config,
+            &registry,
+        )
+        .await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
     }
 

@@ -12,8 +12,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_skipped,
-        report_unserved,
+        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_ignored,
+        report_skipped, report_unserved,
     },
 };
 
@@ -93,6 +93,10 @@ async fn edit(
             };
 
             let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
+            if config.should_ignore(&action_ref) {
+                report_ignored(site, &mut result);
+                continue;
+            }
             let repo_id = action_ref.to_repo_id().without_subpath();
             let versions = match provider.get_versions(&repo_id).await {
                 Ok(v) => v,
@@ -160,7 +164,10 @@ mod tests {
     };
 
     use super::*;
-    use crate::{cli::CliExitCode, common::ErrorKind};
+    use crate::{
+        cli::CliExitCode,
+        common::{ErrorKind, SkipCause},
+    };
 
     struct TagProvider {
         latest: &'static str,
@@ -681,6 +688,46 @@ mod tests {
             assert_eq!(std::fs::read_to_string(&readme)?, md_expected);
             assert_eq!(std::fs::read_to_string(&script)?, ts_expected);
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_edit_reports_ignored_refs_without_failing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        let content = "steps:\n  - uses: skip/a@v4.0.0\n  - uses: o/b@v4.0.0\n";
+        std::fs::write(&file, content)?;
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry("v4.2.0"),
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        let skipped: Vec<(usize, SkipCause)> = result
+            .skipped
+            .iter()
+            .map(|s| (s.site.line, s.reason))
+            .collect();
+        assert_eq!(skipped, [(2, SkipCause::Ignored)]);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(
+            std::fs::read_to_string(&file)?,
+            content.replace("o/b@v4.0.0", "o/b@v4.2.0")
+        );
         Ok(())
     }
 

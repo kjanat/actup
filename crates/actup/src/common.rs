@@ -144,6 +144,30 @@ pub fn report_unserved(
     report_error(site, &CoreError::ProviderNotFound { host }, result);
 }
 
+/// Why `update` or `pin` left an action reference unchanged.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipCause {
+    /// `scan.ignore` matches the reference.
+    Ignored,
+    /// The `uses:` value is escaped or spans lines.
+    Unplaceable,
+    /// The edit overlaps another edit.
+    Overlap,
+    /// The edit does not fit its line.
+    OutOfBounds,
+}
+
+impl From<SkipReason> for SkipCause {
+    fn from(reason: SkipReason) -> Self {
+        match reason {
+            SkipReason::Unplaceable => Self::Unplaceable,
+            SkipReason::Overlap => Self::Overlap,
+            SkipReason::OutOfBounds => Self::OutOfBounds,
+        }
+    }
+}
+
 /// An action reference that `update` or `pin` left unchanged.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SkippedRef {
@@ -151,7 +175,7 @@ pub struct SkippedRef {
     #[serde(flatten)]
     pub site: RefSite,
     /// Why the writer left it unchanged.
-    pub reason: SkipReason,
+    pub reason: SkipCause,
 }
 
 /// An action reference that `update` or `pin` changed.
@@ -244,7 +268,18 @@ pub fn report_skipped(site: RefSite, reason: SkipReason, result: &mut EditResult
         site.action,
         reason.describe()
     );
-    result.skipped.push(SkippedRef { site, reason });
+    result.skipped.push(SkippedRef {
+        site,
+        reason: reason.into(),
+    });
+}
+
+/// Record that `scan.ignore` keeps the writer off `site`.
+pub fn report_ignored(site: RefSite, result: &mut EditResult) {
+    result.skipped.push(SkippedRef {
+        site,
+        reason: SkipCause::Ignored,
+    });
 }
 
 /// Warn that `err` leaves `site` unchanged, count it, and record it as errored.
@@ -591,18 +626,30 @@ impl EditResult {
             println!("{}", notice.yellow());
         }
 
+        if let Some(notice) = self.ignored_notice() {
+            println!("{}", notice.dimmed());
+        }
+
         if let Some(err_summary) = self.errors.summary() {
             println!("{}", err_summary.red());
         }
     }
 
+    fn unwritable(&self) -> usize {
+        self.skipped
+            .iter()
+            .filter(|s| s.reason != SkipCause::Ignored)
+            .count()
+    }
+
     fn skipped_notice(&self) -> Option<String> {
-        (!self.skipped.is_empty()).then(|| {
-            format!(
-                "Skipped {} action reference(s); edit them by hand",
-                self.skipped.len()
-            )
-        })
+        let count = self.unwritable();
+        (count > 0).then(|| format!("Skipped {count} action reference(s); edit them by hand"))
+    }
+
+    fn ignored_notice(&self) -> Option<String> {
+        let count = self.skipped.len() - self.unwritable();
+        (count > 0).then(|| format!("Ignored {count} action reference(s) matched by `scan.ignore`"))
     }
 
     /// Determine exit code, considering skipped references and `dry_run` for outdated status.
@@ -614,7 +661,7 @@ impl EditResult {
             return base.into();
         }
 
-        if !self.skipped.is_empty() || (dry_run && !self.edited.is_empty()) {
+        if self.unwritable() > 0 || (dry_run && !self.edited.is_empty()) {
             return CliExitCode::Outdated.into();
         }
 
@@ -723,7 +770,7 @@ mod tests {
     fn skipped_ref(reason: SkipReason) -> SkippedRef {
         SkippedRef {
             site: site(3),
-            reason,
+            reason: reason.into(),
         }
     }
 
@@ -911,7 +958,7 @@ mod tests {
 
             assert!(written.is_empty());
             assert_eq!(result.edited, []);
-            let skipped: Vec<(usize, SkipReason)> = result
+            let skipped: Vec<(usize, SkipCause)> = result
                 .skipped
                 .iter()
                 .map(|skip| (skip.site.line, skip.reason))
@@ -919,9 +966,9 @@ mod tests {
             assert_eq!(
                 skipped,
                 [
-                    (1, SkipReason::Overlap),
-                    (1, SkipReason::Overlap),
-                    (2, SkipReason::Overlap),
+                    (1, SkipCause::Overlap),
+                    (1, SkipCause::Overlap),
+                    (2, SkipCause::Overlap),
                 ]
             );
             assert_eq!(result.errors.total(), 0);
@@ -1266,6 +1313,42 @@ mod tests {
             result.skipped_notice().as_deref(),
             Some("Skipped 1 action reference(s); edit them by hand")
         );
+    }
+
+    #[test]
+    fn test_ignored_refs_neither_fail_nor_count_as_skipped()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut result = EditResult::default();
+        report_ignored(site(3), &mut result);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(result.exit_code(true), i32::from(CliExitCode::Success));
+        assert!(result.skipped_notice().is_none());
+        assert_eq!(
+            result.ignored_notice().as_deref(),
+            Some("Ignored 1 action reference(s) matched by `scan.ignore`")
+        );
+        assert_eq!(
+            serde_json::to_value(&result.skipped)?,
+            serde_json::json!([{
+                "file": "ci.yml",
+                "line": 3,
+                "action": "a/b@v4",
+                "owner": "a",
+                "repo": "b",
+                "host": "github.com",
+                "provider": "github",
+                "reference": "v4",
+                "reason": "ignored",
+            }])
+        );
+        report_skipped(site(4), SkipReason::Overlap, &mut result);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
+        assert_eq!(
+            result.skipped_notice().as_deref(),
+            Some("Skipped 1 action reference(s); edit them by hand")
+        );
+        result.print_summary(false, "Pinned", "Would pin", OutputFormat::Human);
+        Ok(())
     }
 
     #[test]
