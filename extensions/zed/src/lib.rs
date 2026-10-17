@@ -244,18 +244,22 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
 
     // Deduplicate repos to minimize API calls. Key by (host, owner, repo) so the
     // same `owner/repo` on different hosts (e.g. GitHub.com vs GHE) does not collide.
-    let mut unique_repos: std::collections::HashMap<
-        (String, String, String),
-        (String, String, String),
-    > = std::collections::HashMap::new();
+    let mut unique_repos: std::collections::HashMap<(String, String, String), RepoFetch> =
+        std::collections::HashMap::new();
     for (_, _, action_ref) in &all_refs {
         let host = action_ref.host().unwrap_or("github.com").to_string();
         let owner = action_ref.owner().to_string();
         let repo = action_ref.repo().to_string();
         let api_base = api_base_for_host(&host);
-        unique_repos
+        let entry = unique_repos
             .entry((host, owner.clone(), repo.clone()))
-            .or_insert((owner, repo, api_base));
+            .or_insert(RepoFetch {
+                owner,
+                repo,
+                api_base,
+                with_branches: false,
+            });
+        entry.with_branches |= names_branch(action_ref);
     }
 
     // Resolve GitHub token from shell environment
@@ -271,8 +275,15 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     > = std::collections::HashMap::new();
     let mut fetch_errors: Vec<(String, String)> = Vec::new();
 
-    for (key, (owner, repo, api_base)) in &unique_repos {
-        match provider::fetch_version_set(owner, repo, token, api_base, 3) {
+    for (key, fetch) in &unique_repos {
+        match provider::fetch_version_set(
+            &fetch.owner,
+            &fetch.repo,
+            token,
+            &fetch.api_base,
+            3,
+            fetch.with_branches,
+        ) {
             Ok(versions) => {
                 version_cache.insert(key.clone(), versions);
             }
@@ -306,6 +317,17 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         all_refs.len(),
     );
     Ok(slash_output(text, "actup: Check Results"))
+}
+
+struct RepoFetch {
+    owner: String,
+    repo: String,
+    api_base: String,
+    with_branches: bool,
+}
+
+fn names_branch(action_ref: &ActionRef) -> bool {
+    !action_ref.is_sha() && !actup_core::version::Version::parse(action_ref.ref_str()).is_semver()
 }
 
 fn slash_output(text: String, label: &str) -> SlashCommandOutput {
@@ -610,6 +632,16 @@ mod tests {
                 .map(|contents| (*contents).to_owned())
                 .ok_or_else(|| format!("{path}: not found"))
         }
+    }
+
+    #[test]
+    fn names_branch_skips_semver_and_sha_refs() {
+        let action = |r: &str| ActionRef::new(None, "actions", "checkout", None, r);
+        assert!(names_branch(&action("main")));
+        assert!(names_branch(&action("release/v1")));
+        assert!(!names_branch(&action("v4")));
+        assert!(!names_branch(&action("v4.2.0")));
+        assert!(!names_branch(&action(&"a".repeat(40))));
     }
 
     #[test]
