@@ -119,9 +119,9 @@ pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf
 ///
 /// A Windows `\\?\` verbatim prefix is removed when the plain path is shorter
 /// than 260 bytes and no component ends in `.` or a space, is a reserved
-/// device name such as `NUL` or `com1.txt`, or holds a character that Win32
-/// paths reject. When `path` cannot be resolved, the result is the absolute
-/// path, else `path` itself.
+/// device name such as `NUL` or `com1.txt`, holds a character that Win32
+/// paths reject, or is empty or longer than 255 bytes. When `path` cannot be
+/// resolved, the result is the absolute path, else `path` itself.
 #[must_use]
 pub fn canonical_path(path: &Path) -> PathBuf {
     path.canonicalize()
@@ -157,9 +157,10 @@ fn without_verbatim_prefix(path: &str) -> Option<String> {
     (plain.len() < MAX_PATH && plain_components).then_some(plain)
 }
 
-const RESERVED_NAMES: [&str; 22] = [
-    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
-    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+const RESERVED_NAMES: [&str; 30] = [
+    "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "COM1", "COM2", "COM3", "COM4", "COM5",
+    "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5",
+    "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
 ];
 
 fn survives_win32(component: &str) -> bool {
@@ -339,6 +340,10 @@ mod tests {
             r"\\?\C:\repo\con.txt",
             r"\\?\C:\repo\Com1 .yml",
             r"\\?\C:\repo\lpt9",
+            r"\\?\C:\repo\com¹",
+            r"\\?\C:\repo\LPT³.txt",
+            r"\\?\C:\repo\CONIN$",
+            r"\\?\C:\repo\conout$.yml",
             r"\\?\C:\a<b",
             r"\\?\C:\a>b",
             r"\\?\C:\a:b",
