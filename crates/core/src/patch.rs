@@ -667,36 +667,33 @@ mod tests {
         let old = sha40('a');
         let new = sha40('b');
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let line = format!("      - {{ uses: actions/checkout@{old}, with: {{ x: 1 }} }}\n");
-        let loc = quoted_loc(&line)?;
-        assert_eq!(
-            applied(&line, repin_sha_edit(&loc, &target))?,
-            line.replace(&old, &new)
-        );
-
-        let line =
-            format!("      - {{ uses: actions/checkout@{old}, with: {{ x: 1 }} }} # v7.0.0\n");
-        let loc = quoted_loc(&line)?;
-        assert_eq!(
-            applied(&line, repin_sha_edit(&loc, &target))?,
-            format!("      - {{ uses: actions/checkout@{new}, with: {{ x: 1 }} }} # v7.0.1\n")
-        );
-        assert_eq!(
-            applied(&line, unpin_edit(&loc, "v7.0.0"))?,
-            "      - { uses: actions/checkout@v7.0.0, with: { x: 1 } }\n"
-        );
-
-        let line =
-            format!("      - {{ uses: actions/checkout@{old}, with: {{ x: 1 }} }} # v7.0.0 keep\n");
-        let loc = quoted_loc(&line)?;
-        assert_eq!(
-            applied(&line, repin_sha_edit(&loc, &target))?,
-            format!("      - {{ uses: actions/checkout@{new}, with: {{ x: 1 }} }} # v7.0.1 keep\n")
-        );
-        assert_eq!(
-            applied(&line, unpin_edit(&loc, "v7.0.0"))?,
-            "      - { uses: actions/checkout@v7.0.0, with: { x: 1 } } # keep\n"
-        );
+        for (with, comment, repinned, unpinned) in [
+            ("{ x: 1 }", "", "", ""),
+            ("{ x: 1 }", " # v7.0.0", " # v7.0.1", ""),
+            ("{ x: 1 }", " # v7.0.0 keep", " # v7.0.1 keep", " # keep"),
+            ("{ msg: it's }", " # v7.0.0", " # v7.0.1", ""),
+            ("{ a: it's, b: 'x # v9' }", "", "", ""),
+            ("{ b: 'it''s # v9' }", "", "", ""),
+            ("{ b: 'it''s # x' }", " # v7.0.0", " # v7.0.1", ""),
+            ("{ b: !!str 'x # v9' }", "", "", ""),
+            ("{ b: &a \"x # v9\" }", " # v7.0.0", " # v7.0.1", ""),
+        ] {
+            let at = |r: &str, comment: &str| {
+                format!("      - {{ uses: actions/checkout@{r}, with: {with} }}{comment}\n")
+            };
+            let line = at(&old, comment);
+            let loc = quoted_loc(&line)?;
+            assert_eq!(
+                applied(&line, repin_sha_edit(&loc, &target))?,
+                at(&new, repinned),
+                "{line}"
+            );
+            assert_eq!(
+                applied(&line, unpin_edit(&loc, "v7.0.0"))?,
+                at("v7.0.0", unpinned),
+                "{line}"
+            );
+        }
         Ok(())
     }
 

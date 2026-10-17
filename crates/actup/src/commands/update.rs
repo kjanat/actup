@@ -536,6 +536,11 @@ mod tests {
             "  - { uses: o/t@v4.0.0, id: x }",
             "  - { uses: \"o/u@OLD\" } # v4.0.0",
             "  - { uses: o/v@OLD, with: { x: 1 } } # v4.0.0",
+            "  - { uses: o/w@OLD, with: { msg: it's } } # v4.0.0",
+            "  - { uses: o/x@OLD, with: { a: it's, b: 'x # v9' } }",
+            "  - { uses: o/y@OLD, with: { b: 'it''s # v9' } }",
+            "  - { uses: o/z@OLD, with: { b: 'it''s # x' } } # v4.0.0",
+            "  - { uses: o/q@OLD, with: { b: !!str 'x # v9' } }",
             "",
         ]
         .join("\n")
@@ -547,6 +552,11 @@ mod tests {
             "  - { uses: o/t@NEW, id: x }",
             "  - { uses: \"o/u@NEW\" } # v4.2.0",
             "  - { uses: o/v@NEW, with: { x: 1 } } # v4.2.0",
+            "  - { uses: o/w@NEW, with: { msg: it's } } # v4.2.0",
+            "  - { uses: o/x@NEW, with: { a: it's, b: 'x # v9' } }",
+            "  - { uses: o/y@NEW, with: { b: 'it''s # v9' } }",
+            "  - { uses: o/z@NEW, with: { b: 'it''s # x' } } # v4.2.0",
+            "  - { uses: o/q@NEW, with: { b: !!str 'x # v9' } }",
             "",
         ]
         .join("\n")

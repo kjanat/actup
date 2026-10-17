@@ -997,16 +997,19 @@ mod tests {
     {
         let old = "a".repeat(40);
         let new = "b".repeat(40);
-        for (line, expected) in [
-            (
-                format!("- {{ uses: a/b@{old}, with: {{ x: 1 }} }}\n"),
-                format!("- {{ uses: a/b@{new}, with: {{ x: 1 }} }}\n"),
-            ),
-            (
-                format!("- {{ uses: a/b@{old}, with: {{ x: 1 }} }} # v4.0.0\n"),
-                format!("- {{ uses: a/b@{new}, with: {{ x: 1 }} }} # v4.2.0\n"),
-            ),
+        for (with, comment, retargeted) in [
+            ("{ x: 1 }", "", ""),
+            ("{ x: 1 }", " # v4.0.0", " # v4.2.0"),
+            ("{ msg: it's }", " # v4.0.0", " # v4.2.0"),
+            ("{ a: it's, b: 'x # v9' }", "", ""),
+            ("{ b: 'it''s # v9' }", "", ""),
+            ("{ b: 'it''s # x' }", " # v4.0.0", " # v4.2.0"),
+            ("{ b: !!str 'x # v9' }", "", ""),
         ] {
+            let at =
+                |r: &str, comment: &str| format!("- {{ uses: a/b@{r}, with: {with} }}{comment}\n");
+            let line = at(&old, comment);
+            let expected = at(&new, retargeted);
             let (l, action) = loc(&line)?;
             let (edit, to) =
                 retarget(&l, &action, &target(), Style::Preserve).ok_or("no retarget edit")?;
