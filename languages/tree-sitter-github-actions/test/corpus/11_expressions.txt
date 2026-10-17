@@ -1105,3 +1105,80 @@ if: ${{ fromJSON((github.event_name == 'push') && '["a"]' || '["b"]') }}
                       (or))
                     (string
                       (string_content))))))))))))
+
+============================================================================
+Repeated negation after an operator in a plain expression
+============================================================================
+name: ${{ a && !!b }}
+jobs:
+  build:
+    steps:
+      - if: ${{ a && !!b }}
+        run: c
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier))
+                (operator
+                  (and))
+                (not)
+                (not)
+                (context
+                  (identifier))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (delimited_expression
+                                        (expression_marker)
+                                        (context
+                                          (identifier))
+                                        (operator
+                                          (and))
+                                        (not)
+                                        (not)
+                                        (context
+                                          (identifier))))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
