@@ -32,6 +32,7 @@ publish      = true
 actup-core.path            = "crates/core"
 actup-provider-github.path = "crates/provider-github"
 actup-providers.path       = "crates/providers"
+async-trait                = "0.1"  # async trait impls
 base64                     = "0.22"  # encoding
 bstr                       = "1"  # byte strings (git refs)
 cc                         = "1.2"

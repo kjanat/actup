@@ -13,7 +13,8 @@ GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 - **Providers**: GitHub and GitHub Enterprise. GitLab and Gitea/Forgejo are not
   wired yet (#48)
 - **LSP**: Editor diagnostics and code actions
-- **MCP**: Tools for AI agents
+- **MCP**: stdio server with read tools and dry-runnable mutators confined to
+  one root
 
 ## Installation
 
@@ -226,6 +227,46 @@ actup completions zsh > ~/.zfunc/_actup
 actup completions fish > ~/.config/fish/completions/actup.fish
 actup completions powershell >> $PROFILE
 ```
+
+## MCP Server
+
+`actup-mcp` serves actup over the Model Context Protocol on stdio:
+
+```sh
+cargo install --git https://github.com/kjanat/actup-v2 actup-mcp
+```
+
+```json
+{
+	"mcpServers": {
+		"actup": { "command": "actup-mcp", "args": ["--root", "/path/to/repo"] }
+	}
+}
+```
+
+The server loads config from `--root` (default: its working directory) like the
+CLI, and refuses every path outside that root, including symlinks that point out
+of it.
+
+| Tool                     | Kind    | Purpose                                                 |
+| ------------------------ | ------- | ------------------------------------------------------- |
+| `actionGetReadme`        | read    | README of an action repository at a ref                 |
+| `actionGetActionYml`     | read    | Raw and parsed `action.yml` at a ref                    |
+| `getVersions`            | read    | Semver tags, latest tag, optionally branches            |
+| `getLatest`              | read    | Version the policy (or `policyOverride`) moves a ref to |
+| `updateFile`             | mutator | Replace refs of named `uses:` values in one file        |
+| `updateAllUsesToVersion` | mutator | Move every reference to one action under a directory    |
+
+Every result carries `provider`, `host` and `status` (`upToDate`, `outdated`,
+`unknown`, `unresolvable`, `rateLimited`). Mutators accept `dryRun`, return each
+change with its line, byte range, before and after text, a unified diff and a
+reversal plan, and change nothing when called again with the same arguments.
+They write like `update`: atomically, after a re-read that refuses a file whose
+edited lines changed since the scan. `updateAllUsesToVersion` and `updateFile`
+refuse an edited text that is not valid YAML or holds a different number of
+`uses:` values. `updateFile` skips that check with `validateYaml: false`.
+`updateAllUsesToVersion` writes each ref in its `policy.pin` style, as `update`
+does.
 
 ## Exit Codes
 

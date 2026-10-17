@@ -10,10 +10,7 @@ mod output;
 
 use std::process::ExitCode;
 
-use actup_core::{
-    CachingProvider, Config, Registration, effective_host, provider, resolve_default_host,
-    user_config_path, validate_no_duplicate_presets,
-};
+use actup_core::{Config, Registration, provider, user_config_path, validate_no_duplicate_presets};
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, CliExitCode, Command};
@@ -166,52 +163,8 @@ pub(crate) fn available_registrations() -> Vec<&'static Registration> {
     registrations
 }
 
-/// Resolve a hostname, create its provider, and register it.
-///
-/// Looks up the [`Registration`] by kind (from the resolved [`actup_core::ProviderConfig`])
-/// and calls its `create` fn pointer to construct the concrete provider.
-fn resolve_and_register(
-    hostname: &str,
-    config: &Config,
-    registrations: &[&'static Registration],
-    registry: &mut provider::Registry,
-) -> actup_core::Result<()> {
-    let provider_config = effective_host(hostname, config, registrations, &config.fetch)?;
-
-    let registration = registrations
-        .iter()
-        .find(|r| r.kind == provider_config.kind)
-        .ok_or_else(|| actup_core::Error::InvalidConfig {
-            path: format!("host \"{hostname}\""),
-            reason: format!("no registration for kind {:?}", provider_config.kind),
-        })?;
-
-    let provider = (registration.create)(provider_config)?;
-    registry.register(Box::new(CachingProvider::new(provider)));
-    Ok(())
-}
-
 fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
-    let registrations = available_registrations();
-    let mut registry = provider::Registry::new();
-
-    // Resolve default host (validates + falls back to "github.com" preset)
-    let default_host = resolve_default_host(config, &registrations)?;
-    registry.set_default_host(&default_host);
-
-    // Resolve and register explicit [hosts."hostname"] entries
-    let mut registered_hosts = std::collections::HashSet::new();
-    for hostname in config.hosts.keys() {
-        resolve_and_register(hostname, config, &registrations, &mut registry)?;
-        registered_hosts.insert(hostname.clone());
-    }
-
-    // Ensure the default host is always registered (preset provides zero-config)
-    if !registered_hosts.contains(&default_host) {
-        resolve_and_register(&default_host, config, &registrations, &mut registry)?;
-    }
-
-    Ok(registry)
+    provider::Registry::from_config(config, &available_registrations())
 }
 
 #[cfg(test)]

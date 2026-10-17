@@ -1,15 +1,6 @@
-//! Provider registry construction for the LSP server.
-//!
-//! Mirrors the CLI's `build_registry` logic: collects compiled-in provider
-//! registrations, resolves the default host, and registers providers for
-//! each configured hostname.
+//! Provider registry and file cache construction for the LSP server.
 
-use std::collections::HashSet;
-
-use actup_core::{
-    CachingProvider, Config, Registration, effective_host, provider, resolve_default_host,
-    validate_no_duplicate_presets,
-};
+use actup_core::{Config, Registration, provider, validate_no_duplicate_presets};
 
 /// Returns all compiled-in provider registrations.
 ///
@@ -23,55 +14,9 @@ pub fn available_registrations() -> Vec<&'static Registration> {
     registrations
 }
 
-/// Resolve a hostname via config + registration presets, create the provider,
-/// and register it in the registry.
-fn resolve_and_register(
-    hostname: &str,
-    config: &Config,
-    registrations: &[&'static Registration],
-    registry: &mut provider::Registry,
-) -> actup_core::Result<()> {
-    let provider_config = effective_host(hostname, config, registrations, &config.fetch)?;
-
-    let registration = registrations
-        .iter()
-        .find(|r| r.kind == provider_config.kind)
-        .ok_or_else(|| actup_core::Error::InvalidConfig {
-            path: format!("host \"{hostname}\""),
-            reason: format!("no registration for kind {:?}", provider_config.kind),
-        })?;
-
-    let provider = (registration.create)(provider_config)?;
-    registry.register(Box::new(CachingProvider::new(provider)));
-    Ok(())
-}
-
-/// Build a [`provider::Registry`] from the given config.
-///
-/// Follows the same algorithm as the CLI:
-/// 1. Collect static registrations from compiled-in provider crates
-/// 2. Resolve the default host (usually `github.com` from preset)
-/// 3. Register providers for each `[hosts."hostname"]` entry in config
-/// 4. Ensure the default host is always registered (zero-config for `github.com`)
+/// Build a [`provider::Registry`] from the given config and the compiled-in registrations.
 pub fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
-    let registrations = available_registrations();
-    let mut registry = provider::Registry::new();
-
-    let default_host = resolve_default_host(config, &registrations)?;
-    registry.set_default_host(&default_host);
-
-    let mut registered_hosts = HashSet::new();
-    for hostname in config.hosts.keys() {
-        resolve_and_register(hostname, config, &registrations, &mut registry)?;
-        registered_hosts.insert(hostname.clone());
-    }
-
-    // Ensure default host is always registered even without an explicit entry.
-    if !registered_hosts.contains(&default_host) {
-        resolve_and_register(&default_host, config, &registrations, &mut registry)?;
-    }
-
-    Ok(registry)
+    provider::Registry::from_config(config, &available_registrations())
 }
 
 /// Build a [`FileCache`](crate::file_cache::FileCache) from the given config.
@@ -92,6 +37,8 @@ pub fn build_file_cache(config: &Config) -> crate::file_cache::FileCache {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::collections::HashSet;
+
     use actup_core::{HostConfig, HostKind};
 
     use super::*;

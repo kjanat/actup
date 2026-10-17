@@ -21,6 +21,7 @@ pub mod config;
 pub mod discovery;
 pub mod error;
 pub mod parser;
+pub mod patch;
 pub mod policy;
 pub mod provider;
 pub mod resolution;

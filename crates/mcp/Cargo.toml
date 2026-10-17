@@ -3,12 +3,40 @@ name                   = "actup-mcp"
 version.workspace      = true
 edition.workspace      = true
 rust-version.workspace = true
+description            = "Model Context Protocol server for actup"
 homepage.workspace     = true
 repository.workspace   = true
 license.workspace      = true
-publish                = false  # stub - not yet implemented
+publish                = false
+
+[lib]
+name = "actup_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "actup-mcp"
+path = "src/main.rs"
+
+[[test]]
+harness = false
+name    = "stdio_contract"
+path    = "tests/stdio_contract.rs"
 
 [dependencies]
+actup-core            = { workspace = true }  # Core engine
+actup-provider-github = { workspace = true }  # GitHub provider
+async-trait           = { workspace = true }  # `ServerHandler` impl
+clap                  = { workspace = true }  # CLI parsing
+rust-mcp-sdk          = { workspace = true, default-features = false, features = ["server", "stdio"] }  # MCP protocol
+schemars              = { workspace = true }  # Tool input schemas
+serde                 = { workspace = true }  # Tool arguments
+serde_json            = { workspace = true }  # Tool results
+tokio                 = { workspace = true }  # Async runtime
+tracing               = { workspace = true }  # Logging
+tracing-subscriber    = { workspace = true }  # Log formatting
+
+[dev-dependencies]
+tempfile = { workspace = true }  # Temp workspaces for contract tests
 
 [lints]
 workspace = true

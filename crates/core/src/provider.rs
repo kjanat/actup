@@ -8,9 +8,9 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActionRepoId, Result,
+    ActionRepoId, CachingProvider, Config, Error, Registration, Result,
     compat::{BoxFuture, MaybeSend, MaybeSync},
-    version,
+    effective_host, resolve_default_host, validate_no_duplicate_presets, version,
 };
 
 /// Identifies the type of provider
@@ -714,6 +714,51 @@ impl Registry {
     pub fn providers(&self) -> &[Box<dyn Provider>] {
         &self.providers
     }
+
+    /// Build a registry for `config` from the providers that `registrations` construct.
+    ///
+    /// Registers every `[hosts]` entry and the default host, each behind a
+    /// [`CachingProvider`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a host does not resolve or its provider cannot be created.
+    ///
+    /// # Panics
+    ///
+    /// Panics if two registrations share a preset hostname.
+    pub fn from_config(config: &Config, registrations: &[&Registration]) -> Result<Self> {
+        validate_no_duplicate_presets(registrations);
+        let mut registry = Self::new();
+        let default_host = resolve_default_host(config, registrations)?;
+        registry.set_default_host(&default_host);
+        for hostname in config.hosts.keys() {
+            registry.register_host(hostname, config, registrations)?;
+        }
+        if !config.hosts.contains_key(&default_host) {
+            registry.register_host(&default_host, config, registrations)?;
+        }
+        Ok(registry)
+    }
+
+    fn register_host(
+        &mut self,
+        hostname: &str,
+        config: &Config,
+        registrations: &[&Registration],
+    ) -> Result<()> {
+        let provider_config = effective_host(hostname, config, registrations, &config.fetch)?;
+        let registration = registrations
+            .iter()
+            .find(|r| r.kind == provider_config.kind)
+            .ok_or_else(|| Error::InvalidConfig {
+                path: format!("host \"{hostname}\""),
+                reason: format!("no registration for kind {:?}", provider_config.kind),
+            })?;
+        let provider = (registration.create)(provider_config)?;
+        self.register(Box::new(CachingProvider::new(provider)));
+        Ok(())
+    }
 }
 
 impl fmt::Debug for Registry {
@@ -1010,5 +1055,96 @@ mod tests {
         assert_eq!(deserialized.inputs().len(), 1);
         assert!(deserialized.inputs()["token"].required());
         assert_eq!(deserialized.outputs().len(), 1);
+    }
+
+    fn create_mock(config: crate::ProviderConfig) -> Result<Box<dyn Provider>> {
+        if config.host == "broken.corp.com" {
+            return Err(Error::Auth {
+                provider: config.host,
+                reason: "no token".into(),
+            });
+        }
+        Ok(Box::new(MockProvider {
+            kind: Kind::GitHub,
+            host: config.host,
+        }))
+    }
+
+    static MOCK_REGISTRATION: Registration = Registration {
+        kind: crate::HostKind::GitHub,
+        presets: &[crate::Preset {
+            host: "github.com",
+            api_base: "https://api.github.com",
+            token_env: "GITHUB_TOKEN",
+        }],
+        default_token_env: Some("GITHUB_TOKEN"),
+        infer_api_base: |host| Some(format!("https://{host}/api/v3")),
+        capabilities: crate::Capabilities {
+            supports_graphql: true,
+            supports_rest: true,
+        },
+        create: create_mock,
+    };
+
+    fn host_of_kind(kind: crate::HostKind) -> crate::HostConfig {
+        crate::HostConfig {
+            kind: Some(kind),
+            api_base: Some("https://example.com/api".into()),
+            token_env: Some("TOKEN".into()),
+            api_mode: None,
+            max_tags_per_repo: None,
+        }
+    }
+
+    #[test]
+    fn from_config_registers_the_preset_default_host() -> std::result::Result<(), Error> {
+        let registry = Registry::from_config(&Config::default(), &[&MOCK_REGISTRATION])?;
+        assert_eq!(registry.default_host(), Some("github.com"));
+        let hosts: Vec<&str> = registry.providers().iter().map(Provider::host).collect();
+        assert_eq!(hosts, ["github.com"]);
+        Ok(())
+    }
+
+    #[test]
+    fn from_config_registers_each_host_once() -> std::result::Result<(), Error> {
+        let mut config = Config::default();
+        for host in ["github.com", "ghe.corp.com"] {
+            config
+                .hosts
+                .insert(host.into(), host_of_kind(crate::HostKind::GitHub));
+        }
+        let registry = Registry::from_config(&config, &[&MOCK_REGISTRATION])?;
+        let mut hosts: Vec<&str> = registry.providers().iter().map(Provider::host).collect();
+        hosts.sort_unstable();
+        assert_eq!(hosts, ["ghe.corp.com", "github.com"]);
+        Ok(())
+    }
+
+    #[test]
+    fn from_config_rejects_a_kind_without_registration() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "gitlab.corp.com".into(),
+            host_of_kind(crate::HostKind::GitLab),
+        );
+        let result = Registry::from_config(&config, &[&MOCK_REGISTRATION]);
+        let Err(Error::InvalidConfig { path, .. }) = result else {
+            panic!("expected InvalidConfig, got {result:?}");
+        };
+        assert_eq!(path, "host \"gitlab.corp.com\"");
+    }
+
+    #[test]
+    fn from_config_returns_the_provider_creation_error() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "broken.corp.com".into(),
+            host_of_kind(crate::HostKind::GitHub),
+        );
+        let result = Registry::from_config(&config, &[&MOCK_REGISTRATION]);
+        assert!(
+            matches!(result, Err(Error::Auth { ref provider, .. }) if provider == "broken.corp.com"),
+            "{result:?}"
+        );
     }
 }

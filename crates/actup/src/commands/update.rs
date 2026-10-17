@@ -3,42 +3,23 @@
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, policy, provider,
-    version,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
+    patch::{FileEdits, PendingEdit, SkipReason, retarget_edit},
+    policy, provider, version,
 };
 use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, FileEdits, PendingEdit, RefSite, SkipReason, WorkflowScanner,
-        commit_file, repin_sha_edit, report_error, report_skipped, report_unserved, unpin_edit,
+        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_skipped,
+        report_unserved,
     },
 };
 
 fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
     loc.ref_range()
         .map(|range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()))
-}
-
-/// Build the edit for an outdated action under its `policy.pin` style.
-///
-/// A SHA target keeps a `# vX.Y.Z` version comment accurate. A SHA pin
-/// rewritten to a tag (`pin = "tag"`) drops its version comment.
-fn build_edit(
-    loc: &UsesLocation,
-    action_ref: &ActionRef,
-    target: &version::Info,
-    style: policy::Style,
-) -> Option<PendingEdit> {
-    let tag = target.version().to_string();
-    if style.writes_sha(action_ref.is_sha()) {
-        repin_sha_edit(loc, target)
-    } else if action_ref.is_sha() {
-        unpin_edit(loc, &tag)
-    } else {
-        ref_edit(loc, &tag)
-    }
 }
 
 fn new_ref(action_ref: &ActionRef, target: &version::Info, style: policy::Style) -> String {
@@ -124,7 +105,7 @@ async fn edit(
             let style = config.policy_for(&action_ref).pin;
             let (edit, new_ref, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
-                    build_edit(&loc, &action_ref, target, style),
+                    retarget_edit(&loc, action_ref.is_sha(), target, style),
                     new_ref(&action_ref, target, style),
                     target_display(&action_ref, target, style),
                     false,
@@ -172,14 +153,12 @@ mod tests {
 
     use actup_core::{
         ActionRepoId, BoxFuture,
+        patch::EditOutcome,
         provider::{ActionYml, Kind, Provider, Sha40},
     };
 
     use super::*;
-    use crate::{
-        cli::CliExitCode,
-        common::{EditOutcome, ErrorKind},
-    };
+    use crate::{cli::CliExitCode, common::ErrorKind};
 
     struct TagProvider {
         latest: &'static str,
@@ -681,8 +660,8 @@ mod tests {
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
         let tag = make_action_ref("actions", "checkout", "v4");
         let pinned = make_action_ref("actions", "checkout", &sha40('b'));
-        assert!(build_edit(&loc, &tag, &target, policy::Style::Preserve).is_none());
-        assert!(build_edit(&loc, &pinned, &target, policy::Style::Preserve).is_none());
+        assert!(retarget_edit(&loc, tag.is_sha(), &target, policy::Style::Preserve).is_none());
+        assert!(retarget_edit(&loc, pinned.is_sha(), &target, policy::Style::Preserve).is_none());
         assert!(pin_branch_edit(&loc, "v4", &sha40('c')).is_none());
     }
 
@@ -727,13 +706,13 @@ mod tests {
     }
 
     #[test]
-    fn test_build_edit_tag_writes_tag() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_retarget_edit_tag_writes_tag() -> Result<(), Box<dyn std::error::Error>> {
         let line = "      - uses: actions/checkout@v4";
         let loc = sha_loc(line)?;
         let action_ref = make_action_ref("actions", "checkout", "v4");
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
-        let edit =
-            build_edit(&loc, &action_ref, &target, policy::Style::Preserve).ok_or("no edit")?;
+        let edit = retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
+            .ok_or("no edit")?;
         assert_eq!(
             apply_at(line, edit)?,
             "      - uses: actions/checkout@v5.0.0"
@@ -742,15 +721,16 @@ mod tests {
     }
 
     #[test]
-    fn test_build_edit_sha_repins_to_sha_with_comment() -> Result<(), Box<dyn std::error::Error>> {
+    fn test_retarget_edit_sha_repins_to_sha_with_comment() -> Result<(), Box<dyn std::error::Error>>
+    {
         let old = sha40('a');
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old}");
         let loc = sha_loc(&line)?;
         let action_ref = make_action_ref("actions", "checkout", &old);
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let edit =
-            build_edit(&loc, &action_ref, &target, policy::Style::Preserve).ok_or("no edit")?;
+        let edit = retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
+            .ok_or("no edit")?;
         assert_eq!(
             apply_at(&line, edit)?,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -793,7 +773,8 @@ mod tests {
         let mut seen = 0;
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
             file_edits.add(
-                build_edit(&loc, &action_ref, &target, policy::Style::Preserve).ok_or("no edit")?,
+                retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
+                    .ok_or("no edit")?,
                 (),
             );
             seen += 1;

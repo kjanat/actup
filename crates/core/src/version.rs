@@ -716,6 +716,12 @@ impl Set {
         self.branches = branches;
     }
 
+    /// Get the branch name -> HEAD SHA map.
+    #[must_use]
+    pub const fn branches(&self) -> &std::collections::HashMap<String, String> {
+        &self.branches
+    }
+
     /// Resolve a branch name to its current HEAD SHA, if known.
     ///
     /// Checks the branch map first, then the default branch.
@@ -1572,6 +1578,15 @@ mod tests {
         assert!(vs.default_branch().is_some());
         assert_eq!(vs.default_branch().unwrap().name(), "main");
         assert_eq!(vs.default_branch().unwrap().sha(), "abc123");
+    }
+
+    #[test]
+    fn test_branches_returns_the_set_map() {
+        let mut vs = Set::new();
+        assert!(vs.branches().is_empty());
+        let map = std::collections::HashMap::from([("dev".to_string(), "d".repeat(40))]);
+        vs.set_branches(map.clone());
+        assert_eq!(vs.branches(), &map);
     }
 
     #[test]

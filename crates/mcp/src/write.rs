@@ -1,0 +1,828 @@
+//! Mutating tools: `updateFile` and `updateAllUsesToVersion`.
+
+use std::{fs, io, ops::Range, path::Path};
+
+use actup_core::{
+    ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, UsesLocation,
+    discover_files, extract_uses_from_yaml, line_spans, parse_action_path, parse_uses,
+    patch::{EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retarget_edit},
+    policy::Style,
+    provider::Registry,
+    rewrite_atomic, validate_edit, version,
+};
+use rust_mcp_sdk::schema::schema_utils::CallToolError;
+use serde::Serialize;
+
+use crate::{
+    args::{self, check_written_ref, repo_id},
+    confine::Root,
+    diff,
+    report::{Reply, Served, Status},
+};
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Site {
+    path: String,
+    line: usize,
+    provider: String,
+    host: String,
+    action: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Span {
+    start: usize,
+    end: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Change {
+    #[serde(flatten)]
+    site: Site,
+    range: Span,
+    from: String,
+    to: String,
+    before: String,
+    after: String,
+}
+
+#[derive(Debug, Serialize)]
+struct Unchanged {
+    #[serde(flatten)]
+    site: Site,
+    #[serde(rename = "ref")]
+    reference: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum SkipCause {
+    Ignored,
+    Unplaceable,
+    Overlap,
+    OutOfBounds,
+}
+
+impl From<SkipReason> for SkipCause {
+    fn from(reason: SkipReason) -> Self {
+        match reason {
+            SkipReason::Unplaceable => Self::Unplaceable,
+            SkipReason::Overlap => Self::Overlap,
+            SkipReason::OutOfBounds => Self::OutOfBounds,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+struct Skipped {
+    #[serde(flatten)]
+    site: Site,
+    reason: SkipCause,
+}
+
+#[derive(Debug, Serialize)]
+struct FileError {
+    path: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct LineRevert {
+    path: String,
+    line: usize,
+    current: String,
+    original: String,
+}
+
+#[derive(Debug, Default, Serialize)]
+struct Reversal {
+    diff: String,
+    lines: Vec<LineRevert>,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Outcome {
+    dry_run: bool,
+    written: Vec<String>,
+    changes: Vec<Change>,
+    unchanged: Vec<Unchanged>,
+    skipped: Vec<Skipped>,
+    errors: Vec<FileError>,
+    diff: String,
+    reversal: Reversal,
+}
+
+impl Outcome {
+    const fn status(&self) -> Status {
+        if self.changes.is_empty() {
+            Status::UpToDate
+        } else {
+            Status::Outdated
+        }
+    }
+
+    fn reply(self, served: Option<&Served>) -> Result<Reply, CallToolError> {
+        let failed = !self.errors.is_empty();
+        let reply = Reply::new(served, self.status(), self)?;
+        Ok(if failed { reply.failing() } else { reply })
+    }
+}
+
+struct Label {
+    site: Site,
+    range: Range<usize>,
+    from: String,
+    to: String,
+    expected: String,
+}
+
+struct Planned {
+    content: String,
+    splices: Splices,
+    changes: Vec<Change>,
+    unchanged: Vec<Unchanged>,
+    skipped: Vec<Skipped>,
+}
+
+fn served_for(registry: &Registry, action: &ActionRef) -> Served {
+    registry.find(action.host()).map_or_else(
+        || {
+            Served::unserved(
+                action
+                    .host()
+                    .or_else(|| registry.default_host())
+                    .unwrap_or_default(),
+            )
+        },
+        Served::by,
+    )
+}
+
+fn site(path: &str, loc: &UsesLocation, served: Served) -> Site {
+    Site {
+        path: path.to_string(),
+        line: loc.line(),
+        provider: served.provider,
+        host: served.host,
+        action: loc.value().to_string(),
+    }
+}
+
+fn label(site: Site, edit: &PendingEdit, loc: &UsesLocation, from: &str, to: &str) -> Label {
+    let EditKind::ReplaceRange { range, .. } = &edit.kind;
+    let base = loc
+        .value()
+        .split_once('@')
+        .map_or_else(|| loc.value(), |(base, _)| base);
+    Label {
+        site,
+        range: range.clone(),
+        from: from.to_string(),
+        to: to.to_string(),
+        expected: format!("{base}@{to}"),
+    }
+}
+
+fn plan(original: &str, edits: FileEdits<Label>) -> Result<Planned, String> {
+    let plan = edits.plan();
+    let content = plan.content();
+    let old_spans = line_spans(original);
+    let new_spans = line_spans(&content);
+    if old_spans.len() != new_spans.len() {
+        return Err("edits changed the number of lines".to_string());
+    }
+    let after = extract_uses_from_yaml(&content);
+    let mut planned = Planned {
+        changes: Vec::new(),
+        unchanged: Vec::new(),
+        skipped: Vec::new(),
+        content: String::new(),
+        splices: plan.splices,
+    };
+    for (label, outcome) in plan.entries {
+        if let EditOutcome::Skipped(reason) = outcome {
+            planned.skipped.push(Skipped {
+                site: label.site,
+                reason: reason.into(),
+            });
+            continue;
+        }
+        let line = label.site.line;
+        let (Some(old), Some(new)) = (
+            old_spans
+                .get(line - 1)
+                .and_then(|s| original.get(s.clone())),
+            new_spans.get(line - 1).and_then(|s| content.get(s.clone())),
+        ) else {
+            return Err(format!("line {line} is out of range"));
+        };
+        if !after
+            .iter()
+            .any(|loc| loc.line() == line && loc.value() == label.expected)
+        {
+            return Err(format!(
+                "line {line}: the edited line does not hold `uses: {}`",
+                label.expected
+            ));
+        }
+        if old == new {
+            planned.unchanged.push(Unchanged {
+                site: label.site,
+                reference: label.from,
+            });
+        } else {
+            planned.changes.push(Change {
+                site: label.site,
+                range: Span {
+                    start: label.range.start,
+                    end: label.range.end,
+                },
+                from: label.from,
+                to: label.to,
+                before: old.to_string(),
+                after: new.to_string(),
+            });
+        }
+    }
+    planned.content = content;
+    Ok(planned)
+}
+
+enum Refusal {
+    Io(io::Error),
+    Changed,
+    Invalid(EditValidationError),
+}
+
+impl From<io::Error> for Refusal {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+impl Refusal {
+    fn message(&self, shown: &str) -> String {
+        match self {
+            Self::Io(e) => format!("writing {shown} failed: {e}"),
+            Self::Changed => format!("edit refused: {shown} changed since scan"),
+            Self::Invalid(e) => format!("edit refused: {shown} after edit: {e}"),
+        }
+    }
+}
+
+fn write(path: &Path, planned: &Planned, validate: bool) -> Result<(String, String), Refusal> {
+    let mut texts = (String::new(), String::new());
+    rewrite_atomic(path, |current| -> Result<String, Refusal> {
+        let content = planned.splices.apply(current).ok_or(Refusal::Changed)?;
+        if validate {
+            validate_edit(current, &content).map_err(Refusal::Invalid)?;
+        }
+        texts = (current.to_string(), content.clone());
+        Ok(content)
+    })?;
+    Ok(texts)
+}
+
+fn commit(
+    outcome: &mut Outcome,
+    path: &Path,
+    shown: &str,
+    original: &str,
+    mut planned: Planned,
+    validate: bool,
+) {
+    outcome.unchanged.append(&mut planned.unchanged);
+    outcome.skipped.append(&mut planned.skipped);
+    if planned.changes.is_empty() {
+        return;
+    }
+    let (before, after) = if outcome.dry_run {
+        (original.to_string(), planned.content.clone())
+    } else {
+        match write(path, &planned, validate) {
+            Ok(texts) => texts,
+            Err(refusal) => {
+                outcome.errors.push(FileError {
+                    path: shown.to_string(),
+                    error: refusal.message(shown),
+                });
+                return;
+            }
+        }
+    };
+    if !outcome.dry_run {
+        outcome.written.push(shown.to_string());
+    }
+    if let Some(forward) = diff::render(shown, &before, &after) {
+        outcome.diff.push_str(&forward);
+    }
+    if let Some(backward) = diff::render(shown, &after, &before) {
+        outcome.reversal.diff.push_str(&backward);
+    }
+    for change in &planned.changes {
+        let line = change.site.line;
+        if outcome
+            .reversal
+            .lines
+            .last()
+            .is_some_and(|last| last.path == shown && last.line == line)
+        {
+            continue;
+        }
+        outcome.reversal.lines.push(LineRevert {
+            path: shown.to_string(),
+            line,
+            current: change.after.clone(),
+            original: change.before.clone(),
+        });
+    }
+    outcome.changes.extend(planned.changes);
+}
+
+fn same_repo(a: &ActionRepoId, b: &ActionRepoId, default_host: &str) -> bool {
+    a.host()
+        .unwrap_or(default_host)
+        .eq_ignore_ascii_case(b.host().unwrap_or(default_host))
+        && a.owner() == b.owner()
+        && a.repo() == b.repo()
+}
+
+fn refused(message: impl std::fmt::Display) -> CallToolError {
+    CallToolError::from_message(message.to_string())
+}
+
+/// `updateFile`: replace the refs of named `uses:` values in one file, all or none.
+///
+/// # Errors
+///
+/// Returns an error result when an argument is invalid, the path leaves the
+/// root, an edit names no single `uses:` value, or the edited file fails validation.
+pub fn update_file(
+    tool: &str,
+    registry: &Registry,
+    root: &Root,
+    args: &args::UpdateFile,
+) -> Result<Reply, CallToolError> {
+    let invalid = |message: String| CallToolError::invalid_arguments(tool, Some(message));
+    if args.edits.is_empty() {
+        return Err(invalid("edits must not be empty".to_string()));
+    }
+    let path = root.file(&args.path).map_err(refused)?;
+    let shown = root.relative(&path);
+    let original = fs::read_to_string(&path).map_err(|e| refused(format!("{shown}: {e}")))?;
+    let default_host = registry.default_host().unwrap_or_default();
+    let locations: Vec<(UsesLocation, ActionRef)> = extract_uses_from_yaml(&original)
+        .into_iter()
+        .filter_map(|loc| {
+            let action = parse_uses(loc.value()).ok().flatten()?;
+            Some((loc, action))
+        })
+        .collect();
+
+    let mut edits = FileEdits::new(path.clone(), original.clone());
+    let mut unchanged = Vec::new();
+    let mut problems = Vec::new();
+    for edit in &args.edits {
+        let named = parse_action_path(&edit.action)
+            .map_err(|e| invalid(format!("action `{}`: {e}", edit.action)))?;
+        check_written_ref("ref", &edit.reference).map_err(invalid)?;
+        let line = edit.line.get();
+        let matches: Vec<&(UsesLocation, ActionRef)> = locations
+            .iter()
+            .filter(|(loc, action)| {
+                let id = action.to_repo_id();
+                loc.line() == line
+                    && same_repo(&id, &named, default_host)
+                    && id.subpath() == named.subpath()
+            })
+            .collect();
+        let [(loc, action)] = matches.as_slice() else {
+            problems.push(format!(
+                "line {line}: {} `uses:` value(s) name `{}`",
+                matches.len(),
+                edit.action
+            ));
+            continue;
+        };
+        let site = site(&shown, loc, served_for(registry, action));
+        if action.ref_str() == edit.reference {
+            unchanged.push(Unchanged {
+                site,
+                reference: edit.reference.clone(),
+            });
+            continue;
+        }
+        let Some(range) = loc.ref_range() else {
+            problems.push(format!(
+                "line {line}: `{}` is escaped or spans lines; edit it by hand",
+                loc.value()
+            ));
+            continue;
+        };
+        let pending = PendingEdit::replace_range(line, range, edit.reference.clone());
+        let label = label(site, &pending, loc, action.ref_str(), &edit.reference);
+        edits.add(pending, label);
+    }
+    if !problems.is_empty() {
+        return Err(refused(problems.join("; ")));
+    }
+
+    let mut planned = plan(&original, edits).map_err(refused)?;
+    if let Some(skip) = planned.skipped.first() {
+        return Err(refused(format!(
+            "line {}: edit skipped ({:?}); nothing was written",
+            skip.site.line, skip.reason
+        )));
+    }
+    if args.validate_yaml && !planned.changes.is_empty() {
+        validate_edit(&original, &planned.content)
+            .map_err(|e| refused(format!("{shown} after edit: {e}")))?;
+    }
+    planned.unchanged.extend(unchanged);
+    let mut outcome = Outcome {
+        dry_run: args.dry_run,
+        ..Outcome::default()
+    };
+    commit(
+        &mut outcome,
+        &path,
+        &shown,
+        &original,
+        planned,
+        args.validate_yaml,
+    );
+    outcome.reply(None)
+}
+
+fn retarget(
+    loc: &UsesLocation,
+    action: &ActionRef,
+    target: &Info,
+    style: Style,
+) -> Option<(PendingEdit, String)> {
+    let edit = retarget_edit(loc, action.is_sha(), target, style)?;
+    let to = if style.writes_sha(action.is_sha()) {
+        target.sha().to_string()
+    } else {
+        target.version().to_string()
+    };
+    Some((edit, to))
+}
+
+struct Job<'a> {
+    registry: &'a Registry,
+    config: &'a Config,
+    root: &'a Root,
+    wanted: &'a ActionRepoId,
+    target: Info,
+    default_host: &'a str,
+}
+
+impl Job<'_> {
+    fn update(&self, file: &Path, outcome: &mut Outcome) -> Result<(), FileError> {
+        let path = self.root.contain(file).map_err(|refusal| FileError {
+            path: file.display().to_string(),
+            error: refusal.to_string(),
+        })?;
+        let shown = self.root.relative(&path);
+        let fail = |error: String| FileError {
+            path: shown.clone(),
+            error,
+        };
+        let original = fs::read_to_string(&path).map_err(|e| fail(e.to_string()))?;
+        let mut edits = FileEdits::new(path.clone(), original.clone());
+        for loc in extract_uses_from_yaml(&original) {
+            let Ok(Some(action)) = parse_uses(loc.value()) else {
+                continue;
+            };
+            let id = action.to_repo_id();
+            if !same_repo(&id, self.wanted, self.default_host)
+                || self
+                    .wanted
+                    .subpath()
+                    .is_some_and(|p| id.subpath() != Some(p))
+            {
+                continue;
+            }
+            let site = site(&shown, &loc, served_for(self.registry, &action));
+            if self.config.should_ignore(&action) {
+                outcome.skipped.push(Skipped {
+                    site,
+                    reason: SkipCause::Ignored,
+                });
+                continue;
+            }
+            let style = self.config.policy_for(&action).pin;
+            let Some((pending, to)) = retarget(&loc, &action, &self.target, style) else {
+                outcome.skipped.push(Skipped {
+                    site,
+                    reason: SkipCause::Unplaceable,
+                });
+                continue;
+            };
+            let label = label(site, &pending, &loc, action.ref_str(), &to);
+            edits.add(pending, label);
+        }
+        let planned = plan(&original, edits).map_err(fail)?;
+        if !planned.changes.is_empty() {
+            validate_edit(&original, &planned.content)
+                .map_err(|e| fail(format!("edit refused: {shown} after edit: {e}")))?;
+        }
+        commit(outcome, &path, &shown, &original, planned, true);
+        Ok(())
+    }
+}
+
+const fn scans(kind: FileKind, args: &args::UpdateAll) -> bool {
+    match kind {
+        FileKind::Workflow | FileKind::Custom => args.include_workflows,
+        FileKind::CompositeAction => args.include_composite_actions,
+    }
+}
+
+/// `updateAllUsesToVersion`: move every matching reference under a directory to one ref.
+///
+/// # Errors
+///
+/// Returns an error result when an argument is invalid or the directory leaves the root.
+pub async fn update_all(
+    tool: &str,
+    registry: &Registry,
+    config: &Config,
+    root: &Root,
+    args: &args::UpdateAll,
+) -> Result<Reply, CallToolError> {
+    let invalid = |message: String| CallToolError::invalid_arguments(tool, Some(message));
+    let target = &args.target;
+    let wanted = repo_id(
+        target.host.as_deref(),
+        &target.owner,
+        &target.repo,
+        target.path.as_deref(),
+    )
+    .map_err(invalid)?;
+    check_written_ref("targetRef", &args.target_ref).map_err(invalid)?;
+    if version::Version::parse(&args.target_ref).is_sha() {
+        return Err(invalid(format!(
+            "targetRef `{}` is a commit SHA; pass a tag or branch and the provider resolves its commit",
+            args.target_ref
+        )));
+    }
+    let workspace = root.dir(&args.workspace_root).map_err(refused)?;
+
+    let default_host = registry.default_host().unwrap_or_default();
+    let Some(provider) = registry.find(wanted.host()) else {
+        let host = wanted.host().unwrap_or(default_host).to_string();
+        return Ok(Reply::failure(
+            &Served::unserved(&host),
+            &actup_core::Error::ProviderNotFound { host },
+        ));
+    };
+    let served = Served::by(provider);
+    let sha = match provider
+        .resolve_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
+        .await
+    {
+        Ok(sha) => sha,
+        Err(e) => return Ok(Reply::failure(&served, &e)),
+    };
+    let job = Job {
+        registry,
+        config,
+        root,
+        wanted: &wanted,
+        target: Info::new(version::Version::parse(&args.target_ref), sha.as_str()),
+        default_host,
+    };
+    let mut outcome = Outcome {
+        dry_run: args.dry_run,
+        ..Outcome::default()
+    };
+    for file in discover_files(&workspace, &config.scan.extra_paths) {
+        if scans(file.kind(), args)
+            && let Err(error) = job.update(file.path(), &mut outcome)
+        {
+            outcome.errors.push(error);
+        }
+    }
+    outcome.reply(Some(&served))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loc(line_body: &str) -> Result<(UsesLocation, ActionRef), Box<dyn std::error::Error>> {
+        let found = extract_uses_from_yaml(line_body);
+        let [loc] = found.as_slice() else {
+            return Err(format!("expected one `uses:` in {line_body:?}").into());
+        };
+        let action = parse_uses(loc.value())?.ok_or("local action")?;
+        Ok((loc.clone(), action))
+    }
+
+    fn target() -> Info {
+        Info::new(version::Version::parse("v4.2.0"), "b".repeat(40))
+    }
+
+    #[test]
+    fn retarget_follows_the_pin_style() -> Result<(), Box<dyn std::error::Error>> {
+        let (tag_loc, tag) = loc("- uses: a/b@v4.0.0\n")?;
+        let sha_line = format!("- uses: a/b@{}\n", "a".repeat(40));
+        let (sha_loc, sha) = loc(&sha_line)?;
+        let to = |loc: &UsesLocation, action: &ActionRef, style: Style| {
+            retarget(loc, action, &target(), style).map(|(_, to)| to)
+        };
+        assert_eq!(
+            to(&tag_loc, &tag, Style::Preserve).as_deref(),
+            Some("v4.2.0")
+        );
+        assert_eq!(to(&tag_loc, &tag, Style::Sha), Some("b".repeat(40)));
+        assert_eq!(to(&sha_loc, &sha, Style::Preserve), Some("b".repeat(40)));
+        assert_eq!(to(&sha_loc, &sha, Style::Tag).as_deref(), Some("v4.2.0"));
+        Ok(())
+    }
+
+    #[test]
+    fn retarget_skips_a_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>> {
+        let (escaped, action) = loc("- uses: \"a/b@v4.0.\\x30\"\n")?;
+        assert!(retarget(&escaped, &action, &target(), Style::Preserve).is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn plan_reports_overlaps_and_refuses_broken_lines() -> Result<(), Box<dyn std::error::Error>> {
+        let content = "- uses: a/b@v1\n";
+        let (l, action) = loc(content)?;
+        let site = || Site {
+            path: "f".into(),
+            line: 1,
+            provider: "github".into(),
+            host: "github.com".into(),
+            action: "a/b@v1".into(),
+        };
+        let first = PendingEdit::replace_range(1, 12..14, "v2".into());
+        let second = PendingEdit::replace_range(1, 12..14, "v3".into());
+        let mut edits = FileEdits::new("f".into(), content.to_string());
+        edits.add(
+            first.clone(),
+            label(site(), &first, &l, action.ref_str(), "v2"),
+        );
+        edits.add(
+            second.clone(),
+            label(site(), &second, &l, action.ref_str(), "v3"),
+        );
+        let planned = plan(content, edits)?;
+        assert_eq!(planned.changes.len(), 1);
+        assert!(matches!(
+            planned.skipped.as_slice(),
+            [Skipped {
+                reason: SkipCause::Overlap,
+                ..
+            }]
+        ));
+
+        let breaking = PendingEdit::replace_range(1, 12..14, "v2\n".into());
+        let mut edits = FileEdits::new("f".into(), content.to_string());
+        edits.add(breaking.clone(), label(site(), &breaking, &l, "v1", "v2"));
+        assert!(plan(content, edits).is_err());
+
+        let unparsed = PendingEdit::replace_range(1, 8..9, "\"".into());
+        let mut edits = FileEdits::new("f".into(), content.to_string());
+        edits.add(unparsed.clone(), label(site(), &unparsed, &l, "v1", "v1"));
+        assert!(plan(content, edits).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn skip_causes_cover_every_writer_limit() -> Result<(), Box<dyn std::error::Error>> {
+        let names: Vec<serde_json::Value> = [
+            SkipCause::Ignored,
+            SkipReason::Unplaceable.into(),
+            SkipReason::Overlap.into(),
+            SkipReason::OutOfBounds.into(),
+        ]
+        .iter()
+        .map(serde_json::to_value)
+        .collect::<Result<_, _>>()?;
+        assert_eq!(names, ["ignored", "unplaceable", "overlap", "outOfBounds"]);
+        Ok(())
+    }
+    fn planned(content: &str, range: Range<usize>, new: &str) -> Planned {
+        let mut edits = FileEdits::new("f".into(), content.to_string());
+        edits.add(PendingEdit::replace_range(2, range, new.to_string()), ());
+        let plan = edits.plan();
+        Planned {
+            content: plan.content(),
+            splices: plan.splices,
+            changes: Vec::new(),
+            unchanged: Vec::new(),
+            skipped: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn write_keeps_changes_made_elsewhere_since_scan() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        fs::write(&path, "steps:\n  - uses: a/b@v1\nname: renamed\n")?;
+        let planned = planned("steps:\n  - uses: a/b@v1\nname: a\n", 14..16, "v2");
+        let Ok((before, after)) = write(&path, &planned, true) else {
+            panic!("write refused");
+        };
+        assert_eq!(before, "steps:\n  - uses: a/b@v1\nname: renamed\n");
+        assert_eq!(after, "steps:\n  - uses: a/b@v2\nname: renamed\n");
+        assert_eq!(fs::read_to_string(&path)?, after);
+        Ok(())
+    }
+
+    #[test]
+    fn write_refuses_a_line_changed_since_scan() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let changed = "steps:\n  - uses: a/b@main\n";
+        fs::write(&path, changed)?;
+        let planned = planned("steps:\n  - uses: a/b@v1\n", 14..16, "v2");
+        let Err(refusal) = write(&path, &planned, true) else {
+            panic!("write must refuse a changed line");
+        };
+        assert_eq!(
+            refusal.message("ci.yml"),
+            "edit refused: ci.yml changed since scan"
+        );
+        assert_eq!(fs::read_to_string(&path)?, changed);
+        Ok(())
+    }
+
+    #[test]
+    fn write_validates_the_edit_only_when_asked() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let content = "steps:\n  - uses: a/b@v1\n";
+        fs::write(&path, content)?;
+        let planned = planned(content, 14..16, "v2\n  - [");
+        let Err(refusal) = write(&path, &planned, true) else {
+            panic!("write must refuse invalid YAML");
+        };
+        let message = refusal.message("ci.yml");
+        assert!(
+            message.starts_with("edit refused: ci.yml after edit: invalid YAML: "),
+            "{message}"
+        );
+        assert_eq!(fs::read_to_string(&path)?, content);
+
+        assert!(write(&path, &planned, false).is_ok());
+        assert_eq!(
+            fs::read_to_string(&path)?,
+            "steps:\n  - uses: a/b@v2\n  - [\n"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn write_reports_an_io_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("missing").join("ci.yml");
+        let planned = planned("steps:\n  - uses: a/b@v1\n", 14..16, "v2");
+        let Err(refusal) = write(&path, &planned, true) else {
+            panic!("write into a missing directory must fail");
+        };
+        let message = refusal.message("ci.yml");
+        assert!(message.starts_with("writing ci.yml failed: "), "{message}");
+        assert!(!path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn commit_records_a_refused_write_as_a_file_error() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let scanned = "steps:\n  - uses: a/b@v1\n";
+        fs::write(&path, "steps:\n  - uses: a/b@main\n")?;
+        let (l, action) = loc("  - uses: a/b@v1\n")?;
+        let site = Site {
+            path: "ci.yml".into(),
+            line: 2,
+            provider: "github".into(),
+            host: "github.com".into(),
+            action: "a/b@v1".into(),
+        };
+        let edit = PendingEdit::replace_range(2, 14..16, "v2".into());
+        let mut edits = FileEdits::new(path.clone(), scanned.to_string());
+        edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), "v2"));
+        let planned = plan(scanned, edits)?;
+        let mut outcome = Outcome::default();
+        commit(&mut outcome, &path, "ci.yml", scanned, planned, true);
+        let [error] = outcome.errors.as_slice() else {
+            panic!("expected one file error: {:?}", outcome.errors);
+        };
+        assert_eq!(error.error, "edit refused: ci.yml changed since scan");
+        assert_eq!(outcome.written, Vec::<String>::new());
+        assert!(outcome.changes.is_empty());
+        assert_eq!(outcome.diff, "");
+        Ok(())
+    }
+}

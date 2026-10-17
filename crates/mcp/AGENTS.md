@@ -1,51 +1,47 @@
 # actup-mcp
 
-Model Context Protocol server for AI agents. **Currently a stub** — `main.rs` is
-a placeholder `println!("Hello, world!")`.
+Model Context Protocol server for AI agents, served over stdio with
+`rust-mcp-sdk` 0.9 (`server` + `stdio` features only).
 
-## Status
+## Layout
 
-Scaffolding only. Zero dependencies. No runtime, no MCP protocol handling.
+| File                      | Purpose                                                             |
+| ------------------------- | ------------------------------------------------------------------- |
+| `src/main.rs`             | Binary: `--root`, config load, `Registry::from_config`, stdio       |
+| `src/lib.rs`              | `Server` (`ServerHandler`), tool list, `INSTRUCTIONS`, read cache   |
+| `src/args.rs`             | Tool argument structs, `schemars` input schemas, ref validation     |
+| `src/read.rs`             | `actionGetReadme`, `actionGetActionYml`, `getVersions`, `getLatest` |
+| `src/write.rs`            | `updateFile`, `updateAllUsesToVersion`                              |
+| `src/confine.rs`          | `Root`: canonical path confinement                                  |
+| `src/report.rs`           | `Status` vocabulary and the result envelope                         |
+| `src/diff.rs`             | Unified diffs for in-line edits                                     |
+| `tests/stdio_contract.rs` | Contract tests over stdio (`harness = false`)                       |
 
-## Planned Purpose
+## Rules
 
-Expose actup's check/update capabilities as MCP tools so AI coding agents can:
+- Provider setup goes through `actup_core::provider::Registry::from_config`, the
+  same function the CLI and LSP call. Do not build a registry here.
+- Edits go through `actup_core::patch::FileEdits` and `retarget_edit`, so a
+  `uses:` value that is escaped or spans lines is never rewritten, and the pin
+  style follows `Style::writes_sha` as in `update`.
+- Writes go through `actup_core::rewrite_atomic`: the file is re-read under the
+  write lock, `Splices::apply` refuses a file whose edited lines changed since
+  the scan, and `validate_edit` refuses invalid YAML or a changed `uses:` count
+  unless `updateFile` passes `validateYaml: false`.
+- Every path argument resolves through `Root::file` / `Root::dir`, and every
+  discovered file through `Root::contain`. Canonicalization rejects `..` and
+  symlinks that leave the root.
+- Mutators are `destructiveHint: true`, honour `dryRun`, and report a change
+  only when a line's text differs, so a repeated call changes nothing.
+- `updateFile` is all or nothing. `updateAllUsesToVersion` skips refs it cannot
+  place or that `scan.ignore` matches, and reports them in `skipped`.
+- Every result carries `provider`, `host` and `status`. Argument and path errors
+  are tool errors (`isError`) without a status.
+- Read results are memoized per server process when the provider answered.
 
-- Inspect `uses:` refs and their version status (read-only)
-- Apply updates with diffs and reversal plans (mutators)
-- Respect the same config/policy/provider rules as CLI and LSP
+## Tests
 
-## Planned Tools (from root AGENTS.md spec)
-
-| Tool                     | Type    | Purpose                          |
-| ------------------------ | ------- | -------------------------------- |
-| `actionGetReadme`        | read    | Fetch README for an action       |
-| `actionGetActionYml`     | read    | Fetch action.yml metadata        |
-| `getVersions`            | read    | List available versions          |
-| `getLatest`              | read    | Get latest version per policy    |
-| `updateFile`             | mutator | Apply edits with YAML validation |
-| `updateAllUsesToVersion` | mutator | Batch update across workspace    |
-
-## Where to Look
-
-| Task                  | Start Here                                         |
-| --------------------- | -------------------------------------------------- |
-| Implement MCP server  | `main.rs` — replace stub with real bootstrap       |
-| Design tool interface | Root `AGENTS.md` → "actup-mcp" section             |
-| Reference impl        | `crates/lsp/` — similar provider/config wiring     |
-| Provider setup        | `crates/lsp/src/provider_setup.rs` — reuse pattern |
-
-## Anti-Patterns (This Crate)
-
-See root `AGENTS.md` § "actup-mcp" for full tool principles (read purity,
-diff+reversal, idempotency).
-
-- **Not a bypass** — must enforce same config/policy/provider rules as CLI/LSP
-- **No direct file writes** — return edit plans; let the caller apply them
-
-## Conventions
-
-- `publish = false` — not published to crates.io
-- `#![warn(missing_docs)]`
-- When implementing: use `tokio` runtime, `tracing` for logs, structured errors
-- All responses must include resolved provider+host and status enum
+`tests/stdio_contract.rs` re-executes itself with `MCP_CONTRACT_ROOT` set to
+serve a mock-provider `Server` on stdio, then drives it over JSON-RPC. Its
+binary cases spawn the real `actup-mcp` and use no network. Run one case with
+`cargo test -p actup-mcp --test stdio_contract -- <name-substring>`.

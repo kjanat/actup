@@ -44,7 +44,7 @@ crates/
   provider-gitea/     # actup-provider-gitea  — Gitea/Forgejo provider
   actup/              # actup (binary)   — CLI: check, update, pin, cache commands
   lsp/                # actup-lsp        — LSP server: diagnostics, code actions, hover, completion
-  mcp/                # actup-mcp        — MCP server (stub, not yet implemented)
+  mcp/                # actup-mcp        — MCP server (stdio)
   wasm/               # actup-wasm       — WASM bindings (wasm32-only, excluded from default-members)
 extensions/
   vscode/             # VSCode extension — TypeScript, bun-based, wraps actup-lsp
@@ -414,8 +414,8 @@ diffs + reversible plans.
 - `actionGetActionYml({ host?, owner, repo, ref?, path? })`
 - `getVersions({ host?, owner, repo, includeBranches?, includePrerelease? })`
 - `getLatest({ host?, owner, repo, currentRef, policyOverride? })`
-- `updateFile({ path, edits[], validateYaml })`
-- `updateAllUsesToVersion({ workspaceRoot, match{host?, owner, repo, path?}, targetRef, includeCompositeActions, includeWorkflows, dryRun })`
+- `updateFile({ path, edits[{ line, action, ref }], validateYaml?, dryRun? })`
+- `updateAllUsesToVersion({ workspaceRoot, match{host?, owner, repo, path?}, targetRef, includeCompositeActions?, includeWorkflows?, dryRun? })`
 
 All responses must include resolved provider+host and status
 (`upToDate|outdated|unknown|unresolvable|rateLimited`).
@@ -623,7 +623,7 @@ just self-check     # Run actup on this repo
 | `actup-provider-gitea`  | Gitea/Forgejo implementation                                           |
 | `actup` (CLI)           | CLI binary: check, update, pin, cache commands                         |
 | `actup-lsp`             | Language Server Protocol implementation                                |
-| `actup-mcp`             | Model Context Protocol server for AI agents (stub)                     |
+| `actup-mcp`             | Model Context Protocol server for AI agents (stdio)                    |
 | `actup-wasm`            | WASM bindings for browser/Node.js (wasm32-only, excluded from default) |
 
 ### Performance notes

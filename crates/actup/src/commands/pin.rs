@@ -3,7 +3,9 @@
 use std::{path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
+    patch::{FileEdits, PendingEdit, SkipReason, repin_sha_edit},
+    provider,
     rewrite::{PinMarker, Rewrite},
 };
 use owo_colors::OwoColorize;
@@ -11,8 +13,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, FileEdits, PendingEdit, RefSite, SkipReason, WorkflowScanner,
-        commit_file, repin_sha_edit, report_error, report_skipped, report_unserved,
+        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_skipped,
+        report_unserved,
     },
 };
 
@@ -299,10 +301,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::{
-        cli::CliExitCode,
-        common::{ErrorKind, FileEdits},
-    };
+    use crate::{cli::CliExitCode, common::ErrorKind};
 
     struct FixedShaProvider {
         sha: Sha40,
@@ -950,7 +949,8 @@ mod tests {
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
         file_edits.add(edit, *change);
         let plan = file_edits.plan();
-        let [(change, crate::common::EditOutcome::Applied { comment })] = plan.entries.as_slice()
+        let [(change, actup_core::patch::EditOutcome::Applied { comment })] =
+            plan.entries.as_slice()
         else {
             return None;
         };
