@@ -113,6 +113,12 @@ action-test:
     shellcheck action/*.sh
     action/test.sh
 
+# Test the crates.io publish script
+[group('test')]
+crates-publish-test:
+    shellcheck .github/actions/crates-publish/*.sh
+    .github/actions/crates-publish/test.sh
+
 # Test the example-workflow pin script
 [group('test')]
 examples-test:
