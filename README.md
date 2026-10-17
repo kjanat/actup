@@ -172,11 +172,12 @@ entry adds `kind` (such as `not_found`, `rate_limited`, `provider_not_found`,
 report has empty lists and `check` prints no findings.
 
 An unresolvable ref that names no tag can get a suggested tag. A partial version
-names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). Any
-other ref names the most similar tag when their Jaro-Winkler similarity is at
-least 0.9 (`v42.0` names `v4.2.0`). `check` prints the suggestion on a `hint:`
-line and adds `suggestion` to the JSON and TOML entry. The LSP offers a
-`Change to` quick fix.
+names the highest stable tag that completes it (`v4.2` names the highest
+`v4.2.x`). A full version such as `v4.2.9` that does not exist gets no
+suggestion. Any other ref names the tag within two edits of it, and the higher
+version wins a tie (`v42.0` and `v4.2.O` name `v4.2.0`). `check` prints the
+suggestion on a `hint:` line and adds `suggestion` to the JSON and TOML entry.
+The LSP offers a `Change to` quick fix.
 
 `check`, `update` and `pin` read every file first. They then fetch the versions
 of each repo that an unignored ref names, once per repo and in one batch through

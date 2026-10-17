@@ -4,35 +4,63 @@ use std::sync::Arc;
 
 use crate::version::{Info, Set, Version};
 
-const MIN_SIMILARITY: f64 = 0.9;
+const MAX_EDITS: usize = 2;
 
-/// Return the highest listed tag that completes the partial version `ref_name`, or else the listed tag most similar to it.
+enum Shape {
+    Partial,
+    Full,
+    Other,
+}
+
+fn shape(ref_name: &str) -> Shape {
+    let core = ref_name.strip_prefix('v').unwrap_or(ref_name);
+    let (numbers, prerelease) = core
+        .split_once('-')
+        .map_or((core, None), |(numbers, pre)| (numbers, Some(pre)));
+    let parts: Vec<&str> = numbers.split('.').collect();
+    let numeric = parts
+        .iter()
+        .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()));
+    let prerelease_ok = prerelease.is_none_or(|pre| {
+        !pre.is_empty()
+            && pre
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    });
+    match (numeric && prerelease_ok, parts.len(), prerelease) {
+        (true, 1 | 2, None) => Shape::Partial,
+        (true, 3, _) => Shape::Full,
+        _ => Shape::Other,
+    }
+}
+
+/// Return the highest stable tag that completes the partial version `ref_name`, or else the listed tag within two edits of it.
 #[must_use]
 pub fn closest_tag(ref_name: &str, versions: &Set) -> Option<Arc<Info>> {
-    let wanted = Version::parse(ref_name);
-    let candidates = versions
-        .semver_tags()
-        .iter()
-        .filter(|tag| wanted.is_prerelease() || !tag.version().is_prerelease())
-        .filter(|tag| tag.version().as_str() != ref_name);
-    let completes = |tag: &&Arc<Info>| {
-        let have = tag.version();
-        wanted.is_semver()
-            && have.major() == wanted.major()
-            && wanted.minor().is_none_or(|m| have.minor() == Some(m))
-            && wanted.patch().is_none_or(|p| have.patch() == Some(p))
-    };
-    if let Some(tag) = candidates
-        .clone()
-        .filter(completes)
-        .max_by(|a, b| a.version().cmp(b.version()))
-    {
-        return Some(Arc::clone(tag));
+    let tags = versions.semver_tags();
+    match shape(ref_name) {
+        Shape::Full => return None,
+        Shape::Partial => {
+            let wanted = Version::parse(ref_name);
+            let completes = tags
+                .iter()
+                .filter(|tag| {
+                    let have = tag.version();
+                    !have.is_prerelease()
+                        && have.major() == wanted.major()
+                        && wanted.minor().is_none_or(|m| have.minor() == Some(m))
+                })
+                .max_by(|a, b| a.version().cmp(b.version()));
+            if let Some(tag) = completes {
+                return Some(Arc::clone(tag));
+            }
+        }
+        Shape::Other => {}
     }
-    candidates
-        .map(|tag| (strsim::jaro_winkler(ref_name, tag.version().as_str()), tag))
-        .filter(|(score, _)| *score >= MIN_SIMILARITY)
-        .max_by(|(a, x), (b, y)| a.total_cmp(b).then_with(|| x.version().cmp(y.version())))
+    tags.iter()
+        .map(|tag| (strsim::levenshtein(ref_name, tag.version().as_str()), tag))
+        .filter(|(edits, _)| (1..=MAX_EDITS).contains(edits))
+        .min_by(|(a, x), (b, y)| a.cmp(b).then_with(|| y.version().cmp(x.version())))
         .map(|(_, tag)| Arc::clone(tag))
 }
 
@@ -68,32 +96,44 @@ mod tests {
         assert_eq!(suggest("v4.2", &tags).as_deref(), Some("v4.2.3"));
         assert_eq!(suggest("4.2", &tags).as_deref(), Some("v4.2.3"));
         assert_eq!(suggest("v4", &tags).as_deref(), Some("v4.3.0"));
-        assert_eq!(suggest("v4.2-rc", &tags).as_deref(), Some("v4.2.4-rc.1"));
     }
 
     #[test]
-    fn typos_name_the_most_similar_tag() {
+    fn missing_full_versions_get_no_suggestion() {
+        let tags = ["v4.2.0", "v4.2.1"];
+        assert_eq!(suggest("v4.2.2", &tags), None);
+        assert_eq!(suggest("4.2.0", &tags), None);
+        assert_eq!(suggest("v4.2.1-rc.1", &tags), None);
+    }
+
+    #[test]
+    fn other_refs_name_a_tag_within_two_edits() {
         let tags = ["v3.9.0", "v4.1.0", "v4.2.0"];
         assert_eq!(suggest("v42.0", &tags).as_deref(), Some("v4.2.0"));
+        assert_eq!(suggest("v4.2.O", &tags).as_deref(), Some("v4.2.0"));
         assert_eq!(suggest("v4.2.0.", &tags).as_deref(), Some("v4.2.0"));
         assert_eq!(suggest("vv4.1.0", &tags).as_deref(), Some("v4.1.0"));
+        assert_eq!(suggest("v4.2.0-", &tags).as_deref(), Some("v4.2.0"));
     }
 
     #[test]
-    fn a_tie_goes_to_the_higher_version() {
+    fn the_fewest_edits_win_and_a_tie_goes_to_the_higher_version() {
         assert_eq!(
-            suggest("v1.1.0", &["v1.0.0", "v1.2.0"]).as_deref(),
+            suggest("v1.x.0", &["v1.0.0", "v1.2.0"]).as_deref(),
+            Some("v1.2.0")
+        );
+        assert_eq!(
+            suggest("v1.2.0x", &["v1.2.0", "v1.9.9"]).as_deref(),
             Some("v1.2.0")
         );
     }
 
     #[test]
-    fn unrelated_refs_and_prereleases_get_no_suggestion() {
+    fn distant_refs_get_no_suggestion() {
         let tags = ["v4.1.0", "v4.2.0", "v5.0.0-rc.1"];
-        assert_eq!(suggest("v9.9.9", &tags), None);
         assert_eq!(suggest("main", &tags), None);
         assert_eq!(suggest("v5", &tags), None);
-        assert_eq!(suggest("v4.2.0", &["v4.2.0"]), None);
+        assert_eq!(suggest("release-4.2.0", &tags), None);
         assert_eq!(suggest("v4.2", &[]), None);
     }
 }
