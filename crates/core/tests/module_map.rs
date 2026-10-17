@@ -11,16 +11,21 @@ struct Section {
 
 fn sections(agents: &str) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
+    let mut fenced = false;
     for line in agents.lines() {
-        if line.starts_with('#') {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            fenced = !fenced;
+        } else if !fenced && line.starts_with('#') {
             sections.push(Section {
                 heading: line.to_owned(),
                 cells: Vec::new(),
             });
-        } else if let Some(cell) = line
-            .strip_prefix("| `")
-            .and_then(|rest| rest.split_once('`'))
-            .map(|(cell, _)| cell.to_owned())
+        } else if !fenced
+            && let Some(cell) = line
+                .strip_prefix("| `")
+                .and_then(|rest| rest.split_once('`'))
+                .map(|(cell, _)| cell.to_owned())
             && let Some(section) = sections.last_mut()
         {
             section.cells.push(cell);
@@ -138,5 +143,22 @@ fn module_map_check_reads_each_directory_table_at_every_level() -> TestResult<()
         "{agents}| `nested/` | Nested |\n\n### Nested (`config/nested/`)\n\n| File | Purpose |\n| --- | --- |\n| `deep.rs` | Deep |\n\n### Extra (`extra/`)\n\n| File | Purpose |\n| --- | --- |\n| `mod.rs` | Mod |\n| `resolution.rs` | Resolution |\n"
     );
     assert_eq!(missing_rows(&complete, src)?, Vec::<String>::new());
+    Ok(())
+}
+
+#[test]
+fn module_map_check_skips_fenced_code_blocks() -> TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let src = temp.path();
+    fs::create_dir(src.join("config"))?;
+    for file in ["lib.rs", "a.rs", "b.rs", "config/mod.rs"] {
+        fs::write(src.join(file), "")?;
+    }
+    let agents = "## Module Map\n\n| Module | Purpose |\n| --- | --- |\n| `a` | A |\n| `config/` | Config |\n\n```markdown\n| `b` | B |\n### Config (`config/`)\n| `mod.rs` | Mod |\n```\n";
+
+    assert_eq!(
+        missing_rows(agents, src)?,
+        ["src/b.rs", "src/config/ has no table", "src/config/mod.rs"]
+    );
     Ok(())
 }
