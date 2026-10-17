@@ -125,6 +125,30 @@ async fn get_versions_lists_refs_over_git() -> TestResult {
 }
 
 #[tokio::test]
+async fn dot_segments_are_refused_before_any_request() -> TestResult {
+    let server = MockServer::start().await;
+    let provider = GitHubProvider::with_host(&api_base(&server), HOST, None)?;
+
+    for (owner, name) in [("..", "r"), (".", "r"), ("o", ".."), ("o", ".")] {
+        let repo = ActionRepoId::new(Some(HOST.into()), owner, name, None);
+        let result = provider.get_versions(&repo).await;
+        assert!(
+            matches!(result, Err(Error::InvalidRef { .. })),
+            "{owner}/{name}: {result:?}"
+        );
+        let result = provider.versions_via_git(&repo).await;
+        assert!(
+            matches!(result, Err(Error::InvalidRef { .. })),
+            "{owner}/{name}: {result:?}"
+        );
+    }
+
+    let requests = server.received_requests().await.ok_or("recording is off")?;
+    assert_eq!(requests.len(), 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_versions_of_a_repo_git_does_not_find_is_not_found() -> TestResult {
     let server = MockServer::start().await;
     serve_missing_repo(&server, 1).await;

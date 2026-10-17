@@ -6,6 +6,7 @@ use actup_core::{
     action_ref::ActionRepoId,
     compat::BoxFuture,
     config::DEFAULT_MAX_TAGS_PER_REPO,
+    encode_segment,
     error::Result,
     provider::{self, ActionYml, Provider, RepoSummary, Search, Sha40},
     version,
@@ -110,8 +111,13 @@ impl GitHubProvider {
             .map_or_else(|| format!("https://{}", self.host), str::to_string)
     }
 
-    fn clone_url(&self, repo: &ActionRepoId) -> String {
-        format!("{}/{}/{}.git", self.git_base(), repo.owner(), repo.repo())
+    fn clone_url(&self, repo: &ActionRepoId) -> Result<String> {
+        Ok(format!(
+            "{}/{}/{}.git",
+            self.git_base(),
+            encode_segment(repo.owner())?,
+            encode_segment(repo.repo())?
+        ))
     }
 
     /// Fetch every tag and the default branch over the git wire protocol.
@@ -122,7 +128,7 @@ impl GitHubProvider {
     /// does not exist.
     pub async fn versions_via_git(&self, repo: &ActionRepoId) -> Result<version::Set> {
         let label = RepoLabel::new(repo.owner(), repo.repo(), Some(self.host.clone()));
-        let refs = list_refs(self.clone_url(repo), self.token.clone(), label).await?;
+        let refs = list_refs(self.clone_url(repo)?, self.token.clone(), label).await?;
 
         debug!(
             owner = %repo.owner(),
@@ -698,8 +704,12 @@ mod tests {
         let provider =
             GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None).unwrap();
         assert_eq!(
-            provider.clone_url(&ActionRepoId::simple("o", "r")),
-            "https://ghe.corp.com/o/r.git"
+            provider.clone_url(&ActionRepoId::simple("o", "r")).ok(),
+            Some("https://ghe.corp.com/o/r.git".to_string())
+        );
+        assert_eq!(
+            provider.clone_url(&ActionRepoId::simple("o", "r+x")).ok(),
+            Some("https://ghe.corp.com/o/r%2Bx.git".to_string())
         );
     }
 
