@@ -713,7 +713,7 @@ mod tests {
                 host: "github.com".into(),
                 action: l.value().into(),
             };
-            let mut edits = FileEdits::new("f".into(), content.to_string());
+            let mut edits = FileEdits::new("f".into(), content.to_string(), SourceFormat::Yaml);
             edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), &to));
             assert_eq!(plan(content, edits)?.content, written);
         }

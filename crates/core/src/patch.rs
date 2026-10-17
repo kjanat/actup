@@ -753,6 +753,24 @@ mod tests {
             assert_eq!(fe.plan().content(), expected, "{format:?} {style}");
         }
 
+        let tagged = "run(\"uses: o/p@v4.0.0 # v4.0.0 keep\");\n";
+        let [loc] = SourceFormat::Text
+            .extract_uses(tagged)
+            .try_into()
+            .map_err(|_| "one `uses:`")?;
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            tagged.to_string(),
+            SourceFormat::Text,
+        );
+        let edit =
+            retarget_edit(&fe.writable(&loc), false, &target, Style::Preserve).ok_or("no edit")?;
+        fe.add(edit, ());
+        assert_eq!(
+            fe.plan().content(),
+            "run(\"uses: o/p@v4.2.0 # v4.0.0 keep\");\n"
+        );
+
         let fresh = "run(\"uses: o/p@v4.0.0\");\n";
         let [loc] = SourceFormat::Text
             .extract_uses(fresh)
