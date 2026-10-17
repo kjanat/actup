@@ -64,13 +64,15 @@ pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
 /// The byte offset of the first `#` in `rest` that starts a YAML comment.
 ///
 /// `rest` starts right after a ref, so a leading quote closes the value. A
-/// later quote opens a quoted scalar only where a flow scalar starts: after
-/// `{`, `[`, `,` or `:` and spaces.
+/// later quote opens a quoted scalar only where a node starts: after `{`,
+/// `[`, `,`, `:` or a `?` key indicator, and after the `!tag` and `&anchor`
+/// properties of that node.
 fn comment_start(rest: &str) -> usize {
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut after_space = false;
-    let mut last = None;
+    let mut node = false;
+    let mut property = Property::None;
     let mut chars = rest.char_indices().peekable();
     while let Some((i, c)) = chars.next() {
         match quote {
@@ -79,18 +81,51 @@ fn comment_start(rest: &str) -> usize {
             Some('"') if c == '\\' => escaped = true,
             Some('\'') if c == '\'' && chars.next_if(|&(_, n)| n == '\'').is_some() => {}
             Some(q) if c == q => quote = None,
+            Some(_) => {}
             None if c == '#' && after_space => return i,
-            None if matches!(c, '"' | '\'') && matches!(last, Some('{' | '[' | ',' | ':')) => {
-                quote = Some(c);
+            None => {
+                property = match property {
+                    Property::Verbatim if c == '>' => Property::Token,
+                    Property::Verbatim => Property::Verbatim,
+                    Property::Token if !c.is_whitespace() && !is_flow_indicator(c) => {
+                        Property::Token
+                    }
+                    Property::Token | Property::None if c.is_whitespace() => Property::None,
+                    Property::Token | Property::None if node && matches!(c, '"' | '\'') => {
+                        quote = Some(c);
+                        node = false;
+                        Property::None
+                    }
+                    Property::Token | Property::None if node && c == '!' => {
+                        if chars.next_if(|&(_, n)| n == '<').is_some() {
+                            Property::Verbatim
+                        } else {
+                            Property::Token
+                        }
+                    }
+                    Property::Token | Property::None if node && c == '&' => Property::Token,
+                    Property::Token | Property::None if node && c == '?' => Property::None,
+                    Property::Token | Property::None => {
+                        node = matches!(c, '{' | '[' | ',' | ':');
+                        Property::None
+                    }
+                };
             }
-            Some(_) | None => {}
         }
         after_space = c.is_whitespace();
-        if !after_space {
-            last = Some(c);
-        }
     }
     rest.len()
+}
+
+#[derive(Clone, Copy)]
+enum Property {
+    None,
+    Token,
+    Verbatim,
+}
+
+const fn is_flow_indicator(c: char) -> bool {
+    matches!(c, ',' | '{' | '}' | '[' | ']')
 }
 
 /// Whether a line fragment is a version comment like `# v1.2.3` or `# 1.2 note`.
@@ -635,6 +670,36 @@ mod tests {
             (
                 "  - { uses: a/b@v1, with: { b: 'it''s # x' } } # v1.0.0",
                 ", with: { b: 'it''s # x' } } ",
+                VERSION,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: !!str 'x # v9' } }",
+                ", with: { b: !!str 'x # v9' } }",
+                Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: &a 'x # v9' } }",
+                ", with: { b: &a 'x # v9' } }",
+                Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { ? 'x # v9' : y } }",
+                ", with: { ? 'x # v9' : y } }",
+                Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: !<tag:yaml.org,2002:str> 'x # v9' } }",
+                ", with: { b: !<tag:yaml.org,2002:str> 'x # v9' } }",
+                Trailing::Foreign,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: &a !!str \"x # v9\" } } # v1.0.0",
+                ", with: { b: &a !!str \"x # v9\" } } ",
+                VERSION,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { b: x!'y } } # v1.0.0",
+                ", with: { b: x!'y } } ",
                 VERSION,
             ),
         ] {

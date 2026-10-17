@@ -1790,7 +1790,7 @@ mod tests {
     {
         let old = "a".repeat(40);
         let text = format!(
-            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n  - {{ uses: o/k@{old}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{old}, with: {{ x: 1 }} }} # v1.0.0\n  - {{ uses: o/m@{old}, with: {{ msg: it's }} }} # v1.0.0\n  - {{ uses: o/n@{old}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{old}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{old}, with: {{ b: 'it''s # x' }} }} # v1.0.0\n"
+            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n  - {{ uses: o/k@{old}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{old}, with: {{ x: 1 }} }} # v1.0.0\n  - {{ uses: o/m@{old}, with: {{ msg: it's }} }} # v1.0.0\n  - {{ uses: o/n@{old}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{old}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{old}, with: {{ b: 'it''s # x' }} }} # v1.0.0\n  - {{ uses: o/r@{old}, with: {{ b: !!str 'x # v9' }} }}\n  - {{ uses: o/w@main, with: {{ b: &a 'x # v9' }} }}\n  - {{ uses: o/x@{old}, with: {{ ? 'x # v9' : y }} }}\n  - {{ uses: o/y@{old}, with: {{ b: &a !!str \"x # v9\" }} }} # v1.0.0\n"
         );
         let new = test_utils::make_version_info("v1.2.0", &"b".repeat(40));
         let mut versions = actup_core::version::Set::build(
@@ -1806,7 +1806,8 @@ mod tests {
         versions.set_other_tags(HashMap::from([("nightly".to_string(), "d".repeat(40))]));
         let mut provider = test_utils::MockProvider::new("github.com");
         for repo in [
-            "b", "t", "s", "u", "f", "g", "h", "i", "k", "l", "m", "n", "p", "q",
+            "b", "t", "s", "u", "f", "g", "h", "i", "k", "l", "m", "n", "p", "q", "r", "w", "x",
+            "y",
         ] {
             provider = provider.with_versions("o", repo, versions.clone());
         }
@@ -1837,7 +1838,7 @@ mod tests {
         assert_eq!(
             fixed,
             format!(
-                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n  - {{ uses: o/k@{b}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{b}, with: {{ x: 1 }} }} # v1.2.0\n  - {{ uses: o/m@{b}, with: {{ msg: it's }} }} # v1.2.0\n  - {{ uses: o/n@{b}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{b}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{b}, with: {{ b: 'it''s # x' }} }} # v1.2.0\n",
+                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n  - {{ uses: o/k@{b}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{b}, with: {{ x: 1 }} }} # v1.2.0\n  - {{ uses: o/m@{b}, with: {{ msg: it's }} }} # v1.2.0\n  - {{ uses: o/n@{b}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{b}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{b}, with: {{ b: 'it''s # x' }} }} # v1.2.0\n  - {{ uses: o/r@{b}, with: {{ b: !!str 'x # v9' }} }}\n  - {{ uses: o/w@{c}, with: {{ b: &a 'x # v9' }} }}\n  - {{ uses: o/x@{b}, with: {{ ? 'x # v9' : y }} }}\n  - {{ uses: o/y@{b}, with: {{ b: &a !!str \"x # v9\" }} }} # v1.2.0\n",
                 b = "b".repeat(40),
                 c = "c".repeat(40),
                 d = "d".repeat(40),
