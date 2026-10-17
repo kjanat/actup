@@ -12,10 +12,8 @@ use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
-    common::{
-        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_ignored,
-        report_skipped, report_unserved,
-    },
+    common::{Change, EditResult, WorkflowScanner, commit_file, report_error, report_skipped},
+    scan::{Scan, versions_for},
 };
 
 fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
@@ -76,30 +74,20 @@ async fn edit(
     }
 
     let mut result = EditResult::default();
+    let scan = Scan::collect(&scanner, &discovered, &mut result.errors);
+    let versions = scan.fetch(&scanner, config, registry, |_| true).await;
 
-    for file in &discovered {
-        let Some(content) = scanner.read_file(file, &mut result.errors) else {
-            continue;
-        };
+    for (index, file) in scan.files.iter().enumerate() {
+        let relative = &file.relative;
+        let mut file_edits = FileEdits::new(file.path.clone(), file.content.clone(), file.format);
 
-        let relative = scanner.relative_path(file);
-        let mut file_edits =
-            FileEdits::new(file.path().to_path_buf(), content.clone(), file.format());
-
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, file.format()) {
-            let loc = file_edits.writable(&loc);
-            let Some(provider) = scanner.provider_for(&action_ref) else {
-                report_unserved(&scanner, &relative, loc.line(), &action_ref, &mut result);
+        for scanned in scan.refs_in(index) {
+            let Some((provider, site)) = scanner.editable(file, scanned, &mut result) else {
                 continue;
             };
-
-            let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
-            if config.should_ignore(&action_ref) {
-                report_ignored(site, &mut result);
-                continue;
-            }
-            let repo_id = action_ref.to_repo_id().without_subpath();
-            let versions = match provider.get_versions(&repo_id).await {
+            let loc = file_edits.writable(&scanned.loc);
+            let (loc, action_ref) = (&loc, &scanned.action_ref);
+            let versions = match versions_for(&versions, &scanned.repo_id) {
                 Ok(v) => v,
                 Err(e) => {
                     report_error(site, &e, &mut result);
@@ -108,17 +96,17 @@ async fn edit(
             };
 
             // Use core check_action to determine if update needed
-            let check = check_action_with_provider(&action_ref, &versions, config, provider).await;
-            let style = config.policy_for(&action_ref).pin;
+            let check = check_action_with_provider(action_ref, versions, config, provider).await;
+            let style = config.policy_for(action_ref).pin;
             let (edit, new_ref, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
-                    retarget_edit(&loc, action_ref.is_sha(), target, style),
-                    new_ref(&action_ref, target, style),
-                    target_display(&action_ref, target, style),
+                    retarget_edit(loc, action_ref.is_sha(), target, style),
+                    new_ref(action_ref, target, style),
+                    target_display(action_ref, target, style),
                     false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
-                    pin_branch_edit(&loc, ref_name, sha),
+                    pin_branch_edit(loc, ref_name, sha),
                     sha.clone(),
                     sha[..7.min(sha.len())].to_string(),
                     true,
@@ -142,7 +130,7 @@ async fn edit(
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
-                    sanitize_for_terminal(&relative),
+                    sanitize_for_terminal(relative),
                     change.site.line,
                     sanitize_for_terminal(&change.site.reference).red(),
                     sanitize_for_terminal(&change.written(comment.as_deref())).green()
@@ -169,6 +157,16 @@ mod tests {
         cli::CliExitCode,
         common::{ErrorKind, SkipCause},
     };
+
+    fn uncached() -> Config {
+        Config {
+            cache: actup_core::config::Cache {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
 
     struct TagProvider {
         latest: &'static str,
@@ -264,7 +262,7 @@ mod tests {
             dir.path(),
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &registry("v4.2.0"),
         )
         .await;
@@ -311,7 +309,7 @@ mod tests {
             dir.path(),
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &registry,
         )
         .await
@@ -375,7 +373,7 @@ mod tests {
         .replace("NEW", &sha40('b'));
         std::fs::write(&file, &content)?;
         let registry = registry("v4.10.1");
-        let config = Config::default();
+        let config = uncached();
 
         let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
         assert_eq!(code, i32::from(CliExitCode::Success));
@@ -397,7 +395,10 @@ mod tests {
         let file = workflows.join("ci.yml");
         std::fs::write(&file, content)?;
         let config = Config::from_contents(
-            Some((Path::new("actup.toml"), toml)),
+            Some((
+                Path::new("actup.toml"),
+                &format!("{toml}\n[cache]\nenabled = false\n"),
+            )),
             actup_core::config::EnvOverrides::default(),
         )?;
         let registry = registry("v4.2.0");
@@ -565,7 +566,7 @@ mod tests {
         let file = workflows.join("ci.yml");
         std::fs::write(&file, content)?;
         let registry = registry("v4.2.0");
-        let config = Config::default();
+        let config = uncached();
 
         for _ in 0..2 {
             let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
@@ -608,7 +609,7 @@ mod tests {
             dir.path(),
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &registry("v4.2.0"),
         )
         .await
@@ -675,7 +676,7 @@ mod tests {
         let ts = "const workflow = `\n  - uses: o/p@OLD # v4.0.0\n  - uses: actions/checkout@v4.0.0\n`;\nexport const step = { uses: \"o/r@v4.0.0\" };\n";
         std::fs::write(&readme, md.replace("OLD", &sha40('a')))?;
         std::fs::write(&script, ts.replace("OLD", &sha40('a')))?;
-        let mut config = Config::default();
+        let mut config = uncached();
         config.scan.extra_paths = vec!["README.md".parse()?, "playground/*.ts".parse()?];
         let registry = registry("v4.2.0");
 
@@ -702,7 +703,10 @@ mod tests {
         let content = "steps:\n  - uses: skip/a@v4.0.0\n  - uses: o/b@v4.0.0\n";
         std::fs::write(&file, content)?;
         let config = Config::from_contents(
-            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            Some((
+                Path::new("actup.toml"),
+                "[scan]\nignore = [\"skip/*\"]\n\n[cache]\nenabled = false\n",
+            )),
             actup_core::config::EnvOverrides::default(),
         )?;
 
@@ -736,7 +740,7 @@ mod tests {
     async fn test_run_without_workflows_reports_nothing_and_succeeds()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let config = Config::default();
+        let config = uncached();
         let registry = registry("v4.2.0");
         assert!(
             edit(dir.path(), false, OutputFormat::Json, &config, &registry)

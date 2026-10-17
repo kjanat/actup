@@ -97,6 +97,10 @@ least 0.9 (`v42.0` names `v4.2.0`). `check` prints the suggestion on a `hint:`
 line and adds `suggestion` to the JSON and TOML entry. The LSP offers a
 `Change to` quick fix.
 
+`check`, `update` and `pin` read every file first. They then fetch the versions
+of each repo that an unignored ref names, once per repo and in one batch through
+the version cache, before they report or edit.
+
 `update` and `pin` write each file to a temp file in its directory, flush it,
 give it the mode of the original and rename it over the original. A failed write
 leaves the original intact. A write through a symlink replaces the file it

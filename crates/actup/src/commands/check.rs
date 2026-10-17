@@ -1,19 +1,17 @@
 //! Check command - scan workflows and report outdated actions
 
-use std::{collections::HashMap, path::Path, sync::Arc};
+use std::path::Path;
 
 use actup_core::{
     ActionRef, ActionRepoId, CheckResult, CheckStatus, Config, NO_VERSIONS_FOUND_REASON,
     check_action_with_provider, provider, version,
 };
-use itertools::Itertools;
-use tracing::debug;
 
 use crate::{
     cli::OutputFormat,
     common::{ErrorTally, WorkflowScanner},
-    file_cache::FileCache,
     output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary},
+    scan::{Scan, Versions},
 };
 
 /// Convert core [`CheckStatus`] to CLI [`FindingStatus`].
@@ -141,8 +139,9 @@ pub async fn run(
     let mut findings = Vec::new();
     let mut io_errors = ErrorTally::default();
 
-    let collected = collect_actions(&scanner, &discovered, &mut io_errors, &mut findings);
-    let versions_map = fetch_versions_for_actions(&collected, config, registry).await;
+    let scan = Scan::collect(&scanner, &discovered, &mut io_errors);
+    let versions_map = scan.fetch(&scanner, config, registry, |_| true).await;
+    let collected = collect_actions(&scanner, &scan, config, &mut findings);
     let unresolved =
         process_collected_actions(collected, &versions_map, config, registry, &mut findings).await;
     resolve_fallback_refs(unresolved, registry, &mut findings).await;
@@ -165,78 +164,59 @@ pub async fn run(
     determine_exit_code(&findings, strict)
 }
 
-/// Phase 1 — walk discovered files, emit immediate "no provider" findings,
-/// and collect the remainder for batch fetching.
+/// Phases 1 and 2 run in [`Scan::collect`] and [`Scan::fetch`]. Emit
+/// immediate "no provider" and ignored findings, and collect the remaining
+/// scanned refs for Phase 3.
 fn collect_actions(
     scanner: &WorkflowScanner<'_>,
-    discovered: &[actup_core::DiscoveredFile],
-    io_errors: &mut ErrorTally,
+    scan: &Scan,
+    config: &Config,
     findings: &mut Vec<Finding>,
 ) -> Vec<CollectedAction> {
     let mut collected = Vec::new();
-    for file in discovered {
-        let Some(content) = scanner.read_file(file, io_errors) else {
+    for scanned in &scan.refs {
+        let relative = &scan.files[scanned.file].relative;
+        let action_ref = &scanned.action_ref;
+        // No provider configured for the ref's host is an environment
+        // error: emit immediately so it doesn't block batch fetching.
+        let Some(provider) = scanner.provider_for(action_ref) else {
+            let host = scanner.host_for(action_ref);
+            findings.push(Finding::new(
+                relative.clone(),
+                scanned.loc.line(),
+                action_ref.clone(),
+                FindingStatus::Unresolvable {
+                    reason: format!("no provider for host: {host}"),
+                    is_environment_error: true,
+                },
+                "unknown".to_string(),
+                host,
+            ));
             continue;
         };
-        let relative = scanner.relative_path(file);
 
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, file.format()) {
-            // No provider configured for the ref's host is an environment
-            // error: emit immediately so it doesn't block batch fetching.
-            let Some(provider) = scanner.provider_for(&action_ref) else {
-                let host = scanner.host_for(&action_ref);
-                findings.push(Finding::new(
-                    relative.clone(),
-                    loc.line(),
-                    action_ref.clone(),
-                    FindingStatus::Unresolvable {
-                        reason: format!("no provider for host: {host}"),
-                        is_environment_error: true,
-                    },
-                    "unknown".to_string(),
-                    host,
-                ));
-                continue;
-            };
-
-            let repo_id = action_ref.to_repo_id().without_subpath();
-            collected.push(CollectedAction {
-                file: relative.clone(),
-                line: loc.line(),
-                action_ref,
-                repo_id,
-                provider: provider.kind().to_string(),
-                host: provider.host().to_string(),
-            });
+        if config.should_ignore(action_ref) {
+            findings.push(Finding::new(
+                relative.clone(),
+                scanned.loc.line(),
+                action_ref.clone(),
+                FindingStatus::Ignored,
+                provider.kind().to_string(),
+                provider.host().to_string(),
+            ));
+            continue;
         }
+
+        collected.push(CollectedAction {
+            file: relative.clone(),
+            line: scanned.loc.line(),
+            action_ref: action_ref.clone(),
+            repo_id: scanned.repo_id.clone(),
+            provider: provider.kind().to_string(),
+            host: provider.host().to_string(),
+        });
     }
     collected
-}
-
-/// Phase 2 — one batched version fetch covering every unique repo referenced
-/// by the collected actions. Returns an empty map if nothing was collected.
-async fn fetch_versions_for_actions(
-    collected: &[CollectedAction],
-    config: &Config,
-    registry: &provider::Registry,
-) -> HashMap<ActionRepoId, Result<version::Set, actup_core::Error>> {
-    if collected.is_empty() {
-        return HashMap::new();
-    }
-
-    let unique_repos: Vec<ActionRepoId> = collected
-        .iter()
-        .map(|c| c.repo_id.clone())
-        .unique()
-        .collect();
-
-    debug!(
-        total_actions = collected.len(),
-        unique_repos = unique_repos.len(),
-        "batch fetching versions"
-    );
-
-    batch_fetch_versions(&unique_repos, config, registry).await
 }
 
 /// Phase 3 — check each action against the batch-fetched versions.
@@ -246,7 +226,7 @@ async fn fetch_versions_for_actions(
 /// pushed straight into `findings`.
 async fn process_collected_actions(
     collected: Vec<CollectedAction>,
-    versions_map: &HashMap<ActionRepoId, Result<version::Set, actup_core::Error>>,
+    versions_map: &Versions,
     config: &Config,
     registry: &provider::Registry,
     findings: &mut Vec<Finding>,
@@ -330,28 +310,6 @@ async fn resolve_fallback_refs(
         }
         findings.push(finding);
     }
-}
-
-/// Batch fetch versions for all repos using the registry's providers.
-///
-/// Returns a map of repo IDs to either successful version sets or errors.
-/// Uses parallel fetching with file-based caching for performance.
-async fn batch_fetch_versions(
-    repos: &[ActionRepoId],
-    config: &Config,
-    registry: &provider::Registry,
-) -> HashMap<ActionRepoId, Result<version::Set, actup_core::Error>> {
-    // Create file cache based on config
-    let cache = Arc::new(if config.cache.enabled {
-        config.cache.path.as_ref().map_or_else(
-            || FileCache::new(config.cache.ttl),
-            |path| FileCache::with_path(path.clone(), config.cache.ttl),
-        )
-    } else {
-        FileCache::disabled()
-    });
-
-    actup_provider_github::fetch_versions_with_registry(repos, config, registry, cache).await
 }
 
 // Tests for check command logic now live in actup-core::resolution module.
@@ -1130,27 +1088,39 @@ mod tests {
         std::fs::create_dir_all(&workflows)?;
         std::fs::write(
             workflows.join("ci.yml"),
-            "steps:\n  - uses: actions/checkout@v4\n  - uses: ghe.corp.example/o/r@v1\n",
+            "steps:\n  - uses: actions/checkout@v4\n  - uses: ghe.corp.example/o/r@v1\n  - uses: skip/me@v1\n",
         )?;
-        let config = Config::default();
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            actup_core::config::EnvOverrides::default(),
+        )?;
         let registry = test_registry();
         let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
-        let discovered = scanner.discover();
         let mut io_errors = ErrorTally::default();
+        let scan = Scan::collect(&scanner, &scanner.discover(), &mut io_errors);
         let mut findings = Vec::new();
 
-        let collected = collect_actions(&scanner, &discovered, &mut io_errors, &mut findings);
+        let collected = collect_actions(&scanner, &scan, &config, &mut findings);
 
         let hosts: Vec<(&str, &str)> = collected
             .iter()
             .map(|c| (c.action_ref.repo(), c.host.as_str()))
             .collect();
         assert_eq!(hosts, [("checkout", "github.com")]);
-        let unresolved: Vec<(&str, &str)> = findings
+        let immediate: Vec<(&str, &str, bool)> = findings
             .iter()
-            .map(|f| (f.action_ref().repo(), f.host()))
+            .map(|f| {
+                (
+                    f.action_ref().repo(),
+                    f.host(),
+                    matches!(f.status(), FindingStatus::Ignored),
+                )
+            })
             .collect();
-        assert_eq!(unresolved, [("r", "ghe.corp.example")]);
+        assert_eq!(
+            immediate,
+            [("r", "ghe.corp.example", false), ("me", "github.com", true)]
+        );
         Ok(())
     }
 
@@ -1171,11 +1141,11 @@ mod tests {
         config.scan.extra_paths = vec!["README.md".parse()?, "playground/*.ts".parse()?];
         let registry = test_registry();
         let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
-        let discovered = scanner.discover();
         let mut io_errors = ErrorTally::default();
+        let scan = Scan::collect(&scanner, &scanner.discover(), &mut io_errors);
         let mut findings = Vec::new();
 
-        let collected = collect_actions(&scanner, &discovered, &mut io_errors, &mut findings);
+        let collected = collect_actions(&scanner, &scan, &config, &mut findings);
 
         let refs: Vec<(&str, usize, &str)> = collected
             .iter()
@@ -1233,19 +1203,5 @@ mod tests {
             }
             _ => panic!("expected Unknown status"),
         }
-    }
-
-    /// Test that `batch_fetch_versions` returns empty map for empty input.
-    #[tokio::test]
-    async fn test_batch_fetch_versions_empty_input() {
-        use actup_core::provider;
-
-        let config = Config::default();
-        let registry = provider::Registry::new();
-
-        let repos: Vec<ActionRepoId> = vec![];
-        let results = batch_fetch_versions(&repos, &config, &registry).await;
-
-        assert!(results.is_empty());
     }
 }

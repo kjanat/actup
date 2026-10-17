@@ -7,6 +7,7 @@ mod commands;
 mod common;
 mod file_cache;
 mod output;
+mod scan;
 
 use anstream::{eprintln, println};
 use std::process::ExitCode;

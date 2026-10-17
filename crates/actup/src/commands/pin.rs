@@ -1,23 +1,23 @@
 //! Pin command - pin all actions to their current SHA
 
 use anstream::println;
-use std::{path::Path, sync::Arc};
+use std::{ops::Range, path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
     patch::{FileEdits, PendingEdit, SkipReason, repin_sha_edit},
     provider,
     rewrite::{PinMarker, Rewrite},
-    sanitize_for_terminal,
+    sanitize_for_terminal, version,
 };
 use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_ignored,
-        report_skipped, report_unserved,
+        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_skipped,
     },
+    scan::{Scan, versions_for},
 };
 
 /// The commit a ref pins to.
@@ -33,14 +33,13 @@ enum PinTarget {
 
 /// Resolve the SHA for an action reference.
 ///
-/// First tries to find it in the version list, then falls back to resolving the ref directly.
+/// First tries to find it in `versions`, then falls back to resolving the ref directly.
 async fn resolve_sha(
     provider: &dyn actup_core::Provider,
     action_ref: &ActionRef,
+    versions: &version::Set,
 ) -> actup_core::Result<PinTarget> {
     let repo_id = action_ref.to_repo_id().without_subpath();
-
-    let versions = provider.get_versions(&repo_id).await?;
 
     // Find version matching current ref
     if let Some(v) = versions
@@ -102,16 +101,12 @@ async fn pin_action_edit(
     provider: &dyn actup_core::Provider,
     action_ref: &ActionRef,
     loc: &UsesLocation,
+    versions: &version::Set,
     config: &Config,
     site: &RefSite,
 ) -> PinStep {
     if action_ref.is_sha() {
-        let repo_id = action_ref.to_repo_id().without_subpath();
-        let versions = match provider.get_versions(&repo_id).await {
-            Ok(v) => v,
-            Err(e) => return PinStep::Failed(e),
-        };
-        let result = check_action_with_provider(action_ref, &versions, config, provider).await;
+        let result = check_action_with_provider(action_ref, versions, config, provider).await;
         let CheckStatus::Outdated { target, .. } = result.status() else {
             return PinStep::Nothing;
         };
@@ -131,7 +126,7 @@ async fn pin_action_edit(
         else {
             return PinStep::Unplaceable;
         };
-        let pin = match resolve_sha(provider, action_ref).await {
+        let pin = match resolve_sha(provider, action_ref, versions).await {
             Ok(pin) => pin,
             Err(e) => return PinStep::Failed(e),
         };
@@ -168,37 +163,43 @@ async fn pin_action_edit(
     }
 }
 
+/// The ref range, the value before `@` and the line after the ref of a SHA pin followed by a pin marker.
+fn marked_pin<'a>(
+    action_ref: &ActionRef,
+    loc: &'a UsesLocation,
+) -> Option<(Range<usize>, &'a str, &'a str)> {
+    if !action_ref.is_sha() {
+        return None;
+    }
+    let (Some(range), Some((prefix, _))) = (loc.ref_range(), loc.value().split_once('@')) else {
+        return None;
+    };
+    let tail = loc.raw_line().get(range.end..).unwrap_or("");
+    PinMarker::parse(tail).map(|_| (range, prefix, tail))
+}
+
 /// Build the unpin step for one action.
 ///
 /// Only a SHA pin followed by a pin marker naming a fetched tag on the pinned
 /// commit is rewritten. The marker's note stays as the comment.
-async fn unpin_action_edit(
-    provider: &dyn actup_core::Provider,
+fn unpin_action_edit(
     action_ref: &ActionRef,
     loc: &UsesLocation,
+    versions: &version::Set,
     site: &RefSite,
 ) -> PinStep {
-    if !action_ref.is_sha() {
-        return PinStep::Nothing;
-    }
-    let (Some(range), Some((prefix, _))) = (loc.ref_range(), loc.value().split_once('@')) else {
+    let Some((range, prefix, tail)) = marked_pin(action_ref, loc) else {
         return PinStep::Nothing;
     };
-    let raw = loc.raw_line();
-    let tail = raw.get(range.end..).unwrap_or("");
-    if PinMarker::parse(tail).is_none() {
-        return PinStep::Nothing;
-    }
-    let repo_id = action_ref.to_repo_id().without_subpath();
-    let versions = match provider.get_versions(&repo_id).await {
-        Ok(v) => v,
-        Err(e) => return PinStep::Failed(e),
-    };
-    let Some(marker) = PinMarker::unpinnable(action_ref.ref_str(), tail, &versions) else {
+    let Some(marker) = PinMarker::unpinnable(action_ref.ref_str(), tail, versions) else {
         return PinStep::Nothing;
     };
     let rewrite = Rewrite::unpin(marker);
-    let edit = PendingEdit::replace_range(loc.line(), range.start..raw.len(), rewrite.text());
+    let edit = PendingEdit::replace_range(
+        loc.line(),
+        range.start..loc.raw_line().len(),
+        rewrite.text(),
+    );
     let change = Change {
         site: site.clone(),
         target: format!("{prefix}@{}", rewrite.text()),
@@ -246,31 +247,42 @@ async fn edit(
     }
 
     let mut result = EditResult::default();
+    let scan = Scan::collect(&scanner, &discovered, &mut result.errors);
+    let wanted = |action_ref: &ActionRef, loc: &UsesLocation| match mode {
+        Mode::Pin => true,
+        Mode::Unpin => marked_pin(action_ref, loc).is_some(),
+    };
+    let versions = scan
+        .fetch(&scanner, config, registry, |r| {
+            wanted(&r.action_ref, &r.loc)
+        })
+        .await;
 
-    for file in &discovered {
-        let Some(content) = scanner.read_file(file, &mut result.errors) else {
-            continue;
-        };
+    for (index, file) in scan.files.iter().enumerate() {
+        let relative = &file.relative;
+        let mut file_edits = FileEdits::new(file.path.clone(), file.content.clone(), file.format);
 
-        let relative = scanner.relative_path(file);
-        let mut file_edits =
-            FileEdits::new(file.path().to_path_buf(), content.clone(), file.format());
-
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, file.format()) {
-            let loc = file_edits.writable(&loc);
-            let Some(provider) = scanner.provider_for(&action_ref) else {
-                report_unserved(&scanner, &relative, loc.line(), &action_ref, &mut result);
+        for scanned in scan.refs_in(index) {
+            let Some((provider, site)) = scanner.editable(file, scanned, &mut result) else {
                 continue;
             };
-
-            let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
-            if config.should_ignore(&action_ref) {
-                report_ignored(site, &mut result);
+            let loc = file_edits.writable(&scanned.loc);
+            let (loc, action_ref) = (&loc, &scanned.action_ref);
+            if !wanted(action_ref, loc) {
                 continue;
             }
+            let versions = match versions_for(&versions, &scanned.repo_id) {
+                Ok(v) => v,
+                Err(e) => {
+                    report_error(site, &e, &mut result);
+                    continue;
+                }
+            };
             let step = match mode {
-                Mode::Pin => pin_action_edit(provider, &action_ref, &loc, config, &site).await,
-                Mode::Unpin => unpin_action_edit(provider, &action_ref, &loc, &site).await,
+                Mode::Pin => {
+                    pin_action_edit(provider, action_ref, loc, versions, config, &site).await
+                }
+                Mode::Unpin => unpin_action_edit(action_ref, loc, versions, &site),
             };
             match step {
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
@@ -284,7 +296,7 @@ async fn edit(
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
-                    sanitize_for_terminal(&relative),
+                    sanitize_for_terminal(relative),
                     change.site.line,
                     sanitize_for_terminal(&change.site.action).yellow(),
                     sanitize_for_terminal(&change.written(comment.as_deref())).cyan()
@@ -311,6 +323,16 @@ mod tests {
         cli::CliExitCode,
         common::{ErrorKind, SkipCause},
     };
+
+    fn uncached() -> Config {
+        Config {
+            cache: actup_core::config::Cache {
+                enabled: false,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
 
     struct FixedShaProvider {
         sha: Sha40,
@@ -481,7 +503,7 @@ mod tests {
             Mode::Pin,
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &registry,
         )
         .await
@@ -547,7 +569,7 @@ mod tests {
         .replace("111", &sha('1'));
         let file = workflow(dir.path(), &content)?;
         let registry = repo_sha_registry();
-        let config = Config::default();
+        let config = uncached();
 
         let code = run(
             dir.path(),
@@ -580,7 +602,7 @@ mod tests {
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let registry = repo_sha_registry();
-        let config = Config::default();
+        let config = uncached();
         let cases = [
             (
                 "usage.md",
@@ -626,7 +648,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let file = workflow(dir.path(), content)?;
         let registry = repo_sha_registry();
-        let config = Config::default();
+        let config = uncached();
 
         for _ in 0..2 {
             let code = run(
@@ -679,7 +701,7 @@ mod tests {
             Mode::Pin,
             true,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &repo_sha_registry(),
         )
         .await
@@ -725,7 +747,7 @@ mod tests {
     async fn test_run_without_workflows_reports_nothing_and_succeeds()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
-        let config = Config::default();
+        let config = uncached();
         let registry = repo_sha_registry();
         assert!(
             edit(
@@ -760,7 +782,7 @@ mod tests {
             Mode::Pin,
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &repo_sha_registry(),
         )
         .await;
@@ -799,7 +821,7 @@ mod tests {
         .join("\n")
         .replace("SHA", &sha);
 
-        let config = Config::default();
+        let config = uncached();
         let mut file_edits = FileEdits::new(
             std::path::PathBuf::from("/pages.yml"),
             content.clone(),
@@ -812,6 +834,7 @@ mod tests {
                 &provider,
                 &action_ref,
                 &loc,
+                &provider.versions,
                 &config,
                 &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
             )
@@ -842,7 +865,7 @@ mod tests {
         };
         let content = "steps:\n  - uses: GitHub.COM/actions/checkout@v4\n".to_string();
 
-        let config = Config::default();
+        let config = uncached();
         let mut file_edits = FileEdits::new(
             std::path::PathBuf::from("/ci.yml"),
             content.clone(),
@@ -855,6 +878,7 @@ mod tests {
                 &provider,
                 &action_ref,
                 &loc,
+                &provider.versions,
                 &config,
                 &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
             )
@@ -907,7 +931,7 @@ mod tests {
             &old[1..]
         );
 
-        let config = Config::default();
+        let config = uncached();
         let mut refs = Vec::new();
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             refs.push(action_ref.to_string());
@@ -915,6 +939,7 @@ mod tests {
                 &provider,
                 &action_ref,
                 &loc,
+                &provider.versions,
                 &config,
                 &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
             )
@@ -966,7 +991,8 @@ mod tests {
                 &provider,
                 &action_ref,
                 &loc,
-                &Config::default(),
+                &provider.versions,
+                &uncached(),
                 &RefSite::new("ci.yml", loc.line(), &action_ref, &provider),
             )
             .await
@@ -1010,8 +1036,15 @@ mod tests {
         let (loc, action_ref) =
             WorkflowScanner::extract_actions(&content, SourceFormat::Yaml).next()?;
         let site = RefSite::new("ci.yml", loc.line(), &action_ref, provider);
-        let PinStep::Edit(edit, change) =
-            pin_action_edit(provider, &action_ref, &loc, &Config::default(), &site).await
+        let PinStep::Edit(edit, change) = pin_action_edit(
+            provider,
+            &action_ref,
+            &loc,
+            &provider.versions,
+            &uncached(),
+            &site,
+        )
+        .await
         else {
             return None;
         };
@@ -1148,7 +1181,10 @@ mod tests {
             );
         let file = workflow(dir.path(), &content)?;
         let config = Config::from_contents(
-            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            Some((
+                Path::new("actup.toml"),
+                "[scan]\nignore = [\"skip/*\"]\n\n[cache]\nenabled = false\n",
+            )),
             actup_core::config::EnvOverrides::default(),
         )?;
         let registry = unpin_registry()?;
@@ -1272,7 +1308,7 @@ mod tests {
             Mode::Unpin,
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &registry,
         )
         .await
@@ -1312,7 +1348,7 @@ mod tests {
             Mode::Unpin,
             false,
             OutputFormat::Json,
-            &Config::default(),
+            &uncached(),
             &registry,
         )
         .await
@@ -1350,7 +1386,10 @@ mod tests {
         let expected = content.replace("o/kept@v4.1.0", &format!("o/kept@{} # v4.1.0", sha('a')));
         let file = workflow(dir.path(), &content)?;
         let config = Config::from_contents(
-            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            Some((
+                Path::new("actup.toml"),
+                "[scan]\nignore = [\"skip/*\"]\n\n[cache]\nenabled = false\n",
+            )),
             actup_core::config::EnvOverrides::default(),
         )?;
         let registry = unpin_registry()?;
@@ -1405,6 +1444,91 @@ mod tests {
         Ok(())
     }
 
+    struct UnfetchableProvider;
+
+    impl Provider for UnfetchableProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            panic!("fetched {}", repo.repo());
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            panic!("resolved {}", repo.repo());
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unpin_fetches_nothing_without_a_marked_pin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        workflow(
+            dir.path(),
+            &format!(
+                "steps:\n  - uses: o/a@v4 # v4\n  - uses: o/b@{}\n  - uses: o/c@{} # mine\n",
+                sha('a'),
+                sha('b')
+            ),
+        )?;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(UnfetchableProvider));
+
+        let Some(result) = edit(
+            dir.path(),
+            Mode::Unpin,
+            false,
+            OutputFormat::Json,
+            &uncached(),
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        assert_eq!(result.edited, []);
+        assert_eq!(result.errored, []);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_unpin_dry_run_reports_without_writing() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -1418,7 +1542,7 @@ mod tests {
             Mode::Unpin,
             true,
             OutputFormat::Human,
-            &Config::default(),
+            &uncached(),
             &registry,
         )
         .await;

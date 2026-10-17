@@ -15,7 +15,10 @@ use actup_core::{
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CliExitCode, OutputFormat};
+use crate::{
+    cli::{CliExitCode, OutputFormat},
+    scan::{ScannedFile, ScannedRef},
+};
 
 // ErrorTally - centralized error counting and exit code determination
 
@@ -544,6 +547,26 @@ impl<'a> WorkflowScanner<'a> {
     #[must_use]
     pub fn provider_for(&self, action: &ActionRef) -> Option<&dyn Provider> {
         self.registry.find(action.host())
+    }
+
+    /// The provider serving `scanned` and its site in `file`, or `None` after recording it in `result` as unserved or ignored.
+    pub fn editable(
+        &self,
+        file: &ScannedFile,
+        scanned: &ScannedRef,
+        result: &mut EditResult,
+    ) -> Option<(&dyn Provider, RefSite)> {
+        let line = scanned.loc.line();
+        let Some(provider) = self.provider_for(&scanned.action_ref) else {
+            report_unserved(self, &file.relative, line, &scanned.action_ref, result);
+            return None;
+        };
+        let site = RefSite::new(&file.relative, line, &scanned.action_ref, provider);
+        if self.config.should_ignore(&scanned.action_ref) {
+            report_ignored(site, result);
+            return None;
+        }
+        Some((provider, site))
     }
 
     /// The host an action resolves to: its written host, else the default host, else `github.com`.

@@ -12,6 +12,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 | `output.rs`     | Human/JSON formatting, colors            | `OutputFormat`, print helpers     |
 | `common.rs`     | Shared command logic, result aggregation | `process_files`, `aggregate`      |
 | `file_cache.rs` | File-based cache storage                 | `FileCache`, TTL handling         |
+| `scan.rs`       | Read files, batch-fetch versions once    | `Scan`, `Scan::fetch`             |
 
 ## Commands
 
