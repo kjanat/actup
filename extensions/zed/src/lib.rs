@@ -479,10 +479,16 @@ fn config_path_option(options: &zed::serde_json::Value) -> Option<String> {
     (!path.trim().is_empty()).then(|| path.to_owned())
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PathStyle {
     Posix,
     Windows,
+}
+
+enum Anchor<'a> {
+    Relative,
+    Rooted,
+    Prefixed(Vec<&'a str>),
 }
 
 impl PathStyle {
@@ -497,69 +503,103 @@ impl PathStyle {
         c == '/' || (matches!(self, Self::Windows) && c == '\\')
     }
 
-    fn is_absolute(self, path: &str) -> bool {
-        match self {
-            Self::Posix => path.starts_with('/'),
-            Self::Windows => {
-                let bytes = path.as_bytes();
-                path.starts_with(['/', '\\'])
-                    || (bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
-            }
-        }
-    }
-
     fn same_name(self, a: &str, b: &str) -> bool {
         match self {
             Self::Posix => a == b,
-            Self::Windows => a.eq_ignore_ascii_case(b),
+            Self::Windows => a.to_lowercase() == b.to_lowercase(),
         }
     }
 
-    fn components(self, path: &str) -> Option<Vec<&str>> {
-        let mut parts = Vec::new();
+    fn same_parts(self, a: &[&str], b: &[&str]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(a, b)| self.same_name(a, b))
+    }
+
+    fn anchor(self, path: &str) -> (Anchor<'_>, &str) {
+        let bytes = path.as_bytes();
+        if self == Self::Windows && bytes.len() >= 2 {
+            if self.is_separator(char::from(bytes[0])) && self.is_separator(char::from(bytes[1])) {
+                let mut share = path[2..].splitn(3, |c| self.is_separator(c));
+                let prefix = share.by_ref().take(2).collect();
+                return (Anchor::Prefixed(prefix), share.next().unwrap_or(""));
+            }
+            if bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+                return (Anchor::Prefixed(vec![&path[..2]]), &path[2..]);
+            }
+        }
+        let anchor = if path.starts_with(|c| self.is_separator(c)) {
+            Anchor::Rooted
+        } else {
+            Anchor::Relative
+        };
+        (anchor, path)
+    }
+
+    fn push_components<'a>(self, parts: &mut Vec<&'a str>, path: &'a str) {
         for part in path.split(|c| self.is_separator(c)) {
             match part {
                 "" | "." => {}
                 ".." => {
-                    parts.pop()?;
+                    parts.pop();
                 }
                 _ => parts.push(part),
             }
         }
-        Some(parts)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct WorktreePath(String);
+struct WorktreePath {
+    style: PathStyle,
+    path: String,
+}
+
+impl WorktreePath {
+    fn names(&self, candidate: &str) -> bool {
+        let parts: Vec<&str> = self.path.split('/').collect();
+        let candidate: Vec<&str> = candidate.split('/').collect();
+        self.style.same_parts(&parts, &candidate)
+    }
+}
 
 fn worktree_relative(
     style: PathStyle,
     root: &str,
     config_path: &str,
 ) -> Result<WorktreePath, String> {
-    let outside = || format!("configPath `{config_path}` is outside the worktree `{root}`");
-    let parts = style.components(config_path).ok_or_else(outside)?;
-    let parts = if style.is_absolute(config_path) {
-        let root_parts = style.components(root).ok_or_else(outside)?;
-        let inside = parts.len() >= root_parts.len()
-            && root_parts
-                .iter()
-                .zip(&parts)
-                .all(|(root_part, part)| style.same_name(root_part, part));
-        if !inside {
-            return Err(outside());
-        }
-        parts[root_parts.len()..].to_vec()
-    } else {
-        parts
+    let (root_anchor, root_rest) = style.anchor(root);
+    let root_prefix = match root_anchor {
+        Anchor::Prefixed(prefix) => prefix,
+        Anchor::Relative | Anchor::Rooted => Vec::new(),
     };
-    if parts.is_empty() {
+    let mut root_parts = Vec::new();
+    style.push_components(&mut root_parts, root_rest);
+
+    let (anchor, rest) = style.anchor(config_path);
+    let (prefix, mut parts) = match anchor {
+        Anchor::Relative => (root_prefix.clone(), root_parts.clone()),
+        Anchor::Rooted => (root_prefix.clone(), Vec::new()),
+        Anchor::Prefixed(prefix) => (prefix, Vec::new()),
+    };
+    style.push_components(&mut parts, rest);
+
+    let inside = style.same_parts(&prefix, &root_prefix)
+        && parts.len() >= root_parts.len()
+        && style.same_parts(&parts[..root_parts.len()], &root_parts);
+    if !inside {
+        return Err(format!(
+            "configPath `{config_path}` is outside the worktree `{root}`"
+        ));
+    }
+    let relative = &parts[root_parts.len()..];
+    if relative.is_empty() {
         return Err(format!(
             "configPath `{config_path}` names the worktree root `{root}`"
         ));
     }
-    Ok(WorktreePath(parts.join("/")))
+    Ok(WorktreePath {
+        style,
+        path: relative.join("/"),
+    })
 }
 
 fn file_parts((path, contents): &(String, String)) -> (&Path, &str) {
@@ -577,9 +617,9 @@ fn read_config(
         read(&path).ok().map(|contents| (path, contents))
     });
     let (discovered, explicit) = match (found, config_path) {
-        (Some(found), Some(WorktreePath(path))) if found.0 == *path => (None, Some(found)),
+        (Some(found), Some(config_path)) if config_path.names(&found.0) => (None, Some(found)),
         (found, None) => (found, None),
-        (found, Some(WorktreePath(path))) => {
+        (found, Some(WorktreePath { path, .. })) => {
             let contents =
                 read(path).map_err(|e| format!("cannot read configPath `{path}`: {e}"))?;
             (found, Some((path.clone(), contents)))
@@ -1092,7 +1132,7 @@ mod tests {
             ),
         ]);
         let requested = RefCell::new(Vec::new());
-        let config_path = WorktreePath("ci/actup.toml".to_owned());
+        let config_path = worktree_relative(PathStyle::Posix, "/repo", "ci/actup.toml")?;
         let config = read_config(read_from(&files, &requested), &[], Some(&config_path))?;
         assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
         assert_eq!(config.policy.bump, policy::Update::Minor);
@@ -1139,65 +1179,111 @@ mod tests {
     }
 
     #[test]
-    fn worktree_relative_maps_paths_inside_the_worktree() -> Result<(), String> {
-        let cases = [
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "ci/actup.toml",
-                "ci/actup.toml",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "./ci//./actup.toml",
-                "ci/actup.toml",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "ci/../.github/actup.yaml",
-                ".github/actup.yaml",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "/home/u/repo/ci/actup.toml",
-                "ci/actup.toml",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo/",
-                "/home/u/x/../repo/actup.toml",
-                "actup.toml",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "ci\\actup.toml",
-                "ci\\actup.toml",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\Users\\u\\repo",
-                "ci\\actup.toml",
-                "ci/actup.toml",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\Users\\u\\repo",
-                "c:/users/U/Repo/ci/actup.toml",
-                "ci/actup.toml",
-            ),
-        ];
-        for (style, root, written, expected) in cases {
+    fn read_config_matches_the_candidate_case_insensitively_on_windows() -> Result<(), String> {
+        let files = HashMap::from([
+            ("actup.toml", "default_host = \"ghe.corp.example\"\n"),
+            ("ACTUP.toml", "default_host = \"ghe.corp.example\"\n"),
+        ]);
+        let requested = RefCell::new(Vec::new());
+        let config_path = worktree_relative(PathStyle::Windows, "C:\\repo", "ACTUP.toml")?;
+        let config = read_config(read_from(&files, &requested), &[], Some(&config_path))?;
+        assert_eq!(
+            config.sources,
+            [ConfigSource::Explicit {
+                path: PathBuf::from("actup.toml"),
+            }]
+        );
+        assert_eq!(*requested.borrow(), ["actup.toml"]);
+
+        let requested = RefCell::new(Vec::new());
+        let config_path = worktree_relative(PathStyle::Posix, "/repo", "ACTUP.toml")?;
+        let config = read_config(read_from(&files, &requested), &[], Some(&config_path))?;
+        assert_eq!(
+            config.sources,
+            [
+                ConfigSource::Repo {
+                    path: PathBuf::from("actup.toml"),
+                    ignored: vec!["default_host".to_string()],
+                },
+                ConfigSource::Explicit {
+                    path: PathBuf::from("ACTUP.toml"),
+                },
+            ]
+        );
+        assert_eq!(*requested.borrow(), ["actup.toml", "ACTUP.toml"]);
+        Ok(())
+    }
+
+    #[test]
+    fn path_style_compares_windows_names_with_unicode_case() {
+        assert!(PathStyle::Windows.same_name("ÄRGER", "ärger"));
+        assert!(!PathStyle::Posix.same_name("ÄRGER", "ärger"));
+        assert!(!PathStyle::Windows.same_name("ärger", "ärgern"));
+    }
+
+    fn assert_maps(style: PathStyle, root: &str, cases: &[(&str, &str)]) -> Result<(), String> {
+        for (written, expected) in cases {
             assert_eq!(
                 worktree_relative(style, root, written)?,
-                WorktreePath(expected.to_owned()),
+                WorktreePath {
+                    style,
+                    path: (*expected).to_owned()
+                },
                 "{style:?} {root} {written}"
             );
         }
         Ok(())
+    }
+
+    #[test]
+    fn worktree_relative_maps_posix_paths_inside_the_worktree() -> Result<(), String> {
+        assert_maps(
+            PathStyle::Posix,
+            "/home/u/repo",
+            &[
+                ("ci/actup.toml", "ci/actup.toml"),
+                ("./ci//./actup.toml", "ci/actup.toml"),
+                ("ci/../.github/actup.yaml", ".github/actup.yaml"),
+                ("/home/u/repo/ci/actup.toml", "ci/actup.toml"),
+                ("/home/u/x/../repo/actup.toml", "actup.toml"),
+                ("ci\\actup.toml", "ci\\actup.toml"),
+                ("../repo/actup.toml", "actup.toml"),
+                ("/../home/u/repo/actup.toml", "actup.toml"),
+            ],
+        )?;
+        assert_maps(
+            PathStyle::Posix,
+            "/home/u/repo/",
+            &[("actup.toml", "actup.toml")],
+        )?;
+        assert_maps(PathStyle::Posix, "/", &[("../../actup.toml", "actup.toml")])
+    }
+
+    #[test]
+    fn worktree_relative_maps_windows_paths_inside_the_worktree() -> Result<(), String> {
+        assert_maps(
+            PathStyle::Windows,
+            "C:\\Users\\u\\repo",
+            &[
+                ("ci\\actup.toml", "ci/actup.toml"),
+                ("c:/users/U/Repo/ci/actup.toml", "ci/actup.toml"),
+                ("\\Users\\u\\repo\\actup.toml", "actup.toml"),
+                ("C:\\..\\Users\\u\\repo\\actup.toml", "actup.toml"),
+            ],
+        )?;
+        assert_maps(
+            PathStyle::Windows,
+            "\\\\server\\share\\repo",
+            &[
+                ("\\\\SERVER\\Share\\repo\\ci\\actup.toml", "ci/actup.toml"),
+                ("\\repo\\actup.toml", "actup.toml"),
+            ],
+        )?;
+        assert_maps(
+            PathStyle::Windows,
+            "C:\\Ärger",
+            &[("c:\\ärger\\actup.toml", "actup.toml")],
+        )
     }
 
     #[test]
@@ -1263,6 +1349,24 @@ mod tests {
                 "\\\\server\\share\\actup.toml",
                 "is outside the worktree",
             ),
+            (
+                PathStyle::Windows,
+                "\\\\server\\share\\repo",
+                "\\\\server\\other\\repo\\actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\Ärger",
+                "c:\\ärgern\\actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Posix,
+                "/home/u/repo",
+                "/home/u/Repo/actup.toml",
+                "is outside the worktree",
+            ),
         ];
         for (style, root, written, expected) in cases {
             let Err(error) = worktree_relative(style, root, written) else {
@@ -1290,7 +1394,9 @@ mod tests {
     fn read_config_rejects_a_missing_config_path_file() {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
-        let config_path = WorktreePath("ci/actup.toml".to_owned());
+        let Ok(config_path) = worktree_relative(PathStyle::Posix, "/repo", "ci/actup.toml") else {
+            panic!("ci/actup.toml lies inside /repo");
+        };
         let Err(error) = read_config(read_from(&files, &requested), &[], Some(&config_path)) else {
             panic!("a missing configPath file must fail");
         };
