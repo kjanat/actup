@@ -899,7 +899,7 @@ mod tests {
         fs::write(&path, content)?;
 
         for dry_run in [false, true] {
-            let mut fe = FileEdits::new(path.clone(), content.to_string());
+            let mut fe = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
             for (line, range) in [(1, 10..12), (1, 11..12), (2, 10..12)] {
                 fe.add(
                     PendingEdit::replace_range(line, range, "v2".to_string()),
@@ -907,7 +907,7 @@ mod tests {
                 );
             }
             let mut result = EditResult::default();
-            let written = commit_file(fe, dry_run, &mut result);
+            let written = commit_file(fe, dir.path(), dry_run, &mut result);
 
             assert!(written.is_empty());
             assert_eq!(result.edited, []);

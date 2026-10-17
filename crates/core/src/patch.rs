@@ -805,7 +805,11 @@ mod tests {
         let overlapping: [(usize, Range<usize>); 3] = [(1, 4..8), (1, 6..6), (2, 0..1)];
         for (line, range) in overlapping {
             let content = "abcdefghijkl\nmnop\n";
-            let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+            let mut fe = FileEdits::new(
+                PathBuf::from("/test"),
+                content.to_string(),
+                SourceFormat::Yaml,
+            );
             fe.add(
                 PendingEdit::replace_range(1, 2..6, "X".to_string()).with_comment(" # x".into()),
                 "first",

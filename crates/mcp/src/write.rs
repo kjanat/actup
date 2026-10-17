@@ -886,7 +886,7 @@ mod tests {
         let path = dir.path().join("ci.yml");
         let content = "steps:\n  - uses: a/b@v1\n  - uses: c/d@v1\n";
         fs::write(&path, content)?;
-        let mut edits = FileEdits::new(path.clone(), content.to_string());
+        let mut edits = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
         for (line, range, to) in [(2, 14..16, "v2"), (2, 15..16, "3"), (3, 14..16, "v2")] {
             let (l, action) = loc(content.lines().nth(line - 1).ok_or("no line")?)?;
             let site = Site {
@@ -901,7 +901,8 @@ mod tests {
         }
         let planned = plan(content, edits)?;
         let mut outcome = Outcome::default();
-        commit(&mut outcome, &path, "ci.yml", content, planned, true);
+        let root = Root::new(dir.path())?;
+        commit(&mut outcome, &root, &path, "ci.yml", content, planned, true);
 
         let skipped: Vec<(usize, &str)> = outcome
             .skipped
