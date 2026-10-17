@@ -304,10 +304,13 @@ fn action_completions(prefix: &str) -> Vec<CompletionItem> {
         .collect()
 }
 
+const MAX_SEMVER_COMPLETIONS: usize = 20;
+
 /// Build completion items for version suggestions.
 ///
 /// Fetches available versions from the provider registry (with file cache),
-/// and produces `CompletionItem`s for each known semver tag plus major tags.
+/// and produces `CompletionItem`s for the latest version, the major tags, and
+/// the newest semver tags matching `version_prefix`.
 pub async fn version_completions(
     owner: &str,
     repo: &str,
@@ -369,28 +372,28 @@ pub async fn version_completions(
         }
     }
 
-    // Add semver tags (newest first, limited to avoid overwhelming).
-    let semver_tags = versions.semver_tags();
-    let max_semver = 20;
-    for (idx, info) in semver_tags.iter().rev().take(max_semver).enumerate() {
-        let tag = info.version().as_str();
-        if tag.to_lowercase().starts_with(&prefix_lower) || prefix_lower.is_empty() {
-            if items.iter().any(|i| i.label == tag) {
-                continue;
-            }
-            let detail = if versions.latest().is_some_and(|l| l == info) {
-                "latest"
-            } else {
-                "semver"
-            };
-            items.push(version_completion_item(
-                tag,
-                Some(detail),
-                info.sha(),
-                false,
-                100 + idx,
-            ));
-        }
+    let semver_tags: Vec<_> = versions
+        .semver_tags()
+        .iter()
+        .filter(|info| {
+            let tag = info.version().as_str();
+            tag.to_lowercase().starts_with(&prefix_lower) && !items.iter().any(|i| i.label == tag)
+        })
+        .take(MAX_SEMVER_COMPLETIONS)
+        .collect();
+    for (idx, info) in semver_tags.into_iter().enumerate() {
+        let detail = if versions.latest().is_some_and(|l| l == info) {
+            "latest"
+        } else {
+            "semver"
+        };
+        items.push(version_completion_item(
+            info.version().as_str(),
+            Some(detail),
+            info.sha(),
+            false,
+            100 + idx,
+        ));
     }
 
     items
@@ -845,6 +848,51 @@ mod tests {
 
         assert!(result.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn version_completions_list_newest_matching_tags_first() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let tags: Vec<_> = (0..25)
+            .rev()
+            .map(|minor| format!("v4.{minor}.0"))
+            .chain((0..5).rev().map(|minor| format!("v1.{minor}.0")))
+            .map(|tag| test_utils::make_version_info(&tag, DUMMY_SHA))
+            .collect();
+        let latest = tags.first().cloned();
+        let versions = version::Set::build(
+            tags,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            latest,
+        );
+        let repo_id = actup_core::ActionRepoId::new(None, "a", "b", None);
+        let document_versions = std::collections::HashMap::from([(repo_id, versions)]);
+        let registry = test_utils::mock_registry(test_utils::MockProvider::new("github.com"));
+        let file_cache = FileCache::disabled();
+        let labels = async |prefix: &str| -> Vec<String> {
+            version_completions(
+                "a",
+                "b",
+                prefix,
+                &registry,
+                &file_cache,
+                Some(&document_versions),
+            )
+            .await
+            .into_iter()
+            .map(|item| item.label)
+            .collect()
+        };
+
+        let newest_v4: Vec<_> = (3..25).rev().map(|minor| format!("v4.{minor}.0")).collect();
+        assert_eq!(labels("").await, newest_v4[..=MAX_SEMVER_COMPLETIONS]);
+        assert_eq!(labels("v4").await, newest_v4[..=MAX_SEMVER_COMPLETIONS]);
+        assert_eq!(
+            labels("v1").await,
+            ["v1.4.0", "v1.3.0", "v1.2.0", "v1.1.0", "v1.0.0"]
+        );
     }
 
     #[test]
