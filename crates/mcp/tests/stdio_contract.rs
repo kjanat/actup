@@ -970,7 +970,37 @@ fn update_file_refreshes_version_comments(client: &mut Client, ws: &Workspace) -
     expect(
         written == "steps:\n  - uses: actions/checkout@v4.2.0 # keep\n",
         || format!("tag over a SHA pin wrote {written:?}"),
-    )
+    )?;
+
+    for (line, reference, want) in [
+        (
+            "  - uses: actions/checkout@v4 # v4.0.0 keep",
+            "main",
+            "  - uses: actions/checkout@main # keep",
+        ),
+        (
+            "  - uses: actions/checkout@main # main keep",
+            "v4.2.0",
+            "  - uses: actions/checkout@v4.2.0 # v4.2.0 keep",
+        ),
+    ] {
+        ws.write(".github/workflows/noted.yml", &format!("steps:\n{line}\n"))?;
+        let named = update_file(
+            client,
+            json!({
+                "path": ".github/workflows/noted.yml",
+                "edits": [{ "line": 2, "action": "actions/checkout", "ref": reference }],
+            }),
+        )?;
+        expect(!is_error(&named), || {
+            format!("{line} -> {reference}: {named}")
+        })?;
+        let written = ws.read(".github/workflows/noted.yml")?;
+        expect(written == format!("steps:\n{want}\n"), || {
+            format!("{line} -> {reference} wrote {written:?}")
+        })?;
+    }
+    Ok(())
 }
 
 fn mutators_refuse_paths_outside_the_root(client: &mut Client, ws: &Workspace) -> TestResult {

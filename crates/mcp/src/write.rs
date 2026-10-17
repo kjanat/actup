@@ -10,8 +10,8 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, SourceFormat, Uses,
     UsesLocation, classify_uses, discover_files, line_spans, parse_action_path,
     patch::{
-        EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retag_edit,
-        retarget_edit, sha_edit, unpin_edit,
+        EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, named_edit,
+        retarget_edit, sha_edit,
     },
     policy::Style,
     provider::Registry,
@@ -409,9 +409,9 @@ fn remote_values(format: SourceFormat, content: &str) -> Vec<(UsesLocation, Acti
 
 /// The edit that writes `reference` over the ref at `loc`, if the rewritten value parses.
 ///
-/// A SHA, or a tag over a SHA pin, drops the version of a trailing version
-/// comment and keeps its note. A tag over another ref takes the place of that
-/// version.
+/// A label comment names a version or the current ref. A tag written over a
+/// tag or branch takes the place of the label. A branch, a SHA, or a tag over a
+/// SHA pin drops the label. Each keeps the note.
 fn ref_edit(
     loc: &UsesLocation,
     current_is_sha: bool,
@@ -434,10 +434,14 @@ fn ref_edit(
     };
     let edit = if action.is_sha() {
         sha_edit(loc, reference, &labels)
-    } else if current_is_sha {
-        unpin_edit(loc, reference, &labels)
     } else {
-        retag_edit(loc, reference, &labels)
+        named_edit(
+            loc,
+            reference,
+            Named::unfetched(reference),
+            current_is_sha,
+            &labels,
+        )
     };
     edit.ok_or_else(unplaceable)
 }

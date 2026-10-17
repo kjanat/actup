@@ -312,8 +312,19 @@ impl Named {
     /// A tag when `versions` lists a tag `name`, or lists no ref `name` and `name` is a version token, else a branch.
     #[must_use]
     pub fn listed(name: &str, versions: &version::Set) -> Self {
-        let tagged = versions.has_exact_tag(name) || versions.other_tag_sha(name).is_some();
-        if tagged || (!versions.names_ref(name) && is_version_token(name)) {
+        if versions.has_exact_tag(name) || versions.other_tag_sha(name).is_some() {
+            Self::Tag
+        } else if versions.names_ref(name) {
+            Self::Branch
+        } else {
+            Self::unfetched(name)
+        }
+    }
+
+    /// A tag when `name` is a version token, else a branch.
+    #[must_use]
+    pub fn unfetched(name: &str) -> Self {
+        if is_version_token(name) {
             Self::Tag
         } else {
             Self::Branch
@@ -623,6 +634,10 @@ mod tests {
         assert_eq!(Named::listed("v9", &versions), Named::Tag);
         assert_eq!(Named::listed("v2", &versions), Named::Branch);
         assert_eq!(Named::listed("develop", &versions), Named::Branch);
+        assert_eq!(Named::unfetched("v4.2.0"), Named::Tag);
+        assert_eq!(Named::unfetched("v2"), Named::Tag);
+        assert_eq!(Named::unfetched("main"), Named::Branch);
+        assert_eq!(Named::unfetched("release/v1"), Named::Branch);
         assert_eq!(labeled_comment("v1", ""), " # v1");
         assert_eq!(note_comment(""), None);
     }

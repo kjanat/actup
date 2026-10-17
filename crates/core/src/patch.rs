@@ -107,27 +107,24 @@ pub fn repin_sha_edit(
     pin_edit(loc, target.sha(), &target.version().to_string(), labels)
 }
 
-/// Build an edit that writes the tag `tag` over the ref at `loc`, as [`Rewrite::named`] writes a tag over a tag.
-#[must_use]
-pub fn retag_edit(loc: &UsesLocation, tag: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
-    named_edit(loc, tag, false, labels)
-}
-
 /// Build an edit that writes the tag `tag` over a SHA pin, keeping only the note of a label comment.
 #[must_use]
 pub fn unpin_edit(loc: &UsesLocation, tag: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
-    named_edit(loc, tag, true, labels)
+    named_edit(loc, tag, Named::Tag, true, labels)
 }
 
 /// Build an edit that writes `sha` over the ref at `loc`, keeping only the note of a label comment.
 #[must_use]
 pub fn sha_edit(loc: &UsesLocation, sha: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
-    named_edit(loc, sha, true, labels)
+    named_edit(loc, sha, Named::Tag, true, labels)
 }
 
-fn named_edit(
+/// Build an edit that writes the tag or branch `new_ref` over the ref at `loc`, as [`Rewrite::named`] writes it.
+#[must_use]
+pub fn named_edit(
     loc: &UsesLocation,
     new_ref: &str,
+    kind: Named,
     current_is_sha: bool,
     labels: &Labels<'_>,
 ) -> Option<PendingEdit> {
@@ -135,8 +132,8 @@ fn named_edit(
     let trailing = Trailing::after(loc.raw_line(), range.end, labels);
     place_edit(
         loc,
-        &Rewrite::named(new_ref, Named::Tag, current_is_sha, trailing),
-        !current_is_sha,
+        &Rewrite::named(new_ref, kind, current_is_sha, trailing),
+        kind == Named::Tag && !current_is_sha,
     )
 }
 
