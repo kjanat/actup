@@ -26,6 +26,8 @@ type TestResult = Result<(), Box<dyn Error>>;
 
 const CHILD_ENV: &str = "MCP_CONTRACT_ROOT";
 
+const TRACK_ENV: &str = "MCP_CONTRACT_TRACK_EXACT";
+
 fn sha(c: char) -> String {
     c.to_string().repeat(40)
 }
@@ -50,6 +52,20 @@ impl MockProvider {
             }),
             _ => None,
         }
+    }
+
+    fn twin_versions() -> version::Set {
+        let info =
+            |tag: &str, c: char| Arc::new(version::Info::new(version::Version::parse(tag), sha(c)));
+        let major = info("v1", 'f');
+        let old = info("v1.0.4", 'g');
+        let new = info("v1.0.5", 'f');
+        version::Set::build(
+            vec![Arc::clone(&major), old, Arc::clone(&new)],
+            HashMap::from([(1, Arc::clone(&new))]),
+            HashMap::from([(1, major)]),
+            Some(new),
+        )
     }
 
     fn versions() -> version::Set {
@@ -83,7 +99,11 @@ impl Provider for MockProvider {
     }
 
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<version::Set>> {
-        let result = Self::failure(repo).map_or_else(|| Ok(Self::versions()), Err);
+        let result = match Self::failure(repo) {
+            Some(e) => Err(e),
+            None if repo.owner() == "twins" => Ok(Self::twin_versions()),
+            None => Ok(Self::versions()),
+        };
         Box::pin(async move { result })
     }
 
@@ -170,6 +190,9 @@ fn serve_child(root: &Path) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    if std::env::var_os(TRACK_ENV).is_some() {
+        config.policy.track = actup_core::policy::Track::Exact;
+    }
     match runtime.block_on(serve_stdio(Server::new(config, registry, root))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -190,6 +213,12 @@ impl Client {
     fn start(root: &Path) -> Result<Self, Box<dyn Error>> {
         let mut command = Command::new(std::env::current_exe()?);
         command.env(CHILD_ENV, root);
+        Self::spawn(command)
+    }
+
+    fn start_exact(root: &Path) -> Result<Self, Box<dyn Error>> {
+        let mut command = Command::new(std::env::current_exe()?);
+        command.env(CHILD_ENV, root).env(TRACK_ENV, "1");
         Self::spawn(command)
     }
 
@@ -471,6 +500,43 @@ fn read_tools_report_provider_host_and_status(client: &mut Client, _ws: &Workspa
         &json!("restore main"),
         "action.yml name",
     )?;
+    Ok(())
+}
+
+fn latest_names_ref_kind_and_same_commit_target(ws: &Workspace) -> TestResult {
+    let mut client = Client::start_exact(&ws.root())?;
+    let latest = client.call(
+        "getLatest",
+        json!({ "owner": "twins", "repo": "r", "currentRef": "v1" }),
+    )?;
+    let l = body(&latest);
+    expect_eq(&l["status"], &json!("outdated"), "same-commit status")?;
+    expect_eq(
+        &l["target"],
+        &json!({ "version": "v1.0.5", "sha": sha('f') }),
+        "same-commit target",
+    )?;
+    expect_eq(&l["refKind"], &json!("tag"), "same-commit refKind")?;
+    expect_eq(&l["sameCommit"], &json!("v1.0.5"), "sameCommit")?;
+
+    let behind = client.call(
+        "getLatest",
+        json!({ "owner": "twins", "repo": "r", "currentRef": "v1.0.4" }),
+    )?;
+    let b = body(&behind);
+    expect_eq(&b["status"], &json!("outdated"), "real bump status")?;
+    expect_eq(&b["refKind"], &json!("tag"), "real bump refKind")?;
+    expect(b.get("sameCommit").is_none(), || {
+        format!("a real bump has no sameCommit: {b}")
+    })?;
+
+    let unlisted = client.call(
+        "getLatest",
+        json!({ "owner": "twins", "repo": "r", "currentRef": "v9" }),
+    )?;
+    expect(body(&unlisted).get("refKind").is_none(), || {
+        format!("an unlisted ref has no refKind: {}", body(&unlisted))
+    })?;
     Ok(())
 }
 
@@ -1163,7 +1229,11 @@ type Case = fn(&mut Client, &Workspace) -> TestResult;
 
 type BinaryCase = fn(&Workspace) -> TestResult;
 
-const BINARY_CASES: [(&str, BinaryCase); 3] = [
+const BINARY_CASES: [(&str, BinaryCase); 4] = [
+    (
+        "latest_names_ref_kind_and_same_commit_target",
+        latest_names_ref_kind_and_same_commit_target,
+    ),
     (
         "binary_serves_the_tools_from_its_working_directory",
         binary_serves_the_tools_from_its_working_directory,

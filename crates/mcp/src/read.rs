@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use actup_core::{
-    ActionRef, ActionRepoId, CheckStatus, Config, Info, Provider,
+    ActionRef, ActionRepoId, CheckStatus, Config, Info, Provider, RefKind,
     config::{Override, PolicyOverride},
     provider::Registry,
     version,
@@ -244,6 +244,10 @@ struct LatestBody<'a> {
     target: Option<Info>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ref_kind: Option<RefKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    same_commit: Option<String>,
     latest: Option<&'a Info>,
 }
 
@@ -290,6 +294,8 @@ pub async fn latest(
             check: name,
             target,
             reason,
+            ref_kind: check.ref_kind(),
+            same_commit: check.same_commit().map(|t| t.version().to_string()),
             latest: set.latest().map(Arc::as_ref),
         },
     )

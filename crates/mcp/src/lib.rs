@@ -50,7 +50,8 @@ actup checks and updates GitHub-compatible Actions `uses:` refs in workflows and
 
 Read tools (no side effects, results reused for `cache.ttl` seconds):
 - getVersions: semver tags, the latest tag, and with includeBranches the branches of a repository.
-- getLatest: the version that the configured policy (or policyOverride) moves currentRef to.
+- getLatest: the version that the configured policy (or policyOverride) moves currentRef to. \
+refKind names what currentRef is (tag, branch or sha); sameCommit names a target on the commit currentRef already points at.
 - actionGetReadme / actionGetActionYml: README and action.yml at a ref (default branch when omitted).
 
 Mutators (write files; pass dryRun: true to plan without writing):

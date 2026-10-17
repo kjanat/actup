@@ -407,7 +407,10 @@ edited lines changed since the scan. `updateAllUsesToVersion` and `updateFile`
 refuse an edited text that is not valid YAML or holds a different number of
 `uses:` values. `updateFile` skips that check with `validateYaml: false`, and
 refuses edits that name actions on more than one host. `updateAllUsesToVersion`
-writes each ref in its `policy.pin` style, as `update` does.
+writes each ref in its `policy.pin` style, as `update` does. `getLatest` adds
+`refKind` (`tag`, `branch` or `sha`) when the version list names `currentRef`,
+and `sameCommit` (the target version) when the target sits on the commit that
+`currentRef` already points at.
 
 ## Exit Codes
 
