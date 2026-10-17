@@ -111,8 +111,9 @@ fn replace(
         Err(e) => return Err(e),
     };
     let name = name.to_string_lossy();
-    let (temp, mut file) =
-        create_temp(dir, &name, || TEMP_COUNTER.fetch_add(1, Ordering::Relaxed))?;
+    let (temp, mut file) = create_temp(dir, &name, permissions.as_ref(), || {
+        TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
+    })?;
     let written = permissions
         .map_or(Ok(()), |permissions| file.set_permissions(permissions))
         .and_then(|()| write(&mut file, contents))
@@ -128,15 +129,17 @@ fn replace(
 fn create_temp(
     dir: &Path,
     name: &str,
+    permissions: Option<&fs::Permissions>,
     mut next: impl FnMut() -> u64,
 ) -> io::Result<(PathBuf, File)> {
+    let options = temp_options(permissions);
     loop {
         let temp = dir.join(format!(
             ".{name}.actup-{}-{}.tmp",
             std::process::id(),
             next()
         ));
-        match OpenOptions::new().write(true).create_new(true).open(&temp) {
+        match options.open(&temp) {
             Ok(file) => return Ok((temp, file)),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(e),
@@ -144,10 +147,27 @@ fn create_temp(
     }
 }
 
+#[cfg(unix)]
+fn temp_options(permissions: Option<&fs::Permissions>) -> OpenOptions {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    if let Some(permissions) = permissions {
+        options.mode(permissions.mode() & 0o777);
+    }
+    options
+}
+
+#[cfg(not(unix))]
+fn temp_options(_permissions: Option<&fs::Permissions>) -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    options
+}
+
 #[cfg(test)]
 mod tests {
-    use std::thread;
-
     use super::*;
 
     type TestResult = Result<(), Box<dyn std::error::Error>>;
@@ -204,7 +224,7 @@ mod tests {
         fs::write(&taken, "taken")?;
         let mut ids = [7, 8].into_iter();
 
-        let (temp, _file) = create_temp(dir.path(), "ci.yml", || ids.next().unwrap_or(0))?;
+        let (temp, _file) = create_temp(dir.path(), "ci.yml", None, || ids.next().unwrap_or(0))?;
 
         assert_eq!(
             temp,
@@ -244,7 +264,7 @@ mod tests {
             );
         }
         assert_eq!(
-            create_temp(&dir.path().join("missing"), "x", || 0)
+            create_temp(&dir.path().join("missing"), "x", None, || 0)
                 .err()
                 .map(|e| e.kind()),
             Some(io::ErrorKind::NotFound)
@@ -358,6 +378,27 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn create_temp_opens_the_file_with_the_original_mode() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let mode =
+            |file: &File| -> io::Result<u32> { Ok(file.metadata()?.permissions().mode() & 0o7777) };
+        let mut ids = 0..;
+        let mut next = || ids.next().unwrap_or(0);
+
+        let private = fs::Permissions::from_mode(0o600);
+        let (_, file) = create_temp(dir.path(), "secret.yml", Some(&private), &mut next)?;
+        assert_eq!(mode(&file)?, 0o600);
+
+        let (_, fresh) = create_temp(dir.path(), "fresh.yml", None, &mut next)?;
+        let plain = File::create(dir.path().join("plain.yml"))?;
+        assert_eq!(mode(&fresh)?, mode(&plain)?);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn temp_file_takes_the_mode_before_any_byte_is_written() -> TestResult {
         use std::os::unix::fs::PermissionsExt;
 
@@ -411,7 +452,7 @@ mod tests {
             .into_iter()
             .map(|path| {
                 let root = dir.path().to_path_buf();
-                thread::spawn(move || {
+                std::thread::spawn(move || {
                     (0..50).try_for_each(|_| {
                         rewrite_atomic(&root, &path, |text| Ok::<_, io::Error>(format!("{text}x")))
                     })
