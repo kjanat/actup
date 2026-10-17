@@ -6,6 +6,11 @@ use actup_core::neutralize_workflow_commands;
 use serde::Serialize;
 
 fn escape_legacy_commands(json: String) -> String {
+    let json = if json.contains('\u{7f}') {
+        json.replace('\u{7f}', "\\u007f")
+    } else {
+        json
+    };
     if json.contains("##[") {
         json.replace("##[", "##\\u005b")
     } else {
@@ -13,12 +18,12 @@ fn escape_legacy_commands(json: String) -> String {
     }
 }
 
-/// `value` as compact JSON, with `##[` escaped as `##\u005b`.
+/// `value` as compact JSON, with DEL escaped as `\u007f` and `##[` as `##\u005b`.
 pub fn json<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<String> {
     serde_json::to_string(value).map(escape_legacy_commands)
 }
 
-/// `value` as pretty JSON, with `##[` escaped as `##\u005b`.
+/// `value` as pretty JSON, with DEL escaped as `\u007f` and `##[` as `##\u005b`.
 pub fn json_pretty<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<String> {
     serde_json::to_string_pretty(value).map(escape_legacy_commands)
 }
@@ -60,6 +65,34 @@ mod tests {
             assert_eq!(parsed["file"], FORGED.file);
             assert_eq!(parsed["reference"], FORGED.reference);
         }
+        Ok(())
+    }
+
+    #[test]
+    fn stripped_output_opens_no_command() -> Result<(), Box<dyn std::error::Error>> {
+        let mut opened = Vec::new();
+        for c in (0u32..=0x2070).filter_map(char::from_u32) {
+            let value = format!("#{c}#[error]x");
+            let reference = format!("v\n{c}::error::x");
+            let report = Report {
+                file: &value,
+                reference: &reference,
+            };
+            for (kind, text) in [("json", json(&report)?), ("toml", toml(&report)?)] {
+                let shown = anstream::adapter::strip_str(&text).to_string();
+                if !commands(&shown).is_empty() {
+                    opened.push(format!("{kind} U+{:04X}", u32::from(c)));
+                }
+            }
+        }
+        assert_eq!(opened, Vec::<String>::new());
+        let del = json(&Report {
+            file: "#\u{7f}#[error]x",
+            reference: "v",
+        })?;
+        assert_eq!(del, r##"{"file":"#\u007f#[error]x","reference":"v"}"##);
+        let parsed: serde_json::Value = serde_json::from_str(&del)?;
+        assert_eq!(parsed["file"], "#\u{7f}#[error]x");
         Ok(())
     }
 

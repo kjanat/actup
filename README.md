@@ -154,12 +154,13 @@ Human output is coloured only on a terminal. `--color always` and
 `NO_COLOR` turns colour off, and a `CLICOLOR_FORCE` other than `0` turns it on
 for piped output. `NO_COLOR` wins when both are set.
 
-Human output and LSP messages replace control characters other than tab and line
-feed, zero-width and bidi control characters, and the byte order mark with
-U+FFFD. In paths, `uses:` values, refs, versions, reasons and error messages
-they replace line feeds too. JSON output keeps the raw text and writes `##[` as
-`##\u005b`. A GitHub Actions runner splits output into lines at CR and LF, reads
-a line that starts with `::` as a workflow command and reads a line that
+Human output, LSP messages and `--github-annotations` lines replace control
+characters other than tab and line feed, zero-width and bidi control characters,
+and the byte order mark with U+FFFD. Human output and LSP messages also replace
+line feeds in paths, `uses:` values, refs, versions, reasons and error messages.
+JSON output writes DEL as `\u007f` and `##[` as `##\u005b`, and keeps the rest
+of the raw text. A GitHub Actions runner splits output into lines at CR and LF,
+reads a line that starts with `::` as a workflow command and reads a line that
 contains `##[` as a legacy one. Human output, TOML output and logs replace the
 first colon of such a line and the `[` of every `##[` with U+FFFD. The runner
 then reads only `--github-annotations` lines as workflow commands. Annotations

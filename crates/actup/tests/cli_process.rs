@@ -536,11 +536,12 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
             "\"o/old@v\\n::error::lf\"",
             "\"o/old@v\\r::error::cr\"",
             "\"o/old@##[error]legacy\"",
+            "\"o/old@#\\x7f#[error]del\"",
             "o/forge@v1",
         ],
     )?;
     let forged = "::error file=x::forged.yml";
-    for name in [forged, "##[error]forged.yml"] {
+    for name in [forged, "##[error]forged.yml", "#\u{7f}#[error]forged.yml"] {
         fs::copy(
             repo.path().join(".github/workflows/ci.yml"),
             repo.path().join(".github/workflows").join(name),
