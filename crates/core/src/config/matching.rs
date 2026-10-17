@@ -120,18 +120,28 @@ impl FromStr for ActionPattern {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Class {
+    Outside,
+    Opened,
+    Negated,
+    Members,
+}
+
 fn foreign_char(name: &str) -> Option<char> {
     let name_char = |c: char| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-');
-    let mut class: Option<usize> = None;
+    let member = |c: char| name_char(c) || GLOB_META.contains(&c);
+    let mut class = Class::Outside;
     for c in name.chars() {
-        match class {
-            Some(0) if c == '!' => {}
-            Some(len) if c == ']' && len > 0 => class = None,
-            Some(len) if name_char(c) || GLOB_META.contains(&c) => class = Some(len + 1),
-            None if c == '[' => class = Some(0),
-            None if name_char(c) || matches!(c, '*' | '?') => {}
+        class = match (class, c) {
+            (Class::Outside, '[') => Class::Opened,
+            (Class::Outside, c) if name_char(c) || matches!(c, '*' | '?') => Class::Outside,
+            (Class::Opened, '!') => Class::Negated,
+            (Class::Opened | Class::Negated, c) if member(c) => Class::Members,
+            (Class::Members, ']') => Class::Outside,
+            (Class::Members, c) if member(c) => Class::Members,
             _ => return Some(c),
-        }
+        };
     }
     None
 }
@@ -327,6 +337,8 @@ mod tests {
             ("o!/r", "owner", "o!", '!'),
             ("o/[a]]", "repo", "[a]]", ']'),
             ("o/[~]", "repo", "[~]", '~'),
+            ("o/[!!]]", "repo", "[!!]]", ']'),
+            ("o/[!!]!", "repo", "[!!]!", '!'),
         ] {
             assert_eq!(
                 raw.parse::<ActionPattern>().err(),
@@ -343,6 +355,7 @@ mod tests {
             "o/[]a]x",
             "o/[!]a]x",
             "o/[a!]x",
+            "o/[!!]x",
             "o/r/sub dir/x@ref~1",
         ] {
             raw.parse::<ActionPattern>()?;
@@ -350,6 +363,7 @@ mod tests {
         assert!(matches("o/[]a]x", "o/ax@v1")?);
         assert!(matches("o/[!]a]x", "o/bx@v1")?);
         assert!(!matches("o/[!]a]x", "o/ax@v1")?);
+        assert!(matches("o/[!!]x", "o/ax@v1")?);
         Ok(())
     }
 
