@@ -244,7 +244,6 @@ impl TestHarness {
         Self::build(user_config, None)
     }
 
-    /// Hold every `window/workDoneProgress/create` reply until `gate` is notified.
     fn with_progress_gate(gate: Arc<Notify>) -> Self {
         Self::build(None, Some(gate))
     }
