@@ -222,9 +222,10 @@ prints `stale (fetched 26h ago, rate limited, resets in 12m)` under it, adds
 `stale` with `age_secs`, `reason` (`rate_limited` or `network`) and
 `retry_after_secs` (when the provider named a reset) to the JSON and TOML entry,
 and exits 3. `update` and `pin` refuse to write from such data, report the ref
-with kind `stale` and exit 3. A REST refresh sends the stored `ETag`s of the
-tags, repository and default branch requests, and an answer of 304 to all three
-renews the entry without a new listing.
+with kind `stale` and exit 3. `actup-lsp` appends the same note to the
+diagnostic and offers no quick fix and no fix-all edit for it. A REST refresh
+sends the stored `ETag`s of the tags, repository and default branch requests,
+and an answer of 304 to all three renews the entry without a new listing.
 
 `update` and `pin` write each file to a temp file in its directory, flush it,
 give it the mode of the original and rename it over the original. A failed write

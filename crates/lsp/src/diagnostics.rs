@@ -462,6 +462,7 @@ async fn compute_diagnostics_for_actions(
             }
             if let Some(stale) = versions.and_then(actup_core::version::Set::stale) {
                 diag.message = format!("{} (stale: {stale})", diag.message);
+                diag.data = None;
             }
             diagnostics.push(diag);
         }
@@ -2080,6 +2081,21 @@ jobs:
             diag.message
         );
         assert!(!outdated.errors.has_errors());
+        assert_eq!(diag.data, None);
+        assert_eq!(
+            crate::code_actions::code_actions_for_diagnostics(
+                &uri,
+                Some(1),
+                &outdated.diagnostics,
+                true
+            ),
+            []
+        );
+        assert!(
+            crate::code_actions::fix_all_in_file(&uri, Some(1), &outdated.diagnostics, true)
+                .is_none()
+        );
+        assert_eq!(crate::code_actions::update_text_edit(diag), None);
 
         let current = diagnostics("    - uses: actions/checkout@v4.2.0\n").await;
         assert_eq!(current.diagnostics, []);
