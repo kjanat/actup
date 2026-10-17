@@ -14,7 +14,7 @@ use actup_core::{
     ActionRepoId, Config, Provider,
     cache::{self, Cache},
     effective_host,
-    fetch::{Outcome, Progress},
+    fetch::{Outcome, Progress, Silent},
     provider, version,
 };
 use futures::StreamExt;
@@ -29,10 +29,16 @@ use crate::{
 /// Maximum concurrent fallback REST requests when registry batching misses.
 const FALLBACK_CONCURRENCY_LIMIT: usize = 50;
 
-struct RegistryFetchPlan {
+struct Served<'r> {
+    repo: ActionRepoId,
+    provider: &'r dyn Provider,
+    cache_key: String,
+}
+
+struct RegistryFetchPlan<'r> {
     results: HashMap<ActionRepoId, actup_core::Result<version::Set>>,
-    github_hosts: HashMap<String, Vec<(ActionRepoId, String)>>,
-    fallback_repos: Vec<(ActionRepoId, Option<cache::Entry>)>,
+    github_hosts: HashMap<String, Vec<Served<'r>>>,
+    fallback_repos: Vec<(Served<'r>, Option<cache::Entry>)>,
 }
 
 enum Cached {
@@ -86,11 +92,11 @@ fn provider_not_found_error(
     }
 }
 
-async fn classify_repos_for_registry_fetch<C: Cache>(
+async fn classify_repos_for_registry_fetch<'r, C: Cache>(
     repos: &[ActionRepoId],
-    registry: &provider::Registry,
+    registry: &'r provider::Registry,
     cache: &C,
-) -> RegistryFetchPlan {
+) -> RegistryFetchPlan<'r> {
     let mut plan = RegistryFetchPlan {
         results: HashMap::with_capacity(repos.len()),
         github_hosts: HashMap::new(),
@@ -110,38 +116,58 @@ async fn classify_repos_for_registry_fetch<C: Cache>(
             continue;
         };
 
-        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
+        let served = Served {
+            cache_key: repo.cache_key(provider.cache_namespace(), provider.host()),
+            repo,
+            provider,
+        };
         if provider.kind() == provider::Kind::GitHub && provider.supports_batch_fetch() {
-            let host = repo
+            let host = served
+                .repo
                 .host()
                 .or_else(|| registry.default_host())
                 .unwrap_or(crate::GITHUB_HOST)
                 .to_string();
-            plan.github_hosts
-                .entry(host)
-                .or_default()
-                .push((repo, cache_key));
+            plan.github_hosts.entry(host).or_default().push(served);
             continue;
         }
 
-        match read_cached(cache, &repo, &cache_key).await {
-            Cached::Fresh(versions) => {
-                plan.results.insert(repo, Ok(versions));
-            }
-            Cached::Fetch(expired) => plan.fallback_repos.push((repo, expired)),
-        }
+        read_into_plan(
+            &mut plan.results,
+            &mut plan.fallback_repos,
+            cache,
+            served,
+            &Silent,
+        )
+        .await;
     }
 
     plan
 }
 
-async fn fetch_github_host_groups<C: Cache>(
-    github_hosts: HashMap<String, Vec<(ActionRepoId, String)>>,
+async fn read_into_plan<'r, C: Cache>(
+    results: &mut HashMap<ActionRepoId, actup_core::Result<version::Set>>,
+    fallback_repos: &mut Vec<(Served<'r>, Option<cache::Entry>)>,
+    cache: &C,
+    served: Served<'r>,
+    progress: &dyn Progress,
+) {
+    match read_cached(cache, &served.repo, &served.cache_key).await {
+        Cached::Fresh(versions) => {
+            results.insert(served.repo, Ok(versions));
+            progress.finished(Outcome::Cache);
+        }
+        Cached::Fetch(expired) => fallback_repos.push((served, expired)),
+    }
+}
+
+async fn fetch_github_host_groups<'r, C: Cache>(
+    github_hosts: HashMap<String, Vec<Served<'r>>>,
     config: &Config,
     cache: Arc<C>,
     results: &mut HashMap<ActionRepoId, actup_core::Result<version::Set>>,
     progress: &dyn Progress,
-) -> Vec<(ActionRepoId, String)> {
+) -> Vec<Served<'r>> {
     let github_registration = [&crate::REGISTRATION];
     let mut fallback_repos = Vec::new();
 
@@ -151,7 +177,7 @@ async fn fetch_github_host_groups<C: Cache>(
                 match crate::create_batch_fetcher(&provider_config, Arc::clone(&cache)) {
                     Ok(fetcher) => {
                         let repos: Vec<ActionRepoId> =
-                            host_repos.into_iter().map(|(repo, _)| repo).collect();
+                            host_repos.into_iter().map(|served| served.repo).collect();
                         results.extend(fetcher.fetch_versions(&repos, progress).await);
                     }
                     Err(e) => {
@@ -170,35 +196,42 @@ async fn fetch_github_host_groups<C: Cache>(
     fallback_repos
 }
 
+async fn fetch_served(
+    (served, expired): (Served<'_>, Option<cache::Entry>),
+) -> (
+    Served<'_>,
+    Option<cache::Entry>,
+    actup_core::Result<version::Set>,
+) {
+    let result = served.provider.get_versions(&served.repo).await;
+    (served, expired, result)
+}
+
 async fn fetch_fallback_repos<C: Cache>(
-    fallback_repos: Vec<(ActionRepoId, Option<cache::Entry>)>,
-    registry: &provider::Registry,
+    fallback_repos: Vec<(Served<'_>, Option<cache::Entry>)>,
     cache: &C,
     results: &mut HashMap<ActionRepoId, actup_core::Result<version::Set>>,
     progress: &dyn Progress,
 ) {
     let fetched: Vec<_> = futures::stream::iter(fallback_repos)
-        .map(|(repo, expired)| async move {
-            let provider = registry.find_for_repo(&repo)?;
-            let cache_ns = provider.cache_namespace().to_string();
-            let host = provider.host().to_string();
-            let result = provider.get_versions(&repo).await;
+        .map(fetch_served)
+        .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
+        .inspect(|(_, _, result)| {
             progress.finished(if result.is_ok() {
                 Outcome::Provider
             } else {
                 Outcome::Failed
             });
-            Some((repo, expired, cache_ns, host, result))
         })
-        .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
-        .filter_map(futures::future::ready)
         .collect()
         .await;
 
-    for (repo, expired, cache_ns, host, result) in fetched {
+    for (served, expired, result) in fetched {
+        let Served {
+            repo, cache_key, ..
+        } = served;
         match result {
             Ok(versions) => {
-                let cache_key = repo.cache_key(&cache_ns, &host);
                 let entry = cache::Entry::new(versions.clone());
                 if let Err(e) = cache.set(&cache_key, entry).await {
                     debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "failed to cache versions");
@@ -244,7 +277,7 @@ pub async fn fetch_versions_with_registry<C: Cache>(
         });
     }
 
-    for (repo, cache_key) in fetch_github_host_groups(
+    for served in fetch_github_host_groups(
         github_hosts,
         config,
         Arc::clone(&cache),
@@ -253,23 +286,17 @@ pub async fn fetch_versions_with_registry<C: Cache>(
     )
     .await
     {
-        match read_cached(cache.as_ref(), &repo, &cache_key).await {
-            Cached::Fresh(versions) => {
-                results.insert(repo, Ok(versions));
-                progress.finished(Outcome::Cache);
-            }
-            Cached::Fetch(expired) => fallback_repos.push((repo, expired)),
-        }
+        read_into_plan(
+            &mut results,
+            &mut fallback_repos,
+            cache.as_ref(),
+            served,
+            progress,
+        )
+        .await;
     }
 
-    fetch_fallback_repos(
-        fallback_repos,
-        registry,
-        cache.as_ref(),
-        &mut results,
-        progress,
-    )
-    .await;
+    fetch_fallback_repos(fallback_repos, cache.as_ref(), &mut results, progress).await;
 
     results
 }
