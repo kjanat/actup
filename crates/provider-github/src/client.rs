@@ -3,8 +3,6 @@
 //! All async methods in this module can return errors for network failures,
 //! rate limiting, authentication issues, or resource not found.
 
-#![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
-
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result, encode_path, error::Source};
@@ -218,6 +216,10 @@ impl GitHubClient {
     ///
     /// This avoids walking every pagination page when actup only needs the
     /// newest N tags for policy evaluation.
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn list_tags_limited(
         &self,
         owner: &str,
@@ -231,6 +233,10 @@ impl GitHubClient {
     }
 
     /// List the newest `max_tags` tags with the `ETag` of the first page.
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn list_tags_limited_tagged(
         &self,
         owner: &str,
@@ -244,6 +250,10 @@ impl GitHubClient {
     /// List the newest `max_tags` tags, sending `etag` as `If-None-Match` on the first page.
     ///
     /// A 304 to the first page answers [`Conditional::NotModified`].
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn list_tags_limited_if_none_match(
         &self,
         owner: &str,
@@ -335,6 +345,10 @@ impl GitHubClient {
     }
 
     /// Get repository info with its `ETag`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo_tagged(&self, owner: &str, repo: &str) -> Result<Tagged<GitHubRepo>> {
         let url = self.repo_url(owner, repo)?;
         debug!(url = %url, "fetching repo info");
@@ -368,6 +382,10 @@ impl GitHubClient {
     }
 
     /// Get repository info, sending `etag` as `If-None-Match`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo_if_none_match(
         &self,
         owner: &str,
@@ -448,6 +466,10 @@ impl GitHubClient {
     }
 
     /// Get branch info with its `ETag`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or branch not found.
     pub async fn get_branch_tagged(
         &self,
         owner: &str,
@@ -466,6 +488,10 @@ impl GitHubClient {
     }
 
     /// Get branch info, sending `etag` as `If-None-Match`.
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or branch not found.
     pub async fn get_branch_if_none_match(
         &self,
         owner: &str,
