@@ -2,7 +2,8 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{Component, Path, PathBuf},
+    ffi::OsStr,
+    path::{Component, Path, PathBuf, Prefix},
     sync::{Arc, OnceLock},
     time::Duration,
 };
@@ -1394,13 +1395,27 @@ fn glob_escape(segment: &str) -> String {
     escaped
 }
 
+fn prefix_glob(prefix: Prefix<'_>) -> String {
+    let unc = |server: &OsStr, share: &OsStr| {
+        format!(
+            "//{}/{}",
+            glob_escape(&server.to_string_lossy()),
+            glob_escape(&share.to_string_lossy())
+        )
+    };
+    match prefix {
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => format!("{}:", char::from(letter)),
+        Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => unc(server, share),
+        Prefix::DeviceNS(device) => format!("//./{}", glob_escape(&device.to_string_lossy())),
+        Prefix::Verbatim(name) => format!("//[?]/{}", glob_escape(&name.to_string_lossy())),
+    }
+}
+
 fn absolute_glob(path: &Path) -> String {
     let mut glob = String::new();
     for component in path.components() {
         match component {
-            Component::Prefix(prefix) => {
-                glob.push_str(&glob_escape(&prefix.as_os_str().to_string_lossy()));
-            }
+            Component::Prefix(prefix) => glob.push_str(&prefix_glob(prefix.kind())),
             Component::RootDir => glob.push('/'),
             Component::CurDir | Component::ParentDir | Component::Normal(_) => {
                 if !glob.is_empty() && !glob.ends_with('/') {
@@ -1873,6 +1888,65 @@ mod tests {
             format!("{}/we[*]ird[[]x][{{]y[}}][?]", slash_glob(temp.path()))
         );
         Ok(())
+    }
+
+    #[test]
+    fn prefix_glob_uses_forward_slashes() {
+        let os = OsStr::new;
+        for (prefix, expected) in [
+            (Prefix::Disk(b'C'), "C:"),
+            (Prefix::VerbatimDisk(b'D'), "D:"),
+            (Prefix::UNC(os("server"), os("share")), "//server/share"),
+            (
+                Prefix::UNC(os("wsl.localhost"), os("Ubuntu")),
+                "//wsl.localhost/Ubuntu",
+            ),
+            (
+                Prefix::VerbatimUNC(os("server"), os("share")),
+                "//server/share",
+            ),
+            (Prefix::UNC(os("s*rv"), os("sh[a]re")), "//s[*]rv/sh[[]a]re"),
+            (Prefix::DeviceNS(os("pipe")), "//./pipe"),
+            (Prefix::Verbatim(os("volume")), "//[?]/volume"),
+        ] {
+            assert_eq!(prefix_glob(prefix), expected, "{prefix:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn absolute_glob_writes_windows_prefixes_with_forward_slashes() {
+        for (path, expected) in [
+            (r"C:\repo\actup.toml", "C:/repo/actup.toml"),
+            (
+                r"\\server\share\repo\actup.toml",
+                "//server/share/repo/actup.toml",
+            ),
+            (
+                r"\\wsl.localhost\Ubuntu\home\actup.toml",
+                "//wsl.localhost/Ubuntu/home/actup.toml",
+            ),
+            (r"\\?\C:\repo\actup.toml", "C:/repo/actup.toml"),
+            (
+                r"\\?\UNC\server\share\repo\actup.toml",
+                "//server/share/repo/actup.toml",
+            ),
+        ] {
+            assert_eq!(absolute_glob(Path::new(path)), expected, "{path}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn absolute_glob_in_appends_pattern_after_unc_root() {
+        assert_eq!(
+            absolute_glob_in(Path::new(r"\\server\share"), "{actup.toml}"),
+            "//server/share/{actup.toml}"
+        );
+        assert_eq!(
+            absolute_glob_in(Path::new(r"\\?\C:\"), "{actup.toml}"),
+            "C:/{actup.toml}"
+        );
     }
 
     async fn initialized_service(
