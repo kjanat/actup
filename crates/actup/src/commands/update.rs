@@ -9,7 +9,10 @@ use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
-    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, report_unplaceable},
+    common::{
+        Change, EditResult, FileEdits, PendingEdit, WorkflowScanner, commit_file,
+        report_unplaceable,
+    },
 };
 
 /// Create an edit that replaces the ref of `loc` with `new_ref`.
@@ -34,24 +37,18 @@ fn build_edit(
     }
 }
 
+fn target_display(action_ref: &ActionRef, target: &version::Info) -> String {
+    if action_ref.is_sha() {
+        let short = &target.sha()[..7.min(target.sha().len())];
+        format!("{} ({short})", target.version())
+    } else {
+        target.version().to_string()
+    }
+}
+
 /// Pin a floating branch ref to its HEAD SHA, tagging it with a `# branch` comment.
 fn pin_branch_edit(loc: &UsesLocation, ref_name: &str, sha: &str) -> Option<PendingEdit> {
     ref_edit(loc, sha).map(|edit| edit.with_comment(format!(" # {ref_name}")))
-}
-
-/// Write accumulated file edits, recording errors.
-fn write_files(files: &[FileEdits], dry_run: bool, errors: &mut ErrorTally) {
-    for file_edits in files {
-        if let Err(e) = file_edits.write(dry_run) {
-            eprintln!(
-                "{}: {} - {}",
-                "Error writing file".red(),
-                file_edits.path.display(),
-                e
-            );
-            errors.record_env();
-        }
-    }
 }
 
 pub async fn run(
@@ -69,12 +66,10 @@ pub async fn run(
         return 0;
     }
 
-    let mut errors = ErrorTally::default();
-    let mut total_updates = 0;
-    let mut files_to_write: Vec<FileEdits> = Vec::new();
+    let mut result = EditResult::default();
 
     for file in &discovered {
-        let Some(content) = scanner.read_file(file, &mut errors) else {
+        let Some(content) = scanner.read_file(file, &mut result.errors) else {
             continue;
         };
 
@@ -91,70 +86,57 @@ pub async fn run(
                 Ok(v) => v,
                 Err(e) => {
                     eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
-                    errors.record(&e);
+                    result.errors.record(&e);
                     continue;
                 }
             };
 
             // Use core check_action to determine if update needed
-            let result = check_action_with_provider(&action_ref, &versions, config, provider).await;
-            let (edit, target_display) = match result.status() {
+            let check = check_action_with_provider(&action_ref, &versions, config, provider).await;
+            let (edit, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
                     build_edit(&loc, &action_ref, target),
-                    target.version().to_string(),
+                    target_display(&action_ref, target),
+                    false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
                     pin_branch_edit(&loc, ref_name, sha),
-                    format!("{} # {ref_name}", &sha[..7.min(sha.len())]),
+                    sha[..7.min(sha.len())].to_string(),
+                    true,
                 ),
                 _ => continue, // Not actionable, skip
             };
             let Some(edit) = edit else {
-                report_unplaceable(&action_ref, &loc, &mut errors);
+                report_unplaceable(&action_ref, &loc, &mut result.errors);
                 continue;
             };
+            let change = Change {
+                action: action_ref,
+                line: loc.line(),
+                target,
+                show_comment,
+            };
+            file_edits.add(edit, change);
+        }
 
-            if !file_edits.add(edit) {
-                eprintln!(
-                    "{}: {}:{} - multiple actions on same line",
-                    "Warning".yellow(),
-                    relative,
-                    loc.line()
-                );
-                errors.record_user();
-                continue;
-            }
-
+        for (change, comment) in commit_file(file_edits, &relative, dry_run, &mut result) {
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
                     relative,
-                    loc.line(),
-                    action_ref.ref_str().red(),
-                    target_display.green()
+                    change.line,
+                    change.action.ref_str().red(),
+                    change.written(comment.as_deref()).green()
                 );
             }
-            total_updates += 1;
-        }
-
-        if !file_edits.is_empty() {
-            files_to_write.push(file_edits);
         }
     }
-
-    write_files(&files_to_write, dry_run, &mut errors);
-
-    let result = EditResult {
-        count: total_updates,
-        errors,
-    };
 
     result.print_summary(dry_run, "Updated", "Would update", format);
     result.exit_code(dry_run)
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::{collections::HashMap, sync::Arc};
 
@@ -164,9 +146,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::cli::CliExitCode;
+    use crate::{cli::CliExitCode, common::EditOutcome};
 
-    struct TagProvider;
+    struct TagProvider {
+        latest: &'static str,
+    }
 
     impl Provider for TagProvider {
         fn kind(&self) -> Kind {
@@ -186,7 +170,7 @@ mod tests {
                 sha40('a'),
             ));
             let new = Arc::new(version::Info::new(
-                version::Version::parse("v4.2.0"),
+                version::Version::parse(self.latest),
                 sha40('b'),
             ));
             let set = version::Set::build(
@@ -240,16 +224,13 @@ mod tests {
         let file = workflows.join("ci.yml");
         let content = "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: \"actions/checkout@v4.0.\\x30\"\n      - uses: actions/checkout@v4.0.0\n";
         std::fs::write(&file, content)?;
-        let mut registry = provider::Registry::new();
-        registry.set_default_host("github.com");
-        registry.register(Box::new(TagProvider));
 
         let code = run(
             dir.path(),
             false,
             OutputFormat::Json,
             &Config::default(),
-            &registry,
+            &registry("v4.2.0"),
         )
         .await;
 
@@ -265,30 +246,102 @@ mod tests {
         ActionRef::simple(owner, repo, ref_str)
     }
 
-    // Version resolution tests now live in actup-core::resolution module.
+    fn registry(latest: &'static str) -> provider::Registry {
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(TagProvider { latest }));
+        registry
+    }
 
-    #[test]
-    fn test_ref_edit_replaces_only_the_ref() {
-        let line = "      - uses: actions/checkout@v4";
-        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
-        let edit = ref_edit(&loc, "v5").unwrap();
-        assert_eq!(edit.line, 10);
-        assert_eq!(
-            edit.apply(line).unwrap(),
-            "      - uses: actions/checkout@v5"
-        );
+    #[tokio::test]
+    async fn test_run_updates_every_action_on_a_line_in_one_pass()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        let content = [
+            "on: push",
+            "jobs:",
+            "  two:",
+            "    runs-on: x",
+            "    steps: [{ uses: actions/checkout@v4.0.0 }, { uses: \"o/b@v4.0.0\" }]",
+            "  three:",
+            "    runs-on: x",
+            "    steps: [{ uses: o/c@v4.0.0 }, { uses: 'o/d@v4.0.0' }, { uses: o/e@OLD }] # note",
+            "  single:",
+            "    runs-on: x",
+            "    steps:",
+            "      - uses: o/f@OLD",
+            "      - uses: o/g@v4.0.0 # mine",
+            "",
+        ]
+        .join("\n")
+        .replace("OLD", &sha40('a'));
+        let expected = [
+            "on: push",
+            "jobs:",
+            "  two:",
+            "    runs-on: x",
+            "    steps: [{ uses: actions/checkout@v4.10.1 }, { uses: \"o/b@v4.10.1\" }]",
+            "  three:",
+            "    runs-on: x",
+            "    steps: [{ uses: o/c@v4.10.1 }, { uses: 'o/d@v4.10.1' }, { uses: o/e@NEW }] # note",
+            "  single:",
+            "    runs-on: x",
+            "    steps:",
+            "      - uses: o/f@NEW # v4.10.1",
+            "      - uses: o/g@v4.10.1 # mine",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW", &sha40('b'));
+        std::fs::write(&file, &content)?;
+        let registry = registry("v4.10.1");
+        let config = Config::default();
+
+        let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, expected);
+
+        let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, expected);
+        Ok(())
+    }
+
+    fn apply_at(line_body: &str, edit: PendingEdit) -> Result<String, Box<dyn std::error::Error>> {
+        let content = format!("{}{line_body}", "\n".repeat(edit.line - 1));
+        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content);
+        file_edits.add(edit, ());
+        let plan = file_edits.plan();
+        if !matches!(plan.entries.as_slice(), [((), EditOutcome::Applied { .. })]) {
+            return Err(format!("edit did not apply: {:?}", plan.entries).into());
+        }
+        Ok(plan.content.trim_start_matches('\n').to_string())
     }
 
     #[test]
-    fn test_pin_branch_edit_pins_with_branch_comment() {
+    fn test_ref_edit_replaces_only_the_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let edit = ref_edit(&loc, "v5").ok_or("no edit")?;
+        assert_eq!(edit.line, 10);
+        assert_eq!(apply_at(line, edit)?, "      - uses: actions/checkout@v5");
+        Ok(())
+    }
+
+    #[test]
+    fn test_pin_branch_edit_pins_with_branch_comment() -> Result<(), Box<dyn std::error::Error>> {
         let sha = sha40('c');
         let line = "      - uses: a/b@main";
-        let loc = sha_loc(line);
-        let edit = pin_branch_edit(&loc, "main", &sha).unwrap();
+        let loc = sha_loc(line)?;
+        let edit = pin_branch_edit(&loc, "main", &sha).ok_or("no edit")?;
         assert_eq!(
-            edit.apply(line).unwrap(),
+            apply_at(line, edit)?,
             format!("      - uses: a/b@{sha} # main")
         );
+        Ok(())
     }
 
     #[test]
@@ -303,60 +356,71 @@ mod tests {
         assert!(pin_branch_edit(&loc, "v4", &sha40('c')).is_none());
     }
 
+    #[test]
+    fn test_target_display_names_the_version_and_a_sha_pin() {
+        let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('b'));
+        assert_eq!(
+            target_display(&make_action_ref("a", "b", "v4"), &target),
+            "v5.0.0"
+        );
+        assert_eq!(
+            target_display(&make_action_ref("a", "b", &sha40('a')), &target),
+            "v5.0.0 (bbbbbbb)"
+        );
+    }
+
     fn sha40(byte: char) -> String {
         byte.to_string().repeat(40)
     }
 
-    fn sha_loc(line_body: &str) -> UsesLocation {
-        // column of the value start in `      - uses: <value>`
+    fn sha_loc(line_body: &str) -> Result<UsesLocation, Box<dyn std::error::Error>> {
         let value = line_body
             .split("uses: ")
             .nth(1)
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap();
-        let column = line_body.find(value).unwrap() + 1;
-        UsesLocation::new(1, column, value.to_string(), line_body.to_string())
+            .and_then(|rest| rest.split_whitespace().next())
+            .ok_or("line has no `uses:` value")?;
+        let column = line_body.find(value).ok_or("value not in line")? + 1;
+        Ok(UsesLocation::new(
+            1,
+            column,
+            value.to_string(),
+            line_body.to_string(),
+        ))
     }
 
     #[test]
-    fn test_build_edit_tag_writes_tag() {
+    fn test_build_edit_tag_writes_tag() -> Result<(), Box<dyn std::error::Error>> {
         let line = "      - uses: actions/checkout@v4";
-        let loc = sha_loc(line);
+        let loc = sha_loc(line)?;
         let action_ref = make_action_ref("actions", "checkout", "v4");
-        let target = actup_core::version::Info::new(
-            actup_core::version::Version::parse("v5.0.0"),
-            sha40('a'),
+        let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
+        let edit = build_edit(&loc, &action_ref, &target).ok_or("no edit")?;
+        assert_eq!(
+            apply_at(line, edit)?,
+            "      - uses: actions/checkout@v5.0.0"
         );
-        let result = build_edit(&loc, &action_ref, &target)
-            .unwrap()
-            .apply(line)
-            .unwrap();
-        assert_eq!(result, "      - uses: actions/checkout@v5.0.0");
+        Ok(())
     }
 
     #[test]
-    fn test_build_edit_sha_repins_to_sha_with_comment() {
+    fn test_build_edit_sha_repins_to_sha_with_comment() -> Result<(), Box<dyn std::error::Error>> {
         let old = sha40('a');
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old}");
-        let loc = sha_loc(&line);
+        let loc = sha_loc(&line)?;
         let action_ref = make_action_ref("actions", "checkout", &old);
-        let target =
-            actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
-        let result = build_edit(&loc, &action_ref, &target)
-            .unwrap()
-            .apply(&line)
-            .unwrap();
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let edit = build_edit(&loc, &action_ref, &target).ok_or("no edit")?;
         assert_eq!(
-            result,
+            apply_at(&line, edit)?,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
         );
+        Ok(())
     }
 
     #[test]
-    fn test_flow_style_update_round_trip_changes_only_refs() {
+    fn test_flow_style_update_round_trip_changes_only_refs()
+    -> Result<(), Box<dyn std::error::Error>> {
         let old_sha = sha40('a');
         let new_sha = sha40('b');
         let content = [
@@ -388,14 +452,12 @@ mod tests {
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content.clone());
         let mut seen = 0;
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
-            assert!(file_edits.add(build_edit(&loc, &action_ref, &target).unwrap()));
+            file_edits.add(build_edit(&loc, &action_ref, &target).ok_or("no edit")?, ());
             seen += 1;
         }
         assert_eq!(seen, 6);
 
-        let Ok(updated) = file_edits.apply() else {
-            panic!("edits did not apply");
-        };
+        let updated = file_edits.plan().content;
         assert_eq!(updated, expected);
 
         let refs: Vec<String> = WorkflowScanner::extract_actions(&updated)
@@ -412,5 +474,6 @@ mod tests {
                 new_sha.as_str()
             ]
         );
+        Ok(())
     }
 }

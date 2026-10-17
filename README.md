@@ -161,7 +161,7 @@ actup completions powershell >> $PROFILE
 | Code | Meaning                                                          |
 | ---- | ---------------------------------------------------------------- |
 | 0    | Success / all up-to-date                                         |
-| 1    | Outdated refs found                                              |
+| 1    | Outdated refs found, or `update`/`pin` skipped a ref             |
 | 2    | User error: unresolvable refs, invalid config, invalid CLI input |
 | 3    | Network/auth/rate-limit error                                    |
 

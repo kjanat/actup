@@ -533,7 +533,7 @@ fn format_check_output(
     // Summary line
     let _ = writeln!(
         out,
-        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} to pin, {} ignored\n",
+        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} branch refs to pin, {} ignored\n",
         outdated.len(),
         up_to_date,
         pinned,

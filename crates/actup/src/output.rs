@@ -391,45 +391,27 @@ fn print_toml(findings: &[Finding]) {
 
 /// Prints a summary of findings.
 pub fn print_summary(findings: &[Finding]) {
-    let total = findings.len();
-    let up_to_date = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::UpToDate))
-        .count();
-    let ignored = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::Ignored))
-        .count();
-    let outdated = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::Outdated { .. }))
-        .count();
-    let pinned = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::Pinned { .. }))
-        .count();
-    let floating = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::Floating { .. }))
-        .count();
-    let to_pin = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::PinBranch { .. }))
-        .count();
-    let unresolvable = findings
-        .iter()
-        .filter(|f| matches!(f.status(), FindingStatus::Unresolvable { .. }))
-        .count();
-
     println!();
-    println!(
-        "{}",
-        format!(
-            "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {to_pin} to pin, {unresolvable} unresolvable",
-            if total == 1 { "" } else { "s" }
-        )
-        .bold()
-    );
+    println!("{}", summary_line(findings).bold());
+}
+
+fn summary_line(findings: &[Finding]) -> String {
+    let total = findings.len();
+    let count =
+        |pred: fn(&FindingStatus) -> bool| findings.iter().filter(|f| pred(f.status())).count();
+    let up_to_date = count(|s| matches!(s, FindingStatus::UpToDate));
+    let ignored = count(|s| matches!(s, FindingStatus::Ignored));
+    let outdated = count(|s| matches!(s, FindingStatus::Outdated { .. }));
+    let pinned = count(|s| matches!(s, FindingStatus::Pinned { .. }));
+    let floating = count(|s| matches!(s, FindingStatus::Floating { .. }));
+    let to_pin = count(|s| matches!(s, FindingStatus::PinBranch { .. }));
+    let unresolvable = count(|s| matches!(s, FindingStatus::Unresolvable { .. }));
+    let sha_pinned = findings.iter().filter(|f| f.action_ref().is_sha()).count();
+
+    format!(
+        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {to_pin} branch refs to pin, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
+        if total == 1 { "" } else { "s" }
+    )
 }
 
 /// Determines CLI exit code based on findings.
@@ -1024,7 +1006,10 @@ mod tests {
         )];
 
         print_summary(&findings);
-        // Verify singular "action" not "actions"
+        assert_eq!(
+            summary_line(&findings),
+            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unresolvable; 0 of 1 SHA-pinned"
+        );
     }
 
     #[test]
@@ -1055,15 +1040,24 @@ mod tests {
             make_finding(
                 "test.yml",
                 4,
-                make_action_ref("actions", "cache", "abc123"),
+                make_action_ref("actions", "cache", &"a".repeat(40)),
                 FindingStatus::Pinned {
-                    sha: "abc123".to_string(),
+                    sha: "a".repeat(40),
                     tag: None,
                 },
             ),
             make_finding(
                 "test.yml",
                 5,
+                make_action_ref("actions", "setup-go", "main"),
+                FindingStatus::PinBranch {
+                    ref_name: "main".to_string(),
+                    sha: "f".repeat(40),
+                },
+            ),
+            make_finding(
+                "test.yml",
+                6,
                 make_action_ref("unknown", "action", "v1"),
                 FindingStatus::Unresolvable {
                     reason: "not found".to_string(),
@@ -1072,15 +1066,19 @@ mod tests {
             ),
         ];
 
-        print_summary(&findings);
-        // Summary should show: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 1 unresolvable
+        assert_eq!(
+            summary_line(&findings),
+            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 0 floating, 1 branch refs to pin, 1 unresolvable; 1 of 6 SHA-pinned"
+        );
     }
 
     #[test]
     fn test_print_summary_empty() {
         let findings: Vec<Finding> = vec![];
-        print_summary(&findings);
-        // Should handle empty list gracefully
+        assert_eq!(
+            summary_line(&findings),
+            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unresolvable; 0 of 0 SHA-pinned"
+        );
     }
 
     // Exit code edge cases

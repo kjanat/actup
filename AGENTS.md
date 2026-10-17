@@ -387,7 +387,8 @@ Must support:
 Exit codes:
 
 - `0` success
-- `1` outdated found (in check) if `--fail-on-outdated`
+- `1` outdated found (in check) if `--fail-on-outdated` or `update`/`pin`
+  skipped a ref its writer cannot edit
 - `2` user error: confirmed unresolvable refs, invalid config, invalid CLI input
 - `3` network/auth/rate-limit prevented verification (document)
 

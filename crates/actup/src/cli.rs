@@ -180,7 +180,7 @@ pub enum OutputFormat {
 pub enum CliExitCode {
     /// Success
     Success = 0,
-    /// Outdated found (in check with --strict, or dry-run with changes)
+    /// Outdated found (in check with --strict, or dry-run with changes), or `update`/`pin` skipped a ref
     Outdated = 1,
     /// User error: a confirmed unresolvable ref, an invalid config file, or invalid CLI input.
     UserError = 2,

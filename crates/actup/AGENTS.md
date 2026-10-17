@@ -42,7 +42,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 | Code | Meaning                                                          | Enum Variant       |
 | ---- | ---------------------------------------------------------------- | ------------------ |
 | 0    | Success / all up-to-date                                         | `Success`          |
-| 1    | Outdated refs found                                              | `Outdated`         |
+| 1    | Outdated refs found, or `update`/`pin` skipped a ref             | `Outdated`         |
 | 2    | User error: unresolvable refs, invalid config, invalid CLI input | `UserError`        |
 | 3    | Network/auth/rate-limit error                                    | `EnvironmentError` |
 
