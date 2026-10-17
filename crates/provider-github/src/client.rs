@@ -179,13 +179,13 @@ impl GitHubClient {
         &self.host
     }
 
-    fn repo_url(&self, owner: &str, repo: &str) -> String {
-        format!(
+    fn repo_url(&self, owner: &str, repo: &str) -> Result<String> {
+        Ok(format!(
             "{}/repos/{}/{}",
             self.api_base,
-            encode_path(owner),
-            encode_path(repo)
-        )
+            encode_path(owner)?,
+            encode_path(repo)?
+        ))
     }
 
     /// Get the API base URL this client targets.
@@ -217,7 +217,7 @@ impl GitHubClient {
         let mut all_tags = Vec::new();
         let mut url = Some(format!(
             "{}/tags?per_page={per_page}",
-            self.repo_url(owner, repo)
+            self.repo_url(owner, repo)?
         ));
 
         while let Some(current_url) = url {
@@ -265,7 +265,7 @@ impl GitHubClient {
 
         let first_url = format!(
             "{}/tags?per_page={per_page}",
-            self.repo_url(owner, repo)
+            self.repo_url(owner, repo)?
         );
         debug!(url = %first_url, max_tags, "fetching first tags page");
         let response = self.get_if_none_match(&first_url, etag).await?;
@@ -329,7 +329,7 @@ impl GitHubClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo(&self, owner: &str, repo: &str) -> Result<GitHubRepo> {
-        let url = self.repo_url(owner, repo);
+        let url = self.repo_url(owner, repo)?;
         debug!(url = %url, "fetching repo info");
 
         let response = self.get(&url).await?;
@@ -367,7 +367,7 @@ impl GitHubClient {
         repo: &str,
         etag: Option<&str>,
     ) -> Result<Conditional<GitHubRepo>> {
-        let url = self.repo_url(owner, repo);
+        let url = self.repo_url(owner, repo)?;
         debug!(url = %url, "fetching repo info");
 
         let response = self.get_if_none_match(&url, etag).await?;
@@ -385,8 +385,8 @@ impl GitHubClient {
 
         let url = format!(
             "{}/git/ref/{}",
-            self.repo_url(owner, repo),
-            encode_path(ref_path)
+            self.repo_url(owner, repo)?,
+            encode_path(ref_path)?
         );
         debug!(url = %url, "fetching ref");
 
@@ -408,13 +408,13 @@ impl GitHubClient {
     ) -> Result<GitHubContent> {
         let mut url = format!(
             "{}/contents/{}",
-            self.repo_url(owner, repo),
-            encode_path(path)
+            self.repo_url(owner, repo)?,
+            encode_path(path)?
         );
 
         if let Some(r) = ref_name {
             url.push_str("?ref=");
-            url.push_str(&encode_path(r));
+            url.push_str(&encode_path(r)?);
         }
 
         debug!(url = %url, "fetching content");
@@ -431,8 +431,8 @@ impl GitHubClient {
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GitHubBranch> {
         let url = format!(
             "{}/branches/{}",
-            self.repo_url(owner, repo),
-            encode_path(branch)
+            self.repo_url(owner, repo)?,
+            encode_path(branch)?
         );
         debug!(url = %url, "fetching branch");
 
@@ -450,8 +450,8 @@ impl GitHubClient {
     ) -> Result<Conditional<GitHubBranch>> {
         let url = format!(
             "{}/branches/{}",
-            self.repo_url(owner, repo),
-            encode_path(branch)
+            self.repo_url(owner, repo)?,
+            encode_path(branch)?
         );
         debug!(url = %url, "fetching branch");
 
@@ -468,8 +468,8 @@ impl GitHubClient {
     pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitHubCommit> {
         let url = format!(
             "{}/commits/{}",
-            self.repo_url(owner, repo),
-            encode_path(sha)
+            self.repo_url(owner, repo)?,
+            encode_path(sha)?
         );
         debug!(url = %url, "fetching commit");
 
@@ -498,8 +498,8 @@ impl GitHubClient {
     ) -> Result<GitHubTagObject> {
         let url = format!(
             "{}/git/tags/{}",
-            self.repo_url(owner, repo),
-            encode_path(sha)
+            self.repo_url(owner, repo)?,
+            encode_path(sha)?
         );
         debug!(url = %url, "fetching tag object");
 

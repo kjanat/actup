@@ -694,4 +694,26 @@ assert.throws(() => parseConfig("actup.toml", "update_policy = \"patch\"\n"), /u
 
 console.log("PASS: parseConfig parses repo config files for checkRefs and planUpdates");
 
+// Test 22: refs that are not git ref names reach no provider.
+for (const uses of ["o/r@../../x/y", "o/r@./x", "o/r@a/.b"]) {
+	assert.throws(() => parseUses(uses), /ref/, uses);
+}
+const calls = [];
+const recordingProvider = {
+	...mockProvider,
+	async getVersions(host, owner, repo) {
+		calls.push(`getVersions ${owner}/${repo}`);
+		return { semverTags: [] };
+	},
+	async resolveRefToSha(host, owner, repo, ref) {
+		calls.push(`resolveRefToSha ${owner}/${repo}@${ref}`);
+		return "a".repeat(40);
+	},
+};
+const dottedYaml = `jobs:\n  build:\n    steps:\n      - uses: o/r@../../x/y\n      - uses: o/r@./x\n      - uses: o/r@a/.b\n`;
+assert.deepEqual(await checkRefs(dottedYaml, recordingProvider), [], "no results for invalid refs");
+assert.deepEqual(calls, [], "no provider call for invalid refs");
+
+console.log("PASS: invalid git refs reach no provider");
+
 console.log("\nAll npm package integration tests PASSED");

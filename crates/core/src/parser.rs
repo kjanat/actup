@@ -44,6 +44,10 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
             reason: "empty version reference after '@'".to_string(),
         });
     }
+    check_ref_name(ref_str).map_err(|reason| Error::InvalidRef {
+        input: input.to_string(),
+        reason,
+    })?;
 
     let id = parse_path(input, path_part)?;
     Ok(Some(ActionRef::new(
@@ -81,10 +85,10 @@ fn parse_path(input: &str, path: &str) -> Result<ActionRepoId> {
     };
     check_name(input, "owner", owner)?;
     check_name(input, "repo", repo)?;
-    if subpath.iter().any(|segment| segment.is_empty()) {
+    if let Some(segment) = subpath.iter().find(|s| matches!(**s, "" | "." | "..")) {
         return Err(Error::InvalidRef {
             input: input.to_string(),
-            reason: "empty path segment".to_string(),
+            reason: format!("path segment `{segment}` is empty, `.` or `..`"),
         });
     }
     let subpath = (!subpath.is_empty()).then(|| subpath.join("/"));
@@ -104,6 +108,45 @@ fn check_name(input: &str, field: &str, name: &str) -> Result<()> {
         input: input.to_string(),
         reason: format!("{field} `{name}` must match `[A-Za-z0-9._-]+`"),
     })
+}
+
+/// Check `name` against the rules of `git check-ref-format` for a ref name.
+///
+/// # Errors
+///
+/// Returns the rule that `name` breaks.
+pub fn check_ref_name(name: &str) -> std::result::Result<(), String> {
+    const FORBIDDEN: [char; 8] = [' ', '~', '^', ':', '?', '*', '[', '\\'];
+    if name.is_empty() || name == "@" {
+        return Err(format!("`{name}` is not a ref name"));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| c.is_ascii_control() || FORBIDDEN.contains(c))
+    {
+        return Err(format!("ref `{name}` holds the character {c:?}"));
+    }
+    if name.contains("..") || name.contains("@{") {
+        return Err(format!("ref `{name}` holds `..` or `@{{`"));
+    }
+    if name.starts_with('/') || name.ends_with('/') || name.contains("//") {
+        return Err(format!("ref `{name}` has an empty `/` component"));
+    }
+    if name.ends_with('.') {
+        return Err(format!("ref `{name}` ends with `.`"));
+    }
+    let is_lock = |c: &str| {
+        std::path::Path::new(c)
+            .extension()
+            .is_some_and(|ext| ext == "lock")
+    };
+    name.split('/')
+        .find(|c| c.starts_with('.') || is_lock(c))
+        .map_or(Ok(()), |component| {
+            Err(format!(
+                "ref component `{component}` starts with `.` or ends with `.lock`"
+            ))
+        })
 }
 
 /// Whether `segment` names a host when it starts a path of three or more segments.
@@ -594,12 +637,12 @@ mod tests {
                 panic!("expected `{input}` to be invalid");
             };
             assert_eq!(named, input);
-            assert_eq!(reason, "empty path segment", "{input}");
+            assert_eq!(reason, "path segment `` is empty, `.` or `..`", "{input}");
         }
         let Err(Error::InvalidRef { reason, .. }) = parse_action_path("o/r//x") else {
             panic!("expected `o/r//x` to be invalid");
         };
-        assert_eq!(reason, "empty path segment");
+        assert_eq!(reason, "path segment `` is empty, `.` or `..`");
     }
 
     #[test]
@@ -648,6 +691,55 @@ mod tests {
         assert!(parse_uses("no-at-sign").is_err());
         assert!(parse_uses("missing@").is_err());
         assert!(parse_uses("@no-path").is_err());
+    }
+
+    #[test]
+    fn invalid_git_ref_names_are_rejected() {
+        for uses in [
+            "o/r@../../x/y",
+            "o/r@./x",
+            "o/r@a/.b",
+            "o/r@..",
+            "o/r@a//b",
+            "o/r@a/",
+            "o/r@/a",
+            "o/r@v1.lock",
+            "o/r@v1.",
+            "o/r@a b",
+            "o/r@a~1",
+            "o/r@a^",
+            "o/r@a:b",
+            "o/r@a?b",
+            "o/r@a*",
+            "o/r@a[b",
+            "o/r@a\\b",
+            "o/r@a@{1}",
+            "o/r@@",
+            "o/r@a\u{7}",
+            "o/r/../x@v1",
+            "o/r/./x@v1",
+            "o/r//x@v1",
+        ] {
+            assert!(
+                matches!(parse_uses(uses), Err(Error::InvalidRef { .. })),
+                "{uses}"
+            );
+        }
+    }
+
+    #[test]
+    fn valid_git_ref_names_parse() {
+        for uses in [
+            "o/r@v1",
+            "o/r@release/v1",
+            "o/r@feat#1",
+            "o/r@v1.0.0+build",
+            "o/r@a.b",
+            "o/r@100%",
+            "o/r/.github/workflows/ci.yml@main",
+        ] {
+            assert!(matches!(parse_uses(uses), Ok(Some(_))), "{uses}");
+        }
     }
 
     #[test]

@@ -159,8 +159,8 @@ pub fn fetch_version_set(
 ) -> actup_core::Result<version::Set> {
     let base = format!(
         "{api_base}/repos/{}/{}",
-        encode_path(owner),
-        encode_path(repo)
+        encode_path(owner)?,
+        encode_path(repo)?
     );
     let not_found = || Error::NotFound {
         owner: owner.to_string(),
@@ -312,9 +312,9 @@ impl<F: Fetch> RestProvider<F> {
         let url = format!(
             "{}/repos/{}/{}/commits/{}",
             self.api_base,
-            encode_path(repo.owner()),
-            encode_path(repo.repo()),
-            encode_path(ref_name)
+            encode_path(repo.owner())?,
+            encode_path(repo.repo())?,
+            encode_path(ref_name)?
         );
         let not_found = || Error::RefNotFound {
             owner: repo.owner().to_string(),
@@ -722,6 +722,23 @@ mod tests {
                 "{ref_name}"
             );
         }
+    }
+
+    #[test]
+    fn resolve_refuses_dot_segments_before_any_request() {
+        let fetch = MockFetch::default();
+        let log = fetch.log();
+        let provider = rest(fetch);
+        for ref_name in ["../../x/y", "./x", ".."] {
+            assert!(
+                matches!(
+                    provider.resolve(&ActionRepoId::simple("o", "r"), ref_name),
+                    Err(Error::InvalidRef { .. })
+                ),
+                "{ref_name}"
+            );
+        }
+        assert_eq!(log.lock().map_or(1, |r| r.len()), 0);
     }
 
     #[test]

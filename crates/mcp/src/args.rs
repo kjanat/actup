@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, num::NonZeroUsize};
 
-use actup_core::{ActionRepoId, parse_action_path, policy, version::is_short_sha};
+use actup_core::{ActionRepoId, check_ref_name, parse_action_path, policy, version::is_short_sha};
 use rust_mcp_sdk::schema::ToolInputSchema;
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::{Deserialize, Serialize};
@@ -251,10 +251,10 @@ pub fn check_ref(field: &str, value: &str) -> Result<(), String> {
     {
         return Err(format!("{field} `{value}` holds the character {c:?}"));
     }
-    if value.contains("..") || value.starts_with(['-', '/']) || value.ends_with('/') {
+    if value.starts_with('-') {
         return Err(format!("{field} `{value}` is not a valid git ref"));
     }
-    Ok(())
+    check_ref_name(value).map_err(|reason| format!("{field}: {reason}"))
 }
 
 /// Check a ref that a mutator writes: [`check_ref`] and no abbreviated SHA.
@@ -329,7 +329,22 @@ mod tests {
     #[test]
     fn check_ref_rejects_unwritable_values() {
         for value in [
-            "", "v1 x", "v1#x", "a@b", "x:y", "\"v1\"", "a..b", "-v1", "/v1", "v1/", "v1\n",
+            "",
+            "v1 x",
+            "v1#x",
+            "a@b",
+            "x:y",
+            "\"v1\"",
+            "a..b",
+            "-v1",
+            "/v1",
+            "v1/",
+            "v1\n",
+            "./x",
+            "a/.b",
+            "../../x/y",
+            "a//b",
+            "v1.lock",
         ] {
             assert!(check_ref("ref", value).is_err(), "{value:?}");
         }

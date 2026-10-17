@@ -660,6 +660,29 @@ await test("apiBase trailing slash is stripped", async () => {
 	assert(!fetchLog[0].url.includes("//repos"), "no double slash");
 });
 
+// Test: dot segments never reach fetch
+await test("dot segments are refused before any request", async () => {
+	mockFetch([]);
+	const provider = createGitHubProvider();
+	for (
+		const [owner, repo, ref] of [
+			["o", "r", ".."],
+			["o", "r", "."],
+			["..", "r", "v1"],
+			["o", "..", "v1"],
+		]
+	) {
+		let error;
+		try {
+			await provider.resolveRefToSha("github.com", owner, repo, ref);
+		} catch (err) {
+			error = err;
+		}
+		assert(error instanceof GitHubProviderError, `${owner}/${repo}@${ref} throws`);
+	}
+	assertEqual(fetchLog.length, 0, "no request");
+});
+
 // -- Summary --
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed > 0) {

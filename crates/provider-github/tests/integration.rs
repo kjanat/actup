@@ -1499,3 +1499,26 @@ async fn slashes_survive_encoding_in_rest_urls() -> Result<(), Box<dyn std::erro
     assert_eq!(action.name(), Some("Minimal"));
     Ok(())
 }
+
+#[tokio::test]
+async fn dot_segments_are_refused_before_any_request() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let provider = provider(&server)?;
+    let repo = ActionRepoId::simple("o", "r");
+
+    for ref_name in ["../../x/y", "./x", "..", "a/./b"] {
+        let result = provider.resolve_ref_to_sha(&repo, ref_name).await;
+        assert!(
+            matches!(result, Err(actup_core::Error::InvalidRef { .. })),
+            "{ref_name}: {result:?}"
+        );
+    }
+    let nested = ActionRepoId::new(None, "o", "r", Some("../x".into()));
+    let action = provider.get_action_yml(&nested, "v1").await;
+    assert!(
+        matches!(action, Err(actup_core::Error::InvalidRef { .. })),
+        "{action:?}"
+    );
+    assert_eq!(server.received_requests().await.map(|r| r.len()), Some(0));
+    Ok(())
+}

@@ -1250,7 +1250,6 @@ jobs:
             "steps:\n  - uses: \"actions/checkout@v\\x34\"\n",
             "steps:\n  - uses: 'a/b@v''4'\n",
             "steps:\n  - uses: |\n      a/b@v4\n",
-            "steps:\n  - uses: a/b@v4\n      more\n",
             "steps:\n  - uses: \"a/b@\\\n      v4\"\n",
             "steps:\n  - name: \"✓\"\n    uses: \"a/b@v\\x34\"\n",
         ] {
@@ -1310,6 +1309,30 @@ jobs:
         );
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_ref.repo(), "checkout");
+    }
+
+    #[test]
+    fn a_plain_scalar_over_two_lines_holds_no_valid_ref() {
+        let yaml = "steps:\n  - uses: a/b@v4\n      more\n";
+        assert!(
+            extract_located_actions(
+                yaml,
+                SourceFormat::Yaml,
+                crate::position::PositionEncoding::Utf16
+            )
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn invalid_git_refs_reach_no_provider() {
+        let yaml = "steps:\n  - uses: o/r@../../x/y\n  - uses: o/r@./x\n  - uses: o/r@a/.b\n  - uses: o/s@v1\n";
+        let repos = extract_unique_repo_ids(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
+        assert_eq!(repos, [ActionRepoId::simple("o", "s")]);
     }
 
     #[test]

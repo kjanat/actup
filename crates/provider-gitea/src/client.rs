@@ -117,13 +117,13 @@ impl GiteaClient {
         &self.host
     }
 
-    fn repo_url(&self, owner: &str, repo: &str) -> String {
-        format!(
+    fn repo_url(&self, owner: &str, repo: &str) -> Result<String> {
+        Ok(format!(
             "{}/repos/{}/{}",
             self.api_base,
-            urlencoding::encode(owner),
-            urlencoding::encode(repo)
-        )
+            encode_path(owner)?,
+            encode_path(repo)?
+        ))
     }
 
     /// List the first `max_tags` tags of a repository, newest first.
@@ -146,7 +146,7 @@ impl GiteaClient {
         loop {
             let url = format!(
                 "{}/tags?page={page}&limit={per_page}",
-                self.repo_url(owner, repo)
+                self.repo_url(owner, repo)?
             );
             debug!(url = %url, page = page, "fetching tags page");
 
@@ -173,7 +173,7 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo(&self, owner: &str, repo: &str) -> Result<GiteaRepository> {
-        let url = self.repo_url(owner, repo);
+        let url = self.repo_url(owner, repo)?;
         debug!(url = %url, "fetching repo info");
 
         let response = self.get(&url).await?;
@@ -186,7 +186,7 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo_archive(&self, owner: &str, repo: &str) -> Result<GiteaArchive> {
-        let url = self.repo_url(owner, repo);
+        let url = self.repo_url(owner, repo)?;
         debug!(url = %url, "fetching repo archive flag");
 
         let response = self.get(&url).await?;
@@ -201,8 +201,8 @@ impl GiteaClient {
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GiteaBranch> {
         let url = format!(
             "{}/branches/{}",
-            self.repo_url(owner, repo),
-            encode_path(branch)
+            self.repo_url(owner, repo)?,
+            encode_path(branch)?
         );
         debug!(url = %url, branch = %branch, "fetching branch info");
 
@@ -224,8 +224,8 @@ impl GiteaClient {
     ) -> Result<GiteaContent> {
         let url = format!(
             "{}/contents/{}?ref={}",
-            self.repo_url(owner, repo),
-            encode_path(path),
+            self.repo_url(owner, repo)?,
+            encode_path(path)?,
             urlencoding::encode(ref_name)
         );
         debug!(url = %url, path = %path, ref_name = %ref_name, "fetching file");
@@ -240,7 +240,7 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or tag not found.
     pub async fn get_tag(&self, owner: &str, repo: &str, tag: &str) -> Result<GiteaTag> {
-        let url = format!("{}/tags/{}", self.repo_url(owner, repo), encode_path(tag));
+        let url = format!("{}/tags/{}", self.repo_url(owner, repo)?, encode_path(tag)?);
         debug!(url = %url, tag = %tag, "fetching tag info");
 
         let response = self.get(&url).await?;
@@ -294,8 +294,8 @@ impl GiteaClient {
     pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GiteaCommit> {
         let url = format!(
             "{}/git/commits/{}",
-            self.repo_url(owner, repo),
-            urlencoding::encode(sha)
+            self.repo_url(owner, repo)?,
+            encode_path(sha)?
         );
         debug!(url = %url, sha = %sha, "fetching commit");
 

@@ -2064,7 +2064,7 @@ mod cli_runs {
         fs::create_dir_all(&workflows)?;
         fs::write(
             workflows.join("ci\u{202e}lmy.yml"),
-            "jobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: \"ghe.corp.example/o/r@v1\\e[2K\u{200b}\"\n",
+            "jobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: \"ghe.corp.example/o/r/x\\e[2K\u{200b}@v1\"\n",
         )?;
 
         let human = actup(repo.path()).arg("check").arg(repo.path()).output()?;
@@ -2072,7 +2072,7 @@ mod cli_runs {
         let stdout = String::from_utf8(human.stdout)?;
         assert!(stdout.contains("ci\u{fffd}lmy.yml"), "stdout: {stdout}");
         assert!(
-            stdout.contains("ghe.corp.example/o/r@v1\u{fffd}[2K\u{fffd}"),
+            stdout.contains("ghe.corp.example/o/r/x\u{fffd}[2K\u{fffd}@v1"),
             "stdout: {stdout}"
         );
         assert!(
@@ -2092,9 +2092,9 @@ mod cli_runs {
         assert!(file.ends_with("ci\u{202e}lmy.yml"), "file: {file:?}");
         assert_eq!(
             findings
-                .pointer("/0/reference")
+                .pointer("/0/action")
                 .and_then(serde_json::Value::as_str),
-            Some("v1\u{1b}[2K\u{200b}")
+            Some("ghe.corp.example/o/r/x\u{1b}[2K\u{200b}@v1")
         );
         Ok(())
     }
@@ -2216,7 +2216,7 @@ mod cli_runs {
         };
         fs::write(
             workflows.join(name),
-            "steps:\n  - uses: \"ghe.corp.example/o/r@v1\\r  L7: actions/checkout@v4  up to date\"\n",
+            "steps:\n  - uses: \"ghe.corp.example/o/r/x\\r  L7: actions/checkout  up to date@v1\"\n",
         )?;
 
         let output = actup(repo.path()).arg("check").arg(repo.path()).output()?;
@@ -2224,7 +2224,7 @@ mod cli_runs {
         let stdout = String::from_utf8(output.stdout)?;
         assert!(!stdout.contains('\r'), "stdout: {stdout:?}");
         assert!(
-            stdout.contains("@v1\u{fffd}  L7: actions/checkout@v4  up to date"),
+            stdout.contains("/x\u{fffd}  L7: actions/checkout  up to date@v1"),
             "stdout: {stdout:?}"
         );
         assert!(

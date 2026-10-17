@@ -5,7 +5,7 @@
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
 use actup_core::{
-    ActionRef, Config, parse_action_path, provider, sanitize_for_terminal, sanitize_line, version,
+    ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_for_terminal, sanitize_line, version,
 };
 use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
@@ -48,6 +48,12 @@ fn parse_action_query(input: &str) -> Option<ActionQuery> {
         (slug, (!r.is_empty()).then(|| r.to_string()))
     });
 
+    if constraint
+        .as_deref()
+        .is_some_and(|r| check_ref_name(r).is_err())
+    {
+        return None;
+    }
     let id = parse_action_path(slug).ok()?;
     if id.subpath().is_some() {
         return None;
@@ -239,6 +245,13 @@ mod tests {
     #[test]
     fn parse_rejects_no_slash() {
         assert!(parse_action_query("actions-checkout").is_none());
+    }
+
+    #[test]
+    fn parse_rejects_an_invalid_git_ref() {
+        for query in ["o/r@../../x/y", "o/r@./x", "o/r@a/.b"] {
+            assert!(parse_action_query(query).is_none(), "{query}");
+        }
     }
 
     #[test]

@@ -2,12 +2,25 @@
 
 use std::fmt::Write;
 
+use crate::{Error, Result};
+
 /// Percent-encode `path` for a URL, keeping its `/` separators.
 ///
 /// Every byte except ASCII letters, digits, `-`, `.`, `_`, `~` and `/` becomes
 /// `%XX`.
-#[must_use]
-pub fn encode_path(path: &str) -> String {
+///
+/// # Errors
+///
+/// Returns [`Error::InvalidRef`] when a segment of `path` is `.` or `..`.
+/// URL parsers resolve those segments, so the request would leave the
+/// repository.
+pub fn encode_path(path: &str) -> Result<String> {
+    if path.split('/').any(|segment| matches!(segment, "." | "..")) {
+        return Err(Error::InvalidRef {
+            input: path.to_string(),
+            reason: "a `.` or `..` path segment".to_string(),
+        });
+    }
     let mut encoded = String::with_capacity(path.len());
     for byte in path.bytes() {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~' | b'/') {
@@ -16,7 +29,7 @@ pub fn encode_path(path: &str) -> String {
             let _ = write!(encoded, "%{byte:02X}");
         }
     }
-    encoded
+    Ok(encoded)
 }
 
 #[cfg(test)]
@@ -24,11 +37,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn encode_path_keeps_separators_and_unreserved_bytes() {
-        assert_eq!(encode_path("release/v1.0_x~y-z"), "release/v1.0_x~y-z");
-        assert_eq!(encode_path("feat#1"), "feat%231");
-        assert_eq!(encode_path("v1.0.0+build"), "v1.0.0%2Bbuild");
-        assert_eq!(encode_path("a%b?c d"), "a%25b%3Fc%20d");
-        assert_eq!(encode_path("é"), "%C3%A9");
+    fn encode_path_keeps_separators_and_unreserved_bytes() -> Result<()> {
+        assert_eq!(encode_path("release/v1.0_x~y-z")?, "release/v1.0_x~y-z");
+        assert_eq!(encode_path("feat#1")?, "feat%231");
+        assert_eq!(encode_path("v1.0.0+build")?, "v1.0.0%2Bbuild");
+        assert_eq!(encode_path("a%b?c d")?, "a%25b%3Fc%20d");
+        assert_eq!(encode_path("%2e%2e")?, "%252e%252e");
+        assert_eq!(encode_path("é")?, "%C3%A9");
+        assert_eq!(encode_path(".github/x..y")?, ".github/x..y");
+        Ok(())
+    }
+
+    #[test]
+    fn encode_path_refuses_dot_segments() {
+        for path in ["..", ".", "../../x/y", "a/./b", "a/.."] {
+            assert!(
+                matches!(encode_path(path), Err(Error::InvalidRef { .. })),
+                "{path}"
+            );
+        }
     }
 }
