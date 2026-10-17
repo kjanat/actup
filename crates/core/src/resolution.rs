@@ -80,8 +80,10 @@ impl CheckResult {
         status: CheckStatus,
         versions: &version::Set,
         config: &Config,
+        resolved: Option<&str>,
     ) -> Self {
-        let Some((kind, sha)) = current_commit(action_ref, versions) else {
+        let listed = current_commit(action_ref, versions);
+        let Some(sha) = listed.map(|(_, sha)| sha).or(resolved) else {
             return Self::new(action_ref.clone(), status);
         };
         let target = match &status {
@@ -99,7 +101,7 @@ impl CheckResult {
         Self {
             action_ref: action_ref.clone(),
             status,
-            ref_kind: Some(kind),
+            ref_kind: listed.map(|(kind, _)| kind),
             same_commit,
         }
     }
@@ -314,14 +316,14 @@ pub async fn check_action_with_provider(
 ) -> CheckResult {
     let (status, lookup) = classify(action_ref, versions, config);
     let Some(lookup) = lookup else {
-        return CheckResult::described(action_ref, status, versions, config);
+        return CheckResult::described(action_ref, status, versions, config, None);
     };
 
     let repo_id = action_ref.to_repo_id().without_subpath();
-    let status = match provider
+    let resolved = provider
         .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-        .await
-    {
+        .await;
+    let status = match &resolved {
         Ok(sha) => match lookup.commit {
             Some(commit) if action_ref.abbreviates(sha.as_str()) => commit,
             _ => lookup.found,
@@ -332,7 +334,8 @@ pub async fn check_action_with_provider(
         },
         Err(_) => lookup.missing,
     };
-    CheckResult::described(action_ref, status, versions, config)
+    let resolved = resolved.as_ref().ok().map(provider::Sha40::as_str);
+    CheckResult::described(action_ref, status, versions, config, resolved)
 }
 
 /// Check action against already-fetched versions.
@@ -345,7 +348,7 @@ pub fn check_action(
     config: &Config,
 ) -> CheckResult {
     let status = classify(action_ref, versions, config).0;
-    CheckResult::described(action_ref, status, versions, config)
+    CheckResult::described(action_ref, status, versions, config, None)
 }
 
 fn current_commit<'a>(
@@ -2792,6 +2795,32 @@ mod tests {
             );
             assert_eq!(result.ref_kind(), Some(RefKind::Branch), "{branch}");
             assert_eq!(result.same_commit(), None, "{branch}");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unlisted_ref_on_the_target_commit_is_same_commit() {
+        const OLD: &str = "4444444444444444444444444444444444444444";
+        const NEW: &str = "5555555555555555555555555555555555555555";
+        let versions = versions_in_order(&[("v1.0.4", OLD), ("v1.0.5", NEW)]);
+        let action = make_action_ref("rust-lang", "crates-io-auth-action", "v1");
+        let warn = branch_config(policy::Branch::Warn);
+        for (head, want) in [(NEW, Some("v1.0.5")), (OLD, None)] {
+            let provider = ResolveMockProvider::with(Resolve::To(head));
+            let result = check_action_with_provider(&action, &versions, &warn, &provider).await;
+            assert_eq!(
+                result.status(),
+                &CheckStatus::Floating {
+                    ref_name: "v1".to_string()
+                },
+                "{head}"
+            );
+            assert_eq!(result.ref_kind(), None, "{head}");
+            assert_eq!(
+                result.same_commit().map(|t| t.version().as_str()),
+                want,
+                "{head}"
+            );
         }
     }
 
