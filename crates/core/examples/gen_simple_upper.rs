@@ -36,7 +36,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         pairs.push((code, u32::from_str_radix(upper, 16)?));
     }
-    if !codes.contains(&0x1E030) || codes.contains(&0x10D50) {
+    if !codes.contains(&0x1E030) || codes.contains(&0x2FFC) || codes.contains(&0x10D50) {
         return Err(format!("{input} is not UnicodeData.txt 15.0.0").into());
     }
     pairs.sort_unstable();

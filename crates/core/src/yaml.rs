@@ -563,13 +563,14 @@ fn resolve(text: &str) -> Result<Scalar, String> {
 }
 
 fn runner_number(text: &str, value: Scalar) -> Option<f64> {
+    let radix = text.starts_with("0x") || text.starts_with("0o");
     match value {
-        Scalar::Unsigned(n) => u32::try_from(n).map(f64::from).ok(),
-        Scalar::Signed(n) => i32::try_from(n).map(f64::from).ok(),
+        Scalar::Unsigned(n) if radix => u32::try_from(n).map(f64::from).ok(),
+        Scalar::Signed(n) if radix => i32::try_from(n).map(f64::from).ok(),
+        Scalar::Unsigned(_) | Scalar::Signed(_) => text.parse().ok(),
         Scalar::Float(n) => Some(n),
         Scalar::Null | Scalar::Bool(_) | Scalar::Str => None,
     }
-    .or_else(|| text.parse().ok())
 }
 
 fn runner_string(text: &str, value: Scalar) -> String {
@@ -1139,8 +1140,7 @@ mod tests {
 
     #[test]
     fn runner_reads_scalars_into_strings_as_the_runner_prints_them() -> Result<(), Error> {
-        let text =
-            "a: 0x1F\nb: 1.50\nc: TRUE\nd: .inf\ne: 1e20\nf: 0xFFFFFFFF\ng: '0x1F'\nh: !!int 012\n";
+        let text = "a: 0x1F\nb: 1.50\nc: TRUE\nd: .inf\ne: 1e20\nf: 0xFFFFFFFF\ng: '0x1F'\nh: !!int 012\ni: -0\nj: -00\nk: +7\n";
         let runner: HashMap<String, String> = from_str(text, Dialect::Runner)?;
         let config: HashMap<String, String> = from_str(text, Dialect::Config)?;
         for (key, printed, raw) in [
@@ -1152,6 +1152,9 @@ mod tests {
             ("f", "-1", "0xFFFFFFFF"),
             ("g", "0x1F", "0x1F"),
             ("h", "12", "012"),
+            ("i", "-0", "-0"),
+            ("j", "-0", "-00"),
+            ("k", "7", "+7"),
         ] {
             assert_eq!(runner.get(key).map(String::as_str), Some(printed), "{key}");
             assert_eq!(config.get(key).map(String::as_str), Some(raw), "{key}");
@@ -1193,5 +1196,10 @@ mod tests {
             let loaded = from_str::<figment::value::Value>(&text, Dialect::Config);
             assert!(loaded.is_ok(), "{text:?}: {loaded:?}");
         }
+        let loaded = from_str::<HashMap<String, String>>("0: a\n-0: b\n", Dialect::Runner);
+        assert_eq!(
+            loaded.map(|map| (map.get("0").cloned(), map.get("-0").cloned())),
+            Ok((Some("a".to_owned()), Some("b".to_owned())))
+        );
     }
 }
