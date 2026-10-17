@@ -251,45 +251,35 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         .map(|(_, v)| v.clone());
     let http = provider::ZedHttp::new(token.clone());
 
-    // Fetch versions for each unique (host, owner, repo)
-    let mut version_cache: HashMap<RepoKey, actup_core::version::Set> = HashMap::new();
-    let mut fetch_errors: Vec<(String, String)> = Vec::new();
-
-    for (key, fetch) in &unique_repos {
-        match provider::fetch_version_set(
-            &http,
-            &fetch.owner,
-            &fetch.repo,
-            &fetch.api_base,
-            provider::MAX_PAGES,
-            fetch.with_branches,
-        ) {
-            Ok(versions) => {
-                version_cache.insert(key.clone(), versions);
-            }
-            Err(e) => {
-                fetch_errors.push((format!("{}/{}/{}", key.0, key.1, key.2), e));
-            }
-        }
-    }
+    let fetched: HashMap<RepoKey, actup_core::Result<actup_core::version::Set>> = unique_repos
+        .iter()
+        .map(|(key, fetch)| {
+            let versions = provider::fetch_version_set(
+                &http,
+                &key.0,
+                &fetch.owner,
+                &fetch.repo,
+                &fetch.api_base,
+                provider::MAX_PAGES,
+                fetch.with_branches,
+            );
+            (key.clone(), versions)
+        })
+        .collect();
 
     let mut providers: HashMap<String, CachingProvider<provider::RestProvider<provider::ZedHttp>>> =
         HashMap::new();
-    let mut results: Vec<(String, UsesLocation, CheckResult)> = Vec::new();
-    for (path, uses_loc, action_ref) in &all_refs {
-        let key = repo_key(action_ref);
-        if let Some(versions) = version_cache.get(&key) {
-            let lookup = providers.entry(key.0.clone()).or_insert_with(|| {
-                CachingProvider::new(provider::RestProvider::new(
-                    provider::ZedHttp::new(token.clone()),
-                    api_base_for_host(&key.0),
-                    key.0.clone(),
-                ))
-            });
-            let result = provider::check(action_ref, versions, &config, lookup);
-            results.push((path.clone(), uses_loc.clone(), result));
-        }
-    }
+    let (results, fetch_errors) = collect_results(&all_refs, &fetched, |action_ref, versions| {
+        let host = repo_key(action_ref).0;
+        let lookup = providers.entry(host.clone()).or_insert_with(|| {
+            CachingProvider::new(provider::RestProvider::new(
+                provider::ZedHttp::new(token.clone()),
+                api_base_for_host(&host),
+                host,
+            ))
+        });
+        provider::check(action_ref, versions, &config, lookup)
+    });
 
     // Format output
     let text = format_check_output(
@@ -300,6 +290,43 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         all_refs.len(),
     );
     Ok(slash_output(text, "actup: Check Results"))
+}
+
+type Located = (String, UsesLocation, CheckResult);
+
+fn collect_results(
+    all_refs: &[(String, UsesLocation, ActionRef)],
+    fetched: &HashMap<RepoKey, actup_core::Result<actup_core::version::Set>>,
+    mut check: impl FnMut(&ActionRef, &actup_core::version::Set) -> CheckResult,
+) -> (Vec<Located>, Vec<(String, String)>) {
+    let results = all_refs
+        .iter()
+        .filter_map(|(path, uses_loc, action_ref)| {
+            let result = match fetched.get(&repo_key(action_ref))? {
+                Ok(versions) => check(action_ref, versions),
+                Err(e) if e.is_user_error() => CheckResult::new(
+                    action_ref.clone(),
+                    CheckStatus::Unresolvable {
+                        reason: e.to_string(),
+                        is_environment_error: false,
+                    },
+                ),
+                Err(_) => return None,
+            };
+            Some((path.clone(), uses_loc.clone(), result))
+        })
+        .collect();
+    let mut fetch_errors: Vec<(String, String)> = fetched
+        .iter()
+        .filter_map(|(key, versions)| match versions {
+            Err(e) if !e.is_user_error() => {
+                Some((format!("{}/{}/{}", key.0, key.1, key.2), e.to_string()))
+            }
+            _ => None,
+        })
+        .collect();
+    fetch_errors.sort();
+    (results, fetch_errors)
 }
 
 struct RepoFetch {
@@ -941,6 +968,91 @@ mod tests {
             text.contains("**Summary:** 1 outdated, 1 up-to-date, 1 pinned, 1 floating, 1 branch refs to pin, 1 ignored, 2 unknown, 1 unresolvable\n"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_missing_repository_counts_as_unresolvable() {
+        let repos = ["gone", "limited", "denied", "offline", "fine"];
+        let all_refs: Vec<(String, UsesLocation, ActionRef)> = repos
+            .iter()
+            .zip(1..)
+            .map(|(repo, line)| {
+                let value = format!("o/{repo}@v1");
+                let loc = UsesLocation::new(line, 9, value.clone(), format!("  uses: {value}"));
+                (
+                    "ci.yml".to_string(),
+                    loc,
+                    ActionRef::simple("o", *repo, "v1"),
+                )
+            })
+            .collect();
+        let key = |repo: &str| ("github.com".to_string(), "o".to_string(), repo.to_string());
+        let fetched = HashMap::from([
+            (
+                key("gone"),
+                Err(actup_core::Error::NotFound {
+                    owner: "o".into(),
+                    repo: "gone".into(),
+                    host: Some("github.com".into()),
+                }),
+            ),
+            (
+                key("limited"),
+                Err(actup_core::Error::RateLimited {
+                    provider: "github".into(),
+                    retry_after: None,
+                }),
+            ),
+            (
+                key("denied"),
+                Err(actup_core::Error::Auth {
+                    provider: "github".into(),
+                    reason: "status code 401".into(),
+                }),
+            ),
+            (
+                key("offline"),
+                Err(actup_core::Error::Network {
+                    operation: "GET tags".into(),
+                    message: "connection reset".into(),
+                }),
+            ),
+            (key("fine"), Ok(empty_versions())),
+        ]);
+
+        let (results, fetch_errors) = collect_results(&all_refs, &fetched, |action_ref, _| {
+            CheckResult::new(action_ref.clone(), CheckStatus::UpToDate)
+        });
+        let text = format_check_output(
+            &Config::default(),
+            &results,
+            &fetch_errors,
+            1,
+            all_refs.len(),
+        );
+
+        assert!(
+            text.contains("**Summary:** 0 outdated, 1 up-to-date, 0 pinned, 0 floating, 0 branch refs to pin, 0 ignored, 3 unknown, 1 unresolvable\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("- `ci.yml` line 1: `o/gone@v1` — action not found: github.com/o/gone\n"),
+            "{text}"
+        );
+        let repos_with_errors: Vec<&str> =
+            fetch_errors.iter().map(|(repo, _)| repo.as_str()).collect();
+        assert_eq!(
+            repos_with_errors,
+            [
+                "github.com/o/denied",
+                "github.com/o/limited",
+                "github.com/o/offline"
+            ]
+        );
+    }
+
+    fn empty_versions() -> actup_core::version::Set {
+        actup_core::version::Set::build(Vec::new(), HashMap::new(), HashMap::new(), None)
     }
 
     #[test]

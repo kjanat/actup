@@ -26,14 +26,66 @@ pub struct Response {
     headers: Vec<(String, String)>,
 }
 
+/// Why a [`Fetch::get`] request failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchError {
+    /// The server answered with this 4xx or 5xx status code.
+    Status(u16),
+    /// The request failed without an HTTP status.
+    Transport(String),
+}
+
+impl FetchError {
+    fn from_zed(message: String) -> Self {
+        // Zed's host `fetch` fails every 4xx and 5xx response with "status code <code>" in the message.
+        message
+            .split_once("status code ")
+            .and_then(|(_, rest)| rest.get(..3))
+            .and_then(|code| code.parse().ok())
+            .map_or(Self::Transport(message), Self::Status)
+    }
+
+    fn into_error(self, url: &str, not_found: impl FnOnce() -> Error) -> Error {
+        let code = match self {
+            Self::Status(code) => code,
+            Self::Transport(message) => {
+                return Error::Network {
+                    operation: format!("GET {url}"),
+                    message,
+                };
+            }
+        };
+        let reason = format!("GET {url}: status code {code}");
+        match code {
+            404 => not_found(),
+            401 => Error::Auth {
+                provider: "github".into(),
+                reason,
+            },
+            403 => Error::Forbidden {
+                provider: "github".into(),
+                reason,
+            },
+            429 => Error::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            },
+            _ => Error::Network {
+                operation: format!("GET {url}"),
+                message: format!("status code {code}"),
+            },
+        }
+    }
+}
+
 /// Synchronous HTTP GET against a GitHub-compatible REST API.
 pub trait Fetch {
     /// Fetch `url`.
     ///
     /// # Errors
     ///
-    /// Returns `Err(String)` when the request fails.
-    fn get(&self, url: &str) -> Result<Response, String>;
+    /// Returns [`FetchError`] when the request fails or the server answers with an error status.
+    fn get(&self, url: &str) -> Result<Response, FetchError>;
 }
 
 /// [`Fetch`] through Zed's host-proxied HTTP client.
@@ -49,7 +101,7 @@ impl ZedHttp {
 }
 
 impl Fetch for ZedHttp {
-    fn get(&self, url: &str) -> Result<Response, String> {
+    fn get(&self, url: &str) -> Result<Response, FetchError> {
         let mut builder = HttpRequest::builder()
             .method(HttpMethod::Get)
             .url(url)
@@ -62,9 +114,13 @@ impl Fetch for ZedHttp {
             builder = builder.header("Authorization", format!("Bearer {t}"));
         }
 
-        let response = builder.build()?.fetch()?;
+        let response = builder
+            .build()
+            .map_err(FetchError::Transport)?
+            .fetch()
+            .map_err(FetchError::from_zed)?;
         let body = String::from_utf8(response.body)
-            .map_err(|e| format!("invalid UTF-8 in response: {e}"))?;
+            .map_err(|e| FetchError::Transport(format!("invalid UTF-8 in response: {e}")))?;
         Ok(Response {
             body,
             headers: response.headers,
@@ -85,21 +141,38 @@ struct GitRef {
 ///
 /// # Errors
 ///
-/// Returns `Err(String)` on HTTP or JSON parse failures of the tag listing. A
-/// failed branch listing keeps the tags.
+/// Returns [`Error::NotFound`] when `host` has no `owner/repo`, and an
+/// environment error for auth, rate-limit, network and parse failures of the
+/// tag listing. A failed branch listing keeps the tags.
 pub fn fetch_version_set(
     fetch: &impl Fetch,
+    host: &str,
     owner: &str,
     repo: &str,
     api_base: &str,
     max_pages: u8,
     with_branches: bool,
-) -> Result<version::Set, String> {
+) -> actup_core::Result<version::Set> {
     let base = format!("{api_base}/repos/{owner}/{repo}");
-    let tags = fetch_all(fetch, &format!("{base}/tags?per_page=100"), max_pages)?;
+    let not_found = || Error::NotFound {
+        owner: owner.to_string(),
+        repo: repo.to_string(),
+        host: Some(host.to_string()),
+    };
+    let tags = fetch_all(
+        fetch,
+        &format!("{base}/tags?per_page=100"),
+        max_pages,
+        &not_found,
+    )?;
     let mut set = version::Set::from_tags(tags.into_iter().map(|tag| (tag.name, tag.sha)));
     if with_branches
-        && let Ok(branches) = fetch_all(fetch, &format!("{base}/branches?per_page=100"), max_pages)
+        && let Ok(branches) = fetch_all(
+            fetch,
+            &format!("{base}/branches?per_page=100"),
+            max_pages,
+            &not_found,
+        )
     {
         set.set_branches(branch_map(branches));
     }
@@ -111,7 +184,12 @@ fn branch_map(branches: Vec<GitRef>) -> HashMap<String, String> {
 }
 
 /// Fetch every page of a tag or branch listing.
-fn fetch_all(fetch: &impl Fetch, first_url: &str, max_pages: u8) -> Result<Vec<GitRef>, String> {
+fn fetch_all(
+    fetch: &impl Fetch,
+    first_url: &str,
+    max_pages: u8,
+    not_found: &dyn Fn() -> Error,
+) -> actup_core::Result<Vec<GitRef>> {
     let mut all_tags = Vec::new();
     let mut url = first_url.to_string();
     let mut page = 0u8;
@@ -122,8 +200,14 @@ fn fetch_all(fetch: &impl Fetch, first_url: &str, max_pages: u8) -> Result<Vec<G
         }
         page += 1;
 
-        let response = fetch.get(&url)?;
-        let tags = parse_refs_json(&response.body)?;
+        let response = fetch.get(&url).map_err(|e| e.into_error(&url, not_found))?;
+        let tags = parse_refs_json(&response.body).map_err(|e| match e {
+            BodyError::Message(message) => api_error(&message, not_found),
+            BodyError::Malformed(message) => Error::Network {
+                operation: format!("parse {url}"),
+                message,
+            },
+        })?;
         all_tags.extend(tags);
 
         match extract_next_url(&response.headers) {
@@ -135,32 +219,27 @@ fn fetch_all(fetch: &impl Fetch, first_url: &str, max_pages: u8) -> Result<Vec<G
     Ok(all_tags)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum BodyError {
+    Message(String),
+    Malformed(String),
+}
+
 /// Parse the JSON array of tag or branch objects from the GitHub REST API.
-///
-/// Note: Zed's `HttpResponse` does not expose the HTTP status code (see
-/// `wit/since_v0.6.0/http-client.wit`), so error responses can only be detected
-/// by the JSON shape. GitHub error responses are objects with a `message`
-/// field rather than arrays — we surface that message directly so the user
-/// gets a useful diagnostic instead of "expected JSON array".
-fn parse_refs_json(json: &str) -> Result<Vec<GitRef>, String> {
-    // Minimal JSON parsing — avoid pulling in a full JSON crate dep.
-    // GitHub returns: [{"name":"v4.2.2","commit":{"sha":"abc..."},...},...]
-    // We use serde_json via actup-core's transitive dependency.
-    let value: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("JSON parse error: {e}"))?;
+fn parse_refs_json(json: &str) -> Result<Vec<GitRef>, BodyError> {
+    let value: serde_json::Value = serde_json::from_str(json)
+        .map_err(|e| BodyError::Malformed(format!("JSON parse error: {e}")))?;
 
     let arr = value.as_array().ok_or_else(|| {
-        // Likely an error response like {"message": "Not Found", ...} or
-        // {"message": "API rate limit exceeded", ...}. Surface the message.
         value
             .get("message")
             .and_then(serde_json::Value::as_str)
             .map_or_else(
                 || {
                     let excerpt: String = json.chars().take(120).collect();
-                    format!("expected JSON array of refs, got: {excerpt}")
+                    BodyError::Malformed(format!("expected JSON array of refs, got: {excerpt}"))
                 },
-                |msg| format!("GitHub API error: {msg}"),
+                |message| BodyError::Message(message.to_string()),
             )
     })?;
 
@@ -169,12 +248,12 @@ fn parse_refs_json(json: &str) -> Result<Vec<GitRef>, String> {
         let name = item
             .get("name")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "missing ref name".to_string())?;
+            .ok_or_else(|| BodyError::Malformed("missing ref name".to_string()))?;
         let sha = item
             .get("commit")
             .and_then(|c| c.get("sha"))
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| "missing commit sha".to_string())?;
+            .ok_or_else(|| BodyError::Malformed("missing commit sha".to_string()))?;
         tags.push(GitRef {
             name: name.to_string(),
             sha: sha.to_string(),
@@ -227,9 +306,15 @@ impl<F: Fetch> RestProvider<F> {
             repo.owner(),
             repo.repo()
         );
-        let response = self.fetch.get(&url).map_err(|message| Error::Network {
-            operation: format!("GET {url}"),
-            message,
+        let not_found = || Error::RefNotFound {
+            owner: repo.owner().to_string(),
+            repo: repo.repo().to_string(),
+            ref_name: ref_name.to_string(),
+            host: Some(self.host.clone()),
+        };
+        let response = self.fetch.get(&url).map_err(|e| match e {
+            FetchError::Status(422) => not_found(),
+            e => e.into_error(&url, not_found),
         })?;
         let value: serde_json::Value =
             serde_json::from_str(&response.body).map_err(|e| Error::Network {
@@ -247,12 +332,11 @@ impl<F: Fetch> RestProvider<F> {
             .get("message")
             .and_then(serde_json::Value::as_str)
             .unwrap_or_default();
-        Err(api_error(message, repo, ref_name, &self.host))
+        Err(api_error(message, &not_found))
     }
 }
 
-// Zed's `HttpResponse` carries no status code.
-fn api_error(message: &str, repo: &ActionRepoId, ref_name: &str, host: &str) -> Error {
+fn api_error(message: &str, not_found: &dyn Fn() -> Error) -> Error {
     let lower = message.to_ascii_lowercase();
     if lower.contains("rate limit") {
         Error::RateLimited {
@@ -265,15 +349,10 @@ fn api_error(message: &str, repo: &ActionRepoId, ref_name: &str, host: &str) -> 
             reason: message.to_string(),
         }
     } else if lower.contains("not found") || lower.contains("no commit found") {
-        Error::RefNotFound {
-            owner: repo.owner().to_string(),
-            repo: repo.repo().to_string(),
-            ref_name: ref_name.to_string(),
-            host: Some(host.to_string()),
-        }
+        not_found()
     } else {
         Error::Network {
-            operation: "resolve ref".into(),
+            operation: "read GitHub response".into(),
             message: format!("unexpected GitHub response: {message}"),
         }
     }
@@ -298,16 +377,13 @@ impl<F: Fetch + Send + Sync> Provider for RestProvider<F> {
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<version::Set>> {
         let result = fetch_version_set(
             &self.fetch,
+            &self.host,
             repo.owner(),
             repo.repo(),
             &self.api_base,
             MAX_PAGES,
             true,
-        )
-        .map_err(|message| Error::Network {
-            operation: "list refs".into(),
-            message,
-        });
+        );
         Box::pin(async move { result })
     }
 
@@ -387,9 +463,12 @@ mod tests {
     const API: &str = "https://api.test";
     const FULL_SHA: &str = "abc1234def5678abc1234def5678abc1234def56";
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+    type IsError = fn(&Error) -> bool;
+
     #[derive(Default)]
     struct MockFetch {
-        routes: HashMap<String, Result<Response, String>>,
+        routes: HashMap<String, Result<Response, FetchError>>,
         requests: Arc<Mutex<Vec<String>>>,
     }
 
@@ -418,8 +497,16 @@ mod tests {
         }
 
         fn failing(mut self, url: &str) -> Self {
+            self.routes.insert(
+                url.to_string(),
+                Err(FetchError::Transport("connection reset".to_string())),
+            );
+            self
+        }
+
+        fn status(mut self, url: &str, code: u16) -> Self {
             self.routes
-                .insert(url.to_string(), Err("connection reset".to_string()));
+                .insert(url.to_string(), Err(FetchError::Status(code)));
             self
         }
 
@@ -433,14 +520,14 @@ mod tests {
     }
 
     impl Fetch for MockFetch {
-        fn get(&self, url: &str) -> Result<Response, String> {
+        fn get(&self, url: &str) -> Result<Response, FetchError> {
             if let Ok(mut requests) = self.requests.lock() {
                 requests.push(url.to_string());
             }
             self.routes
                 .get(url)
                 .cloned()
-                .unwrap_or_else(|| Err(format!("unexpected request: {url}")))
+                .unwrap_or_else(|| Err(FetchError::Transport(format!("unexpected request: {url}"))))
         }
     }
 
@@ -448,10 +535,21 @@ mod tests {
     const BRANCHES_URL: &str = "https://api.test/repos/o/r/branches?per_page=100";
     const TAGS: &str = r#"[{"name": "v1.0.0", "commit": {"sha": "t1"}}, {"name": "stable", "commit": {"sha": "t2"}}]"#;
 
+    fn listing(fetch: &MockFetch, with_branches: bool) -> actup_core::Result<version::Set> {
+        fetch_version_set(fetch, "github.com", "o", "r", API, MAX_PAGES, with_branches)
+    }
+
+    fn refs(json: &str) -> Vec<GitRef> {
+        match parse_refs_json(json) {
+            Ok(refs) => refs,
+            Err(e) => panic!("{json} is no listing: {e:?}"),
+        }
+    }
+
     #[test]
-    fn fetch_skips_branches_unless_asked() -> Result<(), String> {
+    fn fetch_skips_branches_unless_asked() -> TestResult {
         let fetch = MockFetch::default().route(TAGS_URL, TAGS);
-        let set = fetch_version_set(&fetch, "o", "r", API, MAX_PAGES, false)?;
+        let set = listing(&fetch, false)?;
         assert_eq!(fetch.requested(), [TAGS_URL]);
         assert_eq!(set.semver_tags().len(), 1);
         assert_eq!(set.other_tag_sha("stable"), Some("t2"));
@@ -459,7 +557,7 @@ mod tests {
     }
 
     #[test]
-    fn fetch_follows_branch_pagination() -> Result<(), String> {
+    fn fetch_follows_branch_pagination() -> TestResult {
         let page2 = "https://api.test/repos/o/r/branches?per_page=100&page=2";
         let fetch = MockFetch::default()
             .route(TAGS_URL, TAGS)
@@ -469,7 +567,7 @@ mod tests {
                 page2,
             )
             .route(page2, r#"[{"name": "dev", "commit": {"sha": "b2"}}]"#);
-        let set = fetch_version_set(&fetch, "o", "r", API, MAX_PAGES, true)?;
+        let set = listing(&fetch, true)?;
         assert_eq!(set.branch_sha("main"), Some("b1"));
         assert_eq!(set.branch_sha("dev"), Some("b2"));
         assert_eq!(fetch.requested(), [TAGS_URL, BRANCHES_URL, page2]);
@@ -477,27 +575,105 @@ mod tests {
     }
 
     #[test]
-    fn branch_failure_keeps_tags() -> Result<(), String> {
+    fn branch_failure_keeps_tags() -> TestResult {
         let fetch = MockFetch::default()
             .route(TAGS_URL, TAGS)
             .failing(BRANCHES_URL);
-        let set = fetch_version_set(&fetch, "o", "r", API, MAX_PAGES, true)?;
+        let set = listing(&fetch, true)?;
         assert_eq!(set.semver_tags().len(), 1);
         assert_eq!(set.branch_sha("main"), None);
         Ok(())
     }
 
     #[test]
-    fn tag_failure_is_an_error() {
-        let fetch = MockFetch::default().failing(TAGS_URL);
+    fn tag_listing_failures_map_to_typed_errors() {
+        let cases: [(MockFetch, IsError); 7] = [
+            (MockFetch::default().status(TAGS_URL, 404), |e| {
+                matches!(e, Error::NotFound { owner, repo, host }
+                    if owner == "o" && repo == "r" && host.as_deref() == Some("github.com"))
+            }),
+            (MockFetch::default().status(TAGS_URL, 401), |e| {
+                matches!(e, Error::Auth { .. })
+            }),
+            (MockFetch::default().status(TAGS_URL, 403), |e| {
+                matches!(e, Error::Forbidden { .. })
+            }),
+            (MockFetch::default().status(TAGS_URL, 429), |e| {
+                matches!(e, Error::RateLimited { .. })
+            }),
+            (
+                MockFetch::default().status(TAGS_URL, 502),
+                |e| matches!(e, Error::Network { message, .. } if message == "status code 502"),
+            ),
+            (
+                MockFetch::default().failing(TAGS_URL),
+                |e| matches!(e, Error::Network { message, .. } if message == "connection reset"),
+            ),
+            (
+                MockFetch::default().route(TAGS_URL, r#"{"message": "Not Found"}"#),
+                |e| matches!(e, Error::NotFound { .. }),
+            ),
+        ];
+        for (fetch, expected) in cases {
+            let Err(error) = listing(&fetch, true) else {
+                panic!("expected the tag listing to fail");
+            };
+            assert!(expected(&error), "{error:?}");
+        }
+    }
+
+    #[test]
+    fn tag_listing_failures_split_user_and_environment_errors() {
+        let user = listing(&MockFetch::default().status(TAGS_URL, 404), false);
+        assert!(user.is_err_and(|e| e.is_user_error()));
+        for code in [401, 403, 429] {
+            let environment = listing(&MockFetch::default().status(TAGS_URL, code), false);
+            assert!(
+                environment.is_err_and(|e| e.is_environment_error()),
+                "{code}"
+            );
+        }
+        let malformed = listing(&MockFetch::default().route(TAGS_URL, "<html>"), false);
+        assert!(malformed.is_err_and(|e| e.is_environment_error()));
+    }
+
+    #[test]
+    fn zed_fetch_errors_carry_the_status_code() {
         assert_eq!(
-            fetch_version_set(&fetch, "o", "r", API, MAX_PAGES, true).err(),
-            Some("connection reset".to_string())
+            FetchError::from_zed(
+                "failed to fetch 'https://api.github.com/repos/o/r/tags': status code 404 Not Found"
+                    .to_string()
+            ),
+            FetchError::Status(404)
+        );
+        assert_eq!(
+            FetchError::from_zed("failed to fetch 'u': status code 429 Too Many Requests".into()),
+            FetchError::Status(429)
+        );
+        assert_eq!(
+            FetchError::from_zed("error sending request: connection refused".into()),
+            FetchError::Transport("error sending request: connection refused".into())
         );
     }
 
     fn rest(fetch: MockFetch) -> RestProvider<MockFetch> {
         RestProvider::new(fetch, API, "github.com")
+    }
+
+    fn lookup_status(code: u16) -> actup_core::Result<Sha40> {
+        let provider =
+            rest(MockFetch::default().status("https://api.test/repos/o/r/commits/x", code));
+        provider.resolve(&ActionRepoId::simple("o", "r"), "x")
+    }
+
+    #[test]
+    fn resolve_classifies_error_statuses() {
+        assert!(matches!(lookup_status(404), Err(Error::RefNotFound { .. })));
+        assert!(matches!(lookup_status(422), Err(Error::RefNotFound { .. })));
+        assert!(matches!(lookup_status(401), Err(Error::Auth { .. })));
+        assert!(matches!(lookup_status(403), Err(Error::Forbidden { .. })));
+        assert!(matches!(lookup_status(429), Err(Error::RateLimited { .. })));
+        assert!(matches!(lookup_status(500), Err(Error::Network { .. })));
     }
 
     fn lookup(body: &str) -> actup_core::Result<Sha40> {
@@ -632,27 +808,26 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_refs_json() -> Result<(), String> {
+    fn test_parse_refs_json() {
         let json = r#"[
             {"name": "v4.2.2", "commit": {"sha": "abc123"}},
             {"name": "v4.2.1", "commit": {"sha": "def456"}},
             {"name": "v4", "commit": {"sha": "abc123"}}
         ]"#;
-        let tags = parse_refs_json(json)?;
+        let tags = refs(json);
         assert_eq!(tags.len(), 3);
         assert_eq!(tags[0].name, "v4.2.2");
         assert_eq!(tags[0].sha, "abc123");
-        Ok(())
     }
 
     #[test]
-    fn branch_listing_feeds_branch_heads() -> Result<(), String> {
+    fn branch_listing_feeds_branch_heads() {
         let json = r#"[
             {"name": "main", "commit": {"sha": "head-main", "url": "u"}, "protected": true},
             {"name": "release/v1", "commit": {"sha": "head-r1", "url": "u"}, "protected": false}
         ]"#;
         let mut set = version::Set::new();
-        set.set_branches(branch_map(parse_refs_json(json)?));
+        set.set_branches(branch_map(refs(json)));
         assert_eq!(set.branch_sha("main"), Some("head-main"));
         assert_eq!(set.branch_sha("release/v1"), Some("head-r1"));
         assert_eq!(set.branch_sha("nope"), None);
@@ -660,14 +835,11 @@ mod tests {
         let main = actup_core::ActionRef::new(None, "actions", "checkout", None, "main");
         let result = actup_core::check_action(&main, &set, &actup_core::Config::default());
         assert_eq!(result.status(), &actup_core::CheckStatus::UpToDate);
-        Ok(())
     }
 
     #[test]
-    fn test_parse_refs_json_empty() -> Result<(), String> {
-        let tags = parse_refs_json("[]")?;
-        assert!(tags.is_empty());
-        Ok(())
+    fn test_parse_refs_json_empty() {
+        assert!(refs("[]").is_empty());
     }
 
     #[test]
@@ -703,7 +875,8 @@ mod tests {
             {"name": "not-semver", "commit": {"sha": "xyz"}}
         ]"#;
         let fetch = MockFetch::default().route(TAGS_URL, tags);
-        let set = fetch_version_set(&fetch, "o", "r", API, MAX_PAGES, false)?;
+        let set = fetch_version_set(&fetch, "github.com", "o", "r", API, MAX_PAGES, false)
+            .map_err(|e| e.to_string())?;
 
         let order: Vec<&str> = set
             .semver_tags()
