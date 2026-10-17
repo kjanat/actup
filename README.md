@@ -62,6 +62,11 @@ actup check --format toml   # TOML format
 actup check --format human  # Default, colored output
 ```
 
+With `--format json` or `toml`, `update` and `pin` print a report with `edited`,
+`dry_run` and a `skipped` list. Each skipped entry names the file, line, action,
+host (when written), provider and `reason` (`unplaceable`, `overlap` or
+`out_of_bounds`).
+
 ## Configuration
 
 Create `actup.toml` or `.actup.toml` in your repo root:

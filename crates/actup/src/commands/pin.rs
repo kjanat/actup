@@ -10,8 +10,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, commit_file,
-        repin_sha_edit, report_unplaceable,
+        Change, EditResult, ErrorTally, FileEdits, PendingEdit, SkipReason, WorkflowScanner,
+        commit_file, repin_sha_edit, report_skipped,
     },
 };
 
@@ -95,6 +95,7 @@ async fn pin_action_edit(
         let short = &target.sha()[..7.min(target.sha().len())];
         let change = Change {
             action: action_ref.clone(),
+            provider: provider.kind().to_string(),
             line: loc.line(),
             target: format!("{} ({short})", target.version()),
             show_comment: false,
@@ -113,6 +114,7 @@ async fn pin_action_edit(
             .with_comment(format!(" # {}", action_ref.ref_str()));
         let change = Change {
             action: action_ref.clone(),
+            provider: provider.kind().to_string(),
             line: loc.line(),
             target: new_uses,
             show_comment: true,
@@ -154,7 +156,14 @@ pub async fn run(
 
             match pin_action_edit(provider, &action_ref, &loc, config, &mut result.errors).await {
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
-                PinStep::Unplaceable => report_unplaceable(&action_ref, &loc, &mut result.errors),
+                PinStep::Unplaceable => report_skipped(
+                    &relative,
+                    loc.line(),
+                    &action_ref,
+                    &provider.kind().to_string(),
+                    SkipReason::Unplaceable,
+                    &mut result,
+                ),
                 PinStep::Nothing => {}
             }
         }
@@ -393,7 +402,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_reports_an_unplaceable_value() -> Result<(), Box<dyn std::error::Error>> {
+    async fn test_run_skips_an_unplaceable_value_without_a_user_error()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let content = "on: push\njobs:\n  b:\n    runs-on: x\n    steps: [{ uses: \"o/h@v\\x32\" }, { uses: o/i@v3 }]\n";
         let file = workflow(dir.path(), content)?;
@@ -407,7 +417,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(code, i32::from(CliExitCode::UserError));
+        assert_eq!(code, i32::from(CliExitCode::Outdated));
         assert_eq!(
             std::fs::read_to_string(&file)?,
             content.replace("o/i@v3", &format!("o/i@{}", sha('1')))

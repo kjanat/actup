@@ -10,12 +10,11 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, FileEdits, PendingEdit, WorkflowScanner, commit_file,
-        report_unplaceable,
+        Change, EditResult, FileEdits, PendingEdit, SkipReason, WorkflowScanner, commit_file,
+        report_skipped,
     },
 };
 
-/// Create an edit that replaces the ref of `loc` with `new_ref`.
 fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
     loc.ref_range()
         .map(|range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()))
@@ -107,11 +106,19 @@ pub async fn run(
                 _ => continue, // Not actionable, skip
             };
             let Some(edit) = edit else {
-                report_unplaceable(&action_ref, &loc, &mut result.errors);
+                report_skipped(
+                    &relative,
+                    loc.line(),
+                    &action_ref,
+                    &provider.kind().to_string(),
+                    SkipReason::Unplaceable,
+                    &mut result,
+                );
                 continue;
             };
             let change = Change {
                 action: action_ref,
+                provider: provider.kind().to_string(),
                 line: loc.line(),
                 target,
                 show_comment,
@@ -216,8 +223,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_run_reports_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>>
-    {
+    async fn test_run_skips_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let workflows = dir.path().join(".github/workflows");
         std::fs::create_dir_all(&workflows)?;
@@ -234,7 +240,7 @@ mod tests {
         )
         .await;
 
-        assert_eq!(code, i32::from(CliExitCode::UserError));
+        assert_eq!(code, i32::from(CliExitCode::Outdated));
         assert_eq!(
             std::fs::read_to_string(&file)?,
             content.replace("checkout@v4.0.0\n", "checkout@v4.2.0\n")

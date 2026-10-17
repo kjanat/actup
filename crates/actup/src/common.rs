@@ -15,6 +15,7 @@ use actup_core::{
     extract_uses_from_yaml, parse_uses, provider, version,
 };
 use owo_colors::OwoColorize;
+use serde::Serialize;
 
 use crate::cli::{CliExitCode, OutputFormat};
 
@@ -42,11 +43,6 @@ impl ErrorTally {
     /// Record an environment error (for I/O failures, etc.).
     pub const fn record_env(&mut self) {
         self.env += 1;
-    }
-
-    /// Record a user error.
-    pub const fn record_user(&mut self) {
-        self.user += 1;
     }
 
     /// Total error count.
@@ -157,19 +153,12 @@ pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<Pend
     })
 }
 
-/// Warn that the `uses:` value at `loc` has no in-place edit and record a user error.
-pub fn report_unplaceable(action_ref: &ActionRef, loc: &UsesLocation, errors: &mut ErrorTally) {
-    eprintln!(
-        "{}: {action_ref} (line {}) - `uses:` value is escaped or spans lines; edit it by hand",
-        "Warning".yellow(),
-        loc.line()
-    );
-    errors.record_user();
-}
-
 /// Why `update` or `pin` leaves an action reference unchanged.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SkipReason {
+    /// The `uses:` value is escaped or spans lines and has no in-place range.
+    Unplaceable,
     /// The edit's range overlaps the range of an earlier edit.
     Overlap,
     /// The edit's range does not fit its line in the source text.
@@ -179,17 +168,43 @@ pub enum SkipReason {
 impl SkipReason {
     const fn describe(self) -> &'static str {
         match self {
+            Self::Unplaceable => "`uses:` value is escaped or spans lines",
             Self::Overlap => "edit overlaps another edit",
             Self::OutOfBounds => "edit does not fit its line",
         }
     }
 }
 
-/// Warn that the writer leaves `action_ref` unchanged and count it as skipped.
+/// An action reference that `update` or `pin` left unchanged.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct SkippedRef {
+    /// File path as displayed.
+    pub file: String,
+    /// Line number (1-indexed).
+    pub line: usize,
+    /// The full `uses:` reference.
+    pub action: String,
+    /// Owner or group.
+    pub owner: String,
+    /// Repository or project.
+    pub repo: String,
+    /// Host written in the reference, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
+    /// Provider kind serving the reference.
+    pub provider: String,
+    /// The ref after `@`.
+    pub reference: String,
+    /// Why the writer left it unchanged.
+    pub reason: SkipReason,
+}
+
+/// Warn that the writer leaves `action_ref` unchanged and record it as skipped.
 pub fn report_skipped(
     relative: &str,
     line: usize,
     action_ref: &ActionRef,
+    provider: &str,
     reason: SkipReason,
     result: &mut EditResult,
 ) {
@@ -198,7 +213,17 @@ pub fn report_skipped(
         "Warning".yellow(),
         reason.describe()
     );
-    result.skipped += 1;
+    result.skipped.push(SkippedRef {
+        file: relative.to_string(),
+        line,
+        action: action_ref.to_string(),
+        owner: action_ref.owner().to_string(),
+        repo: action_ref.repo().to_string(),
+        host: action_ref.host().map(String::from),
+        provider: provider.to_string(),
+        reference: action_ref.ref_str().to_string(),
+        reason,
+    });
 }
 
 /// Whether a trailing line fragment is a version comment like `# v1.2.3` or `# 1.2`.
@@ -385,6 +410,8 @@ fn absolute_range(
 pub struct Change {
     /// The action reference as found.
     pub action: ActionRef,
+    /// Provider kind serving the reference.
+    pub provider: String,
     /// Line number (1-indexed).
     pub line: usize,
     /// The written target, without any appended comment.
@@ -424,7 +451,14 @@ pub fn commit_file(
         match outcome {
             EditOutcome::Applied { comment } => written.push((change, comment)),
             EditOutcome::Skipped(reason) => {
-                report_skipped(relative, change.line, &change.action, reason, result);
+                report_skipped(
+                    relative,
+                    change.line,
+                    &change.action,
+                    &change.provider,
+                    reason,
+                    result,
+                );
             }
         }
     }
@@ -552,24 +586,58 @@ fn looks_like_yaml_input(path: &Path) -> bool {
 
 // EditResult - result of applying edits across files
 
+/// Structured summary of an `update` or `pin` run.
+#[derive(Debug, Serialize)]
+pub struct EditReport<'a> {
+    /// Number of edited action references.
+    pub edited: usize,
+    /// Whether the run left files unwritten.
+    pub dry_run: bool,
+    /// Action references left unchanged.
+    pub skipped: &'a [SkippedRef],
+}
+
 /// Summary of edit operations.
 #[derive(Default)]
 pub struct EditResult {
     /// Total number of edits applied.
     pub count: usize,
-    /// Number of action references left unchanged by a writer limitation.
-    pub skipped: usize,
+    /// Action references left unchanged by a writer limitation.
+    pub skipped: Vec<SkippedRef>,
     /// Error tally.
     pub errors: ErrorTally,
 }
 
 impl EditResult {
-    /// Print human-readable summary.
+    /// Print the summary: text for human output, an [`EditReport`] for JSON and TOML.
     pub fn print_summary(&self, dry_run: bool, verb: &str, dry_verb: &str, format: OutputFormat) {
-        if !matches!(format, OutputFormat::Human) {
-            return;
+        let structured = match format {
+            OutputFormat::Human => None,
+            OutputFormat::Json => {
+                Some(serde_json::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string()))
+            }
+            OutputFormat::Toml => {
+                Some(toml::to_string_pretty(&self.report(dry_run)).map_err(|e| e.to_string()))
+            }
+        };
+        match structured {
+            Some(Ok(text)) => println!("{text}"),
+            Some(Err(e)) => eprintln!("Error serializing edit report: {e}"),
+            None => self.print_human(dry_run, verb, dry_verb),
         }
+    }
 
+    /// The structured summary of this run.
+    #[must_use]
+    pub fn report(&self, dry_run: bool) -> EditReport<'_> {
+        EditReport {
+            edited: self.count,
+            dry_run,
+            skipped: &self.skipped,
+        }
+    }
+
+    fn print_human(&self, dry_run: bool, verb: &str, dry_verb: &str) {
         println!();
         let msg = if dry_run {
             format!("{dry_verb} {count} action reference(s)", count = self.count)
@@ -588,10 +656,10 @@ impl EditResult {
     }
 
     fn skipped_notice(&self) -> Option<String> {
-        (self.skipped > 0).then(|| {
+        (!self.skipped.is_empty()).then(|| {
             format!(
                 "Skipped {} action reference(s); edit them by hand",
-                self.skipped
+                self.skipped.len()
             )
         })
     }
@@ -605,7 +673,7 @@ impl EditResult {
             return base.into();
         }
 
-        if self.skipped > 0 || (dry_run && self.count > 0) {
+        if !self.skipped.is_empty() || (dry_run && self.count > 0) {
             return CliExitCode::Outdated.into();
         }
 
@@ -823,32 +891,42 @@ mod tests {
         assert!(repin_sha_edit(&loc, &target).is_none());
     }
 
-    #[test]
-    fn test_report_unplaceable_records_a_user_error() {
-        let loc = UsesLocation::new(3, 1, "a/b@v4".to_string(), "x".to_string());
-        let mut errors = ErrorTally::default();
-        report_unplaceable(&ActionRef::simple("a", "b", "v4"), &loc, &mut errors);
-        assert_eq!(errors.total(), 1);
-        assert_eq!(errors.exit_code(), CliExitCode::UserError);
+    fn skipped_ref(reason: SkipReason) -> SkippedRef {
+        SkippedRef {
+            file: "ci.yml".to_string(),
+            line: 3,
+            action: "a/b@v4".to_string(),
+            owner: "a".to_string(),
+            repo: "b".to_string(),
+            host: None,
+            provider: "github".to_string(),
+            reference: "v4".to_string(),
+            reason,
+        }
     }
 
     #[test]
-    fn test_report_skipped_counts_a_skip_and_no_user_error() {
+    fn test_report_skipped_records_a_skip_and_no_user_error() {
         let mut result = EditResult::default();
         report_skipped(
             "ci.yml",
             3,
             &ActionRef::simple("a", "b", "v4"),
-            SkipReason::Overlap,
+            "github",
+            SkipReason::Unplaceable,
             &mut result,
         );
-        assert_eq!(result.skipped, 1);
+        assert_eq!(result.skipped, [skipped_ref(SkipReason::Unplaceable)]);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
     }
 
     #[test]
     fn test_skip_reasons_describe_the_writer_limit() {
+        assert_eq!(
+            SkipReason::Unplaceable.describe(),
+            "`uses:` value is escaped or spans lines"
+        );
         assert_eq!(SkipReason::Overlap.describe(), "edit overlaps another edit");
         assert_eq!(
             SkipReason::OutOfBounds.describe(),
@@ -1111,6 +1189,7 @@ mod tests {
     fn change(line: usize, target: &str, show_comment: bool) -> Change {
         Change {
             action: ActionRef::simple("a", "b", "v1"),
+            provider: "github".to_string(),
             line,
             target: target.to_string(),
             show_comment,
@@ -1153,7 +1232,8 @@ mod tests {
         assert_eq!(written.len(), 1);
         assert_eq!(written[0].1.as_deref(), Some(" # c"));
         assert_eq!(result.count, 1);
-        assert_eq!(result.skipped, 1);
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0].reason, SkipReason::Overlap);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(fs::read_to_string(&path)?, "uses: a/b@v2 # c\n");
         Ok(())
@@ -1248,7 +1328,7 @@ mod tests {
     fn test_edit_result_skipped_refs_exit_outdated() {
         let result = EditResult {
             count: 2,
-            skipped: 1,
+            skipped: vec![skipped_ref(SkipReason::Unplaceable)],
             errors: ErrorTally::default(),
         };
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
@@ -1260,12 +1340,44 @@ mod tests {
     }
 
     #[test]
+    fn test_edit_report_lists_skipped_refs() -> Result<(), Box<dyn std::error::Error>> {
+        let result = EditResult {
+            count: 2,
+            skipped: vec![skipped_ref(SkipReason::Unplaceable)],
+            errors: ErrorTally::default(),
+        };
+        let expected = serde_json::json!({
+            "edited": 2,
+            "dry_run": true,
+            "skipped": [{
+                "file": "ci.yml",
+                "line": 3,
+                "action": "a/b@v4",
+                "owner": "a",
+                "repo": "b",
+                "provider": "github",
+                "reference": "v4",
+                "reason": "unplaceable",
+            }],
+        });
+        assert_eq!(serde_json::to_value(result.report(true))?, expected);
+        assert_eq!(
+            toml::to_string_pretty(&result.report(false))?,
+            "edited = 2\ndry_run = false\n\n[[skipped]]\nfile = \"ci.yml\"\nline = 3\naction = \"a/b@v4\"\nowner = \"a\"\nrepo = \"b\"\nprovider = \"github\"\nreference = \"v4\"\nreason = \"unplaceable\"\n"
+        );
+        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
+            result.print_summary(false, "Updated", "Would update", format);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_edit_result_errors_outrank_skipped_refs() {
         let mut errors = ErrorTally::default();
         errors.record(&not_found());
         let result = EditResult {
             count: 0,
-            skipped: 1,
+            skipped: vec![skipped_ref(SkipReason::Overlap)],
             errors,
         };
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::UserError));
@@ -1288,7 +1400,7 @@ mod tests {
 
         let result = EditResult {
             count: 5,
-            skipped: 0,
+            skipped: Vec::new(),
             errors,
         };
         // Env error takes priority over changes
