@@ -21,8 +21,8 @@ The CLI remains native-only. The existing native LSP binary is unaffected.
 
 ## Motivation
 
-Today, both the VS Code and Zed extensions are thin shims that locate and spawn
-`actup-lsp` as a native binary. This means:
+Before this spec, both the VS Code and Zed extensions were thin shims that
+located and spawned `actup-lsp` as a native binary. This meant:
 
 1. **No vscode.dev support** — web extensions can't spawn native processes
 2. **Users must pre-install `actup-lsp`** — friction, version mismatch risk
@@ -78,7 +78,7 @@ packages/
     wasm/               # Built .wasm artifact (gitignored)
 ```
 
-`actup-wasm` is a workspace member (unlike `extensions/zed/` which is separate).
+`actup-wasm` is a workspace member.
 
 ## Scope & Deliverables
 
@@ -288,11 +288,11 @@ Cloudflare Workers.
 | Consumer           | Target                   | HTTP            | Runtime                |
 | ------------------ | ------------------------ | --------------- | ---------------------- |
 | npm / VS Code web  | `wasm32-unknown-unknown` | JS fetch bridge | `wasm-bindgen-futures` |
-| Zed extension      | `wasm32-wasip2`          | WASI HTTP       | WASI reactor           |
+| Zed extension      | `wasm32-wasip2`          | Zed HTTP client | WASI reactor           |
 | Node.js standalone | `wasm32-unknown-unknown` | JS fetch bridge | Node WASM loader       |
 
-The `actup-wasm` crate targets `wasm32-unknown-unknown` (broadest compat). Zed
-integration (D9) may need a separate build target or a thin wasip2 adapter.
+The `actup-wasm` crate targets `wasm32-unknown-unknown` (broadest compat). The
+Zed extension (D9) embeds `actup-core` directly and builds for `wasm32-wasip2`.
 
 ## RwLock Strategy
 
@@ -385,9 +385,8 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
       enabled). Only gap: `#[serde(skip)]` on `fetched_at: SystemTime`.
 - [x] **npm scope** → `actup-wasm` (unscoped). No `@actup` org exists; one
       package doesn't justify it.
-- [x] **Workspace membership** → Workspace member. Unlike Zed (wasip2 + cdylib
-      conflicts), `wasm32-unknown-unknown` via `wasm-pack` works fine in the
-      workspace. Separate = duplicated lockfile.
+- [x] **Workspace membership** → Workspace member. `wasm32-unknown-unknown` via
+      `wasm-pack` works in the workspace. Separate = duplicated lockfile.
 - [x] **WASM LSP transport** → Skip WASM LSP for D8 (web extension). The current
       desktop extension uses `LanguageClient` + `actup-lsp` subprocess, which is
       correct for native. D8's web extension will call WASM functions directly
