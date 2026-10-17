@@ -12,8 +12,8 @@
 # laptop and a 256 GiB workstation alike):
 #   - HEADROOM = max(HEADROOM_MIN_MB, HEADROOM_FRAC * MemTotal)  reserved for the rest of the system
 #   - CEILING  = CEILING_FRAC * MemTotal                         absolute upper bound on cap
-#   - cap      = clamp(MemAvailable - HEADROOM, MIN_CAP_MB, CEILING)
-#   - refuse   if cap < MIN_CAP_MB                                (not enough free memory to bother)
+#   - cap      = clamp(MemAvailable - HEADROOM, MIN_CAP_MB, min(CEILING, inherited hard RLIMIT_AS, inherited hard RLIMIT_RSS))
+#   - refuse   if cap < MIN_CAP_MB                                (not enough free memory, or the inherited limit is too low)
 # Every threshold is overridable via env vars.
 
 set -euo pipefail
@@ -108,8 +108,10 @@ render_bars() {
 }
 
 # Resolve thresholds against /proc/meminfo. Sets globals: total_mb, avail_mb,
-# headroom_mb, ceiling_mb, cap_mb, refuse_reason. cap_mb is clamped to ceiling
-# but NOT yet to MIN_CAP_MB — caller decides whether to refuse based on that.
+# headroom_mb, ceiling_mb, cap_mb, cap_source, refuse_reason. cap_mb is clamped to
+# ceiling and to the inherited hard RLIMIT_AS/RLIMIT_RSS, but NOT yet to MIN_CAP_MB —
+# caller decides whether to refuse based on that. cap_source names the inherited
+# limit when one of them set cap_mb, and is empty otherwise.
 resolve() {
 	local total_kb avail_kb
 	read -r total_kb avail_kb < <(awk '
@@ -139,16 +141,18 @@ resolve() {
 
 	# An unprivileged process cannot raise a hard limit it inherited from an outer prlimit.
 	local resource hard
+	cap_source=""
 	for resource in as rss; do
 		hard="$(prlimit --pid "$$" --"$resource" --output HARD --noheadings --raw)"
 		if [ "$hard" != unlimited ] && [ "$((hard / 1024 / 1024))" -lt "$cap_mb" ]; then
 			cap_mb=$((hard / 1024 / 1024))
+			cap_source="inherited hard RLIMIT_${resource^^}"
 		fi
 	done
 
 	refuse_reason=""
 	if [ "$cap_mb" -lt "$MIN_CAP_MB" ]; then
-		refuse_reason="cap=$(fmt_mb "$cap_mb") < MIN_CAP_MB=$(fmt_mb "$MIN_CAP_MB")"
+		refuse_reason="cap=$(fmt_mb "$cap_mb")${cap_source:+ from the $cap_source} < MIN_CAP_MB=$(fmt_mb "$MIN_CAP_MB")"
 	fi
 }
 
@@ -178,7 +182,8 @@ usage() {
 	cat <<-EOF
 		usage: $(basename "$0") [<command> [args...]]
 
-		Run <command> with an adaptive RLIMIT_AS cap derived from /proc/meminfo.
+		Run <command> with an adaptive RLIMIT_AS cap derived from /proc/meminfo and
+		clamped to the inherited hard RLIMIT_AS and RLIMIT_RSS.
 		Bare invocation runs DEFAULT_CMD (currently: ${C_DIM}${DEFAULT_CMD}${C_RESET}).
 
 		env knobs (current effective value shown — set via env var to override):
@@ -196,7 +201,7 @@ usage() {
 		  MemAvailable:  $(fmt_mb "$avail_mb")
 		  headroom:      $(fmt_mb "$headroom_mb") (${headroom_origin})
 		  ceiling:       $(fmt_mb "$ceiling_mb") (${CEILING_FRAC_PCT}% of total)
-		  cap:           $(fmt_mb "$cap_mb")${cap_marker}
+		  cap:           $(fmt_mb "$cap_mb")${cap_source:+ ($cap_source)}${cap_marker}
 
 		memory bars:
 	EOF
@@ -229,7 +234,11 @@ resolve
 if [ -n "$refuse_reason" ]; then
 	printf 'ts-bounded: refusing — MemTotal=%s MemAvailable=%s headroom=%s → %s.\n' \
 		"$(fmt_mb "$total_mb")" "$(fmt_mb "$avail_mb")" "$(fmt_mb "$headroom_mb")" "$refuse_reason" >&2
-	echo 'ts-bounded: free memory or override MIN_CAP_MB / HEADROOM_FRAC_PCT and retry.' >&2
+	if [ -n "$cap_source" ]; then
+		echo "ts-bounded: the $cap_source sets this cap; raise the outer limit or lower MIN_CAP_MB and retry." >&2
+	else
+		echo 'ts-bounded: free memory or override MIN_CAP_MB / HEADROOM_FRAC_PCT and retry.' >&2
+	fi
 	exit 1
 fi
 
