@@ -319,17 +319,17 @@ fn format_size(bytes: u64) -> String {
             std::cmp::Ordering::Less => quotient,
         }
     };
-    if bytes >= 1024 * 1024 {
-        let t = tenths(1024 * 1024);
-        format!("{}.{} MB", t / 10, t % 10)
-    } else if bytes >= 1024 {
-        let t = tenths(1024);
-        format!("{}.{} KB", t / 10, t % 10)
-    } else if bytes == 1 {
-        "1 byte".to_string()
-    } else {
-        format!("{bytes} bytes")
+    match bytes {
+        1 => return "1 byte".to_string(),
+        0..1024 => return format!("{bytes} bytes"),
+        _ => {}
     }
+    let (t, name) = [(1 << 10, "KB"), (1 << 20, "MB")]
+        .into_iter()
+        .map(|(unit, name)| (tenths(unit), name))
+        .find(|&(t, _)| t < 10240)
+        .unwrap_or_else(|| (tenths(1 << 30), "GB"));
+    format!("{}.{} {name}", t / 10, t % 10)
 }
 
 #[cfg(test)]
@@ -415,7 +415,11 @@ mod tests {
         assert_eq!(format_size(1280), "1.2 KB");
         assert_eq!(format_size(2304), "2.2 KB");
         assert_eq!(format_size(1792), "1.8 KB");
-        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
-        assert_eq!(format_size(u64::MAX), "17592186044416.0 MB");
+        assert_eq!(format_size(1023), "1023 bytes");
+        assert_eq!(format_size(1024 * 1024 - 1), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 - 52), "1023.9 KB");
+        assert_eq!(format_size(1024 * 1024 * 1024 - 1), "1.0 GB");
+        assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
+        assert_eq!(format_size(u64::MAX), "17179869184.0 GB");
     }
 }
