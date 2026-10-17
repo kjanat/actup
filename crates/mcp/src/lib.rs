@@ -19,7 +19,7 @@ use std::{
     time::SystemTime,
 };
 
-use actup_core::{Clock, Config, SystemClock, provider::Registry};
+use actup_core::{Clock, Config, Registration, SystemClock, provider::Registry};
 pub use confine::{Refusal, Root};
 use rust_mcp_sdk::{
     McpServer, StdioTransport, ToMcpServerHandler, TransportOptions,
@@ -36,6 +36,13 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Map, Value};
 
 use crate::{args::input_schema, report::Reply};
+
+/// The provider registrations the server builds its registry from.
+pub static REGISTRATIONS: [&Registration; 3] = [
+    &actup_provider_github::REGISTRATION,
+    &actup_provider_gitlab::REGISTRATION,
+    &actup_provider_gitea::REGISTRATION,
+];
 
 /// Instructions the server sends to clients at initialization.
 pub const INSTRUCTIONS: &str = "\
@@ -348,6 +355,19 @@ mod tests {
         fn now(&self) -> SystemTime {
             self.0.lock().map_or(SystemTime::UNIX_EPOCH, |now| *now)
         }
+    }
+
+    #[test]
+    fn registrations_cover_every_provider() {
+        let kinds: Vec<actup_core::HostKind> = REGISTRATIONS.iter().map(|r| r.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                actup_core::HostKind::GitHub,
+                actup_core::HostKind::GitLab,
+                actup_core::HostKind::Gitea
+            ]
+        );
     }
 
     struct CountingProvider(Arc<AtomicUsize>);

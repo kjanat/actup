@@ -56,8 +56,7 @@ edits that pass on their own.
 
 ## Architecture Notes
 
-- **Only supports GitHub provider**: GitLab/Gitea are not wired in the LSP or
-  the CLI (#48)
+- `provider_setup::available_registrations` registers GitHub, GitLab and Gitea
 - Tracing goes to **stderr** (stdout is LSP protocol channel)
 - `DashMap` for concurrent document state
 - `tokio::RwLock` for shared provider/config access

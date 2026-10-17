@@ -4,9 +4,8 @@ Gitea and Forgejo provider. Implements `actup-core::Provider`.
 
 ## Status
 
-Functional provider implementation but **not yet wired into CLI/LSP** — no
-`REGISTRATION` static exported. The CLI has commented-out feature-gated support
-ready for when registration is added.
+Exports `REGISTRATION` (`codeberg.org` preset, REST only). The CLI registers it
+behind a default feature; the LSP and the MCP server always register it.
 
 ## Module Map
 
@@ -19,19 +18,20 @@ ready for when registration is added.
 
 ## Where to Look
 
-| Task                 | Start Here                                                                  |
-| -------------------- | --------------------------------------------------------------------------- |
-| Wire into CLI/LSP    | Add `REGISTRATION` static to `lib.rs`, then enable feature in CLI `main.rs` |
-| Add API endpoint     | `client.rs`                                                                 |
-| Change auth handling | `client.rs`                                                                 |
+| Task                 | Start Here                 |
+| -------------------- | -------------------------- |
+| Change presets       | `REGISTRATION` in `lib.rs` |
+| Add API endpoint     | `client.rs`                |
+| Change auth handling | `client.rs`                |
 
 ## Conventions
 
 - `#![forbid(unsafe_code)]`
-- `wiremock` as dev-dep but no tests written yet
+- `tests/integration.rs`: `wiremock` tests for `REGISTRATION`, versions, ref
+  resolution, files and every error status
+- `api_base` is the full API root; the client appends no API version
 - Uses `pub use types::*` glob re-export (unlike GitLab which enumerates)
 
 ## Anti-Patterns
 
-- **No default host constants defined** — needs adding before registration can
-  work
+- **Never hardcode `codeberg.org`** in logic. Use the constants from `lib.rs`.

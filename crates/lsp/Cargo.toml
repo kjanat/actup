@@ -15,7 +15,9 @@ path = "src/main.rs"
 
 [dependencies]
 actup-core            = { workspace = true }  # Core config + resolution engine
+actup-provider-gitea  = { workspace = true }  # Gitea/Forgejo provider
 actup-provider-github = { workspace = true }  # GitHub/GHE provider
+actup-provider-gitlab = { workspace = true }  # GitLab provider
 dashmap               = { workspace = true }  # Concurrent document state
 dirs                  = { workspace = true }  # OS cache directory
 serde                 = { workspace = true }  # initializationOptions deserialization
@@ -30,6 +32,7 @@ futures  = { workspace = true }  # Stream/Sink for integration tests
 glob     = { workspace = true }  # Watcher glob matching in tests
 tempfile = { workspace = true }  # Temp dirs for cache tests
 tower    = { workspace = true }  # Service trait for integration tests
+wiremock = { workspace = true }  # HTTP mocking for provider wiring tests
 
 [lints]
 workspace = true

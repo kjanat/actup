@@ -115,10 +115,12 @@ token_env = "GHE_TOKEN"
 
 ### GitLab (`actup-provider-gitlab`)
 
-**Status**: Not wired (#48). The crate implements `Provider`, but it exports no
-`REGISTRATION`, and neither the CLI nor the LSP registers it. A `[hosts]` entry
-with `kind = "gitlab"` stops every run with
-`provider GitLab not compiled in (available: github)`.
+**Status**: Registered by the CLI (feature `gitlab`, on by default), the LSP and
+the MCP server. `REGISTRATION` declares the `gitlab.com` preset
+(`https://gitlab.com/api/v4`, `GITLAB_TOKEN`) and infers `https://{host}/api/v4`
+for other hosts. GitLab supports the REST API only, so each GitLab host sets
+`api_mode = "rest"` while `[fetch] api_mode` is `"graphql"`. A GitLab host is
+registered when `[hosts]` names it.
 
 **Crate features**:
 
@@ -128,16 +130,15 @@ with `kind = "gitlab"` stops every run with
 - Project path URL encoding (handles namespaces correctly)
 - Base64 content decoding
 
-**Planned configuration** (#48). `api_base` is the full API root:
+**Configuration**. `api_base` is the full API root:
 
 ```toml
 [hosts."gitlab.com"]
-kind      = "gitlab"
-api_base  = "https://gitlab.com/api/v4"
-token_env = "GITLAB_TOKEN"
+api_mode = "rest"
 
 [hosts."gitlab.example.com"]
 kind      = "gitlab"
+api_mode  = "rest"
 api_base  = "https://gitlab.example.com/api/v4"
 token_env = "GITLAB_PRIVATE_TOKEN"
 ```
@@ -153,10 +154,13 @@ token_env = "GITLAB_PRIVATE_TOKEN"
 
 ### Gitea/Forgejo (`actup-provider-gitea`)
 
-**Status**: Not wired (#48). The crate implements `Provider`, but it exports no
-`REGISTRATION`, and neither the CLI nor the LSP registers it. A `[hosts]` entry
-with `kind = "gitea"` stops every run with
-`provider Gitea not compiled in (available: github)`.
+**Status**: Registered by the CLI (feature `gitea`, on by default), the LSP and
+the MCP server. `REGISTRATION` declares the `codeberg.org` preset
+(`https://codeberg.org/api/v1`, `CODEBERG_TOKEN`), infers
+`https://{host}/api/v1` for other hosts and reads `GITEA_TOKEN` there. Gitea
+supports the REST API only, so each Gitea host sets `api_mode = "rest"` while
+`[fetch] api_mode` is `"graphql"`. A Gitea host is registered when `[hosts]`
+names it.
 
 **Crate features**:
 
@@ -166,17 +170,20 @@ with `kind = "gitea"` stops every run with
 - Base64 content decoding
 - Compatible with Gitea API v1
 
-**Planned configuration** (#48). `api_base` is the full API root:
+**Configuration**. `api_base` is the full API root:
 
 ```toml
+[hosts."codeberg.org"]
+api_mode = "rest"
+
 [hosts."gitea.example.com"]
-kind      = "gitea"
-api_base  = "https://gitea.example.com/api/v1"
-token_env = "GITEA_TOKEN"
+kind     = "gitea"
+api_mode = "rest"
 
 # Forgejo is a soft fork of Gitea with identical API
 [hosts."forgejo.example.com"]
 kind      = "gitea"  # Uses "gitea" kind
+api_mode  = "rest"
 api_base  = "https://forgejo.example.com/api/v1"
 token_env = "FORGEJO_TOKEN"
 ```
@@ -187,14 +194,16 @@ token_env = "FORGEJO_TOKEN"
 
 - Auth header: `Authorization: token {token}` (lowercase "token")
 - Pagination: `page` and `limit` query parameters (no header indicators)
-- Stop pagination when empty array returned
+- Stop pagination at a page shorter than `limit`
+- A tag resolves through `/tags/{tag}` to its commit, then a branch through
+  `/branches/{branch}`
 - API versioned at `/api/v1`
 
 ## Host Routing
 
 Actup routes each action reference to the provider registered for its host. The
-default build registers GitHub only, so github.com and GitHub Enterprise hosts
-resolve. GitLab and Gitea hosts resolve once #48 wires their providers.
+registry holds the default host and every host that `[hosts]` names. GitHub,
+GitLab and Gitea/Forgejo hosts resolve through their providers.
 
 ```yaml
 # .github/workflows/build.yml
@@ -257,11 +266,11 @@ The provider architecture is designed to make this straightforward.
 
 ## Feature Flags
 
-`crates/actup` declares the features `github`, `gitlab` and `gitea`. The default
-build enables `github` and is GitHub-only. All three features are placeholders.
-`actup-provider-github` is a non-optional dependency of the CLI and the LSP, and
-`gitlab` and `gitea` compile nothing until #48 wires them. The LSP declares no
-provider features.
+`crates/actup` declares the features `github`, `gitlab` and `gitea`, all on by
+default. `github` is a placeholder: `actup-provider-github` is a non-optional
+dependency. `gitlab` and `gitea` add `actup-provider-gitlab` and
+`actup-provider-gitea` and their registrations. The LSP and the MCP server
+declare no provider features and register all three providers.
 
 ## Provider Quality Checklist
 

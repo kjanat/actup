@@ -37,7 +37,7 @@ impl GitLabProvider {
     ///
     /// # Arguments
     ///
-    /// * `api_base` - API base URL (e.g., "<https://gitlab.example.com>")
+    /// * `api_base` - API root URL (e.g., "<https://gitlab.example.com/api/v4>")
     /// * `host` - Display host name (e.g., "gitlab.example.com")
     /// * `token` - Optional personal access token
     ///
@@ -263,7 +263,8 @@ mod tests {
             commit_body(),
         )
         .await;
-        let result = match GitLabProvider::with_host(&server.uri(), "gitlab.com", None) {
+        let api_base = format!("{}/api/v4", server.uri());
+        let result = match GitLabProvider::with_host(&api_base, "gitlab.com", None) {
             Ok(provider) => {
                 provider
                     .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), ref_name)

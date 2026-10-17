@@ -24,7 +24,9 @@ path    = "tests/stdio_contract.rs"
 
 [dependencies]
 actup-core            = { workspace = true }  # Core engine
+actup-provider-gitea  = { workspace = true }  # Gitea/Forgejo provider
 actup-provider-github = { workspace = true }  # GitHub provider
+actup-provider-gitlab = { workspace = true }  # GitLab provider
 async-trait           = { workspace = true }  # `ServerHandler` impl
 clap                  = { workspace = true }  # CLI parsing
 rust-mcp-sdk          = { workspace = true, default-features = false, features = ["server", "stdio"] }  # MCP protocol

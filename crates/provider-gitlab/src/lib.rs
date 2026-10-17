@@ -2,6 +2,7 @@
 //!
 //! Implements the `Provider` trait for GitLab.com and self-hosted GitLab.
 //! Handles REST API calls, authentication, rate limiting, and project path encoding.
+//! Exports [`REGISTRATION`] for the provider registration API.
 //!
 //! # Features
 //!
@@ -23,7 +24,7 @@
 //!
 //! // Create provider for self-hosted GitLab
 //! let provider = GitLabProvider::with_host(
-//!     "https://gitlab.example.com",
+//!     "https://gitlab.example.com/api/v4",
 //!     "gitlab.example.com",
 //!     Some("your-token")
 //! )?;
@@ -38,6 +39,11 @@ mod client;
 mod provider;
 mod types;
 
+use actup_core::{
+    HostKind,
+    config::registration::{Capabilities, Preset, ProviderConfig, Registration},
+    provider::Provider,
+};
 pub use client::{DEFAULT_PER_PAGE, GitLabClient};
 pub use provider::GitLabProvider;
 pub use types::{
@@ -47,3 +53,46 @@ pub use types::{
 
 /// Default GitLab host
 pub const GITLAB_HOST: &str = "gitlab.com";
+
+/// API root of [`GITLAB_HOST`].
+pub const GITLAB_API_BASE: &str = "https://gitlab.com/api/v4";
+
+/// Environment variable that holds a GitLab token.
+pub const GITLAB_TOKEN_ENV: &str = "GITLAB_TOKEN";
+
+/// Provider registration for GitLab.com and self-hosted GitLab.
+///
+/// Declares the `gitlab.com` preset, infers `https://{host}/api/v4` for other
+/// hosts, and supports the REST API only.
+pub static REGISTRATION: Registration = Registration {
+    kind: HostKind::GitLab,
+    presets: &[Preset {
+        host: GITLAB_HOST,
+        api_base: GITLAB_API_BASE,
+        token_env: GITLAB_TOKEN_ENV,
+    }],
+    default_token_env: Some(GITLAB_TOKEN_ENV),
+    infer_api_base: infer_gitlab_api_base,
+    capabilities: Capabilities {
+        supports_graphql: false,
+        supports_rest: true,
+    },
+    create: create_gitlab_provider,
+};
+
+fn infer_gitlab_api_base(hostname: &str) -> Option<String> {
+    (hostname != GITLAB_HOST).then(|| format!("https://{hostname}/api/v4"))
+}
+
+fn create_gitlab_provider(
+    ProviderConfig {
+        host,
+        api_base,
+        token_env,
+        ..
+    }: ProviderConfig,
+) -> actup_core::Result<Box<dyn Provider>> {
+    let token = token_env.and_then(|var| std::env::var(var).ok());
+    let provider = GitLabProvider::with_host(&api_base, &host, token.as_deref())?;
+    Ok(Box::new(provider))
+}

@@ -1,8 +1,7 @@
 #:schema ../schemas/actup-config.schema.json
 #
-# Example configuration for github.com plus a GitHub Enterprise host.
-# GitLab and Gitea hosts are planned (#48). docs/providers.md shows their
-# planned configuration.
+# Example configuration for github.com, a GitHub Enterprise host, GitLab.com
+# and Codeberg.
 
 default_host = "github.com"
 
@@ -34,6 +33,13 @@ kind      = "github"
 api_base  = "https://github.enterprise.com/api/v3"
 token_env = "GHE_TOKEN"
 
+# GitLab.com and Codeberg (Forgejo) presets; both providers are REST-only
+[hosts."gitlab.com"]
+api_mode = "rest"
+
+[hosts."codeberg.org"]
+api_mode = "rest"
+
 # Example workflow references this config would handle:
 #
 # GitHub.com:
@@ -42,3 +48,7 @@ token_env = "GHE_TOKEN"
 #
 # GitHub Enterprise:
 #   - uses: github.enterprise.com/internal/action@v1
+#
+# GitLab.com and Codeberg:
+#   - uses: gitlab.com/group/project@v1
+#   - uses: codeberg.org/owner/action@v1

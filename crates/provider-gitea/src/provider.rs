@@ -26,7 +26,7 @@ impl GiteaProvider {
     ///
     /// # Arguments
     ///
-    /// * `api_base` - API base URL (e.g., "<https://gitea.com>" or "<https://git.example.com>")
+    /// * `api_base` - API root URL (e.g., "<https://codeberg.org/api/v1>")
     /// * `host` - Display host name (e.g., "gitea.com")
     /// * `token` - Optional API token
     ///
@@ -106,18 +106,10 @@ impl Provider for GiteaProvider {
         Box::pin(async move {
             debug!(owner = %owner, repo = %repo_name, ref_name = %ref_name, "resolving ref to SHA");
 
-            let sha = match self.client.get_git_ref(&owner, &repo_name, &ref_name).await {
-                Ok(git_ref) => git_ref.object.sha,
-                Err(actup_core::Error::NotFound { .. })
-                    if actup_core::version::is_short_sha(&ref_name) =>
-                {
-                    self.client
-                        .get_commit(&owner, &repo_name, &ref_name)
-                        .await?
-                        .sha
-                }
-                Err(e) => return Err(e),
-            };
+            let sha = self
+                .client
+                .resolve_ref(&owner, &repo_name, &ref_name)
+                .await?;
 
             Sha40::new(&sha).ok_or_else(|| actup_core::Error::Internal {
                 context: format!("commit SHA from Gitea: {sha}"),
@@ -268,12 +260,13 @@ mod tests {
         }
         respond(
             &server,
-            format!("{BASE}/commits/abc1234"),
+            format!("{BASE}/git/commits/abc1234"),
             200,
             commit_body(),
         )
         .await;
-        let result = match GiteaProvider::new(&server.uri(), "gitea.com", None) {
+        let api_base = format!("{}/api/v1", server.uri());
+        let result = match GiteaProvider::new(&api_base, "gitea.com", None) {
             Ok(provider) => {
                 provider
                     .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), ref_name)
@@ -296,15 +289,15 @@ mod tests {
     async fn resolve_missing_name_skips_commit_lookup() {
         let (server, result) = resolve("nope").await;
         assert!(
-            matches!(result, Err(actup_core::Error::NotFound { .. })),
+            matches!(result, Err(actup_core::Error::RefNotFound { .. })),
             "{result:?}"
         );
         let requests = server.received_requests().await.unwrap_or_default();
         assert!(requests.iter().all(|r| !r.url.path().contains("/commits/")));
     }
 
-    const BASE: &str = "/api/v1/repos/o/r/git";
-    const MISSING: [&str; 2] = ["refs/refs/tags/REF", "refs/refs/heads/REF"];
+    const BASE: &str = "/api/v1/repos/o/r";
+    const MISSING: [&str; 2] = ["tags/REF", "branches/REF"];
 
     fn commit_body() -> String {
         let author = r#"{"name": "a", "email": "a@example.com", "date": "2026-01-01T00:00:00Z"}"#;

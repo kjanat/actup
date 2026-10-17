@@ -15,7 +15,9 @@ path = "src/main.rs"
 
 [dependencies]
 actup-core            = { workspace = true }  # Core engine
+actup-provider-gitea  = { workspace = true, optional = true }  # Gitea/Forgejo provider
 actup-provider-github = { workspace = true }  # GitHub provider
+actup-provider-gitlab = { workspace = true, optional = true }  # GitLab provider
 clap                  = { workspace = true }  # CLI parsing
 clap_complete         = { workspace = true }  # Shell completions
 dirs                  = { workspace = true }  # Directory paths
@@ -32,12 +34,13 @@ tracing-subscriber    = { workspace = true }  # Log formatting
 
 [dev-dependencies]
 tempfile = { workspace = true }  # Temp files for tests
+wiremock = { workspace = true }  # HTTP mocking
 
 [features]
-default = ["github"]
-gitea   = []  # Placeholder until provider registration is wired.
+default = ["gitea", "github", "gitlab"]
+gitea   = ["dep:actup-provider-gitea"]  # Gitea/Forgejo hosts
 github  = []  # Placeholder for API symmetry; `actup-provider-github` is non-optional.
-gitlab  = []  # Placeholder until provider registration is wired.
+gitlab  = ["dep:actup-provider-gitlab"]  # GitLab hosts
 
 [lints]
 workspace = true

@@ -30,7 +30,9 @@ publish      = true
 
 [workspace.dependencies]
 actup-core.path            = "crates/core"
+actup-provider-gitea.path  = "crates/provider-gitea"
 actup-provider-github.path = "crates/provider-github"
+actup-provider-gitlab.path = "crates/provider-gitlab"
 actup-providers.path       = "crates/providers"
 async-trait                = "0.1"  # async trait impls
 base64                     = "0.22"  # encoding

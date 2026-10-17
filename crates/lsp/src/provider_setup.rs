@@ -9,7 +9,11 @@ use actup_core::{Config, Registration, Retention, provider, validate_no_duplicat
 /// Panics if two registrations share a preset hostname (programmer invariant).
 #[must_use]
 pub fn available_registrations() -> Vec<&'static Registration> {
-    let registrations = vec![&actup_provider_github::REGISTRATION];
+    let registrations = vec![
+        &actup_provider_github::REGISTRATION,
+        &actup_provider_gitlab::REGISTRATION,
+        &actup_provider_gitea::REGISTRATION,
+    ];
     validate_no_duplicate_presets(&registrations);
     registrations
 }
@@ -67,9 +71,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn available_registrations_includes_github() {
-        let regs = available_registrations();
-        assert!(regs.iter().any(|r| r.kind == HostKind::GitHub));
+    fn available_registrations_cover_every_provider() {
+        let kinds: Vec<HostKind> = available_registrations().iter().map(|r| r.kind).collect();
+        assert_eq!(kinds, [HostKind::GitHub, HostKind::GitLab, HostKind::Gitea]);
     }
 
     #[test]
@@ -155,6 +159,78 @@ mod tests {
         };
         assert_eq!(registry.default_host(), Some("github.com"));
         assert!((Providers::LIVE.file_cache)(&config).is_enabled());
+    }
+
+    #[tokio::test]
+    async fn diagnostics_resolve_a_gitlab_ref_through_the_gitlab_provider()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+
+        let server = MockServer::start().await;
+        let project = "/api/v4/projects/group%2Fproject";
+        let (old, new) = ("a".repeat(40), "b".repeat(40));
+        let tag = |name: &str, sha: &str| {
+            format!(r#"{{"name": "{name}", "target": "{sha}", "commit": null, "release": null}}"#)
+        };
+        for (url, body) in [
+            (
+                format!("{project}/repository/tags"),
+                format!("[{}, {}]", tag("v1.4.0", &new), tag("v1.0.0", &old)),
+            ),
+            (
+                project.to_string(),
+                r#"{"id": 1, "name": "project", "path": "project", "path_with_namespace": "group/project", "default_branch": "main", "description": null, "web_url": "w"}"#.to_string(),
+            ),
+            (
+                format!("{project}/repository/branches/main"),
+                format!(r#"{{"name": "main", "commit": {{"id": "{new}", "short_id": "bbbbbbb", "title": "t"}}, "default": true}}"#),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(url))
+                .respond_with(ResponseTemplate::new(200).set_body_string(body))
+                .mount(&server)
+                .await;
+        }
+        let mut config = Config::default();
+        config.hosts.insert(
+            "gitlab.com".to_string(),
+            HostConfig {
+                kind: None,
+                api_base: Some(format!("{}/api/v4", server.uri())),
+                token_env: Some("_ACTUP_TEST_UNSET_GITLAB_TOKEN".to_string()),
+                api_mode: Some(actup_core::config::ApiMode::Rest),
+                max_tags_per_repo: None,
+            },
+        );
+        let registry = build_registry(&config)?;
+        let uri =
+            tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let text = "steps:\n  - uses: gitlab.com/group/project@v1.0.0\n";
+
+        let result = crate::diagnostics::compute_diagnostics(
+            text,
+            &uri,
+            &config,
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        let messages: Vec<&str> = result
+            .diagnostics
+            .iter()
+            .map(|d| d.message.as_str())
+            .collect();
+        assert!(
+            messages.iter().any(|m| m.contains("v1.4.0")),
+            "{messages:?}"
+        );
+        Ok(())
     }
 
     #[test]

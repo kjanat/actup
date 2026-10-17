@@ -17,9 +17,7 @@ use reqwest::{
 };
 use tracing::{debug, warn};
 
-use crate::types::{
-    GiteaBranch, GiteaCommit, GiteaContent, GiteaError, GiteaRef, GiteaRepository, GiteaTag,
-};
+use crate::types::{GiteaBranch, GiteaCommit, GiteaContent, GiteaError, GiteaRepository, GiteaTag};
 
 /// Default items per page
 pub const DEFAULT_PER_PAGE: u8 = 50; // Gitea recommends 50
@@ -41,7 +39,7 @@ impl GiteaClient {
     ///
     /// # Arguments
     ///
-    /// * `api_base` - API base URL (e.g., "<https://gitea.com>" or "<https://git.example.com>")
+    /// * `api_base` - API root URL (e.g., "<https://codeberg.org/api/v1>")
     /// * `host` - Display host name (e.g., "gitea.com")
     /// * `token` - Optional API token
     ///
@@ -76,10 +74,11 @@ impl GiteaClient {
                 message: e.to_string(),
             })?;
 
+        let api_base = api_base.trim_end_matches('/');
         let api_base_url = if api_base.starts_with("http") {
-            format!("{api_base}/api/v1")
+            api_base.to_string()
         } else {
-            format!("https://{api_base}/api/v1")
+            format!("https://{api_base}")
         };
 
         Ok(Self {
@@ -210,40 +209,55 @@ impl GiteaClient {
         self.handle_response(response, owner, repo).await
     }
 
-    /// Get a git ref (tag or branch)
+    /// Get a single tag by name
     ///
     /// # Errors
     ///
-    /// Returns error on network failure, rate limit, auth failure, or ref not found.
-    pub async fn get_git_ref(&self, owner: &str, repo: &str, ref_name: &str) -> Result<GiteaRef> {
-        // Gitea expects full ref path (refs/heads/main or refs/tags/v1.0.0)
-        let ref_path = if ref_name.starts_with("refs/") {
-            ref_name.to_string()
-        } else {
-            // Try as tag first, then branch
-            format!("refs/tags/{ref_name}")
-        };
-
-        let url = format!("{}/repos/{owner}/{repo}/git/refs/{ref_path}", self.api_base);
-        debug!(url = %url, ref_name = %ref_name, "fetching git ref");
+    /// Returns error on network failure, rate limit, auth failure, or tag not found.
+    pub async fn get_tag(&self, owner: &str, repo: &str, tag: &str) -> Result<GiteaTag> {
+        let url = format!("{}/repos/{owner}/{repo}/tags/{tag}", self.api_base);
+        debug!(url = %url, tag = %tag, "fetching tag info");
 
         let response = self.get(&url).await?;
-        let result: Result<GiteaRef> = self.handle_response(response, owner, repo).await;
+        self.handle_response(response, owner, repo).await
+    }
 
-        match result {
-            Ok(git_ref) => Ok(git_ref),
-            Err(Error::NotFound { .. }) if !ref_path.starts_with("refs/heads/") => {
-                // Tag not found, try as branch
-                let branch_path = format!("refs/heads/{ref_name}");
-                let url = format!(
-                    "{}/repos/{owner}/{repo}/git/refs/{branch_path}",
-                    self.api_base
-                );
-                debug!(url = %url, ref_name = %ref_name, "tag not found, trying as branch");
-                let response = self.get(&url).await?;
-                self.handle_response(response, owner, repo).await
-            }
-            Err(e) => Err(e), // Auth, rate-limit, network errors propagate unchanged
+    /// Resolve a tag, branch, or short commit SHA to the commit SHA it names
+    ///
+    /// Tries the tag first, then the branch, then a commit lookup when the
+    /// ref is a short SHA. A tag resolves to its commit, never to an
+    /// annotated tag object.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::RefNotFound`] when no tag, branch, or commit matches,
+    /// and auth, rate-limit, or network errors unchanged.
+    pub async fn resolve_ref(&self, owner: &str, repo: &str, ref_name: &str) -> Result<String> {
+        match self.get_tag(owner, repo, ref_name).await {
+            Ok(tag) => return Ok(tag.commit.sha),
+            Err(Error::NotFound { .. }) => {}
+            Err(e) => return Err(e),
+        }
+
+        match self.get_branch(owner, repo, ref_name).await {
+            Ok(branch) => return Ok(branch.commit.id),
+            Err(Error::NotFound { .. }) => {}
+            Err(e) => return Err(e),
+        }
+
+        let not_found = || Error::RefNotFound {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            ref_name: ref_name.to_string(),
+            host: Some(self.host.clone()),
+        };
+        if !actup_core::version::is_short_sha(ref_name) {
+            return Err(not_found());
+        }
+        match self.get_commit(owner, repo, ref_name).await {
+            Ok(commit) => Ok(commit.sha),
+            Err(Error::NotFound { .. }) => Err(not_found()),
+            Err(e) => Err(e),
         }
     }
 

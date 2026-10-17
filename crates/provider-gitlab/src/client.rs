@@ -43,14 +43,14 @@ impl GitLabClient {
     ///
     /// Returns an error if the HTTP client cannot be created.
     pub fn new(token: Option<&str>) -> Result<Self> {
-        Self::with_api_base("https://gitlab.com", "gitlab.com", token)
+        Self::with_api_base(crate::GITLAB_API_BASE, crate::GITLAB_HOST, token)
     }
 
     /// Create a client for a custom API endpoint (e.g., self-hosted GitLab)
     ///
     /// # Arguments
     ///
-    /// * `api_base` - API base URL (e.g., "<https://gitlab.example.com>")
+    /// * `api_base` - API root URL (e.g., "<https://gitlab.example.com/api/v4>")
     /// * `host` - Display host name (e.g., "gitlab.example.com")
     /// * `token` - Optional personal access token or project access token
     ///
@@ -91,10 +91,11 @@ impl GitLabClient {
             });
         }
 
+        let api_base = api_base.trim_end_matches('/');
         let api_base_url = if api_base.starts_with("http") {
-            format!("{api_base}/api/v4")
+            api_base.to_string()
         } else {
-            format!("https://{api_base}/api/v4")
+            format!("https://{api_base}")
         };
 
         Ok(Self {
@@ -329,7 +330,7 @@ impl GitLabClient {
 
         // Try direct tag lookup
         match self.get_tag(owner, repo, ref_name).await {
-            Ok(tag) => return Ok(tag.target),
+            Ok(tag) => return Ok(actup_providers::TagLike::sha(&tag).to_string()),
             Err(Error::NotFound { .. }) => {}
             Err(e) => return Err(e),
         }

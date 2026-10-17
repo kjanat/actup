@@ -10,8 +10,8 @@ GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 - **Check** workflows for outdated action versions
 - **Update** to latest versions (respecting semver policy)
 - **Pin** refs to immutable commit SHAs for security
-- **Providers**: GitHub and GitHub Enterprise. GitLab and Gitea/Forgejo are not
-  wired yet (#48)
+- **Providers**: GitHub, GitHub Enterprise, GitLab and Gitea/Forgejo
+  (`docs/providers.md`)
 - **LSP**: Editor diagnostics and code actions
 - **MCP**: stdio server with read tools and dry-runnable mutators confined to
   one root

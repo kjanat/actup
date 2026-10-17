@@ -160,14 +160,21 @@ async fn run(cli: Cli) -> i32 {
 /// The returned list is validated: duplicate preset hostnames across
 /// providers cause a panic (programmer invariant).
 ///
-/// Only GitHub is included (`actup-provider-github` is non-optional).
+/// GitHub is always included. The `gitlab` and `gitea` features add
+/// GitLab and Gitea/Forgejo.
 ///
 /// # Panics
 ///
 /// Panics if two or more registrations share the same preset hostname.
 #[must_use]
 pub(crate) fn available_registrations() -> Vec<&'static Registration> {
-    let registrations = vec![&actup_provider_github::REGISTRATION];
+    let registrations = vec![
+        &actup_provider_github::REGISTRATION,
+        #[cfg(feature = "gitlab")]
+        &actup_provider_gitlab::REGISTRATION,
+        #[cfg(feature = "gitea")]
+        &actup_provider_gitea::REGISTRATION,
+    ];
     validate_no_duplicate_presets(&registrations);
     registrations
 }
@@ -270,10 +277,17 @@ mod tests {
     }
 
     #[test]
-    fn available_registrations_expected_count() {
-        assert_eq!(available_registrations().len(), 1);
+    fn available_registrations_follow_the_provider_features() {
+        let kinds: Vec<HostKind> = available_registrations().iter().map(|r| r.kind).collect();
+        let expected = [
+            Some(HostKind::GitHub),
+            cfg!(feature = "gitlab").then_some(HostKind::GitLab),
+            cfg!(feature = "gitea").then_some(HostKind::Gitea),
+        ];
+        assert_eq!(kinds, expected.into_iter().flatten().collect::<Vec<_>>());
     }
 
+    #[cfg(all(feature = "gitlab", feature = "gitea"))]
     #[test]
     fn build_registry_loads_multi_provider_example() -> Result<(), Box<dyn std::error::Error>> {
         let path = std::path::Path::new("examples/multi-provider.actup.toml");
@@ -286,7 +300,27 @@ mod tests {
         assert_eq!(registry.default_host(), Some("github.com"));
         assert!(registry.find(Some("github.com")).is_some());
         assert!(registry.find(Some("github.enterprise.com")).is_some());
+        let kinds = |host| registry.find(Some(host)).map(actup_core::Provider::kind);
+        assert_eq!(kinds("gitlab.com"), Some(provider::Kind::GitLab));
+        assert_eq!(kinds("codeberg.org"), Some(provider::Kind::Gitea));
         Ok(())
+    }
+
+    #[cfg(not(feature = "gitlab"))]
+    #[test]
+    fn build_registry_without_the_gitlab_feature_rejects_a_gitlab_host() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "gitlab.com".to_string(),
+            host_config_with_kind(HostKind::GitLab),
+        );
+        let error = build_registry(&config).err().map(|e| e.to_string());
+        assert!(
+            error
+                .as_deref()
+                .is_some_and(|e| e.contains("not compiled in")),
+            "{error:?}"
+        );
     }
 
     #[test]

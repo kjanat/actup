@@ -66,7 +66,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 `main.rs` builds the provider `Registry`:
 
 - GitHub: always registered (non-optional)
-- GitLab, Gitea: not registered; their crates export no `REGISTRATION` (#48)
+- GitLab, Gitea: registered behind the default features `gitlab` and `gitea`
 
 ## Tests
 

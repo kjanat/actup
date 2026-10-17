@@ -2,8 +2,9 @@
 //!
 //! `actup actions/checkout` prints the latest version tag.
 //! `actup actions/checkout@v4` prints the latest within major v4.
+//! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
-use actup_core::{ActionRef, Config, provider, version};
+use actup_core::{ActionRef, Config, parse_action_path, provider, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -11,6 +12,8 @@ use crate::cli::{CliExitCode, LatestArgs, OutputFormat};
 
 /// Parsed action query from the positional argument.
 struct ActionQuery {
+    /// Host written before the owner, if any.
+    host: Option<String>,
     owner: String,
     repo: String,
     /// Optional constraint ref (e.g. `v4` from `actions/checkout@v4`)
@@ -33,27 +36,23 @@ pub struct LookupResult {
     exact_version: Option<String>,
 }
 
-/// Parse `owner/repo` or `owner/repo@ref` into an [`ActionQuery`].
+/// Parse `[host/]owner/repo` or `[host/]owner/repo@ref` into an [`ActionQuery`].
 fn parse_action_query(input: &str) -> Option<ActionQuery> {
     // Split off optional @ref
-    let (slug, constraint) = match input.split_once('@') {
-        Some((slug, r)) if !r.is_empty() => (slug, Some(r.to_string())),
-        _ => (input, None),
-    };
+    let (slug, constraint) = input.split_once('@').map_or((input, None), |(slug, r)| {
+        (slug, (!r.is_empty()).then(|| r.to_string()))
+    });
 
-    let (owner, repo) = slug.split_once('/')?;
-    if owner.is_empty() || repo.is_empty() {
-        return None;
-    }
-
-    // Reject if there are extra slashes (subpath not supported for quick lookup)
-    if repo.contains('/') {
+    let id = parse_action_path(slug).ok()?;
+    // A subpath is not supported for quick lookup.
+    if id.subpath().is_some() {
         return None;
     }
 
     Some(ActionQuery {
-        owner: owner.to_string(),
-        repo: repo.to_string(),
+        host: id.host().map(str::to_owned),
+        owner: id.owner().to_string(),
+        repo: id.repo().to_string(),
         constraint,
     })
 }
@@ -116,10 +115,14 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
 
     // Build a synthetic ActionRef for provider lookup
     let ref_str = query.constraint.as_deref().unwrap_or("v0");
-    let action_ref = ActionRef::simple(&query.owner, &query.repo, ref_str);
+    let action_ref = ActionRef::new(query.host.clone(), &query.owner, &query.repo, None, ref_str);
 
     let Some(provider) = registry.find(action_ref.host()) else {
-        eprintln!("No provider configured for default host");
+        let host = action_ref.host().map_or_else(
+            || "the default host".to_string(),
+            |host| format!("host {host}"),
+        );
+        eprintln!("No provider configured for {host}");
         return CliExitCode::EnvironmentError.into();
     };
 
@@ -235,6 +238,97 @@ mod tests {
     #[test]
     fn parse_rejects_subpath() {
         assert!(parse_action_query("owner/repo/subpath").is_none());
+    }
+
+    #[test]
+    fn parse_keeps_a_host_prefix() -> Result<(), Box<dyn std::error::Error>> {
+        let q = parse_action_query("GitLab.com/group/project@v1").ok_or("no query")?;
+        assert_eq!(
+            (q.host.as_deref(), q.owner.as_str(), q.repo.as_str()),
+            (Some("gitlab.com"), "group", "project")
+        );
+        assert_eq!(q.constraint.as_deref(), Some("v1"));
+        assert!(parse_action_query("gitlab.com/group/project/sub").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn run_without_a_provider_for_the_host_is_an_environment_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::default();
+        let registry = crate::build_registry(&config)?;
+        let args = LatestArgs {
+            action: Some("git.example.org/group/project".to_string()),
+            format: crate::cli::OutputFormat::Json,
+        };
+        assert_eq!(
+            run(&args, &config, &registry).await,
+            i32::from(CliExitCode::EnvironmentError)
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "gitlab")]
+    #[tokio::test]
+    async fn run_resolves_a_gitlab_ref_through_the_gitlab_provider()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::{
+            Mock, MockServer, ResponseTemplate,
+            matchers::{method, path},
+        };
+
+        let server = MockServer::start().await;
+        let project = "/api/v4/projects/group%2Fproject";
+        let sha = "b".repeat(40);
+        let tags = format!(
+            r#"[{{"name": "v1.4.0", "target": "{sha}", "commit": null, "release": null}}]"#
+        );
+        for (url, body) in [
+            (format!("{project}/repository/tags"), tags),
+            (
+                project.to_string(),
+                r#"{"id": 1, "name": "project", "path": "project", "path_with_namespace": "group/project", "default_branch": "main", "description": null, "web_url": "w"}"#.to_string(),
+            ),
+            (
+                format!("{project}/repository/branches/main"),
+                format!(r#"{{"name": "main", "commit": {{"id": "{sha}", "short_id": "bbbbbbb", "title": "t"}}, "default": true}}"#),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(url))
+                .respond_with(ResponseTemplate::new(200).set_body_string(body))
+                .mount(&server)
+                .await;
+        }
+        let mut config = Config::default();
+        config.hosts.insert(
+            "gitlab.com".to_string(),
+            actup_core::config::HostConfig {
+                kind: None,
+                api_base: Some(format!("{}/api/v4", server.uri())),
+                token_env: Some("_ACTUP_TEST_UNSET_GITLAB_TOKEN".to_string()),
+                api_mode: Some(actup_core::config::ApiMode::Rest),
+                max_tags_per_repo: None,
+            },
+        );
+        let registry = crate::build_registry(&config)?;
+        let args = LatestArgs {
+            action: Some("gitlab.com/group/project".to_string()),
+            format: crate::cli::OutputFormat::Json,
+        };
+
+        assert_eq!(
+            run(&args, &config, &registry).await,
+            i32::from(CliExitCode::Success)
+        );
+        let requests = server.received_requests().await.unwrap_or_default();
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.url.path() == format!("{project}/repository/tags")),
+            "{requests:?}"
+        );
+        Ok(())
     }
 
     #[test]
