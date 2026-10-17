@@ -25,7 +25,6 @@ tracing         = { workspace = true }  # Logging
 urlencoding     = { workspace = true }  # URL encoding for project paths
 
 [dev-dependencies]
-insta    = { workspace = true }
 wiremock = { workspace = true }
 
 [lints]

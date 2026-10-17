@@ -73,7 +73,7 @@ module. Lint the wasm32 build with `just clippy-wasm`.
 
 ## Tests
 
-- No Rust tests (wasm32-only code, `wasm-bindgen-test` listed but unused)
+- No Rust tests (wasm32-only code)
 - Node.js integration tests in `tests/`:
   - `node_parse.mjs` — tests `parseUsesRefs` export
   - `node_check.mjs` — tests `checkRefs` + `planUpdates` with a JS mock provider

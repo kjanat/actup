@@ -19,19 +19,13 @@ actup-providers = { workspace = true }
 base64          = { workspace = true }  # Base64 decoding for GitHub API content
 futures         = { workspace = true }  # Async utilities (for parallel requests)
 reqwest         = { workspace = true }  # HTTP client
-# octocrab    = { workspace = true, optional = true }  # GitHub API (optional)
 serde           = { workspace = true }  # Serialization
 serde_json      = { workspace = true }  # JSON parsing
 tokio           = { workspace = true }  # Async runtime
 tracing         = { workspace = true }  # Logging
 
 [dev-dependencies]
-insta    = { workspace = true }
 wiremock = { workspace = true }
 
 [lints]
 workspace = true
-
-# [features]
-# default = []
-# octocrab = ["dep:octocrab"]

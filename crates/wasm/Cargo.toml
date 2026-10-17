@@ -22,8 +22,5 @@ tsify-next           = { workspace = true }
 wasm-bindgen         = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
 
-[dev-dependencies]
-wasm-bindgen-test = { workspace = true }
-
 [lints]
 workspace = true

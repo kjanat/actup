@@ -28,7 +28,7 @@ ready for when registration is added.
 ## Conventions
 
 - `#![forbid(unsafe_code)]`
-- `insta` + `wiremock` as dev-deps but no tests written yet
+- `wiremock` as dev-dep but no tests written yet
 - Uses `pub use types::*` glob re-export (unlike GitLab which enumerates)
 
 ## Anti-Patterns

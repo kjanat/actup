@@ -24,7 +24,6 @@ tokio           = { workspace = true }  # Async runtime
 tracing         = { workspace = true }  # Logging
 
 [dev-dependencies]
-insta    = { workspace = true }
 wiremock = { workspace = true }
 
 [lints]

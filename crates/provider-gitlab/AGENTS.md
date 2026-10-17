@@ -29,7 +29,7 @@ ready for when registration is added.
 
 - Uses `urlencoding` for GitLab project path encoding (unlike GitHub)
 - `#![forbid(unsafe_code)]`
-- `insta` + `wiremock` as dev-deps but no tests written yet
+- `wiremock` as dev-dep but no tests written yet
 
 ## Anti-Patterns
 

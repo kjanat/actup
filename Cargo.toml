@@ -38,21 +38,17 @@ bstr                       = "1"  # byte strings (git refs)
 cc                         = "1.2"
 clap_complete              = "4.5"  # completions
 dashmap                    = "6"  # concurrency
-directories                = "6"  # paths
 dirs                       = "6"  # paths
 futures                    = "0.3"  # async
 glob                       = "0.3"  # patterns
-human-panic                = "2"  # panics
 itertools                  = "0.14"  # iterator utilities
 js-sys                     = "0.3.95"  # wasm js interop
 json_comments              = "0.2"  # jsonc
-octocrab                   = "0.49"  # github
 owo-colors                 = "4"  # colors
 rust-mcp-sdk               = "0.9"  # mcp
 sanitize-filename          = "0.6"  # filesystem
 saphyr-parser              = "0.0.6"  # yaml
 schemars                   = "1"  # schema
-schemars_derive            = "1"  # schema
 serde_json                 = "1"  # json
 serde-wasm-bindgen         = "0.6"  # wasm serde bridge
 serde_yaml_ng              = "0.10"  # yaml
@@ -66,12 +62,9 @@ tracing                    = "0.1"  # logging
 tree-sitter                = "0.26.8"
 tree-sitter-language       = "0.1"
 tsify-next                 = "0.5"  # rust→ts type emission for wasm-bindgen
-url                        = "2"  # urls
 urlencoding                = "2.1"  # url encoding
-walkdir                    = "2"  # filesystem
 wasm-bindgen               = "0.2.118"  # wasm bindings
 wasm-bindgen-futures       = "0.4.68"  # async wasm-bindgen exports
-wasm-bindgen-test          = "0.3.68"  # wasm test harness
 wiremock                   = "0.6"  # mocking
 zed_extension_api          = "0.7.0"  # zed extension
 
@@ -96,14 +89,6 @@ features         = ["blocking-client", "sha1"]
 version          = "0.57"
 default-features = false
 features         = ["blocking-client", "http-client-reqwest-rust-tls"]
-
-[workspace.dependencies.insta]  # snapshots
-version  = "1.42"
-features = ["yaml"]
-
-[workspace.dependencies.miette]  # errors
-version  = "7.6"
-features = ["fancy"]
 
 [workspace.dependencies.reqwest]  # HTTP/API
 version          = "0.13"

@@ -62,5 +62,4 @@ system.
 
 - Mock HTTP with `wiremock` in `tests/integration.rs` (5 tests)
 - Fixtures in `tests/fixtures/` (JSON API responses)
-- `insta` listed as dev-dependency but no `.snap` files yet
 - Never rely on live network in tests

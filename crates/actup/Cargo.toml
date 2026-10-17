@@ -19,7 +19,6 @@ actup-provider-github = { workspace = true }  # GitHub provider
 clap                  = { workspace = true }  # CLI parsing
 clap_complete         = { workspace = true }  # Shell completions
 dirs                  = { workspace = true }  # Directory paths
-futures               = { workspace = true }  # Async utilities
 itertools             = { workspace = true }  # Iterator utilities
 owo-colors            = { workspace = true }  # Terminal colors
 sanitize-filename     = { workspace = true }  # Safe filenames
@@ -33,7 +32,6 @@ tracing-subscriber    = { workspace = true }  # Log formatting
 
 [dev-dependencies]
 tempfile = { workspace = true }  # Temp files for tests
-wiremock = { workspace = true }  # HTTP mocking
 
 [features]
 default = ["github"]
