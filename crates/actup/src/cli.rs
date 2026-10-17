@@ -15,7 +15,7 @@ use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(name = "actup")]
-#[command(author, version, about = "GitHub Actions version manager")]
+#[command(author, version, about = "GitHub Actions version manager", long_about = None)]
 #[command(propagate_version = true)]
 pub struct Cli {
     #[command(subcommand)]

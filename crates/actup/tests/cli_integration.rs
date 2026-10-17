@@ -1832,6 +1832,23 @@ mod cli_runs {
     }
 
     #[test]
+    fn help_opens_with_the_program_description() -> Result<(), Box<dyn std::error::Error>> {
+        let home = TempDir::new()?;
+        for flag in ["--help", "-h"] {
+            let output = actup(home.path()).arg(flag).output()?;
+
+            assert_eq!(output.status.code(), Some(0), "{flag}");
+            let stdout = String::from_utf8(output.stdout)?;
+            assert_eq!(
+                stdout.lines().next(),
+                Some("GitHub Actions version manager"),
+                "{flag}: {stdout}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn schema_ignores_invalid_config() -> Result<(), Box<dyn std::error::Error>> {
         let repo = broken_repo()?;
         let output = actup(repo.path())
