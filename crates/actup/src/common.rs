@@ -8,9 +8,11 @@ use std::{fs, path::Path};
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
-    SourceFormat, UsesLocation, discover_files, parse_uses,
+    SourceFormat, UsesLocation,
+    cache::Staleness,
+    discover_files, parse_uses,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
-    provider, resolve_within, rewrite_atomic, sanitize_for_terminal, sanitize_line,
+    provider, resolve_within, rewrite_atomic, sanitize_for_terminal, sanitize_line, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -229,6 +231,8 @@ pub enum ErrorKind {
     Changed,
     /// The edited file fails YAML validation.
     InvalidEdit,
+    /// The versions came from an expired cache entry.
+    Stale,
 }
 
 impl From<&CoreError> for ErrorKind {
@@ -301,6 +305,54 @@ pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
         kind: ErrorKind::from(err),
         message,
     });
+}
+
+/// Why a writer has no versions to write from.
+#[derive(Debug)]
+pub enum Unwritable {
+    /// The provider failed.
+    Failed(CoreError),
+    /// The versions came from an expired cache entry.
+    Stale(Staleness),
+}
+
+impl From<CoreError> for Unwritable {
+    fn from(err: CoreError) -> Self {
+        Self::Failed(err)
+    }
+}
+
+/// The fetched versions of a writer's ref, refusing a set read from an expired cache entry.
+pub fn writable_versions(
+    versions: Result<&version::Set, CoreError>,
+) -> Result<&version::Set, Unwritable> {
+    let versions = versions?;
+    versions
+        .stale()
+        .map_or(Ok(versions), |stale| Err(Unwritable::Stale(stale)))
+}
+
+/// Warn that `why` leaves `site` unchanged, count it as an error, and record it as errored.
+///
+/// A stale version set counts as an environment error.
+pub fn report_unwritable(site: RefSite, why: Unwritable, result: &mut EditResult) {
+    match why {
+        Unwritable::Failed(err) => report_error(site, &err, result),
+        Unwritable::Stale(stale) => {
+            let message = format!("versions are stale ({stale}); refusing to write");
+            eprintln!(
+                "{}: {} - {message}",
+                "Warning".yellow(),
+                sanitize_line(&site.action)
+            );
+            result.errors.record_env();
+            result.errored.push(ErroredRef {
+                site,
+                kind: ErrorKind::Stale,
+                message,
+            });
+        }
+    }
 }
 
 /// One action reference change, for progress output and the report.

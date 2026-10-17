@@ -87,6 +87,19 @@ impl Cache for FileCache {
         &self,
         key: &str,
     ) -> Pin<Box<dyn Future<Output = cache::Result<cache::Entry>> + Send + '_>> {
+        let lookup = self.lookup(key);
+        Box::pin(async move {
+            match lookup.await? {
+                cache::Lookup::Fresh(entry) => Ok(entry),
+                cache::Lookup::Expired(_) => Err(cache::Error::NotFound),
+            }
+        })
+    }
+
+    fn lookup(
+        &self,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = cache::Result<cache::Lookup>> + Send + '_>> {
         let key = key.to_string();
 
         Box::pin(async move {
@@ -116,18 +129,13 @@ impl Cache for FileCache {
                 return Err(cache::Error::NotFound);
             };
 
-            // Check TTL
             if entry.is_expired(self.ttl) {
                 debug!(key = %key, "cache entry expired");
-                // Remove expired entry (best-effort, log failures)
-                if let Err(e) = tokio::fs::remove_file(&path).await {
-                    debug!(key = %key, path = %path.display(), error = %e, "failed to remove expired cache entry");
-                }
-                return Err(cache::Error::NotFound);
+                return Ok(cache::Lookup::Expired(entry));
             }
 
             debug!(key = %key, age_secs = ?entry.age().map(|d| d.as_secs()), "cache hit");
-            Ok(entry)
+            Ok(cache::Lookup::Fresh(entry))
         })
     }
 
@@ -262,6 +270,37 @@ mod tests {
         // Should be expired immediately
         let result = cache.get("test_key").await;
         assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
+    }
+
+    #[tokio::test]
+    async fn expired_entry_stays_readable_through_lookup() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (cache, _temp) = make_test_cache(0);
+        cache
+            .set(
+                "key",
+                actup_core::cache::Entry::new(version::Set::default()),
+            )
+            .await?;
+
+        assert!(cache.get("key").await.is_err());
+        assert!(matches!(
+            cache.lookup("key").await?,
+            actup_core::cache::Lookup::Expired(_)
+        ));
+
+        let (fresh, _temp) = make_test_cache(3600);
+        fresh
+            .set(
+                "key",
+                actup_core::cache::Entry::new(version::Set::default()),
+            )
+            .await?;
+        assert!(matches!(
+            fresh.lookup("key").await?,
+            actup_core::cache::Lookup::Fresh(_)
+        ));
+        Ok(())
     }
 
     #[tokio::test]

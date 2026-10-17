@@ -10,8 +10,9 @@ use std::{
 };
 
 use actup_core::{
-    ActionRef, Clock, Config, SystemClock, check_action_with_provider, extract_uses_from_yaml,
-    parse_uses, provider,
+    ActionRef, Clock, Config, SystemClock,
+    cache::Staleness,
+    check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     version,
 };
@@ -317,6 +318,7 @@ fn build_hover_content(
     result: &CheckResult,
     latest_version: Option<&str>,
     default_host: Option<&str>,
+    stale: Option<Staleness>,
 ) -> String {
     let mut md = String::with_capacity(512);
 
@@ -356,6 +358,10 @@ fn build_hover_content(
     }
 
     let _ = writeln!(md, "| **Status** | {} |", format_check_result(result));
+
+    if let Some(stale) = stale {
+        let _ = writeln!(md, "| **Stale** | {stale} |");
+    }
 
     // Runtime
     if let Some(meta) = meta
@@ -422,6 +428,11 @@ pub async fn compute_hover(
         &result,
         latest_version.as_deref(),
         ctx.registry.default_host(),
+        versions
+            .as_ref()
+            .ok()
+            .and_then(Option::as_ref)
+            .and_then(version::Set::stale),
     );
     if let Some(note) = archived_note(&located.action_ref, &repo_id, ctx).await {
         content.insert_str(0, &format!("**Warning:** {note}\n\n"));
@@ -712,7 +723,8 @@ mod tests {
         );
         let result = CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
 
-        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+        let content =
+            build_hover_content(&action_ref, None, &result, None, Some("github.com"), None);
 
         assert!(
             content.contains("\n[View on gitlab.com](https://gitlab.com/group/project)\n"),
@@ -845,6 +857,7 @@ mod tests {
             &result,
             Some("v4.2.0"),
             Some("github.com"),
+            None,
         );
 
         assert!(content.contains("### Checkout"));
@@ -865,7 +878,8 @@ mod tests {
         let action_ref = ActionRef::simple("actions", "setup-node", "v4");
         let result = CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
 
-        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+        let content =
+            build_hover_content(&action_ref, None, &result, None, Some("github.com"), None);
 
         // Falls back to owner/repo as header.
         assert!(content.contains("### actions/setup-node"));
@@ -897,6 +911,7 @@ mod tests {
             &result,
             Some("v4.2.0"),
             Some("github.com"),
+            None,
         );
 
         assert!(content.contains("Outdated"));
@@ -928,7 +943,8 @@ mod tests {
         };
         let result = actup_core::check_action(&action_ref, &versions, &config);
 
-        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+        let content =
+            build_hover_content(&action_ref, None, &result, None, Some("github.com"), None);
 
         assert!(
             content.contains("**Pin available**, same commit: branch `v1` = v1.0.5 (`abc1234`)"),
@@ -960,7 +976,8 @@ mod tests {
         };
         let result = actup_core::check_action(&action_ref, &versions, &config);
 
-        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+        let content =
+            build_hover_content(&action_ref, None, &result, None, Some("github.com"), None);
 
         assert!(
             content.contains("**Same commit**: tag `v1.0.5` = v1 (`abc1234`)"),
@@ -1192,6 +1209,85 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compute_hover_shows_the_stale_note_of_an_expired_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let temp = tempfile::TempDir::new()?;
+        let file_cache = crate::file_cache::FileCache::with_path(
+            temp.path().to_path_buf(),
+            std::time::Duration::ZERO,
+        );
+        let repo = actup_core::ActionRepoId::simple("actions", "checkout");
+        let key = repo.cache_key("github", "github.com");
+        actup_core::cache::Cache::set(
+            &file_cache,
+            &key,
+            actup_core::cache::Entry::new(test_utils::simple_version_set("v4.2.0", DUMMY_SHA)),
+        )
+        .await?;
+        let registry =
+            test_utils::mock_registry(test_utils::MockProvider::new("github.com").with_error(
+                "actions",
+                "checkout",
+                actup_core::Error::RateLimited {
+                    provider: "github".into(),
+                    retry_after: Some(std::time::Duration::from_mins(12)),
+                },
+            ));
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+
+        let hover = compute_hover(
+            "      - uses: actions/checkout@v3\n",
+            Position {
+                line: 0,
+                character: 20,
+            },
+            None,
+            &ctx,
+        )
+        .await
+        .ok_or("no hover")?;
+
+        let HoverContents::Markup(markup) = &hover.contents else {
+            return Err(format!("expected markup, got {:?}", hover.contents).into());
+        };
+        assert!(markup.value.contains("Outdated"), "{}", markup.value);
+        assert!(
+            markup.value.contains("| **Stale** | fetched "),
+            "{}",
+            markup.value
+        );
+        assert!(
+            markup.value.contains(" ago, rate limited, resets in 12m |"),
+            "{}",
+            markup.value
+        );
+
+        let fresh = build_hover_content(
+            &ActionRef::simple("actions", "checkout", "v3"),
+            None,
+            &CheckResult::new(
+                ActionRef::simple("actions", "checkout", "v3"),
+                CheckStatus::UpToDate,
+            ),
+            None,
+            Some("github.com"),
+            None,
+        );
+        assert!(!fresh.contains("Stale"), "{fresh}");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn compute_hover_reuses_diagnostics_version_data() {
         use crate::test_utils::{self, DUMMY_SHA};
 
@@ -1349,6 +1445,7 @@ mod tests {
             &CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
             None,
             Some("github.com"),
+            None,
         );
         assert!(content.contains("### test/action"));
         assert!(content.contains("Up to date"));

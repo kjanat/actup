@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use actup_core::{
     ActionRef, ActionRepoId, CheckStatus, Config, Info, Provider, RefKind,
+    cache::Staleness,
     config::{Override, PolicyOverride},
     provider::Registry,
     version,
@@ -176,6 +177,8 @@ struct VersionsBody<'a> {
     latest: Option<&'a Info>,
     #[serde(flatten)]
     branches: Option<Branches<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<Staleness>,
 }
 
 /// `getVersions`: the semver tags, the latest of them and optionally the branches.
@@ -229,8 +232,10 @@ pub async fn versions(
             latest,
             tags,
             branches,
+            stale: set.stale(),
         },
     )
+    .map(|reply| reply.stale_if(set.stale().is_some()))
 }
 
 #[derive(Serialize)]
@@ -249,6 +254,8 @@ struct LatestBody<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     same_commit: Option<String>,
     latest: Option<&'a Info>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<Staleness>,
 }
 
 /// `getLatest`: the version that policy allows `currentRef` to move to.
@@ -297,8 +304,10 @@ pub async fn latest(
             ref_kind: check.ref_kind(),
             same_commit: check.same_commit().map(|t| t.version().to_string()),
             latest: set.latest().map(Arc::as_ref),
+            stale: set.stale(),
         },
     )
+    .map(|reply| reply.stale_if(set.stale().is_some()))
 }
 
 fn with_bump(config: &Config, bump: Option<actup_core::policy::Update>) -> Config {

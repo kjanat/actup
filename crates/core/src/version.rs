@@ -430,6 +430,10 @@ pub struct Set {
     /// When this data was fetched (skipped in serialization — platform-dependent)
     #[serde(skip)]
     fetched_at: Option<std::time::SystemTime>,
+
+    /// Set when this data came from an expired cache entry.
+    #[serde(skip)]
+    stale: Option<crate::cache::Staleness>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -593,6 +597,7 @@ impl Set {
             other_tags: std::collections::HashMap::new(),
             listing: Listing::Partial,
             fetched_at: Some(clock.now()),
+            stale: None,
         }
     }
 
@@ -836,6 +841,19 @@ impl Set {
     #[must_use]
     pub const fn listing(&self) -> Listing {
         self.listing
+    }
+
+    /// This set marked as read from an expired cache entry.
+    #[must_use]
+    pub const fn into_stale(mut self, staleness: crate::cache::Staleness) -> Self {
+        self.stale = Some(staleness);
+        self
+    }
+
+    /// How stale this set is, when it came from an expired cache entry.
+    #[must_use]
+    pub const fn stale(&self) -> Option<crate::cache::Staleness> {
+        self.stale
     }
 
     /// Builder-style setter for default branch
@@ -1434,6 +1452,7 @@ mod tests {
             other_tags: HashMap::new(),
             listing: Listing::Partial,
             fetched_at: None,
+            stale: None,
         };
 
         let current = Version::parse("v3.0.0");
@@ -1461,6 +1480,7 @@ mod tests {
             other_tags: HashMap::new(),
             listing: Listing::Partial,
             fetched_at: None,
+            stale: None,
         };
 
         let current = Version::parse("v3.0.0");
@@ -1483,6 +1503,7 @@ mod tests {
             other_tags: HashMap::new(),
             listing: Listing::Partial,
             fetched_at: None,
+            stale: None,
         };
 
         // Non-semver current version
@@ -1514,6 +1535,7 @@ mod tests {
             other_tags: HashMap::new(),
             listing: Listing::Partial,
             fetched_at: None,
+            stale: None,
         };
 
         let current = Version::parse("v4.0.0");

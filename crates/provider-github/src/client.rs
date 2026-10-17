@@ -13,7 +13,7 @@ use actup_providers::{
 };
 use reqwest::{
     Client, Response, StatusCode,
-    header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
+    header::{ACCEPT, AUTHORIZATION, ETAG, HeaderMap, HeaderValue, IF_NONE_MATCH, USER_AGENT},
 };
 use tracing::{debug, warn};
 
@@ -30,6 +30,43 @@ pub const ACTION_TOPIC: &str = "github-actions";
 
 /// Default items per page
 pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
+
+/// The result of a GET sent with an optional `If-None-Match` validator.
+#[derive(Debug)]
+pub enum Conditional<T> {
+    /// The server answered 304 to the validator.
+    NotModified,
+    /// The server sent the resource, with its `ETag` when it set one.
+    Modified {
+        /// The parsed response body.
+        body: T,
+        /// The response `ETag` header.
+        etag: Option<String>,
+    },
+}
+
+impl<T> Conditional<T> {
+    /// The body and `ETag` of a modified response.
+    ///
+    /// # Errors
+    ///
+    /// Returns a network error for a 304 answer.
+    pub fn into_modified(self) -> Result<(T, Option<String>)> {
+        match self {
+            Self::Modified { body, etag } => Ok((body, etag)),
+            Self::NotModified => Err(not_modified_without_validator()),
+        }
+    }
+}
+
+/// The error for a 304 answer to a request that sent no validator.
+pub fn not_modified_without_validator() -> Error {
+    Error::Network {
+        operation: "API request".to_string(),
+        message: "status 304 Not Modified to a request without a validator".to_string(),
+        source: None,
+    }
+}
 
 /// HTTP client configured for GitHub API
 #[derive(Debug, Clone)]
@@ -197,14 +234,43 @@ impl GitHubClient {
         repo: &str,
         max_tags: u8,
     ) -> Result<Vec<GitHubTag>> {
+        self.list_tags_limited_if_none_match(owner, repo, max_tags, None)
+            .await?
+            .into_modified()
+            .map(|(tags, _)| tags)
+    }
+
+    /// List the newest `max_tags` tags, sending `etag` as `If-None-Match` on the first page.
+    ///
+    /// A 304 to the first page answers [`Conditional::NotModified`]; the
+    /// `ETag` of a modified answer is the first page's.
+    pub async fn list_tags_limited_if_none_match(
+        &self,
+        owner: &str,
+        repo: &str,
+        max_tags: u8,
+        etag: Option<&str>,
+    ) -> Result<Conditional<Vec<GitHubTag>>> {
         let max_tags = max_tags.max(MIN_PER_PAGE);
         let per_page = max_tags.min(MAX_PER_PAGE);
 
-        let mut all_tags = Vec::with_capacity(usize::from(max_tags));
-        let mut url = Some(format!(
+        let first_url = format!(
             "{}/repos/{owner}/{repo}/tags?per_page={per_page}",
             self.api_base
-        ));
+        );
+        debug!(url = %first_url, max_tags, "fetching first tags page");
+        let response = self.get_if_none_match(&first_url, etag).await?;
+        let mut url = Self::parse_next_link(&response);
+        let (first, first_etag) = match self
+            .handle_conditional::<Vec<GitHubTag>>(response, owner, repo, etag)
+            .await?
+        {
+            Conditional::NotModified => return Ok(Conditional::NotModified),
+            Conditional::Modified { body, etag } => (body, etag),
+        };
+
+        let mut all_tags = Vec::with_capacity(usize::from(max_tags));
+        all_tags.extend(first.into_iter().take(usize::from(max_tags)));
 
         while let Some(current_url) = url {
             if all_tags.len() >= usize::from(max_tags) {
@@ -225,7 +291,10 @@ impl GitHubClient {
             }
         }
 
-        Ok(all_tags)
+        Ok(Conditional::Modified {
+            body: all_tags,
+            etag: first_etag,
+        })
     }
 
     /// Parse Link header for next page URL
@@ -282,6 +351,20 @@ impl GitHubClient {
         self.handle_response(response, "search", query).await
     }
 
+    /// Get repository info, sending `etag` as `If-None-Match`.
+    pub async fn get_repo_if_none_match(
+        &self,
+        owner: &str,
+        repo: &str,
+        etag: Option<&str>,
+    ) -> Result<Conditional<GitHubRepo>> {
+        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        debug!(url = %url, "fetching repo info");
+
+        let response = self.get_if_none_match(&url, etag).await?;
+        self.handle_conditional(response, owner, repo, etag).await
+    }
+
     /// Get a specific git ref
     ///
     /// # Errors
@@ -336,6 +419,21 @@ impl GitHubClient {
         self.handle_response(response, owner, repo).await
     }
 
+    /// Get branch info, sending `etag` as `If-None-Match`.
+    pub async fn get_branch_if_none_match(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+        etag: Option<&str>,
+    ) -> Result<Conditional<GitHubBranch>> {
+        let url = format!("{}/repos/{owner}/{repo}/branches/{branch}", self.api_base);
+        debug!(url = %url, "fetching branch");
+
+        let response = self.get_if_none_match(&url, etag).await?;
+        self.handle_conditional(response, owner, repo, etag).await
+    }
+
     /// Get a commit by full or abbreviated SHA
     ///
     /// # Errors
@@ -378,6 +476,11 @@ impl GitHubClient {
 
     /// Make a GET request with retry and exponential backoff
     async fn get(&self, url: &str) -> Result<Response> {
+        self.get_if_none_match(url, None).await
+    }
+
+    /// Make a GET request with an optional `If-None-Match` header, with retry and exponential backoff
+    async fn get_if_none_match(&self, url: &str, etag: Option<&str>) -> Result<Response> {
         let mut last_error = None;
 
         for attempt in 0..self.max_retries {
@@ -391,7 +494,11 @@ impl GitHubClient {
                 tokio::time::sleep(delay).await;
             }
 
-            match self.client.get(url).send().await {
+            let request = etag.map_or_else(
+                || self.client.get(url),
+                |etag| self.client.get(url).header(IF_NONE_MATCH, etag),
+            );
+            match request.send().await {
                 Ok(response) => return Ok(response),
                 Err(e) => {
                     // Only retry on transient errors
@@ -431,6 +538,27 @@ impl GitHubClient {
         })
     }
 
+    /// Handle a response to a request that sent `etag` as `If-None-Match`.
+    async fn handle_conditional<T: serde::de::DeserializeOwned>(
+        &self,
+        response: Response,
+        owner: &str,
+        repo: &str,
+        etag: Option<&str>,
+    ) -> Result<Conditional<T>> {
+        if etag.is_some() && response.status() == StatusCode::NOT_MODIFIED {
+            debug!(owner, repo, "not modified");
+            return Ok(Conditional::NotModified);
+        }
+        let etag = response
+            .headers()
+            .get(ETAG)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+        let body = self.handle_response(response, owner, repo).await?;
+        Ok(Conditional::Modified { body, etag })
+    }
+
     /// Handle response, checking for errors
     async fn handle_response<T: serde::de::DeserializeOwned>(
         &self,
@@ -460,20 +588,10 @@ impl GitHubClient {
                 repo: repo.to_string(),
                 host: Some(self.host.clone()),
             }),
-            StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => {
-                // Check for rate limit
-                let retry_after = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(Duration::from_secs);
-
-                Err(Error::RateLimited {
-                    provider: "github".to_string(),
-                    retry_after,
-                })
-            }
+            StatusCode::FORBIDDEN | StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited {
+                provider: "github".to_string(),
+                retry_after: retry_after(response.headers(), std::time::SystemTime::now()),
+            }),
             StatusCode::UNAUTHORIZED => Err(Error::Auth {
                 provider: "github".to_string(),
                 reason: "unauthorized - check your token".to_string(),
@@ -489,6 +607,25 @@ impl GitHubClient {
             }
         }
     }
+}
+
+/// When a rate limited request may be retried: `retry-after`, else the
+/// `x-ratelimit-reset` epoch of an exhausted `x-ratelimit-remaining`.
+fn retry_after(headers: &HeaderMap, now: std::time::SystemTime) -> Option<Duration> {
+    let number = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<u64>().ok())
+    };
+    if let Some(secs) = number("retry-after") {
+        return Some(Duration::from_secs(secs));
+    }
+    if number("x-ratelimit-remaining") != Some(0) {
+        return None;
+    }
+    let reset = std::time::UNIX_EPOCH + Duration::from_secs(number("x-ratelimit-reset")?);
+    Some(reset.duration_since(now).unwrap_or_default())
 }
 
 /// Returns `true` when `api_host` references the loopback interface.
@@ -528,7 +665,59 @@ fn is_loopback_host(api_host: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_loopback_host;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use reqwest::header::{HeaderMap, HeaderValue};
+
+    use super::{is_loopback_host, retry_after};
+
+    fn headers(pairs: &[(&'static str, &'static str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (name, value) in pairs {
+            map.insert(*name, HeaderValue::from_static(value));
+        }
+        map
+    }
+
+    #[test]
+    fn retry_after_prefers_the_retry_after_header_then_an_exhausted_reset() {
+        let now = UNIX_EPOCH + Duration::from_secs(1_000);
+        assert_eq!(
+            retry_after(
+                &headers(&[("retry-after", "30"), ("x-ratelimit-remaining", "0")]),
+                now
+            ),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            retry_after(
+                &headers(&[
+                    ("x-ratelimit-remaining", "0"),
+                    ("x-ratelimit-reset", "1720")
+                ]),
+                now
+            ),
+            Some(Duration::from_mins(12))
+        );
+        assert_eq!(
+            retry_after(
+                &headers(&[("x-ratelimit-remaining", "0"), ("x-ratelimit-reset", "900")]),
+                now
+            ),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            retry_after(
+                &headers(&[
+                    ("x-ratelimit-remaining", "12"),
+                    ("x-ratelimit-reset", "1720")
+                ]),
+                now
+            ),
+            None
+        );
+        assert_eq!(retry_after(&headers(&[]), now), None);
+    }
 
     #[test]
     fn loopback_names_and_addresses() {

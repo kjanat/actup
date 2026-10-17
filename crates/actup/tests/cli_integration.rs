@@ -2273,3 +2273,130 @@ mod cli_runs {
         Ok(())
     }
 }
+
+mod stale_cache {
+    use std::{fs, path::Path, process::Command};
+
+    use tempfile::TempDir;
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    const OLD: &str = "1111111111111111111111111111111111111111";
+    const NEW: &str = "2222222222222222222222222222222222222222";
+
+    fn repo(server: &MockServer) -> Result<TempDir, Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let workflows = temp.path().join(".github/workflows");
+        fs::create_dir_all(&workflows)?;
+        fs::write(
+            workflows.join("ci.yml"),
+            "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: o/r@v1.0.0\n",
+        )?;
+        // RFC 2606 reserves `.invalid`, so the git listing fails and REST answers.
+        fs::write(
+            temp.path().join("explicit.toml"),
+            format!(
+                "default_host = \"ghe.invalid\"\n\n[cache]\npath = '{}'\n\n[hosts.\"ghe.invalid\"]\nkind = \"github\"\napi_base = '{}'\ntoken_env = \"ACTUP_TEST_TOKEN_THAT_IS_NEVER_SET\"\napi_mode = \"rest\"\n",
+                temp.path().join("cache").display(),
+                server.uri(),
+            ),
+        )?;
+        Ok(temp)
+    }
+
+    fn actup(dir: &Path, args: &[&str]) -> Command {
+        let mut cmd = Command::new(env!("CARGO_BIN_EXE_actup"));
+        cmd.current_dir(dir)
+            .env("XDG_CONFIG_HOME", dir)
+            .env("HOME", dir)
+            .arg("--config")
+            .arg(dir.join("explicit.toml"))
+            .args(args);
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("ACTUP_") {
+                cmd.env_remove(key);
+            }
+        }
+        cmd
+    }
+
+    async fn answer(server: &MockServer, url: &str, response: ResponseTemplate) {
+        Mock::given(method("GET"))
+            .and(path(url.to_string()))
+            .respond_with(response)
+            .mount(server)
+            .await;
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn check_reports_an_expired_entry_as_stale_after_a_rate_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let tags = format!(
+            r#"[{{"name": "v1.1.0", "commit": {{"sha": "{NEW}"}}}}, {{"name": "v1.0.0", "commit": {{"sha": "{OLD}"}}}}]"#
+        );
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            ResponseTemplate::new(200).set_body_string(tags),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r",
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"full_name": "o/r", "default_branch": "main"}"#),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r/branches/main",
+            ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"name": "main", "commit": {{"sha": "{NEW}"}}}}"#
+            )),
+        )
+        .await;
+        let dir = repo(&server)?;
+
+        let fresh = actup(dir.path(), &["check", "--format", "json"]).output()?;
+        assert_eq!(fresh.status.code(), Some(0), "{fresh:?}");
+        let rows: serde_json::Value =
+            serde_json::from_slice(&fresh.stdout).map_err(|e| format!("{e}: {fresh:?}"))?;
+        assert_eq!(rows[0]["status"], "outdated");
+        assert!(rows[0].get("stale").is_none(), "{rows}");
+
+        server.reset().await;
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            ResponseTemplate::new(429).insert_header("retry-after", "720"),
+        )
+        .await;
+
+        let stale = actup(dir.path(), &["check", "--format", "json"])
+            .env("ACTUP_CACHE__TTL", "0")
+            .output()?;
+        assert_eq!(stale.status.code(), Some(3), "{stale:?}");
+        let rows: serde_json::Value =
+            serde_json::from_slice(&stale.stdout).map_err(|e| format!("{e}: {stale:?}"))?;
+        assert_eq!(rows[0]["status"], "outdated");
+        assert_eq!(rows[0]["latest_version"], "v1.1.0");
+        assert_eq!(rows[0]["stale"]["reason"], "rate_limited");
+        assert_eq!(rows[0]["stale"]["retry_after_secs"], 720);
+        assert!(rows[0]["stale"]["age_secs"].is_u64(), "{rows}");
+
+        let human = actup(dir.path(), &["check"])
+            .env("ACTUP_CACHE__TTL", "0")
+            .env("NO_COLOR", "1")
+            .output()?;
+        assert_eq!(human.status.code(), Some(3), "{human:?}");
+        let text = String::from_utf8(human.stdout)?;
+        assert!(
+            text.contains("stale (fetched 0s ago, rate limited, resets in 12m)"),
+            "{text}"
+        );
+        Ok(())
+    }
+}

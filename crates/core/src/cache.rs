@@ -4,6 +4,7 @@
 //! implementation is left to the caller (file-based, in-memory, etc.).
 
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     time::{Duration, SystemTime},
 };
@@ -31,6 +32,10 @@ pub struct Entry {
 
     /// Last-Modified header value
     last_modified: Option<String>,
+
+    /// Opaque validators the provider sends with conditional requests, keyed by request.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    validators: BTreeMap<String, String>,
 }
 
 impl Entry {
@@ -48,6 +53,7 @@ impl Entry {
             stored_at: clock.now(),
             etag: None,
             last_modified: None,
+            validators: BTreeMap::new(),
         }
     }
 
@@ -101,6 +107,142 @@ impl Entry {
     pub fn with_last_modified(mut self, last_modified: impl Into<String>) -> Self {
         self.last_modified = Some(last_modified.into());
         self
+    }
+
+    /// Get the conditional request validators
+    #[must_use]
+    pub const fn validators(&self) -> &BTreeMap<String, String> {
+        &self.validators
+    }
+
+    /// Builder-style setter for the conditional request validators
+    #[must_use]
+    pub fn with_validators(mut self, validators: BTreeMap<String, String>) -> Self {
+        self.validators = validators;
+        self
+    }
+
+    /// This entry stored again now, with its versions and validators.
+    #[must_use]
+    pub fn renewed(self) -> Self {
+        Self {
+            stored_at: SystemClock.now(),
+            ..self
+        }
+    }
+
+    /// This entry's versions marked stale, when `error` is a rate limit or a network failure.
+    #[must_use]
+    pub fn stale_versions(&self, error: &crate::Error) -> Option<version::Set> {
+        let staleness = Staleness::after(error, self.age().unwrap_or_default())?;
+        Some(self.versions.clone().into_stale(staleness))
+    }
+}
+
+/// A cache read: an entry within its TTL, or one past it.
+#[derive(Debug, Clone)]
+pub enum Lookup {
+    /// The entry is within its TTL.
+    Fresh(Entry),
+    /// The entry is past its TTL.
+    Expired(Entry),
+}
+
+/// Why a provider could not refresh an expired entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StaleReason {
+    /// The provider rate limited the request.
+    RateLimited,
+    /// The request failed on the network.
+    Network,
+}
+
+/// The age of a version set read from an expired entry, and why it was not refreshed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Staleness {
+    age: Duration,
+    reason: StaleReason,
+    retry_after: Option<Duration>,
+}
+
+impl Staleness {
+    /// The staleness of an entry aged `age` after `error`, for a rate limit or a network failure.
+    #[must_use]
+    pub const fn after(error: &crate::Error, age: Duration) -> Option<Self> {
+        let (reason, retry_after) = match error {
+            crate::Error::RateLimited { retry_after, .. } => {
+                (StaleReason::RateLimited, *retry_after)
+            }
+            crate::Error::Network { .. } => (StaleReason::Network, None),
+            _ => return None,
+        };
+        Some(Self {
+            age,
+            reason,
+            retry_after,
+        })
+    }
+
+    /// How long ago the entry was stored.
+    #[must_use]
+    pub const fn age(&self) -> Duration {
+        self.age
+    }
+
+    /// Why the entry was not refreshed.
+    #[must_use]
+    pub const fn reason(&self) -> StaleReason {
+        self.reason
+    }
+
+    /// When the provider accepts requests again, if it said so.
+    #[must_use]
+    pub const fn retry_after(&self) -> Option<Duration> {
+        self.retry_after
+    }
+}
+
+/// Serializes as `{ age_secs, reason, retry_after_secs }`, leaving out an unknown reset.
+impl Serialize for Staleness {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+
+        let fields = if self.retry_after.is_some() { 3 } else { 2 };
+        let mut state = serializer.serialize_struct("Staleness", fields)?;
+        state.serialize_field("age_secs", &self.age.as_secs())?;
+        state.serialize_field("reason", &self.reason)?;
+        if let Some(retry_after) = self.retry_after {
+            state.serialize_field("retry_after_secs", &retry_after.as_secs())?;
+        }
+        state.end()
+    }
+}
+
+impl std::fmt::Display for Staleness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let reason = match self.reason {
+            StaleReason::RateLimited => "rate limited",
+            StaleReason::Network => "network error",
+        };
+        write!(f, "fetched {} ago, {reason}", span(self.age))?;
+        if let Some(retry_after) = self.retry_after {
+            write!(f, ", resets in {}", span(retry_after))?;
+        }
+        Ok(())
+    }
+}
+
+fn span(duration: Duration) -> String {
+    let secs = duration.as_secs();
+    match secs {
+        0..60 => format!("{secs}s"),
+        60..3600 => format!("{}m", secs / 60),
+        3600..172_800 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86_400),
     }
 }
 
@@ -164,6 +306,12 @@ impl std::error::Error for Error {}
 pub trait Cache: MaybeSend + MaybeSync {
     /// Get a cached entry by key
     fn get(&self, key: &str) -> BoxFuture<'_, Result<Entry>>;
+
+    /// Get a cached entry by key, past its TTL too
+    fn lookup(&self, key: &str) -> BoxFuture<'_, Result<Lookup>> {
+        let entry = self.get(key);
+        Box::pin(async move { entry.await.map(Lookup::Fresh) })
+    }
 
     /// Store an entry in the cache
     fn set(&self, key: &str, entry: Entry) -> BoxFuture<'_, Result<()>>;
@@ -337,6 +485,154 @@ mod tests {
 
         assert_eq!(entry.etag(), Some("W/\"abc123\""));
         assert_eq!(entry.last_modified(), Some("Mon, 01 Jan 2024 00:00:00 GMT"));
+    }
+
+    fn rate_limited(retry_after: Option<Duration>) -> crate::Error {
+        crate::Error::RateLimited {
+            provider: "github".into(),
+            retry_after,
+        }
+    }
+
+    #[test]
+    fn staleness_follows_rate_limits_and_network_failures_only() {
+        let age = Duration::from_hours(26);
+        let network = crate::Error::Network {
+            operation: "GET".into(),
+            message: "connection failed".into(),
+            source: None,
+        };
+        let auth = crate::Error::Auth {
+            provider: "github".into(),
+            reason: "bad token".into(),
+            source: None,
+        };
+        let missing = crate::Error::NotFound {
+            owner: "o".into(),
+            repo: "r".into(),
+            host: None,
+        };
+
+        let limited = Staleness::after(&rate_limited(Some(Duration::from_mins(12))), age);
+        assert_eq!(
+            limited.map(|s| (s.age(), s.reason(), s.retry_after())),
+            Some((age, StaleReason::RateLimited, Some(Duration::from_mins(12))))
+        );
+        assert_eq!(
+            Staleness::after(&network, age).map(|s| (s.reason(), s.retry_after())),
+            Some((StaleReason::Network, None))
+        );
+        assert_eq!(Staleness::after(&auth, age), None);
+        assert_eq!(Staleness::after(&missing, age), None);
+    }
+
+    #[test]
+    fn staleness_reads_its_age_reason_and_reset() {
+        let show = |error: &crate::Error, age: Duration| {
+            Staleness::after(error, age).map(|s| s.to_string())
+        };
+        assert_eq!(
+            show(
+                &rate_limited(Some(Duration::from_mins(12))),
+                Duration::from_hours(26)
+            ),
+            Some("fetched 26h ago, rate limited, resets in 12m".into())
+        );
+        assert_eq!(
+            show(
+                &rate_limited(Some(Duration::from_secs(59))),
+                Duration::from_hours(72)
+            ),
+            Some("fetched 3d ago, rate limited, resets in 59s".into())
+        );
+        assert_eq!(
+            show(
+                &crate::Error::Network {
+                    operation: String::new(),
+                    message: String::new(),
+                    source: None,
+                },
+                Duration::from_mins(90)
+            ),
+            Some("fetched 1h ago, network error".into())
+        );
+    }
+
+    #[test]
+    fn stale_versions_marks_a_copy_and_renewed_restamps_the_entry()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        #[derive(Debug)]
+        struct Past(SystemTime);
+        impl Clock for Past {
+            fn now(&self) -> SystemTime {
+                self.0
+            }
+        }
+        let then = SystemTime::now()
+            .checked_sub(Duration::from_hours(26))
+            .ok_or("clock before epoch")?;
+        let validators = BTreeMap::from([("tags".to_string(), "\"t\"".to_string())]);
+        let entry = Entry::with_clock(version::Set::default(), &Past(then))
+            .with_validators(validators.clone());
+
+        let stale = entry
+            .stale_versions(&rate_limited(None))
+            .ok_or("no stale versions")?
+            .stale()
+            .ok_or("not marked")?;
+        assert!(stale.age() >= Duration::from_hours(26));
+        assert_eq!(entry.versions().stale(), None);
+        assert!(
+            entry
+                .stale_versions(&crate::Error::Internal {
+                    context: String::new(),
+                    message: String::new(),
+                    source: None,
+                })
+                .is_none()
+        );
+
+        assert!(entry.is_expired(Duration::from_hours(1)));
+        let renewed = entry.renewed();
+        assert!(!renewed.is_expired(Duration::from_hours(1)));
+        assert_eq!(renewed.validators(), &validators);
+        Ok(())
+    }
+
+    #[test]
+    fn validators_round_trip_and_stay_out_of_json_when_empty()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let bare = serde_json::to_value(Entry::new(version::Set::default()))?;
+        assert!(bare.get("validators").is_none());
+
+        let validators = BTreeMap::from([("repo".to_string(), "W/\"r\"".to_string())]);
+        let entry = Entry::new(version::Set::default()).with_validators(validators.clone());
+        let back: Entry = serde_json::from_str(&serde_json::to_string(&entry)?)?;
+        assert_eq!(back.validators(), &validators);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn default_lookup_answers_fresh_entries()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        struct One;
+        impl Cache for One {
+            fn get(&self, _key: &str) -> BoxFuture<'_, Result<Entry>> {
+                Box::pin(async { Ok(Entry::new(version::Set::default())) })
+            }
+            fn set(&self, _key: &str, _entry: Entry) -> BoxFuture<'_, Result<()>> {
+                Box::pin(async { Ok(()) })
+            }
+            fn remove(&self, _key: &str) -> BoxFuture<'_, Result<()>> {
+                Box::pin(async { Ok(()) })
+            }
+            fn clear(&self) -> BoxFuture<'_, Result<()>> {
+                Box::pin(async { Ok(()) })
+            }
+        }
+        assert!(matches!(One.lookup("k").await?, Lookup::Fresh(_)));
+        assert!(matches!(Noop.lookup("k").await, Err(Error::Disabled)));
+        Ok(())
     }
 
     // Error tests

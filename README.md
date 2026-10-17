@@ -195,6 +195,16 @@ or cached longer ago than `cache.ttl`, makes its refs environment errors (exit
 the cache, the same as `cache.enabled = false`. The two flags cannot be
 combined. The quick lookup `actup owner/repo` uses the cache too.
 
+A cache entry past its TTL stays on disk. When the provider then rate limits the
+refresh or the network fails, `check` reports the finding from that entry,
+prints `stale (fetched 26h ago, rate limited, resets in 12m)` under it, adds
+`stale` with `age_secs`, `reason` (`rate_limited` or `network`) and
+`retry_after_secs` (when the provider named a reset) to the JSON and TOML entry,
+and exits 3. `update` and `pin` refuse to write from such data, report the ref
+with kind `stale` and exit 3. A REST refresh sends the stored `ETag`s of the
+tags, repository and default branch requests, and an answer of 304 to all three
+renews the entry without a new listing.
+
 `update` and `pin` write each file to a temp file in its directory, flush it,
 give it the mode of the original and rename it over the original. A failed write
 leaves the original intact. A write through a symlink replaces the file it
@@ -448,7 +458,9 @@ refuses edits that name actions on more than one host. `updateAllUsesToVersion`
 writes each ref in its `policy.pin` style, as `update` does. `getLatest` adds
 `refKind` (`tag`, `branch` or `sha`) when the version list names `currentRef`,
 and `sameCommit` (the target version) when the target sits on the commit that
-`currentRef` already points at.
+`currentRef` already points at. `getVersions` and `getLatest` add `stale`,
+shaped like the CLI field, when their versions come from an expired cache entry,
+and the server answers the next call afresh.
 
 ## Exit Codes
 
@@ -457,7 +469,7 @@ and `sameCommit` (the target version) when the target sits on the commit that
 | 0    | Success / all up-to-date                                                       |
 | 1    | A `check --fail-on` kind found, or `update`/`pin` skipped a ref it cannot edit |
 | 2    | User error: unresolvable refs, invalid config, invalid CLI input               |
-| 3    | Network/auth/rate-limit error, or no provider for a ref's host                 |
+| 3    | Network/auth/rate-limit error, no provider for a ref's host, or stale data     |
 
 ## Files Scanned
 

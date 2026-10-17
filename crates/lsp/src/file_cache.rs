@@ -85,6 +85,8 @@ impl FileCache {
 ///
 /// Returns `None` if no provider is available for the repo. Returns
 /// `Some(Err(_))` if the provider fetch fails (caller decides how to handle).
+/// A rate limit or network failure with an expired entry returns that
+/// entry's versions marked stale.
 pub async fn fetch_versions_cached(
     repo_id: &ActionRepoId,
     registry: &provider::Registry,
@@ -94,10 +96,11 @@ pub async fn fetch_versions_cached(
     let version_repo = repo_id.without_subpath();
     let cache_key = version_repo.cache_key(provider.cache_namespace(), provider.host());
 
-    // Try file cache first.
-    if let Ok(entry) = file_cache.get(&cache_key).await {
-        return Some(Ok(entry.versions().clone()));
-    }
+    let expired = match file_cache.lookup(&cache_key).await {
+        Ok(cache::Lookup::Fresh(entry)) => return Some(Ok(entry.versions().clone())),
+        Ok(cache::Lookup::Expired(entry)) => Some(entry),
+        Err(_) => None,
+    };
 
     // Fetch from provider.
     match provider.get_versions(&version_repo).await {
@@ -109,7 +112,7 @@ pub async fn fetch_versions_cached(
             }
             Some(Ok(versions))
         }
-        Err(e) => Some(Err(e)),
+        Err(e) => Some(expired.and_then(|entry| entry.stale_versions(&e)).ok_or(e)),
     }
 }
 
@@ -118,6 +121,19 @@ impl Cache for FileCache {
         &self,
         key: &str,
     ) -> Pin<Box<dyn Future<Output = cache::Result<cache::Entry>> + Send + '_>> {
+        let lookup = self.lookup(key);
+        Box::pin(async move {
+            match lookup.await? {
+                cache::Lookup::Fresh(entry) => Ok(entry),
+                cache::Lookup::Expired(_) => Err(cache::Error::NotFound),
+            }
+        })
+    }
+
+    fn lookup(
+        &self,
+        key: &str,
+    ) -> Pin<Box<dyn Future<Output = cache::Result<cache::Lookup>> + Send + '_>> {
         let key = key.to_string();
         Box::pin(async move {
             if !self.enabled {
@@ -148,14 +164,11 @@ impl Cache for FileCache {
 
             if entry.is_expired(self.ttl) {
                 tracing::debug!(key = %key, "cache entry expired");
-                if let Err(e) = tokio::fs::remove_file(&path).await {
-                    tracing::debug!(key = %key, error = %e, "failed to remove expired entry");
-                }
-                return Err(cache::Error::NotFound);
+                return Ok(cache::Lookup::Expired(entry));
             }
 
             tracing::debug!(key = %key, age_secs = ?entry.age().map(|d| d.as_secs()), "cache hit");
-            Ok(entry)
+            Ok(cache::Lookup::Fresh(entry))
         })
     }
 
@@ -250,7 +263,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::test_utils::{DUMMY_SHA, MockProvider, simple_version_set};
+    use crate::test_utils::{DUMMY_SHA, MockProvider, mock_registry, simple_version_set};
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();
@@ -507,17 +520,118 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn expired_entry_is_removed_from_disk() {
+    async fn expired_entry_stays_on_disk_for_lookup() -> Result<(), Box<dyn std::error::Error>> {
         let (cache, _temp) = make_test_cache(0);
         let entry = cache::Entry::new(version::Set::default());
-        cache.set("expire_test", entry).await.unwrap();
+        cache.set("expire_test", entry).await?;
 
         let result = cache.get("expire_test").await;
         assert!(matches!(result, Err(cache::Error::NotFound)));
 
-        // The expired file should have been removed from disk.
-        let path = cache.key_to_path("expire_test");
-        assert!(!tokio::fs::try_exists(&path).await.unwrap());
+        assert!(tokio::fs::try_exists(cache.key_to_path("expire_test")).await?);
+        assert!(matches!(
+            cache.lookup("expire_test").await?,
+            cache::Lookup::Expired(_)
+        ));
+        Ok(())
+    }
+
+    fn ghe_checkout() -> (ActionRepoId, String) {
+        let repo = ActionRepoId::new(
+            Some("ghe.corp.com".to_string()),
+            "actions",
+            "checkout",
+            None,
+        );
+        let key = repo.cache_key(
+            MockProvider::new("ghe.corp.com").cache_namespace(),
+            "ghe.corp.com",
+        );
+        (repo, key)
+    }
+
+    #[tokio::test]
+    async fn fetch_versions_cached_falls_back_to_an_expired_entry_on_a_rate_limit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (cache, _temp) = make_test_cache(0);
+        let (repo, key) = ghe_checkout();
+        cache
+            .set(
+                &key,
+                cache::Entry::new(simple_version_set("v4.0.0", DUMMY_SHA)),
+            )
+            .await?;
+        let registry = mock_registry(MockProvider::new("ghe.corp.com").with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::RateLimited {
+                provider: "github".into(),
+                retry_after: Some(Duration::from_mins(12)),
+            },
+        ));
+
+        let versions = fetch_versions_cached(&repo, &registry, &cache)
+            .await
+            .ok_or("no provider")??;
+
+        let stale = versions.stale().ok_or("not stale")?;
+        assert_eq!(stale.reason(), cache::StaleReason::RateLimited);
+        assert_eq!(stale.retry_after(), Some(Duration::from_mins(12)));
+        assert_eq!(
+            versions.latest().map(|t| t.version().to_string()),
+            Some("v4.0.0".to_string())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn fetch_versions_cached_reports_errors_without_an_expired_entry_or_after_a_user_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (cache, _temp) = make_test_cache(0);
+        let (repo, key) = ghe_checkout();
+        let network = || actup_core::Error::Network {
+            operation: "GET".into(),
+            message: "connection failed".into(),
+            source: None,
+        };
+        let registry = mock_registry(MockProvider::new("ghe.corp.com").with_error(
+            "actions",
+            "checkout",
+            network(),
+        ));
+        assert!(matches!(
+            fetch_versions_cached(&repo, &registry, &cache).await,
+            Some(Err(actup_core::Error::Network { .. }))
+        ));
+
+        cache
+            .set(
+                &key,
+                cache::Entry::new(simple_version_set("v4.0.0", DUMMY_SHA)),
+            )
+            .await?;
+        let versions = fetch_versions_cached(&repo, &registry, &cache)
+            .await
+            .ok_or("no provider")??;
+        assert_eq!(
+            versions.stale().map(|s| s.reason()),
+            Some(cache::StaleReason::Network)
+        );
+
+        let missing = mock_registry(MockProvider::new("ghe.corp.com").with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::NotFound {
+                owner: "actions".into(),
+                repo: "checkout".into(),
+                host: None,
+            },
+        ));
+        assert!(matches!(
+            fetch_versions_cached(&repo, &missing, &cache).await,
+            Some(Err(actup_core::Error::NotFound { .. }))
+        ));
+        Ok(())
     }
 
     #[tokio::test]

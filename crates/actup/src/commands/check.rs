@@ -109,6 +109,7 @@ async fn check_action_with_versions(
         result.as_ref().and_then(|r| r.same_commit().cloned()),
     )
     .with_suggestion(result.as_ref().and_then(|r| r.suggestion().cloned()))
+    .with_stale(versions_result.and_then(|r| r.as_ref().ok()?.stale()))
 }
 
 /// Collected action for batch processing.

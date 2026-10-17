@@ -13,7 +13,50 @@ use actup_providers::{RepoLabel, filename_label, list_refs, parse_action_yml, pr
 use base64::{Engine, engine::general_purpose::STANDARD};
 use tracing::{debug, warn};
 
-use crate::client::GitHubClient;
+use crate::client::{Conditional, GitHubClient, not_modified_without_validator};
+
+const TAGS_ETAG: &str = "github.tags";
+const REPO_ETAG: &str = "github.repo";
+const BRANCH_ETAG: &str = "github.branch";
+
+/// The `ETag`s of the three REST calls behind a version set, and its default branch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestValidators {
+    tags: String,
+    repo: String,
+    branch: String,
+    default_branch: String,
+}
+
+impl RestValidators {
+    /// Read the validators a cache entry stored for `versions`, when all three `ETag`s are there.
+    #[must_use]
+    pub fn from_entry(
+        validators: &std::collections::BTreeMap<String, String>,
+        versions: &version::Set,
+    ) -> Option<Self> {
+        Some(Self {
+            tags: validators.get(TAGS_ETAG)?.clone(),
+            repo: validators.get(REPO_ETAG)?.clone(),
+            branch: validators.get(BRANCH_ETAG)?.clone(),
+            default_branch: versions.default_branch()?.name().to_string(),
+        })
+    }
+}
+
+/// The answer of the REST API to a version listing.
+#[derive(Debug)]
+pub enum RestVersions {
+    /// All three calls answered 304 to the stored `ETag`s.
+    NotModified,
+    /// The versions, with the `ETag`s to store beside them, keyed for a cache entry.
+    Fetched {
+        /// The listed versions.
+        versions: Box<version::Set>,
+        /// The `ETag`s the three calls returned.
+        validators: std::collections::BTreeMap<String, String>,
+    },
+}
 
 /// GitHub provider for resolving action versions
 pub struct GitHubProvider {
@@ -102,30 +145,110 @@ impl GitHubProvider {
     ///
     /// Returns an error if any of the REST calls fail.
     pub async fn versions_via_rest(&self, repo: &ActionRepoId) -> Result<version::Set> {
+        match self.versions_via_rest_since(repo, None).await? {
+            RestVersions::Fetched { versions, .. } => Ok(*versions),
+            RestVersions::NotModified => Err(not_modified_without_validator()),
+        }
+    }
+
+    /// Fetch versions over the REST API, sending the `ETag`s of `since` as `If-None-Match`.
+    ///
+    /// Answers [`RestVersions::NotModified`] only when the tags' first page,
+    /// the repository and its default branch all answer 304. Any other answer
+    /// refetches each 304 call without a validator.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any of the REST calls fail.
+    pub async fn versions_via_rest_since(
+        &self,
+        repo: &ActionRepoId,
+        since: Option<&RestValidators>,
+    ) -> Result<RestVersions> {
         let owner = repo.owner();
         let repo_name = repo.repo();
 
-        debug!(owner = %owner, repo = %repo_name, "fetching versions from GitHub REST");
+        debug!(owner = %owner, repo = %repo_name, conditional = since.is_some(), "fetching versions from GitHub REST");
 
         let tags = self
             .client
-            .list_tags_limited(owner, repo_name, self.max_tags)
+            .list_tags_limited_if_none_match(
+                owner,
+                repo_name,
+                self.max_tags,
+                since.map(|v| v.tags.as_str()),
+            )
             .await?;
-
-        let mut version_set = process_tags(tags);
-
-        let repo_info = self.client.get_repo(owner, repo_name).await?;
+        let repo_info = self
+            .client
+            .get_repo_if_none_match(owner, repo_name, since.map(|v| v.repo.as_str()))
+            .await?;
+        let branch_name = match (&repo_info, since) {
+            (Conditional::Modified { body, .. }, _) => body.default_branch.clone(),
+            (Conditional::NotModified, Some(since)) => since.default_branch.clone(),
+            (Conditional::NotModified, None) => return Err(not_modified_without_validator()),
+        };
+        let branch_etag = since
+            .filter(|v| v.default_branch == branch_name)
+            .map(|v| v.branch.as_str());
         let branch = self
             .client
-            .get_branch(owner, repo_name, &repo_info.default_branch)
+            .get_branch_if_none_match(owner, repo_name, &branch_name, branch_etag)
             .await?;
 
-        version_set.set_default_branch(version::BranchInfo::new(
-            repo_info.default_branch,
-            branch.commit.sha,
-        ));
+        if matches!(
+            (&tags, &repo_info, &branch),
+            (
+                Conditional::NotModified,
+                Conditional::NotModified,
+                Conditional::NotModified
+            )
+        ) {
+            debug!(owner = %owner, repo = %repo_name, "versions not modified");
+            return Ok(RestVersions::NotModified);
+        }
 
-        Ok(version_set)
+        let (tags, tags_etag) = match tags {
+            Conditional::NotModified => self
+                .client
+                .list_tags_limited_if_none_match(owner, repo_name, self.max_tags, None)
+                .await?
+                .into_modified()?,
+            modified @ Conditional::Modified { .. } => modified.into_modified()?,
+        };
+        let (branch, branch_etag) = match branch {
+            Conditional::NotModified => self
+                .client
+                .get_branch_if_none_match(owner, repo_name, &branch_name, None)
+                .await?
+                .into_modified()?,
+            modified @ Conditional::Modified { .. } => modified.into_modified()?,
+        };
+        let (_, repo_etag) = match repo_info {
+            Conditional::NotModified => self
+                .client
+                .get_repo_if_none_match(owner, repo_name, None)
+                .await?
+                .into_modified()?,
+            modified @ Conditional::Modified { .. } => modified.into_modified()?,
+        };
+
+        let mut versions = process_tags(tags);
+        versions.set_default_branch(version::BranchInfo::new(branch_name, branch.commit.sha));
+
+        let validators = [
+            (TAGS_ETAG, tags_etag),
+            (REPO_ETAG, repo_etag),
+            (BRANCH_ETAG, branch_etag),
+        ]
+        .into_iter()
+        .filter_map(|(key, etag)| Some((key.to_string(), etag?)))
+        .collect();
+
+        Ok(RestVersions::Fetched {
+            versions: Box::new(versions),
+            validators,
+        })
     }
 
     #[must_use]

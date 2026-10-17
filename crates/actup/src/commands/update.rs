@@ -12,7 +12,10 @@ use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
-    common::{Change, EditResult, WorkflowScanner, commit_file, report_error, report_skipped},
+    common::{
+        Change, EditResult, WorkflowScanner, commit_file, report_skipped, report_unwritable,
+        writable_versions,
+    },
     scan::{Scan, versions_for},
 };
 
@@ -87,10 +90,10 @@ async fn edit(
             };
             let loc = file_edits.writable(&scanned.loc);
             let (loc, action_ref) = (&loc, &scanned.action_ref);
-            let versions = match versions_for(&versions, &scanned.repo_id) {
+            let versions = match writable_versions(versions_for(&versions, &scanned.repo_id)) {
                 Ok(v) => v,
-                Err(e) => {
-                    report_error(site, &e, &mut result);
+                Err(why) => {
+                    report_unwritable(site, why, &mut result);
                     continue;
                 }
             };
@@ -213,6 +216,16 @@ mod tests {
                 HashMap::new(),
                 Some(new),
             );
+            let set = match actup_core::cache::Staleness::after(
+                &actup_core::Error::RateLimited {
+                    provider: "github".to_string(),
+                    retry_after: None,
+                },
+                std::time::Duration::from_hours(26),
+            ) {
+                Some(stale) if repo.repo() == "stale" => set.into_stale(stale),
+                _ => set,
+            };
             Box::pin(async move { Ok(set) })
         }
 
@@ -760,6 +773,52 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&file)?,
             content.replace("o/b@v4.0.0", "o/b@v4.2.0")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_refuses_to_write_from_stale_versions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        let content =
+            "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: o/stale@v4.0.0\n";
+        std::fs::write(&file, content)?;
+        let registry = registry("v4.2.0");
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &uncached(),
+            &registry,
+        )
+        .await
+        else {
+            return Err("no workflows".into());
+        };
+
+        assert_eq!(std::fs::read_to_string(&file)?, content);
+        assert_eq!(result.edited, Vec::new());
+        let errored: Vec<(usize, ErrorKind, &str)> = result
+            .errored
+            .iter()
+            .map(|e| (e.site.line, e.kind, e.message.as_str()))
+            .collect();
+        assert_eq!(
+            errored,
+            [(
+                6,
+                ErrorKind::Stale,
+                "versions are stale (fetched 26h ago, rate limited); refusing to write"
+            )]
+        );
+        assert_eq!(
+            result.exit_code(false),
+            i32::from(CliExitCode::EnvironmentError)
         );
         Ok(())
     }

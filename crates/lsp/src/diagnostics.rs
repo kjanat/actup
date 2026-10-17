@@ -412,6 +412,9 @@ async fn compute_diagnostics_for_actions(
             if !action.editable {
                 diag.data = None;
             }
+            if let Some(stale) = versions.and_then(actup_core::version::Set::stale) {
+                diag.message = format!("{} (stale: {stale})", diag.message);
+            }
             diagnostics.push(diag);
         }
     }
@@ -1850,6 +1853,71 @@ jobs:
         };
         assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(diag.code, Some(NumberOrString::String("outdated".into())));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_expired_entry_after_a_rate_limit_marks_outdated_diagnostics_stale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use actup_core::cache::Cache;
+
+        let temp = tempfile::TempDir::new()?;
+        let cache = crate::file_cache::FileCache::with_path(
+            temp.path().to_path_buf(),
+            std::time::Duration::ZERO,
+        );
+        let key = ActionRepoId::simple("actions", "checkout").cache_key("github", "github.com");
+        cache
+            .set(
+                &key,
+                actup_core::cache::Entry::new(test_utils::simple_version_set("v4.2.0", DUMMY_SHA)),
+            )
+            .await?;
+        let registry =
+            test_utils::mock_registry(test_utils::MockProvider::new("github.com").with_error(
+                "actions",
+                "checkout",
+                CoreError::RateLimited {
+                    provider: "github".into(),
+                    retry_after: Some(std::time::Duration::from_mins(12)),
+                },
+            ));
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let config = Config::default();
+        let diagnostics = |yaml: &'static str| {
+            compute_diagnostics(
+                yaml,
+                &uri,
+                &config,
+                &registry,
+                &cache,
+                crate::position::PositionEncoding::Utf16,
+            )
+        };
+
+        let outdated = diagnostics("    - uses: actions/checkout@v3\n").await;
+        let [diag] = outdated.diagnostics.as_slice() else {
+            return Err(format!("expected one diagnostic, got {:?}", outdated.diagnostics).into());
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(diag.code, Some(NumberOrString::String("outdated".into())));
+        assert!(
+            diag.message.starts_with(&format!(
+                "actions/checkout@v3: v3 -> v4.2.0 ({}) (stale: fetched ",
+                &DUMMY_SHA[..7]
+            )),
+            "{}",
+            diag.message
+        );
+        assert!(
+            diag.message.ends_with(" ago, rate limited, resets in 12m)"),
+            "{}",
+            diag.message
+        );
+        assert!(!outdated.errors.has_errors());
+
+        let current = diagnostics("    - uses: actions/checkout@v4.2.0\n").await;
+        assert_eq!(current.diagnostics, []);
         Ok(())
     }
 

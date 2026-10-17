@@ -518,6 +518,132 @@ mod tests {
         Ok(())
     }
 
+    struct StaleProvider(Arc<AtomicUsize>);
+
+    impl Provider for StaleProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let latest = Arc::new(version::Info::new(
+                version::Version::parse("v4.2.0"),
+                "b".repeat(40),
+            ));
+            let set = version::Set::build(
+                vec![Arc::clone(&latest)],
+                std::collections::HashMap::from([(4, Arc::clone(&latest))]),
+                std::collections::HashMap::new(),
+                Some(latest),
+            );
+            let set = match actup_core::cache::Staleness::after(
+                &actup_core::Error::RateLimited {
+                    provider: "github".to_string(),
+                    retry_after: Some(std::time::Duration::from_mins(12)),
+                },
+                std::time::Duration::from_hours(26),
+            ) {
+                Some(stale) => set.into_stale(stale),
+                None => set,
+            };
+            Box::pin(async move { Ok(set) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            let err = actup_core::Error::RefNotFound {
+                owner: String::new(),
+                repo: String::new(),
+                ref_name: ref_name.to_string(),
+                host: None,
+            };
+            Box::pin(async move { Err(err) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn read_tools_report_stale_versions_and_leave_them_out_of_the_cache()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(StaleProvider(Arc::clone(&calls))));
+        let server = Server::new(Config::default(), registry, Root::new(dir.path())?);
+        let args = |json: Value| match json {
+            Value::Object(args) => Some(args),
+            _ => None,
+        };
+        let stale = serde_json::json!({
+            "age_secs": 93_600,
+            "reason": "rate_limited",
+            "retry_after_secs": 720,
+        });
+
+        for _ in 0..2 {
+            let latest = server
+                .call(
+                    LATEST,
+                    args(serde_json::json!({ "owner": "a", "repo": "b", "currentRef": "v4.0.0" })),
+                )
+                .await?;
+            assert_eq!(latest.is_error, None);
+            let body = latest.structured_content.ok_or("no body")?;
+            assert_eq!(body.get("status"), Some(&Value::from("outdated")));
+            assert_eq!(body.get("check"), Some(&Value::from("outdated")));
+            assert_eq!(body.get("stale"), Some(&stale));
+        }
+
+        let versions = server
+            .call(
+                VERSIONS,
+                args(serde_json::json!({ "owner": "a", "repo": "b" })),
+            )
+            .await?
+            .structured_content
+            .ok_or("no body")?;
+        assert_eq!(versions.get("status"), Some(&Value::from("upToDate")));
+        assert_eq!(versions.get("stale"), Some(&stale));
+
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert!(server.memo.lock().map_err(|e| e.to_string())?.is_empty());
+        Ok(())
+    }
+
     #[test]
     fn tools_mark_mutators_destructive_and_reads_read_only() {
         let tools = Server::tools();

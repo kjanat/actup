@@ -3,7 +3,7 @@
 use anstream::{eprintln, println};
 use std::sync::Arc;
 
-use actup_core::{ActionRef, RefKind, UsesLocation, sanitize_line, version};
+use actup_core::{ActionRef, RefKind, UsesLocation, cache::Staleness, sanitize_line, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -42,6 +42,8 @@ struct JsonFinding {
     same_commit: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     suggestion: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stale: Option<Staleness>,
 }
 
 impl From<&Finding> for JsonFinding {
@@ -101,6 +103,7 @@ impl From<&Finding> for JsonFinding {
             ref_kind: f.ref_kind(),
             same_commit: f.same_commit().map(|t| t.version().to_string()),
             suggestion: f.suggestion().map(|t| t.version().to_string()),
+            stale: f.stale(),
         }
     }
 }
@@ -149,6 +152,7 @@ pub struct Finding {
     same_commit: Option<Arc<version::Info>>,
     suggestion: Option<Arc<version::Info>>,
     span: Option<Span>,
+    stale: Option<Staleness>,
 }
 
 impl Finding {
@@ -173,6 +177,7 @@ impl Finding {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         }
     }
 
@@ -187,6 +192,13 @@ impl Finding {
     #[must_use]
     pub const fn span(&self) -> Option<Span> {
         self.span
+    }
+
+    /// Record that the finding rests on an expired cache entry.
+    #[must_use]
+    pub const fn with_stale(mut self, stale: Option<Staleness>) -> Self {
+        self.stale = stale;
+        self
     }
 
     /// Record the kind of ref and the suggested target on its current commit.
@@ -260,6 +272,12 @@ impl Finding {
     #[must_use]
     pub const fn suggestion(&self) -> Option<&Arc<version::Info>> {
         self.suggestion.as_ref()
+    }
+
+    /// Get how stale the versions behind the finding are, when they came from an expired cache entry
+    #[must_use]
+    pub const fn stale(&self) -> Option<Staleness> {
+        self.stale
     }
 }
 
@@ -404,6 +422,9 @@ fn print_human(findings: &[Finding]) {
         }
 
         print_finding_line(finding);
+        if let Some(stale) = finding.stale() {
+            println!("      {}", format!("stale ({stale})").yellow());
+        }
     }
 }
 
@@ -694,19 +715,20 @@ fn trips(kind: FailOn, status: &FindingStatus) -> bool {
 /// - 0: Success, or no finding of a `fail_on` kind
 /// - 1: A finding of a `fail_on` kind
 /// - 2: User error (bad ref, repo not found)
-/// - 3: Environment error (network, rate limit, auth)
+/// - 3: Environment error (network, rate limit, auth), or a finding from an expired cache entry
 pub fn determine_exit_code(findings: &[Finding], fail_on: &[FailOn]) -> i32 {
     let has_outdated = findings
         .iter()
         .any(|f| fail_on.iter().any(|&kind| trips(kind, f.status())));
     let has_env_error = findings.iter().any(|f| {
-        matches!(
-            f.status(),
-            FindingStatus::Unresolvable {
-                is_environment_error: true,
-                ..
-            }
-        )
+        f.stale().is_some()
+            || matches!(
+                f.status(),
+                FindingStatus::Unresolvable {
+                    is_environment_error: true,
+                    ..
+                }
+            )
     });
     let has_user_error = findings.iter().any(|f| {
         matches!(
@@ -841,6 +863,83 @@ mod tests {
         assert_eq!(suggestion_hint(&bump_finding()), None);
         print_human(&[typo]);
         Ok(())
+    }
+
+    fn stale(retry_after: Option<std::time::Duration>) -> Option<Staleness> {
+        Staleness::after(
+            &actup_core::Error::RateLimited {
+                provider: "github".into(),
+                retry_after,
+            },
+            std::time::Duration::from_hours(26),
+        )
+    }
+
+    #[test]
+    fn json_and_toml_nest_the_stale_facts() -> Result<(), Box<dyn std::error::Error>> {
+        #[derive(Serialize)]
+        struct Wrapper {
+            findings: Vec<JsonFinding>,
+        }
+
+        let finding = bump_finding().with_stale(stale(Some(std::time::Duration::from_mins(12))));
+        let json = serde_json::to_value(JsonFinding::from(&finding))?;
+        assert_eq!(
+            json["stale"],
+            serde_json::json!({ "age_secs": 93_600, "reason": "rate_limited", "retry_after_secs": 720 })
+        );
+
+        let network = bump_finding().with_stale(Staleness::after(
+            &actup_core::Error::Network {
+                operation: String::new(),
+                message: String::new(),
+                source: None,
+            },
+            std::time::Duration::from_secs(5),
+        ));
+        assert_eq!(
+            serde_json::to_value(JsonFinding::from(&network))?["stale"],
+            serde_json::json!({ "age_secs": 5, "reason": "network" })
+        );
+
+        let fresh = serde_json::to_value(JsonFinding::from(&bump_finding()))?;
+        assert!(fresh.get("stale").is_none(), "{fresh}");
+
+        let toml = toml::to_string_pretty(&Wrapper {
+            findings: vec![JsonFinding::from(&finding)],
+        })?;
+        let parsed: toml::Value = toml::from_str(&toml)?;
+        let table = &parsed["findings"][0]["stale"];
+        assert_eq!(table["age_secs"].as_integer(), Some(93_600));
+        assert_eq!(table["reason"].as_str(), Some("rate_limited"));
+        assert_eq!(table["retry_after_secs"].as_integer(), Some(720));
+        print_human(&[finding]);
+        Ok(())
+    }
+
+    #[test]
+    fn a_stale_finding_exits_with_an_environment_error() {
+        let up_to_date = make_finding(
+            "ci.yml",
+            5,
+            make_action_ref("actions", "checkout", "v4"),
+            FindingStatus::UpToDate,
+        );
+        assert_eq!(
+            determine_exit_code(std::slice::from_ref(&up_to_date), &[FailOn::Outdated]),
+            0
+        );
+        assert_eq!(
+            determine_exit_code(&[up_to_date.with_stale(stale(None))], &[]),
+            3
+        );
+        assert_eq!(
+            determine_exit_code(
+                &[bump_finding().with_stale(stale(None))],
+                &[FailOn::Outdated]
+            ),
+            3
+        );
     }
 
     #[test]
@@ -1998,6 +2097,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2032,6 +2132,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2061,6 +2162,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2092,6 +2194,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2118,6 +2221,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2145,6 +2249,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2174,6 +2279,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2200,6 +2306,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2225,6 +2332,7 @@ mod tests {
             same_commit: None,
             suggestion: None,
             span: None,
+            stale: None,
         };
 
         let json_finding = JsonFinding::from(&finding);

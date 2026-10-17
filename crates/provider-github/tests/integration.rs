@@ -721,3 +721,522 @@ async fn repo_state_reads_archived_and_disabled() -> Result<(), Box<dyn std::err
     ));
     Ok(())
 }
+
+mod stale {
+    use std::{
+        collections::{BTreeMap, HashMap},
+        sync::{Arc, Mutex},
+        time::{Duration, SystemTime},
+    };
+
+    use actup_core::{
+        ActionRepoId, BoxFuture, Clock, Provider,
+        cache::{self, Cache, Entry, Lookup, StaleReason},
+        provider::{self, ActionYml, Kind, Sha40},
+        version::{self, BranchInfo, Info, Version},
+    };
+    use actup_provider_github::{BatchFetcher, GitHubProvider};
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{header, method, path},
+    };
+
+    use super::{BRANCH_RESPONSE, REPO_RESPONSE, TAGS_RESPONSE};
+
+    const HOST: &str = "ghe.invalid";
+    const CACHED_SHA: &str = "1111111111111111111111111111111111111111";
+    const DAY_AGO: Duration = Duration::from_hours(26);
+
+    #[derive(Debug)]
+    struct Past(SystemTime);
+
+    impl Clock for Past {
+        fn now(&self) -> SystemTime {
+            self.0
+        }
+    }
+
+    #[derive(Default)]
+    struct MemoryCache(Mutex<HashMap<String, Entry>>);
+
+    impl MemoryCache {
+        fn with(key: &str, entry: Entry) -> Arc<Self> {
+            let cache = Self::default();
+            if let Ok(mut entries) = cache.0.lock() {
+                entries.insert(key.to_string(), entry);
+            }
+            Arc::new(cache)
+        }
+
+        fn entry(&self, key: &str) -> Option<Entry> {
+            self.0.lock().ok()?.get(key).cloned()
+        }
+    }
+
+    impl Cache for MemoryCache {
+        fn get(&self, key: &str) -> BoxFuture<'_, cache::Result<Entry>> {
+            let lookup = self.lookup(key);
+            Box::pin(async move {
+                match lookup.await? {
+                    Lookup::Fresh(entry) => Ok(entry),
+                    Lookup::Expired(_) => Err(cache::Error::NotFound),
+                }
+            })
+        }
+
+        fn lookup(&self, key: &str) -> BoxFuture<'_, cache::Result<Lookup>> {
+            let entry = self.entry(key);
+            Box::pin(async move {
+                let entry = entry.ok_or(cache::Error::NotFound)?;
+                Ok(if entry.is_expired(Duration::from_hours(1)) {
+                    Lookup::Expired(entry)
+                } else {
+                    Lookup::Fresh(entry)
+                })
+            })
+        }
+
+        fn set(&self, key: &str, entry: Entry) -> BoxFuture<'_, cache::Result<()>> {
+            if let Ok(mut entries) = self.0.lock() {
+                entries.insert(key.to_string(), entry);
+            }
+            Box::pin(async { Ok(()) })
+        }
+
+        fn remove(&self, key: &str) -> BoxFuture<'_, cache::Result<()>> {
+            if let Ok(mut entries) = self.0.lock() {
+                entries.remove(key);
+            }
+            Box::pin(async { Ok(()) })
+        }
+
+        fn clear(&self) -> BoxFuture<'_, cache::Result<()>> {
+            if let Ok(mut entries) = self.0.lock() {
+                entries.clear();
+            }
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    fn repo(name: &str) -> ActionRepoId {
+        ActionRepoId::new(Some(HOST.to_string()), "o", name, None)
+    }
+
+    fn key(name: &str) -> String {
+        repo(name).cache_key("github", HOST)
+    }
+
+    fn cached_versions() -> version::Set {
+        let info = Arc::new(Info::new(Version::parse("v1.0.0"), CACHED_SHA));
+        version::Set::build(
+            vec![Arc::clone(&info)],
+            HashMap::from([(1, Arc::clone(&info))]),
+            HashMap::new(),
+            Some(info),
+        )
+        .with_default_branch(BranchInfo::new("main", CACHED_SHA))
+    }
+
+    fn day_old_entry() -> Result<Entry, Box<dyn std::error::Error>> {
+        let then = SystemTime::now()
+            .checked_sub(DAY_AGO)
+            .ok_or("clock before epoch")?;
+        Ok(Entry::with_clock(cached_versions(), &Past(then)))
+    }
+
+    fn etags(tags: &str, repo: &str, branch: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("github.tags".to_string(), tags.to_string()),
+            ("github.repo".to_string(), repo.to_string()),
+            ("github.branch".to_string(), branch.to_string()),
+        ])
+    }
+
+    fn fetcher(
+        server: &MockServer,
+        cache: Arc<MemoryCache>,
+    ) -> Result<BatchFetcher<MemoryCache>, Box<dyn std::error::Error>> {
+        let provider = GitHubProvider::with_host(&server.uri(), HOST, None)?;
+        Ok(BatchFetcher::rest_only(provider, cache, 10))
+    }
+
+    async fn answer(
+        server: &MockServer,
+        url: &str,
+        etag: Option<&str>,
+        response: ResponseTemplate,
+    ) {
+        let mock = Mock::given(method("GET")).and(path(url.to_string()));
+        match etag {
+            Some(etag) => {
+                mock.and(header("if-none-match", etag))
+                    .respond_with(response)
+                    .with_priority(1)
+                    .mount(server)
+                    .await;
+            }
+            None => mock.respond_with(response).mount(server).await,
+        }
+    }
+
+    async fn fetch_one(
+        server: &MockServer,
+        cache: &Arc<MemoryCache>,
+        name: &str,
+    ) -> Result<actup_core::Result<version::Set>, Box<dyn std::error::Error>> {
+        let fetcher = fetcher(server, Arc::clone(cache))?;
+        let mut results = fetcher
+            .fetch_versions(&[repo(name)], &actup_core::fetch::Silent)
+            .await;
+        Ok(results.remove(&repo(name)).ok_or("no result")?)
+    }
+
+    fn latest(versions: &version::Set) -> Option<String> {
+        versions.latest().map(|t| t.version().to_string())
+    }
+
+    #[tokio::test]
+    async fn three_not_modified_answers_renew_the_expired_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let not_modified = || ResponseTemplate::new(304);
+        answer(&server, "/repos/o/r/tags", Some("\"t1\""), not_modified()).await;
+        answer(&server, "/repos/o/r", Some("\"r1\""), not_modified()).await;
+        answer(
+            &server,
+            "/repos/o/r/branches/main",
+            Some("\"b1\""),
+            not_modified(),
+        )
+        .await;
+        let cache = MemoryCache::with(
+            &key("r"),
+            day_old_entry()?.with_validators(etags("\"t1\"", "\"r1\"", "\"b1\"")),
+        );
+
+        let versions = fetch_one(&server, &cache, "r").await??;
+
+        assert_eq!(versions.stale(), None);
+        assert_eq!(latest(&versions), Some("v1.0.0".to_string()));
+        let entry = cache.entry(&key("r")).ok_or("entry gone")?;
+        assert!(!entry.is_expired(Duration::from_hours(1)));
+        assert_eq!(entry.validators(), &etags("\"t1\"", "\"r1\"", "\"b1\""));
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            3
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_changed_call_refetches_the_unchanged_ones_and_stores_new_etags()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            Some("\"t1\""),
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"t2\"")
+                .set_body_string(TAGS_RESPONSE),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r",
+            Some("\"r1\""),
+            ResponseTemplate::new(304),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r/branches/main",
+            Some("\"b1\""),
+            ResponseTemplate::new(304),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r",
+            None,
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"r2\"")
+                .set_body_string(REPO_RESPONSE),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r/branches/main",
+            None,
+            ResponseTemplate::new(200)
+                .insert_header("etag", "\"b2\"")
+                .set_body_string(BRANCH_RESPONSE),
+        )
+        .await;
+        let cache = MemoryCache::with(
+            &key("r"),
+            day_old_entry()?.with_validators(etags("\"t1\"", "\"r1\"", "\"b1\"")),
+        );
+
+        let versions = fetch_one(&server, &cache, "r").await??;
+
+        assert_eq!(versions.stale(), None);
+        assert_eq!(latest(&versions), Some("v6.0.2".to_string()));
+        assert_eq!(
+            versions.default_branch().map(BranchInfo::sha),
+            Some("0c366fd6a839edf440554fa01a7085ccba70ac98")
+        );
+        let entry = cache.entry(&key("r")).ok_or("entry gone")?;
+        assert_eq!(entry.validators(), &etags("\"t2\"", "\"r2\"", "\"b2\""));
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            5
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_fetch_without_stored_etags_sends_none_and_stores_the_answered_ones()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let ok = |etag: &str, body: &str| {
+            ResponseTemplate::new(200)
+                .insert_header("etag", etag)
+                .set_body_string(body)
+        };
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            None,
+            ok("\"t1\"", TAGS_RESPONSE),
+        )
+        .await;
+        answer(&server, "/repos/o/r", None, ok("\"r1\"", REPO_RESPONSE)).await;
+        answer(
+            &server,
+            "/repos/o/r/branches/main",
+            None,
+            ok("\"b1\"", BRANCH_RESPONSE),
+        )
+        .await;
+        let cache = MemoryCache::with(&key("r"), day_old_entry()?);
+
+        let versions = fetch_one(&server, &cache, "r").await??;
+
+        assert_eq!(latest(&versions), Some("v6.0.2".to_string()));
+        let requests = server.received_requests().await.unwrap_or_default();
+        assert_eq!(requests.len(), 3);
+        assert!(
+            requests
+                .iter()
+                .all(|request| !request.headers.contains_key("if-none-match"))
+        );
+        let entry = cache.entry(&key("r")).ok_or("entry gone")?;
+        assert_eq!(entry.validators(), &etags("\"t1\"", "\"r1\"", "\"b1\""));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_rate_limit_answers_with_the_expired_entry_marked_stale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let reset = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs()
+            + 720;
+        answer(
+            &server,
+            "/repos/o/limited/tags",
+            None,
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-remaining", "0")
+                .insert_header("x-ratelimit-reset", reset.to_string())
+                .set_body_string(r#"{"message": "API rate limit exceeded"}"#),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/throttled/tags",
+            None,
+            ResponseTemplate::new(429).insert_header("retry-after", "60"),
+        )
+        .await;
+        let cache = MemoryCache::with(&key("limited"), day_old_entry()?);
+        cache.set(&key("throttled"), day_old_entry()?).await?;
+
+        let limited = fetch_one(&server, &cache, "limited").await??;
+        let throttled = fetch_one(&server, &cache, "throttled").await??;
+
+        let stale = limited.stale().ok_or("limited not stale")?;
+        assert_eq!(stale.reason(), StaleReason::RateLimited);
+        assert!(stale.age() >= DAY_AGO);
+        let retry = stale.retry_after().ok_or("no reset")?;
+        assert!(
+            (Duration::from_mins(11)..=Duration::from_mins(12)).contains(&retry),
+            "{retry:?}"
+        );
+        assert_eq!(latest(&limited), Some("v1.0.0".to_string()));
+        assert_eq!(
+            throttled.stale().map(|s| (s.reason(), s.retry_after())),
+            Some((StaleReason::RateLimited, Some(Duration::from_mins(1))))
+        );
+        let entry = cache.entry(&key("limited")).ok_or("entry gone")?;
+        assert!(entry.is_expired(Duration::from_hours(1)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_network_failure_answers_with_the_expired_entry_marked_stale()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            None,
+            ResponseTemplate::new(502).set_body_string("bad gateway"),
+        )
+        .await;
+        let cache = MemoryCache::with(&key("r"), day_old_entry()?);
+
+        let versions = fetch_one(&server, &cache, "r").await??;
+
+        let stale = versions.stale().ok_or("not stale")?;
+        assert_eq!(
+            (stale.reason(), stale.retry_after()),
+            (StaleReason::Network, None)
+        );
+        assert_eq!(latest(&versions), Some("v1.0.0".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failures_without_an_entry_or_of_the_user_stay_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "/repos/o/limited/tags",
+            None,
+            ResponseTemplate::new(429).insert_header("retry-after", "60"),
+        )
+        .await;
+        mount_gone(&server).await;
+        let cache = MemoryCache::with(&key("gone"), day_old_entry()?);
+
+        let limited = fetch_one(&server, &cache, "limited").await?;
+        let gone = fetch_one(&server, &cache, "gone").await?;
+
+        assert!(
+            matches!(limited, Err(actup_core::Error::RateLimited { .. })),
+            "{limited:?}"
+        );
+        assert!(
+            matches!(gone, Err(actup_core::Error::NotFound { .. })),
+            "{gone:?}"
+        );
+        Ok(())
+    }
+
+    async fn mount_gone(server: &MockServer) {
+        answer(
+            server,
+            "/repos/o/gone/tags",
+            None,
+            ResponseTemplate::new(404).set_body_string(r#"{"message": "Not Found"}"#),
+        )
+        .await;
+    }
+
+    struct RateLimitedProvider;
+
+    impl Provider for RateLimitedProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitLab
+        }
+
+        fn host(&self) -> &'static str {
+            "gitlab.invalid"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            Box::pin(async {
+                Err(actup_core::Error::RateLimited {
+                    provider: "gitlab".to_string(),
+                    retry_after: None,
+                })
+            })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            Box::pin(async {
+                Err(actup_core::Error::ProviderNotFound {
+                    host: String::new(),
+                })
+            })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_without_batching_falls_back_to_its_expired_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("gitlab.invalid");
+        registry.register(Box::new(RateLimitedProvider));
+        let repo = ActionRepoId::new(Some("gitlab.invalid".to_string()), "g", "p", None);
+        let cache = MemoryCache::with(
+            &repo.cache_key(RateLimitedProvider.cache_namespace(), "gitlab.invalid"),
+            day_old_entry()?,
+        );
+
+        let results = actup_provider_github::fetch_versions_with_registry(
+            std::slice::from_ref(&repo),
+            &actup_core::Config::default(),
+            &registry,
+            cache,
+            &actup_core::fetch::Silent,
+        )
+        .await;
+
+        let versions = results
+            .get(&repo)
+            .ok_or("no result")?
+            .as_ref()
+            .map_err(ToString::to_string)?;
+        assert_eq!(
+            versions.stale().map(|s| s.reason()),
+            Some(StaleReason::RateLimited)
+        );
+        assert_eq!(latest(versions), Some("v1.0.0".to_string()));
+        Ok(())
+    }
+}

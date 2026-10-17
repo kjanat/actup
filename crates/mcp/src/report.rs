@@ -88,6 +88,7 @@ impl Served {
 pub struct Reply {
     body: Map<String, Value>,
     failed: bool,
+    stale: bool,
 }
 
 impl Reply {
@@ -118,6 +119,7 @@ impl Reply {
         Ok(Self {
             body,
             failed: status.failed(),
+            stale: false,
         })
     }
 
@@ -132,7 +134,11 @@ impl Reply {
             serde_json::to_value(Status::of_error(error)).unwrap_or(Value::Null),
         );
         body.insert("error".into(), actup_core::error::chain(error).into());
-        Self { body, failed: true }
+        Self {
+            body,
+            failed: true,
+            stale: false,
+        }
     }
 
     /// Mark the reply as an error result.
@@ -142,10 +148,17 @@ impl Reply {
         self
     }
 
-    /// Whether the reply is a success worth caching.
+    /// Mark the reply as built from an expired cache entry when `stale` holds.
+    #[must_use]
+    pub const fn stale_if(mut self, stale: bool) -> Self {
+        self.stale = stale;
+        self
+    }
+
+    /// Whether the reply is a fresh success worth caching.
     #[must_use]
     pub const fn succeeded(&self) -> bool {
-        !self.failed
+        !self.failed && !self.stale
     }
 
     /// Convert to an MCP result carrying the object as text and structured content.

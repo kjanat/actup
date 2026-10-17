@@ -15,7 +15,8 @@ use owo_colors::OwoColorize;
 use crate::{
     cli::OutputFormat,
     common::{
-        Change, EditResult, RefSite, WorkflowScanner, commit_file, report_error, report_skipped,
+        Change, EditResult, RefSite, Unwritable, WorkflowScanner, commit_file, report_skipped,
+        report_unwritable, writable_versions,
     },
     scan::{Scan, versions_for},
 };
@@ -88,7 +89,7 @@ impl Mode {
 enum PinStep {
     Edit(PendingEdit, Box<Change>),
     Unplaceable,
-    Failed(actup_core::Error),
+    Failed(Unwritable),
     Nothing,
 }
 
@@ -128,7 +129,7 @@ async fn pin_action_edit(
         };
         let pin = match resolve_sha(provider, action_ref, versions).await {
             Ok(pin) => pin,
-            Err(e) => return PinStep::Failed(e),
+            Err(e) => return PinStep::Failed(e.into()),
         };
         let (edit, new_ref, target, show_comment) = match pin {
             PinTarget::Expanded {
@@ -268,10 +269,10 @@ async fn edit(
             if !wanted(action_ref, loc) {
                 continue;
             }
-            let versions = match versions_for(&versions, &scanned.repo_id) {
+            let versions = match writable_versions(versions_for(&versions, &scanned.repo_id)) {
                 Ok(v) => v,
-                Err(e) => {
-                    report_error(site, &e, &mut result);
+                Err(why) => {
+                    report_unwritable(site, why, &mut result);
                     continue;
                 }
             };
@@ -284,7 +285,7 @@ async fn edit(
             match step {
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
                 PinStep::Unplaceable => report_skipped(site, SkipReason::Unplaceable, &mut result),
-                PinStep::Failed(e) => report_error(site, &e, &mut result),
+                PinStep::Failed(why) => report_unwritable(site, why, &mut result),
                 PinStep::Nothing => {}
             }
         }
@@ -1149,6 +1150,87 @@ mod tests {
             versions,
         }));
         Ok(registry)
+    }
+
+    #[tokio::test]
+    async fn test_pin_and_unpin_refuse_to_write_from_stale_versions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let stale = actup_core::cache::Staleness::after(
+            &actup_core::Error::Network {
+                operation: "GET".to_string(),
+                message: "connection failed".to_string(),
+                source: None,
+            },
+            std::time::Duration::from_hours(26),
+        )
+        .ok_or("network errors leave stale versions")?;
+        let latest = Arc::new(version::Info::new(
+            version::Version::parse("v4.2.0"),
+            sha('b'),
+        ));
+        let versions = version::Set::build(
+            vec![
+                Arc::clone(&latest),
+                Arc::new(version::Info::new(
+                    version::Version::parse("v4.1.0"),
+                    sha('a'),
+                )),
+            ],
+            HashMap::from([(4, Arc::clone(&latest))]),
+            HashMap::new(),
+            Some(latest),
+        )
+        .into_stale(stale);
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(FixedShaProvider {
+            sha: Sha40::new(sha('c')).ok_or("fixture SHA must be valid")?,
+            versions,
+        }));
+        let dir = tempfile::tempdir()?;
+        let content = [
+            "steps:",
+            "  - uses: o/tag@v4.1.0",
+            "  - uses: o/sha@AAA",
+            "  - uses: o/marked@AAA # v4.1.0",
+            "",
+        ]
+        .join("\n")
+        .replace("AAA", &sha('a'));
+        let file = workflow(dir.path(), &content)?;
+
+        for (mode, lines) in [(Mode::Pin, vec![2, 3, 4]), (Mode::Unpin, vec![4])] {
+            let Some(result) = edit(
+                dir.path(),
+                mode,
+                false,
+                OutputFormat::Json,
+                &uncached(),
+                &registry,
+            )
+            .await
+            else {
+                return Err("no workflows".into());
+            };
+
+            assert_eq!(std::fs::read_to_string(&file)?, content, "{mode:?}");
+            assert!(result.edited.is_empty(), "{mode:?}");
+            let errored: Vec<(usize, ErrorKind)> = result
+                .errored
+                .iter()
+                .map(|e| (e.site.line, e.kind))
+                .collect();
+            let expected: Vec<(usize, ErrorKind)> = lines
+                .into_iter()
+                .map(|line| (line, ErrorKind::Stale))
+                .collect();
+            assert_eq!(errored, expected, "{mode:?}");
+            assert_eq!(
+                result.exit_code(false),
+                i32::from(CliExitCode::EnvironmentError)
+            );
+        }
+        Ok(())
     }
 
     #[tokio::test]
