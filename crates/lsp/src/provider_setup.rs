@@ -25,6 +25,23 @@ pub fn build_registry(config: &Config) -> actup_core::Result<provider::Registry>
     )
 }
 
+/// How the backend builds its provider registry and file cache from a loaded config.
+#[derive(Clone, Copy)]
+pub struct Providers {
+    /// Builds the provider registry.
+    pub registry: fn(&Config) -> actup_core::Result<provider::Registry>,
+    /// Builds the persistent version cache.
+    pub file_cache: fn(&Config) -> crate::file_cache::FileCache,
+}
+
+impl Providers {
+    /// The compiled-in providers and the on-disk cache.
+    pub const LIVE: Self = Self {
+        registry: build_registry,
+        file_cache: build_file_cache,
+    };
+}
+
 /// Build a [`FileCache`](crate::file_cache::FileCache) from the given config.
 ///
 /// Respects `config.cache.enabled`, `config.cache.path`, and `config.cache.ttl`.
@@ -127,6 +144,17 @@ mod tests {
         let config = Config::default();
         let cache = build_file_cache(&config);
         assert!(cache.is_enabled());
+    }
+
+    #[test]
+    fn live_providers_use_the_compiled_in_registrations_and_the_disk_cache() {
+        use actup_core::cache::Cache;
+        let config = Config::default();
+        let Ok(registry) = (Providers::LIVE.registry)(&config) else {
+            panic!("the default config builds a registry");
+        };
+        assert_eq!(registry.default_host(), Some("github.com"));
+        assert!((Providers::LIVE.file_cache)(&config).is_enabled());
     }
 
     #[test]

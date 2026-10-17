@@ -5,11 +5,9 @@
 //! through the `tower::Service` interface, and reading server→client
 //! notifications from the [`ClientSocket`] stream.
 //!
-//! No network calls are made: the provider registry is built from config
-//! during `initialize`, and if `GITHUB_TOKEN` is absent, the provider
-//! gracefully degrades (returning errors that surface as Information
-//! diagnostics). This is intentional — integration tests validate the
-//! protocol flow, not version resolution correctness (unit tests cover that).
+//! The backend builds its providers with [`test_utils::MOCK_PROVIDERS`]: every
+//! provider is a [`test_utils::MockProvider`] and the file cache is disabled,
+//! so no test reaches the network or the user's cache.
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -228,16 +226,14 @@ impl Drop for TestHarness {
 }
 
 impl TestHarness {
-    // TODO: TestHarness uses the real LspBackend, so CI-provided GITHUB_TOKEN
-    // can cause live network calls during didOpen → diagnostics. Refactor to
-    // inject a mock provider registry or clear auth env vars before construction.
     fn new() -> Self {
         Self::with_user_config(None)
     }
 
     fn with_user_config(user_config: Option<std::path::PathBuf>) -> Self {
-        let (service, socket) =
-            LspService::new(move |client| LspBackend::with_user_config(client, user_config));
+        let (service, socket) = LspService::new(move |client| {
+            LspBackend::with_providers(client, user_config, test_utils::MOCK_PROVIDERS)
+        });
         let collected = Arc::new(Mutex::new(CollectedMessages::default()));
         let collected_clone = Arc::clone(&collected);
 
@@ -475,6 +471,36 @@ async fn did_open_with_uses_publishes_diagnostics() {
     }
 
     harness.shutdown().await;
+}
+
+#[tokio::test]
+async fn harness_serves_versions_from_the_mock_provider() -> Result<(), Box<dyn std::error::Error>>
+{
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/mocked.yml").ok_or("no uri")?;
+    let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    let published = harness
+        .wait_for_diagnostics(&uri, Duration::from_secs(5))
+        .await;
+
+    let messages: Vec<&str> = published
+        .iter()
+        .flat_map(|params| &params.diagnostics)
+        .map(|diag| diag.message.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("v4.2.0")
+                && message.contains(&test_utils::DUMMY_SHA[..7])),
+        "{messages:?}"
+    );
+
+    harness.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]

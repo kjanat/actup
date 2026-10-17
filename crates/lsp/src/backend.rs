@@ -260,6 +260,8 @@ pub struct LspBackend {
     /// Defaults to UTF-16 per LSP spec if the client doesn't advertise
     /// encoding support.
     position_encoding: OnceLock<crate::position::PositionEncoding>,
+    /// Builds the provider registry and file cache from each loaded config.
+    providers: provider_setup::Providers,
 }
 
 impl LspBackend {
@@ -272,6 +274,15 @@ impl LspBackend {
 
     /// Create a new backend that reads the user config from `user_config`.
     pub fn with_user_config(client: Client, user_config: Option<PathBuf>) -> Self {
+        Self::with_providers(client, user_config, provider_setup::Providers::LIVE)
+    }
+
+    /// Create a new backend that builds its registry and file cache with `providers`.
+    pub fn with_providers(
+        client: Client,
+        user_config: Option<PathBuf>,
+        providers: provider_setup::Providers,
+    ) -> Self {
         Self {
             client,
             documents: Arc::new(DashMap::new()),
@@ -288,6 +299,7 @@ impl LspBackend {
             config_reload: Mutex::new(()),
             config_watchers_registered: Mutex::new(false),
             position_encoding: OnceLock::new(),
+            providers,
         }
     }
 
@@ -438,7 +450,7 @@ impl LanguageServer for LspBackend {
 
         let (registry, file_cache) = if let ConfigState::Loaded(config) = &config {
             // Build provider registry from config + compiled-in registrations.
-            let registry = match provider_setup::build_registry(config) {
+            let registry = match (self.providers.registry)(config) {
                 Ok(r) => {
                     if let Some(host) = r.default_host() {
                         tracing::info!(default_host = host, "provider registry built");
@@ -460,7 +472,7 @@ impl LanguageServer for LspBackend {
             };
 
             // Initialize persistent file cache (shared with CLI).
-            let file_cache = Arc::new(provider_setup::build_file_cache(config));
+            let file_cache = Arc::new((self.providers.file_cache)(config));
             tracing::info!(enabled = file_cache.is_enabled(), "file cache initialized");
             (registry, Some(file_cache))
         } else {
@@ -1282,7 +1294,7 @@ impl LspBackend {
         *self.config.write().await = ConfigState::Loaded(Box::new(new_config.clone()));
 
         // Rebuild provider registry (config may change hosts/tokens).
-        let registry = match provider_setup::build_registry(&new_config) {
+        let registry = match (self.providers.registry)(&new_config) {
             Ok(r) => Some(Arc::new(r)),
             Err(e) => {
                 tracing::error!("failed to rebuild provider registry: {e}");
@@ -1300,7 +1312,7 @@ impl LspBackend {
         *self.registry.write().await = registry;
 
         // Rebuild file cache (TTL or path may have changed).
-        let file_cache = Arc::new(provider_setup::build_file_cache(&new_config));
+        let file_cache = Arc::new((self.providers.file_cache)(&new_config));
         *self.file_cache.write().await = Some(file_cache);
 
         // Reset error deduplication on config reload so that persistent errors
@@ -2181,8 +2193,9 @@ mod tests {
             },
         };
 
-        let (mut service, socket) =
-            tower_lsp_server::LspService::new(|client| LspBackend::with_user_config(client, None));
+        let (mut service, socket) = tower_lsp_server::LspService::new(|client| {
+            LspBackend::with_providers(client, None, crate::test_utils::MOCK_PROVIDERS)
+        });
         let params = InitializeParams {
             workspace_folders: Some(vec![WorkspaceFolder {
                 uri: Uri::from_file_path(root).ok_or("bad root uri")?,
@@ -2341,8 +2354,9 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let config_file = temp.path().join("actup.toml");
         std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
-        let (service, _socket) =
-            tower_lsp_server::LspService::new(|client| LspBackend::with_user_config(client, None));
+        let (service, _socket) = tower_lsp_server::LspService::new(|client| {
+            LspBackend::with_providers(client, None, crate::test_utils::MOCK_PROVIDERS)
+        });
         let backend = service.inner();
         let root = Uri::from_file_path(temp.path()).ok_or("bad root uri")?;
         backend

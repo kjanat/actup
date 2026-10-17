@@ -16,7 +16,7 @@ use std::{
 };
 
 use actup_core::{
-    ActionRepoId, Error as CoreError,
+    ActionRepoId, Capabilities, Config, Error as CoreError, HostKind, Preset, Registration,
     compat::BoxFuture,
     provider::{self, ActionYml, Kind, Provider, Sha40},
     version,
@@ -281,6 +281,47 @@ impl actup_core::Clock for StepClock {
         }
     }
 }
+
+/// A GitHub-kind registration whose providers are [`MockProvider`]s.
+///
+/// Its providers serve `actions/checkout` at `v4.2.0` on [`DUMMY_SHA`] and
+/// empty version sets for every other repo.
+pub static MOCK_REGISTRATION: Registration = Registration {
+    kind: HostKind::GitHub,
+    presets: &[Preset {
+        host: "github.com",
+        api_base: "https://api.github.com",
+        token_env: "GITHUB_TOKEN",
+    }],
+    default_token_env: Some("GITHUB_TOKEN"),
+    infer_api_base: |host| (host != "github.com").then(|| format!("https://{host}/api/v3")),
+    capabilities: Capabilities {
+        supports_graphql: true,
+        supports_rest: true,
+    },
+    create: |config| {
+        Ok(Box::new(MockProvider::new(&config.host).with_versions(
+            "actions",
+            "checkout",
+            simple_version_set("v4.2.0", DUMMY_SHA),
+        )))
+    },
+};
+
+/// Build a registry of [`MOCK_REGISTRATION`] providers from `config`.
+pub fn mock_registry_from_config(config: &Config) -> actup_core::Result<provider::Registry> {
+    provider::Registry::from_config(
+        config,
+        &[&MOCK_REGISTRATION],
+        &actup_core::Retention::expiring(config.cache.ttl),
+    )
+}
+
+/// Mock providers and a disabled file cache, for a backend that never leaves the process.
+pub const MOCK_PROVIDERS: crate::provider_setup::Providers = crate::provider_setup::Providers {
+    registry: mock_registry_from_config,
+    file_cache: |_| crate::file_cache::FileCache::disabled(),
+};
 
 /// Build a [`provider::Registry`] from a single mock provider.
 pub fn mock_registry(provider: MockProvider) -> provider::Registry {
