@@ -1468,6 +1468,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn update_all_with_every_match_ignored_skips_the_target_on_a_served_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir_all(dir.path().join(".github/workflows"))?;
+        let workflow = dir.path().join(".github/workflows/ci.yml");
+        let content = "steps:\n  - uses: actions/checkout@v3\n  - uses: actions/checkout@v4\n";
+        fs::write(&workflow, content)?;
+        let root = Root::new(dir.path())?;
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(Resolving));
+        let mut config = Config::default();
+        config.scan.ignore = vec!["actions/checkout".parse()?];
+        let mut args = update_all_args(None)?;
+        args.target_ref = "v9.9.9".to_owned();
+
+        let reply = update_all("t", &registry, &config, &root, &args)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (is_error, ignored) = body(reply)?;
+        assert_ne!(is_error, Some(true));
+        assert_eq!(ignored["provider"], json!("github"));
+        assert_eq!(ignored["host"], json!("github.com"));
+        assert_eq!(ignored["changes"], json!([]));
+        assert_eq!(ignored["errors"], json!([]));
+        let skipped: Vec<(&Value, &Value)> = ignored["skipped"]
+            .as_array()
+            .ok_or("skipped is not an array")?
+            .iter()
+            .map(|s| (&s["line"], &s["reason"]))
+            .collect();
+        assert_eq!(
+            skipped,
+            [
+                (&json!(2), &json!("ignored")),
+                (&json!(3), &json!("ignored"))
+            ]
+        );
+        assert_eq!(fs::read_to_string(&workflow)?, content);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_all_reports_an_unserved_host() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         fs::create_dir_all(dir.path().join(".github/workflows"))?;
