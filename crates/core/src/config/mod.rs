@@ -722,6 +722,27 @@ impl Config {
         layers.extract(env)
     }
 
+    /// Parse one explicit config file, given as path and contents, over the defaults and apply `env`.
+    ///
+    /// The caller named the file, as with `--config`, so every key applies.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidConfig`] for an invalid value.
+    pub fn from_explicit_contents(
+        path: &Path,
+        contents: &str,
+        env: EnvOverrides,
+    ) -> Result<Self, Error> {
+        Layers::default()
+            .trusted(
+                FileContents::new(path, contents)?,
+                Source::Explicit {
+                    path: path.to_path_buf(),
+                },
+            )
+            .extract(env)
+    }
+
     /// Return the highest-precedence config file in [`Config::sources`].
     #[must_use]
     pub fn loaded_from(&self) -> Option<&Path> {
@@ -1876,6 +1897,64 @@ mod tests {
             assert_eq!(config.loaded_from(), Some(Path::new(name)));
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_from_explicit_contents_keeps_every_key_and_applies_env() -> Result<(), Error> {
+        let config = Config::from_explicit_contents(
+            Path::new("ci/actup.toml"),
+            "default_host = \"ghe.corp.example\"\n\n[scan]\nextra_paths = [\".gitea/workflows\"]\n\n[cache]\npath = \"/tmp/actup\"\n\n[hosts.\"ghe.corp.example\"]\nkind = \"github\"\napi_base = \"https://ghe.corp.example/api/v3\"\ntoken_env = \"GHE_TOKEN\"\n",
+            EnvOverrides::from_vars([("ACTUP_POLICY__BUMP", "patch")]),
+        )?;
+
+        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
+        assert_eq!(
+            config
+                .scan
+                .extra_paths
+                .iter()
+                .map(ExtraPath::as_str)
+                .collect::<Vec<_>>(),
+            [".gitea/workflows"]
+        );
+        assert_eq!(config.cache.path.as_deref(), Some(Path::new("/tmp/actup")));
+        let host = config.hosts.get("ghe.corp.example");
+        assert_eq!(
+            host.and_then(|h| h.api_base.as_deref()),
+            Some("https://ghe.corp.example/api/v3")
+        );
+        assert_eq!(host.and_then(|h| h.token_env.as_deref()), Some("GHE_TOKEN"));
+        assert_eq!(config.policy.bump, crate::policy::Update::Patch);
+        assert_eq!(config.loaded_from(), Some(Path::new("ci/actup.toml")));
+        assert_eq!(
+            config.sources,
+            [
+                Source::Explicit {
+                    path: PathBuf::from("ci/actup.toml"),
+                },
+                Source::Env {
+                    vars: vec!["ACTUP_POLICY__BUMP".to_string()],
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_explicit_contents_rejects_a_renamed_key_naming_the_file() {
+        let Err(err) = Config::from_explicit_contents(
+            Path::new("ci/actup.toml"),
+            "update_policy = \"patch\"\n",
+            EnvOverrides::default(),
+        ) else {
+            panic!("a renamed key must fail");
+        };
+        let Error::InvalidConfig { path, .. } = &err else {
+            panic!("{err:?} is not an invalid config");
+        };
+        assert_eq!(path, "ci/actup.toml");
+        let rendered = crate::error::chain(&err);
+        assert!(rendered.contains("update_policy"), "{rendered}");
     }
 
     #[test]

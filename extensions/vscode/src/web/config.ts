@@ -1,4 +1,4 @@
-import { parseConfig, type RepoConfig, repoConfigCandidates } from "actup-wasm";
+import { parseConfig, parseExplicitConfig, type RepoConfig, repoConfigCandidates } from "actup-wasm";
 import * as vscode from "vscode";
 import { CONFIG_PATH_SETTING, configPathSetting } from "../settings.ts";
 
@@ -18,9 +18,9 @@ async function readText(uri: vscode.Uri): Promise<string> {
 	return new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
 }
 
-function parsed(path: string, contents: string): FolderConfig {
+function parsed(path: string, contents: string, parse: typeof parseConfig): FolderConfig {
 	try {
-		return { kind: "loaded", path, config: parseConfig(path, contents) };
+		return { kind: "loaded", path, config: parse(path, contents) };
 	} catch (err) {
 		return { kind: "invalid", path, message: err instanceof Error ? err.message : String(err) };
 	}
@@ -46,7 +46,7 @@ export async function loadFolderConfig(folder: vscode.Uri, configPath: string | 
 			const reason = err instanceof Error ? err.message : String(err);
 			return { kind: "invalid", path: configPath, message: `cannot read ${configPath}: ${reason}` };
 		}
-		return parsed(configPath, contents);
+		return parsed(configPath, contents, parseExplicitConfig);
 	}
 	for (const candidate of repoConfigCandidates()) {
 		let contents: string;
@@ -55,7 +55,7 @@ export async function loadFolderConfig(folder: vscode.Uri, configPath: string | 
 		} catch {
 			continue;
 		}
-		return parsed(candidate, contents);
+		return parsed(candidate, contents, parseConfig);
 	}
 	return { kind: "none" };
 }

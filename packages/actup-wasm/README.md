@@ -155,11 +155,17 @@ alone.
 
 ### `parseConfig(path, contents)`
 
-Parse a repo config file as the CLI parses it. Pure, synchronous. The extension
-of `path` picks the format: `toml`, `json`, `jsonc`, `yaml` or `yml`. No user
-config and no `ACTUP_` variables apply. Returns a `RepoConfig` to pass to
-`checkRefs` and `planUpdates`, and throws for an invalid config with a message
-that names `path`.
+Parse a repo config file that discovery found, as the CLI parses it. Pure,
+synchronous. The extension of `path` picks the format: `toml`, `json`, `jsonc`,
+`yaml` or `yml`. No user config and no `ACTUP_` variables apply. Returns a
+`RepoConfig` to pass to `checkRefs` and `planUpdates`, and throws for an invalid
+config with a message that names `path`.
+
+### `parseExplicitConfig(path, contents)`
+
+Parse a config file the user named, as the CLI parses a `--config` file. Pure,
+synchronous. Every key applies, including those a discovered repo config may not
+set. Returns a `RepoConfig` like `parseConfig`.
 
 ### `repoConfigCandidates()`
 

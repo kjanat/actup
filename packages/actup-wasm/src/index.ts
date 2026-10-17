@@ -199,7 +199,7 @@ export function sortVersionTags(tags: readonly VersionTag[]): VersionTag[] {
 }
 
 /**
- * Parse a repo config file with actup-core's parser, as the CLI parses it.
+ * Parse a repo config file that discovery found, as the CLI parses it.
  *
  * Pure, synchronous. The extension of `path` picks the format (`toml`,
  * `json`, `jsonc`, `yaml` or `yml`). No user config and no `ACTUP_`
@@ -213,6 +213,22 @@ export function sortVersionTags(tags: readonly VersionTag[]): VersionTag[] {
 export function parseConfig(path: string, contents: string): RepoConfig {
 	const w = requireInit();
 	return w.parseConfig(path, contents);
+}
+
+/**
+ * Parse a config file the user named, as the CLI parses a `--config` file.
+ *
+ * Pure, synchronous. Every key applies. The extension of `path` picks the
+ * format. No user config and no `ACTUP_` variables apply.
+ *
+ * @param path - The file's path, for example `ci/actup.toml`.
+ * @param contents - The file's text.
+ * @returns Every table of the config, to pass to `checkRefs` and `planUpdates`.
+ * @throws For an invalid config, naming `path`.
+ */
+export function parseExplicitConfig(path: string, contents: string): RepoConfig {
+	const w = requireInit();
+	return w.parseExplicitConfig(path, contents);
 }
 
 /**

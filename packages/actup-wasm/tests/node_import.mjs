@@ -21,6 +21,7 @@ const {
 	isHostSegment,
 	parseActionPath,
 	parseConfig,
+	parseExplicitConfig,
 	parseUses,
 	parseUsesRefs,
 	planUpdates,
@@ -746,5 +747,22 @@ for (const r of invalidResults) {
 assert.deepEqual(calls, [], "no provider call for invalid refs");
 
 console.log("PASS: invalid git refs are unresolvable and reach no provider");
+
+const hosts = [];
+const hostProvider = {
+	...majorProvider,
+	async getVersions(host, owner, repo) {
+		hosts.push(host);
+		return majorProvider.getVersions(host, owner, repo);
+	},
+};
+await checkRefs(outdatedYaml, hostProvider, { default_host: "ghe.corp.example" });
+const explicitConfig = parseExplicitConfig("ci/actup.toml", "default_host = \"ghe.other.example\"\n");
+assert.equal(explicitConfig.default_host, "ghe.other.example", "an explicit file keeps default_host");
+await checkRefs(outdatedYaml, hostProvider, explicitConfig);
+assert.deepEqual(hosts, ["ghe.corp.example", "ghe.other.example"], "default_host reaches the provider");
+assert.throws(() => parseExplicitConfig("ci/actup.toml", "update_policy = \"patch\"\n"), /ci\/actup\.toml.*update_policy/s);
+
+console.log("PASS: a caller's config and an explicit file keep every key");
 
 console.log("\nAll npm package integration tests PASSED");

@@ -54,14 +54,12 @@ fn config_from_js(value: &JsValue) -> Result<Config, JsValue> {
         Ok(_) => return Err(not_object()),
         Err(e) => return Err(JsValue::from_str(&format!("invalid config: {e}"))),
     }
-    Config::from_contents(
-        Some((Path::new("config.json"), &json)),
-        EnvOverrides::default(),
-    )
-    .map_err(|e| JsValue::from_str(&chain(&e)))
+    Config::from_explicit_contents(Path::new("config.json"), &json, EnvOverrides::default())
+        .map_err(|e| JsValue::from_str(&chain(&e)))
 }
 
-/// Parse the repo config file at `path` with `contents`, as the CLI parses it.
+/// Parse the repo config file at `path` with `contents`, as the CLI parses a
+/// file that discovery found.
 ///
 /// The extension of `path` picks the format: `toml`, `json`, `jsonc`, `yaml`
 /// or `yml`. No user config and no `ACTUP_` variables apply. Pass the result
@@ -73,6 +71,22 @@ fn config_from_js(value: &JsValue) -> Result<Config, JsValue> {
 #[wasm_bindgen(js_name = "parseConfig", unchecked_return_type = "RepoConfig")]
 pub fn parse_config(path: &str, contents: &str) -> Result<JsValue, JsValue> {
     let config = Config::from_contents(Some((Path::new(path), contents)), EnvOverrides::default())
+        .map_err(|e| JsValue::from_str(&chain(&e)))?;
+    to_js(&config)
+}
+
+/// Parse the config file at `path` with `contents` that the user named, as
+/// the CLI parses a `--config` file.
+///
+/// Every key applies. The extension of `path` picks the format, and no user
+/// config and no `ACTUP_` variables apply.
+///
+/// # Errors
+///
+/// Returns `JsValue` error for an invalid config, naming `path`.
+#[wasm_bindgen(js_name = "parseExplicitConfig", unchecked_return_type = "RepoConfig")]
+pub fn parse_explicit_config(path: &str, contents: &str) -> Result<JsValue, JsValue> {
+    let config = Config::from_explicit_contents(Path::new(path), contents, EnvOverrides::default())
         .map_err(|e| JsValue::from_str(&chain(&e)))?;
     to_js(&config)
 }

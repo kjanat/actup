@@ -8,11 +8,11 @@ the Cargo workspace.
 
 ## Module Map
 
-| File          | Purpose                                      | Key Exports                                                                                                                                                        |
-| ------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `index.ts`    | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment`, `parseConfig`, `repoConfigCandidates` |
-| `provider.ts` | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                                                                                                                      |
-| `types.ts`    | Hand-maintained provider interface           | `ActupProvider`, `ProviderErrorKind`                                                                                                                               |
+| File          | Purpose                                      | Key Exports                                                                                                                                                                               |
+| ------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`    | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment`, `parseConfig`, `parseExplicitConfig`, `repoConfigCandidates` |
+| `provider.ts` | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                                                                                                                                             |
+| `types.ts`    | Hand-maintained provider interface           | `ActupProvider`, `ProviderErrorKind`                                                                                                                                                      |
 
 ## Package Exports
 

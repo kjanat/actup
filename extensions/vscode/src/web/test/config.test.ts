@@ -55,13 +55,14 @@ describe("loadFolderConfig", () => {
 
 	test("reads an explicit path, relative or absolute, before every candidate", async () => {
 		file("actup.toml", "[policy]\nbump = \"minor\"\n");
-		file("ci/actup.json", "{ \"policy\": { \"bump\": \"patch\" } }");
+		file("ci/actup.json", "{ \"default_host\": \"ghe.corp.example\", \"policy\": { \"bump\": \"patch\" } }");
 
 		const relative = await loadFolderConfig(folder, "ci/actup.json");
 		const absolute = await loadFolderConfig(folder, "/repo/ci/actup.json");
 
 		expect(kindOf(relative)).toBe("loaded ci/actup.json");
 		expect(relative.kind === "loaded" ? relative.config.policy?.bump : undefined).toBe("patch");
+		expect(relative.kind === "loaded" ? relative.config.default_host : undefined).toBe("ghe.corp.example");
 		expect(kindOf(absolute)).toBe("loaded /repo/ci/actup.json");
 	});
 

@@ -6,14 +6,14 @@ native builds see an empty crate.
 
 ## Module Map
 
-| Module        | Purpose                                     | Key Types                                                                                                                                              |
-| ------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `lib.rs`      | Conditional compilation gate                | `bridge`, `wasm_api`                                                                                                                                   |
-| `wasm_api.rs` | WASM API                                    | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment`, `parseConfig`, `repoConfigCandidates` |
-| `bridge.rs`   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                                                                      |
-| `clock.rs`    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                                                              |
+| Module        | Purpose                                     | Key Types                                                                                                                                                                     |
+| ------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib.rs`      | Conditional compilation gate                | `bridge`, `wasm_api`                                                                                                                                                          |
+| `wasm_api.rs` | WASM API                                    | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment`, `parseConfig`, `parseExplicitConfig`, `repoConfigCandidates` |
+| `bridge.rs`   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                                                                                             |
+| `clock.rs`    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                                                                                     |
 
-## WASM API (9 exports)
+## WASM API (10 exports)
 
 | Export                 | Sync/Async | Purpose                                            |
 | ---------------------- | ---------- | -------------------------------------------------- |
@@ -25,6 +25,7 @@ native builds see an empty crate.
 | `parseActionPath`      | sync       | Parse `[host/]owner/repo[/subpath]`                |
 | `isHostSegment`        | sync       | Apply core's host rule to a first path segment     |
 | `parseConfig`          | sync       | Parse a repo config file into a `RepoConfig`       |
+| `parseExplicitConfig`  | sync       | Parse a named config file, every key applying      |
 | `repoConfigCandidates` | sync       | Repo config paths of one directory, by priority    |
 
 ## Where to Look
