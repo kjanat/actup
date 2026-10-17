@@ -2951,6 +2951,36 @@ jobs:
         );
     }
 
+    #[tokio::test]
+    async fn markdown_reports_invalid_refs_at_action_keys_only() {
+        let provider = test_utils::MockProvider::new("github.com");
+        let registry = test_utils::mock_registry(provider);
+        let uri = Uri::from_file_path("/test/README.md").unwrap();
+        let md = "# CI\n\n```yaml\njobs:\n  b:\n    steps:\n      - uses: o/r@\n      - uses: ./local\n        with:\n          uses: lint\n```\n";
+        let result = compute_diagnostics(
+            md,
+            &uri,
+            &Config::default(),
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        let found: Vec<(u32, Option<DiagnosticSeverity>, &str)> = result
+            .diagnostics
+            .iter()
+            .map(|d| (d.range.start.line, d.severity, d.message.as_str()))
+            .collect();
+        assert_eq!(
+            found,
+            [(
+                6,
+                Some(DiagnosticSeverity::ERROR),
+                "o/r@: empty version reference after '@'"
+            )]
+        );
+    }
+
     // --- Quiet mode ---
 
     #[tokio::test]

@@ -623,6 +623,11 @@ impl UsesLocation {
         self
     }
 
+    pub(crate) const fn on_line(mut self, line: usize) -> Self {
+        self.line = line;
+        self
+    }
+
     /// Sort the value like [`classify_uses`].
     ///
     /// Returns `None` for an invalid value under a `uses` key that GitHub does

@@ -42,7 +42,7 @@ impl SourceFormat {
                 .flat_map(|block| {
                     extract_uses_from_yaml(&block.text)
                         .into_iter()
-                        .map(move |loc| block.relocate(&loc))
+                        .map(move |loc| block.relocate(loc))
                 })
                 .collect(),
             Self::Text => extract_uses_from_text(content),
@@ -129,13 +129,9 @@ struct YamlBlock {
 }
 
 impl YamlBlock {
-    fn relocate(&self, loc: &UsesLocation) -> UsesLocation {
-        UsesLocation::new(
-            loc.line() + self.first_line - 1,
-            loc.column(),
-            loc.value().to_owned(),
-            loc.raw_line().to_owned(),
-        )
+    const fn relocate(&self, loc: UsesLocation) -> UsesLocation {
+        let line = loc.line() + self.first_line - 1;
+        loc.on_line(line)
     }
 }
 
@@ -292,6 +288,30 @@ mod tests {
                 (10, "actions/cache@v4".into(), Some("v4".into())),
                 (13, "open/fence@v2".into(), Some("v2".into())),
             ]
+        );
+    }
+
+    #[test]
+    fn markdown_keeps_every_field_of_a_block_location() {
+        let block = "jobs:\n  b:\n    steps:\n      - uses: o/r@\n        with:\n          uses: lint\n      - uses: \"a/b@v\\x34\"\n";
+        let md = format!("# CI\n\n```yaml\n{block}```\n");
+        let yaml = extract_uses_from_yaml(block);
+        let shifted = SourceFormat::Markdown.extract_uses(&md);
+        assert_eq!(shifted.len(), yaml.len());
+        for (moved, original) in shifted.iter().zip(&yaml) {
+            assert_eq!(moved.clone().on_line(original.line()), *original);
+            assert_eq!(moved.line(), original.line() + 3);
+        }
+        let classified: Vec<(usize, bool)> = shifted
+            .iter()
+            .map(|loc| (loc.line(), loc.classify().is_some()))
+            .collect();
+        assert_eq!(classified, [(7, true), (9, false), (10, true)]);
+        assert_eq!(
+            shifted[2]
+                .scalar_range()
+                .and_then(|r| shifted[2].raw_line().get(r)),
+            Some("\"a/b@v\\x34\"")
         );
     }
 

@@ -569,6 +569,25 @@ mod tests {
     }
 
     #[test]
+    fn find_action_matches_an_escaped_value_in_a_markdown_block() {
+        let line = r#"      - uses: "actions/checkout@v1.0.\x30""#;
+        let md = format!("# CI\n\n```yaml\njobs:\n  build:\n    steps:\n{line}\n```\n");
+        let Some(byte) = line.find("checkout") else {
+            panic!("checkout is not on the line");
+        };
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let position = Position {
+            line: 6,
+            character: crate::position::byte_to_col(line, byte, encoding),
+        };
+        let located = find_action_at_position(&md, SourceFormat::Markdown, position, encoding);
+        assert_eq!(
+            located.map(|l| l.action_ref.to_string()),
+            Some("actions/checkout@v1.0.0".to_string())
+        );
+    }
+
+    #[test]
     fn find_action_matches_an_escaped_value_on_its_scalar() {
         let line = r#"    steps: [{ uses: "actions/checkout@v1.0.\x30" }, { uses: "actions/setup-node@v4.\x30" }]"#;
         let yaml = format!("jobs:\n  build:\n{line}\n");
