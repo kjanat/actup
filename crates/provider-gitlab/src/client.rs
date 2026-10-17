@@ -8,6 +8,9 @@
 use std::time::Duration;
 
 use actup_core::{Error, Result};
+use actup_providers::{
+    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
+};
 use reqwest::{
     Client, Response, StatusCode,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -18,17 +21,8 @@ use crate::types::{
     GitLabBranch, GitLabError, GitLabFile, GitLabProject, GitLabTag, GitLabTreeEntry,
 };
 
-/// Maximum items per page allowed by GitLab API
-pub const MAX_PER_PAGE: u8 = 100;
-/// Minimum items per page
-pub const MIN_PER_PAGE: u8 = 1;
 /// Default items per page
 pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
-
-/// Default max retry attempts for transient errors
-pub const DEFAULT_MAX_RETRIES: u32 = 3;
-/// Default base delay in milliseconds for exponential backoff
-pub const DEFAULT_RETRY_BASE_DELAY_MS: u64 = 100;
 
 /// HTTP client configured for GitLab API
 #[derive(Debug, Clone)]

@@ -42,9 +42,6 @@ mod client;
 mod provider;
 mod types;
 
-pub use client::{
-    DEFAULT_MAX_RETRIES, DEFAULT_PER_PAGE, DEFAULT_RETRY_BASE_DELAY_MS, GiteaClient, MAX_PER_PAGE,
-    MIN_PER_PAGE,
-};
+pub use client::{DEFAULT_PER_PAGE, GiteaClient};
 pub use provider::GiteaProvider;
 pub use types::*;

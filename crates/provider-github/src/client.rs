@@ -5,29 +5,24 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use crate::types::{
-    GitHubBranch, GitHubContent, GitHubRef, GitHubRepo, GitHubTag, GitHubTagObject,
-};
-
-/// Maximum items per page allowed by GitHub API
-pub const MAX_PER_PAGE: u8 = 100;
-/// Minimum items per page
-pub const MIN_PER_PAGE: u8 = 1;
-/// Default items per page
-pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
-
-/// Default max retry attempts for transient errors
-pub const DEFAULT_MAX_RETRIES: u32 = 3;
-/// Default base delay in milliseconds for exponential backoff
-pub const DEFAULT_RETRY_BASE_DELAY_MS: u64 = 100;
 use std::time::Duration;
 
 use actup_core::{Error, Result};
+use actup_providers::{
+    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
+};
 use reqwest::{
     Client, Response, StatusCode,
     header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, USER_AGENT},
 };
 use tracing::{debug, warn};
+
+use crate::types::{
+    GitHubBranch, GitHubContent, GitHubRef, GitHubRepo, GitHubTag, GitHubTagObject,
+};
+
+/// Default items per page
+pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
 
 /// HTTP client configured for GitHub API
 #[derive(Debug, Clone)]

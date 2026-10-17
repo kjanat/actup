@@ -38,10 +38,7 @@ mod client;
 mod provider;
 mod types;
 
-pub use client::{
-    DEFAULT_MAX_RETRIES, DEFAULT_PER_PAGE, DEFAULT_RETRY_BASE_DELAY_MS, GitLabClient, MAX_PER_PAGE,
-    MIN_PER_PAGE,
-};
+pub use client::{DEFAULT_PER_PAGE, GitLabClient};
 pub use provider::GitLabProvider;
 pub use types::{
     GitLabBranch, GitLabBranchCommit, GitLabCommit, GitLabError, GitLabFile, GitLabProject,
