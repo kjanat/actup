@@ -37,6 +37,9 @@ actup update
 # Pin all actions to their current SHA
 actup pin
 
+# Turn `@<sha> # v4` back into `@v4` where the tag is still on that commit
+actup pin --unpin
+
 # Preview changes without applying
 actup update --dry-run
 ```
@@ -49,6 +52,7 @@ actup update --dry-run
 | `update`      | Update actions to latest versions              |
 | `fix`         | Alias for `update`                             |
 | `pin`         | Pin all actions to their current commit SHA    |
+| `pin --unpin` | Unpin marked SHA pins back to their tag        |
 | `config`      | Show effective configuration                   |
 | `cache`       | Manage version cache (`info`, `clear`, `path`) |
 | `schema`      | Output JSON schema for config file             |
@@ -159,6 +163,12 @@ action.
 The `# vX.Y.Z` comment replaces an old version comment. It is added only where
 the line can take it: never next to another comment, and never on a line that
 holds other `uses:` values or ends inside a scalar.
+
+`actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
+rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose
+comment starts with a tag, and only when the fetched tags hold that tag on the
+pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
+`update` nor fix-all unpins this way.
 
 > [!WARNING]
 > `pin = "tag"` unpins. It rewrites an outdated SHA pin to its target's tag,

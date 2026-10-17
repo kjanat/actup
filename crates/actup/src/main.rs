@@ -127,9 +127,13 @@ async fn run(cli: Cli) -> i32 {
         ) => commands::update::run(&path, dry_run, format, &config, &registry).await,
         Some(Command::Pin {
             path,
+            unpin,
             dry_run,
             format,
-        }) => commands::pin::run(&path, dry_run, format, &config, &registry).await,
+        }) => {
+            let mode = commands::pin::Mode::from_unpin_flag(unpin);
+            commands::pin::run(&path, mode, dry_run, format, &config, &registry).await
+        }
         Some(Command::Config { path, format }) => {
             let registrations = available_registrations();
             commands::config::run(&path, format, &config, &registrations)

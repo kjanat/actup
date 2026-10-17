@@ -219,8 +219,8 @@ pub fn code_actions_for_diagnostics(
     actions
 }
 
-/// Resolved targets for the three "Pin to …" code actions. Each is `None` when
-/// it's unavailable or would be a no-op for the current ref.
+/// Resolved targets for the "Pin to …" and unpin code actions. Each is `None`
+/// when it's unavailable or would be a no-op for the current ref.
 pub struct PinTargets {
     /// `(full commit SHA, version label)` for the version-commented SHA pin.
     pub sha: Option<(String, String)>,
@@ -228,13 +228,17 @@ pub struct PinTargets {
     pub major: Option<String>,
     /// Default branch to track, e.g. `main`.
     pub branch: Option<String>,
+    /// Unpin to the tag a SHA pin's `# <tag>` marker names, when that tag is on the pinned commit.
+    pub unpin: Option<Rewrite>,
 }
 
-/// Build "Pin to …" refactor actions for the ref under the cursor.
+/// Build "Pin to …" and unpin refactor actions for the ref under the cursor.
 ///
 /// `ref_range` is the ref portion's range; `trailing`/`line_end_col` describe
 /// the line's existing comment so the SHA pin refreshes a `# vX.Y.Z` note and
-/// the floating pins (major/branch) drop a now-stale one.
+/// the floating pins (major/branch) drop a now-stale one. The unpin action
+/// replaces the marker comment with its note. None of these is a `source.fixAll`
+/// action.
 pub fn pin_code_actions(
     uri: &Uri,
     version: Option<i32>,
@@ -281,6 +285,22 @@ pub fn pin_code_actions(
             version,
             supports_document_changes,
             format!("Pin to branch {branch}"),
+            edit,
+        ));
+    }
+    if let Some(unpin) = &targets.unpin {
+        let e = OutdatedEdit::new(unpin.clone(), line_end_col);
+        let edit = outdated_text_edit(
+            ref_range,
+            &e.target_ref,
+            e.repin_comment.as_deref(),
+            e.replace_end_col,
+        );
+        actions.push(pin_action(
+            uri,
+            version,
+            supports_document_changes,
+            format!("actup: unpin to `{}`", unpin.new_ref),
             edit,
         ));
     }
@@ -650,6 +670,7 @@ mod tests {
             sha: Some((sha.to_string(), "v7.2.3".to_string())),
             major: Some("v7".to_string()),
             branch: Some("main".to_string()),
+            unpin: None,
         };
         let actions = pin_code_actions(
             &uri,
@@ -692,6 +713,7 @@ mod tests {
             sha: None,
             major: Some("v7".to_string()),
             branch: None,
+            unpin: None,
         };
         // trailing Version + end col 86 => the edit overwrites the old comment.
         let actions = pin_code_actions(
@@ -713,12 +735,51 @@ mod tests {
     }
 
     #[test]
+    fn unpin_action_replaces_the_marker_and_stays_out_of_fix_all()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let targets = PinTargets {
+            sha: None,
+            major: None,
+            branch: None,
+            unpin: Some(Rewrite::unpin(actup_core::rewrite::PinMarker {
+                tag: "v4",
+                note: "keep",
+            })),
+        };
+        let actions = pin_code_actions(
+            &uri,
+            TEST_VERSION,
+            true,
+            make_range(0, 31, 71),
+            Trailing::Foreign,
+            86,
+            &targets,
+        );
+        let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
+            return Err(format!("expected one action, got {actions:?}").into());
+        };
+        assert_eq!(action.title, "actup: unpin to `v4`");
+        let kind = action.kind.clone().ok_or("no kind")?;
+        assert_eq!(kind, CodeActionKind::REFACTOR);
+        assert!(!kind_allowed(
+            Some(&[CodeActionKind::SOURCE_FIX_ALL]),
+            &kind
+        ));
+        let edits = extract_text_edits(action.edit.as_ref().ok_or("no edit")?, &uri, TEST_VERSION);
+        assert_eq!(edits[0].new_text, "v4 # keep");
+        assert_eq!(edits[0].range, make_range(0, 31, 86));
+        Ok(())
+    }
+
+    #[test]
     fn pin_actions_empty_when_no_targets() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let targets = PinTargets {
             sha: None,
             major: None,
             branch: None,
+            unpin: None,
         };
         let actions = pin_code_actions(
             &uri,

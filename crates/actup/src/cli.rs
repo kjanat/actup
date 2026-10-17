@@ -157,6 +157,10 @@ pub enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
 
+        /// Rewrite a SHA pin to the tag its `# <tag>` comment names, only when that tag is on the pinned commit
+        #[arg(long)]
+        unpin: bool,
+
         /// Dry run - show what would be changed without modifying files
         #[arg(long)]
         dry_run: bool,

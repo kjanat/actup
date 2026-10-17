@@ -8,7 +8,12 @@ use std::{
     time::Duration,
 };
 
-use actup_core::{Config, cache::Cache as _, provider};
+use actup_core::{
+    Config,
+    cache::Cache as _,
+    provider,
+    rewrite::{PinMarker, Rewrite},
+};
 use dashmap::DashMap;
 use tokio::{
     sync::{Mutex, RwLock},
@@ -911,7 +916,7 @@ impl LspBackend {
             .is_some_and(|we| we.document_changes == Some(true))
     }
 
-    /// Build "Pin to {SHA, major, branch}" code actions for the ref at `position`.
+    /// Build "Pin to {SHA, major, branch}" and unpin code actions for the ref at `position`.
     ///
     /// Returns an empty vec when there's no ref under the cursor or no provider.
     async fn pin_actions_at(
@@ -968,11 +973,12 @@ impl LspBackend {
     }
 }
 
-/// Resolve the SHA, major-tag, and default-branch targets for a ref.
+/// Resolve the SHA, major-tag, default-branch and unpin targets for a ref.
 ///
 /// Cached tags resolve the SHA without a network call; branch refs (and
 /// uncached tags) fall back to a provider lookup. No-op targets (a target equal
-/// to the current ref, or a SHA pin of an already-pinned ref) are dropped.
+/// to the current ref, or a SHA pin of an already-pinned ref) are dropped. The
+/// unpin target needs a pin marker naming a fetched tag on the pinned commit.
 async fn compute_pin_targets(
     action: &crate::diagnostics::LocatedAction,
     cached_versions: Option<&actup_core::version::Set>,
@@ -1024,7 +1030,17 @@ async fn compute_pin_targets(
         .ok()
         .filter(|b| b.as_str() != ref_str);
 
-    crate::code_actions::PinTargets { sha, major, branch }
+    let unpin = versions
+        .filter(|_| action_ref.is_sha())
+        .and_then(|v| PinMarker::unpinnable(ref_str, &action.tail, v))
+        .map(Rewrite::unpin);
+
+    crate::code_actions::PinTargets {
+        sha,
+        major,
+        branch,
+        unpin,
+    }
 }
 
 /// The "Pin to major" target for `action_ref`, or `None` when it's a no-op or
@@ -1606,6 +1622,98 @@ mod tests {
         let sha = "d".repeat(40);
         let v = crate::test_utils::simple_version_set("v2.2.0", &sha);
         assert_eq!(major_target(&aref(&sha), Some(&v)).as_deref(), Some("v2"));
+    }
+
+    async fn unpinned(
+        line: &str,
+        versions: &actup_core::version::Set,
+    ) -> std::result::Result<Option<String>, Box<dyn std::error::Error>> {
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let at = tower_lsp_server::ls_types::Position {
+            line: 0,
+            character: 30,
+        };
+        let action = crate::diagnostics::locate_action_at(line, at, encoding)
+            .ok_or("no action under the cursor")?;
+        let provider = crate::test_utils::MockProvider::new("github.com");
+        let targets = compute_pin_targets(&action, Some(versions), &provider).await;
+        if targets.unpin.is_none() {
+            return Ok(None);
+        }
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let ref_range = tower_lsp_server::ls_types::Range {
+            start: tower_lsp_server::ls_types::Position {
+                line: 0,
+                character: action.col_start,
+            },
+            end: tower_lsp_server::ls_types::Position {
+                line: 0,
+                character: action.col_end,
+            },
+        };
+        let only_unpin = crate::code_actions::PinTargets {
+            sha: None,
+            major: None,
+            branch: None,
+            unpin: targets.unpin,
+        };
+        let actions = crate::code_actions::pin_code_actions(
+            &uri,
+            None,
+            false,
+            ref_range,
+            action.trailing,
+            action.line_end_col,
+            &only_unpin,
+        );
+        let [tower_lsp_server::ls_types::CodeActionOrCommand::CodeAction(unpin)] =
+            actions.as_slice()
+        else {
+            return Err(format!("expected one unpin action, got {actions:?}").into());
+        };
+        assert_eq!(
+            unpin.kind,
+            Some(tower_lsp_server::ls_types::CodeActionKind::REFACTOR)
+        );
+        let edits = unpin
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.changes.as_ref())
+            .and_then(|changes| changes.get(&uri))
+            .ok_or("unpin action has no edits")?;
+        let text = crate::workspace_commands::apply_text_edits(line, edits, encoding)
+            .ok_or("unpin edit does not fit")?;
+        Ok(Some(format!("{}: {text}", unpin.title)))
+    }
+
+    #[tokio::test]
+    async fn unpin_needs_a_marker_naming_a_tag_on_the_pinned_commit()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let a = "a".repeat(40);
+        let versions = crate::test_utils::simple_version_set("v4.1.0", &a);
+        let elsewhere = crate::test_utils::simple_version_set("v4.1.0", &"b".repeat(40));
+        let line = |tail: &str| format!("  - uses: actions/checkout@{a}{tail}");
+
+        assert_eq!(
+            unpinned(&line(" # v4.1.0"), &versions).await?.as_deref(),
+            Some("actup: unpin to `v4.1.0`:   - uses: actions/checkout@v4.1.0")
+        );
+        assert_eq!(
+            unpinned(&line("  #v4.1.0 keep me"), &versions)
+                .await?
+                .as_deref(),
+            Some("actup: unpin to `v4.1.0`:   - uses: actions/checkout@v4.1.0 # keep me")
+        );
+        assert_eq!(unpinned(&line(" # v4.1.0"), &elsewhere).await?, None);
+        assert_eq!(unpinned(&line(" # v4.2.0"), &versions).await?, None);
+        assert_eq!(unpinned(&line(" # main"), &versions).await?, None);
+        assert_eq!(unpinned(&line(" # mine"), &versions).await?, None);
+        assert_eq!(unpinned(&line(""), &versions).await?, None);
+        assert_eq!(
+            unpinned("  - uses: actions/checkout@v4.1.0 # v4.1.0", &versions).await?,
+            None
+        );
+        Ok(())
     }
 
     #[test]

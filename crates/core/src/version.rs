@@ -661,6 +661,12 @@ impl Set {
         })
     }
 
+    /// The commit SHA of the semver tag named exactly `name`.
+    #[must_use]
+    pub fn tag_sha(&self, name: &str) -> Option<&str> {
+        self.tag(name).map(|t| t.sha())
+    }
+
     /// Find the latest version that `bump` allows for a current version
     ///
     /// A component that `current` leaves out matches any value, so `v4` under

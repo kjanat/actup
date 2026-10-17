@@ -39,6 +39,46 @@ pub fn is_version_comment(tail: &str) -> bool {
     body.starts_with(|c: char| c.is_ascii_digit())
 }
 
+/// A `# <ref> [note]` comment after a SHA pin that names the ref it was pinned from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PinMarker<'a> {
+    /// The ref the comment names, like `v4`.
+    pub tag: &'a str,
+    /// The text after the ref, trimmed.
+    pub note: &'a str,
+}
+
+impl<'a> PinMarker<'a> {
+    /// Parse `tail`, the text after a ref, as a pin marker.
+    ///
+    /// The first token after `#` must be a semver version, `main`, `master`,
+    /// `develop`, `trunk`, or a ref holding `/`, and holds no control character.
+    #[must_use]
+    pub fn parse(tail: &'a str) -> Option<Self> {
+        let body = tail.trim_start().strip_prefix('#')?.trim();
+        let (tag, note) = body
+            .split_once(char::is_whitespace)
+            .map_or((body, ""), |(tag, note)| (tag, note.trim()));
+        if tag.is_empty() || tag.chars().any(char::is_control) {
+            return None;
+        }
+        let names_ref = match version::Version::parse(tag) {
+            version::Version::Semver { .. } => true,
+            version::Version::Sha { .. } => false,
+            version::Version::Branch { .. } | version::Version::Other { .. } => {
+                matches!(tag, "main" | "master" | "develop" | "trunk") || tag.contains('/')
+            }
+        };
+        names_ref.then_some(Self { tag, note })
+    }
+
+    /// The marker after the SHA pin `sha` when `versions` holds its tag on that commit.
+    #[must_use]
+    pub fn unpinnable(sha: &str, tail: &'a str, versions: &version::Set) -> Option<Self> {
+        Self::parse(tail).filter(|marker| versions.tag_sha(marker.tag) == Some(sha))
+    }
+}
+
 /// The replacement for a ref, starting at the ref.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rewrite {
@@ -84,6 +124,16 @@ impl Rewrite {
             new_ref: sha.to_string(),
             comment: (trailing != Trailing::Foreign).then(|| format!(" # {label}")),
             to_line_end: trailing == Trailing::Version,
+        }
+    }
+
+    /// Unpin to the tag `marker` names, keeping its note as the comment.
+    #[must_use]
+    pub fn unpin(marker: PinMarker<'_>) -> Self {
+        Self {
+            new_ref: marker.tag.to_string(),
+            comment: (!marker.note.is_empty()).then(|| format!(" # {}", marker.note)),
+            to_line_end: true,
         }
     }
 
@@ -205,6 +255,74 @@ mod tests {
                 "{style} {is_sha} {trailing:?}"
             );
         }
+    }
+
+    const fn marker<'a>(tag: &'a str, note: &'a str) -> PinMarker<'a> {
+        PinMarker { tag, note }
+    }
+
+    #[test]
+    fn pin_marker_names_a_version_branch_or_slashed_ref() {
+        assert_eq!(PinMarker::parse(" # v4"), Some(marker("v4", "")));
+        assert_eq!(
+            PinMarker::parse("#\tv4.1.0  keep me "),
+            Some(marker("v4.1.0", "keep me"))
+        );
+        assert_eq!(PinMarker::parse("# main"), Some(marker("main", "")));
+        assert_eq!(
+            PinMarker::parse("# release/v1"),
+            Some(marker("release/v1", ""))
+        );
+        assert_eq!(PinMarker::parse("# mine"), None);
+        assert_eq!(PinMarker::parse("# "), None);
+        assert_eq!(PinMarker::parse("v4"), None);
+        assert_eq!(PinMarker::parse(&format!("# {}", "a".repeat(40))), None);
+        assert_eq!(PinMarker::parse("# v4\u{7}"), None);
+        assert_eq!(PinMarker::parse("# v\u{85}4"), None);
+    }
+
+    #[test]
+    fn unpinnable_needs_the_tag_on_the_pinned_commit() {
+        let at_a = std::sync::Arc::new(info("v4.0.0", 'a'));
+        let major = std::sync::Arc::new(info("v4", 'b'));
+        let versions = version::Set::build(
+            vec![at_a, std::sync::Arc::clone(&major)],
+            std::collections::HashMap::new(),
+            std::collections::HashMap::from([(4, major)]),
+            None,
+        );
+        let a = "a".repeat(40);
+        let b = "b".repeat(40);
+        assert_eq!(
+            PinMarker::unpinnable(&a, "# v4.0.0", &versions),
+            Some(marker("v4.0.0", ""))
+        );
+        assert_eq!(
+            PinMarker::unpinnable(&b, "# v4 note", &versions),
+            Some(marker("v4", "note"))
+        );
+        assert_eq!(PinMarker::unpinnable(&a, "# v4", &versions), None);
+        assert_eq!(PinMarker::unpinnable(&a, "# v5.0.0", &versions), None);
+        assert_eq!(PinMarker::unpinnable(&a, "# main", &versions), None);
+        assert_eq!(PinMarker::unpinnable(&a, "# mine", &versions), None);
+    }
+
+    #[test]
+    fn unpin_writes_the_tag_and_keeps_the_note() {
+        assert_eq!(
+            Rewrite::unpin(PinMarker {
+                tag: "v4",
+                note: ""
+            }),
+            rewrite("v4", None, true)
+        );
+        assert_eq!(
+            Rewrite::unpin(PinMarker {
+                tag: "v4",
+                note: "keep me"
+            }),
+            rewrite("v4", Some(" # keep me"), true)
+        );
     }
 
     #[test]

@@ -105,6 +105,8 @@ pub struct LocatedAction {
     uses_value: String,
     /// What follows the ref on its line.
     pub trailing: Trailing,
+    /// The text after the ref on its line, empty when the ref is not editable.
+    pub tail: String,
     /// 0-indexed end-of-line column (negotiated encoding), used to overwrite a
     /// stale version comment when re-pinning.
     pub line_end_col: u32,
@@ -149,14 +151,15 @@ fn extract_located_actions(
                 // Convert byte offsets to the negotiated LSP encoding.
                 let raw_line = loc.raw_line();
                 let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
-                let (col_start, col_end, editable, trailing) =
+                let (col_start, col_end, editable, trailing, tail) =
                     loc.ref_range()
-                        .map_or((0, line_end_col, false, Trailing::None), |r| {
+                        .map_or((0, line_end_col, false, Trailing::None, ""), |r| {
                             (
                                 crate::position::byte_to_col(raw_line, r.start, encoding),
                                 crate::position::byte_to_col(raw_line, r.end, encoding),
                                 true,
                                 Trailing::after(raw_line, r.end),
+                                raw_line.get(r.end..).unwrap_or(""),
                             )
                         });
 
@@ -170,6 +173,7 @@ fn extract_located_actions(
                     editable,
                     uses_value: loc.value().to_string(),
                     trailing,
+                    tail: tail.to_string(),
                     line_end_col,
                 });
             }

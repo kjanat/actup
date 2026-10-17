@@ -4,6 +4,7 @@ use std::{path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider,
+    rewrite::{PinMarker, Rewrite},
 };
 use owo_colors::OwoColorize;
 
@@ -62,6 +63,23 @@ async fn resolve_sha(
     } else {
         PinTarget::Named { sha }
     })
+}
+
+/// Which way `pin` rewrites refs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// Pin tag and branch refs to commit SHAs and re-pin outdated SHA pins.
+    Pin,
+    /// Rewrite a SHA pin to the tag its `# <tag>` marker names, when the fetched tags hold that tag on the pinned commit.
+    Unpin,
+}
+
+impl Mode {
+    /// The mode the `--unpin` flag selects.
+    #[must_use]
+    pub const fn from_unpin_flag(unpin: bool) -> Self {
+        if unpin { Self::Unpin } else { Self::Pin }
+    }
 }
 
 enum PinStep {
@@ -146,24 +164,72 @@ async fn pin_action_edit(
     }
 }
 
-/// Pin all workflow actions to their current commit SHA for reproducibility.
+/// Build the unpin step for one action.
+///
+/// Only a SHA pin that `scan.ignore` leaves in, followed by a pin marker
+/// naming a fetched tag on the pinned commit, is rewritten. The marker's note
+/// stays as the comment.
+async fn unpin_action_edit(
+    provider: &dyn actup_core::Provider,
+    action_ref: &ActionRef,
+    loc: &UsesLocation,
+    config: &Config,
+    site: &RefSite,
+) -> PinStep {
+    if !action_ref.is_sha() || config.should_ignore(action_ref) {
+        return PinStep::Nothing;
+    }
+    let (Some(range), Some((prefix, _))) = (loc.ref_range(), loc.value().split_once('@')) else {
+        return PinStep::Nothing;
+    };
+    let raw = loc.raw_line();
+    let tail = raw.get(range.end..).unwrap_or("");
+    if PinMarker::parse(tail).is_none() {
+        return PinStep::Nothing;
+    }
+    let repo_id = action_ref.to_repo_id().without_subpath();
+    let versions = match provider.get_versions(&repo_id).await {
+        Ok(v) => v,
+        Err(e) => return PinStep::Failed(e),
+    };
+    let Some(marker) = PinMarker::unpinnable(action_ref.ref_str(), tail, &versions) else {
+        return PinStep::Nothing;
+    };
+    let rewrite = Rewrite::unpin(marker);
+    let edit = PendingEdit::replace_range(loc.line(), range.start..raw.len(), rewrite.text());
+    let change = Change {
+        site: site.clone(),
+        target: format!("{prefix}@{}", rewrite.text()),
+        new_ref: rewrite.new_ref,
+        show_comment: false,
+    };
+    PinStep::Edit(edit, Box::new(change))
+}
+
+/// Pin all workflow actions to their current commit SHA, or unpin marked SHA pins under [`Mode::Unpin`].
 pub async fn run(
     path: &Path,
+    mode: Mode,
     dry_run: bool,
     format: OutputFormat,
     config: &Config,
     registry: &provider::Registry,
 ) -> i32 {
-    let Some(result) = edit(path, dry_run, format, config, registry).await else {
+    let Some(result) = edit(path, mode, dry_run, format, config, registry).await else {
         EditResult::default().print_report(dry_run, format);
         return 0;
     };
-    result.print_summary(dry_run, "Pinned", "Would pin", format);
+    let (verb, dry_verb) = match mode {
+        Mode::Pin => ("Pinned", "Would pin"),
+        Mode::Unpin => ("Unpinned", "Would unpin"),
+    };
+    result.print_summary(dry_run, verb, dry_verb, format);
     result.exit_code(false)
 }
 
 async fn edit(
     path: &Path,
+    mode: Mode,
     dry_run: bool,
     format: OutputFormat,
     config: &Config,
@@ -194,7 +260,11 @@ async fn edit(
             };
 
             let site = RefSite::new(&relative, loc.line(), &action_ref, provider);
-            match pin_action_edit(provider, &action_ref, &loc, config, &site).await {
+            let step = match mode {
+                Mode::Pin => pin_action_edit(provider, &action_ref, &loc, config, &site).await,
+                Mode::Unpin => unpin_action_edit(provider, &action_ref, &loc, config, &site).await,
+            };
+            match step {
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
                 PinStep::Unplaceable => report_skipped(site, SkipReason::Unplaceable, &mut result),
                 PinStep::Failed(e) => report_error(site, &e, &mut result),
@@ -400,6 +470,7 @@ mod tests {
 
         let Some(result) = edit(
             dir.path(),
+            Mode::Pin,
             false,
             OutputFormat::Json,
             &Config::default(),
@@ -470,11 +541,27 @@ mod tests {
         let registry = repo_sha_registry();
         let config = Config::default();
 
-        let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+        let code = run(
+            dir.path(),
+            Mode::Pin,
+            false,
+            OutputFormat::Human,
+            &config,
+            &registry,
+        )
+        .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, expected);
 
-        let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+        let code = run(
+            dir.path(),
+            Mode::Pin,
+            false,
+            OutputFormat::Human,
+            &config,
+            &registry,
+        )
+        .await;
         assert_eq!(code, i32::from(CliExitCode::Success));
         assert_eq!(std::fs::read_to_string(&file)?, expected);
         Ok(())
@@ -490,7 +577,15 @@ mod tests {
         let config = Config::default();
 
         for _ in 0..2 {
-            let code = run(dir.path(), false, OutputFormat::Human, &config, &registry).await;
+            let code = run(
+                dir.path(),
+                Mode::Pin,
+                false,
+                OutputFormat::Human,
+                &config,
+                &registry,
+            )
+            .await;
             assert_eq!(code, i32::from(CliExitCode::Success));
             assert_eq!(std::fs::read(&file)?, expected.as_bytes());
         }
@@ -529,6 +624,7 @@ mod tests {
 
         let Some(result) = edit(
             dir.path(),
+            Mode::Pin,
             true,
             OutputFormat::Json,
             &Config::default(),
@@ -580,12 +676,22 @@ mod tests {
         let config = Config::default();
         let registry = repo_sha_registry();
         assert!(
-            edit(dir.path(), false, OutputFormat::Json, &config, &registry)
-                .await
-                .is_none()
+            edit(
+                dir.path(),
+                Mode::Pin,
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry
+            )
+            .await
+            .is_none()
         );
         for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
-            assert_eq!(run(dir.path(), false, format, &config, &registry).await, 0);
+            assert_eq!(
+                run(dir.path(), Mode::Pin, false, format, &config, &registry).await,
+                0
+            );
         }
         Ok(())
     }
@@ -599,6 +705,7 @@ mod tests {
 
         let code = run(
             dir.path(),
+            Mode::Pin,
             false,
             OutputFormat::Json,
             &Config::default(),
@@ -895,6 +1002,138 @@ mod tests {
         assert_eq!(pinned.line, format!("  - uses: o/r@{other} # deadbee"));
         assert_eq!(pinned.new_ref, other);
         assert_eq!(pinned.comment.as_deref(), Some(" # deadbee"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_unpin_flag_selects_the_mode() -> Result<(), Box<dyn std::error::Error>> {
+        use clap::Parser;
+
+        let mode = |args: &[&str]| -> Result<Mode, Box<dyn std::error::Error>> {
+            match crate::cli::Cli::try_parse_from(args)?.command {
+                Some(crate::cli::Command::Pin { unpin, .. }) => Ok(Mode::from_unpin_flag(unpin)),
+                _ => Err("expected the pin command".into()),
+            }
+        };
+        assert_eq!(mode(&["actup", "pin"])?, Mode::Pin);
+        assert_eq!(
+            mode(&["actup", "pin", "--unpin", "--dry-run"])?,
+            Mode::Unpin
+        );
+        Ok(())
+    }
+
+    fn unpin_registry() -> Result<provider::Registry, Box<dyn std::error::Error>> {
+        let at = |version: &str, c: char| {
+            std::sync::Arc::new(version::Info::new(version::Version::parse(version), sha(c)))
+        };
+        let major = at("v4", 'a');
+        let latest = at("v4.2.0", 'b');
+        let versions = version::Set::build(
+            vec![
+                std::sync::Arc::clone(&latest),
+                at("v4.1.0", 'a'),
+                std::sync::Arc::clone(&major),
+            ],
+            HashMap::from([(4, std::sync::Arc::clone(&latest))]),
+            HashMap::from([(4, major)]),
+            Some(latest),
+        );
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(FixedShaProvider {
+            sha: Sha40::new(sha('c')).ok_or("fixture SHA must be valid")?,
+            versions,
+        }));
+        Ok(registry)
+    }
+
+    #[tokio::test]
+    async fn test_unpin_rewrites_only_markers_naming_a_tag_on_the_pin()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let content = [
+            "steps:",
+            "  - uses: o/a@AAA # v4.1.0",
+            "  - uses: o/b@AAA  #v4 keep me",
+            "  - uses: o/c@AAA # v4.2.0",
+            "  - uses: o/d@AAA # v9.9.9",
+            "  - uses: o/e@AAA # mine",
+            "  - uses: o/f@AAA",
+            "  - uses: o/g@v4.1.0 # v4.1.0",
+            "  - uses: skip/h@AAA # v4.1.0",
+            "  - { uses: o/i@AAA } # v4.1.0",
+            "",
+        ]
+        .join("\n")
+        .replace("AAA", &sha('a'));
+        let expected = content
+            .replace(&format!("o/a@{} # v4.1.0", sha('a')), "o/a@v4.1.0")
+            .replace(
+                &format!("o/b@{}  #v4 keep me", sha('a')),
+                "o/b@v4 # keep me",
+            );
+        let file = workflow(dir.path(), &content)?;
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), "[scan]\nignore = [\"skip/*\"]\n")),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = unpin_registry()?;
+
+        let Some(result) = edit(
+            dir.path(),
+            Mode::Unpin,
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+        let edited: Vec<(usize, &str)> = result
+            .edited
+            .iter()
+            .map(|e| (e.site.line, e.to.as_str()))
+            .collect();
+        assert_eq!(edited, [(2, "v4.1.0"), (3, "v4")]);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, expected);
+
+        let code = run(
+            dir.path(),
+            Mode::Unpin,
+            false,
+            OutputFormat::Human,
+            &config,
+            &registry,
+        )
+        .await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unpin_dry_run_reports_without_writing() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let content = format!("steps:\n  - uses: o/a@{} # v4\n", sha('a'));
+        let file = workflow(dir.path(), &content)?;
+        let registry = unpin_registry()?;
+
+        let code = run(
+            dir.path(),
+            Mode::Unpin,
+            true,
+            OutputFormat::Human,
+            &Config::default(),
+            &registry,
+        )
+        .await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, content);
         Ok(())
     }
 }
