@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Funnel every `tree-sitter` invocation through ts-bounded.sh (memory-capped
 # via prlimit). Lives at <repo>/bin/tree-sitter and is on PATH via .envrc.
-# Resolves the real tree-sitter via `type -ap`, explicitly skipping itself, so
-# ts-bounded.sh receives an absolute path and never recurses back here.
+# Resolves the real tree-sitter via `type -ap`, skipping every candidate that
+# names ts-bounded.sh, so shims from other checkouts never call each other.
 set -euo pipefail
 
 SOURCE_PATH="$0"
@@ -24,9 +24,11 @@ MANIFEST="${SCRIPT_DIR}/../Cargo.toml"
 }
 
 SELF="${SCRIPT_DIR}/tree-sitter"
+BOUNDED="languages/tree-sitter-github-actions/scripts/ts-bounded.sh"
 REAL_TS=""
 while IFS= read -r candidate; do
 	[[ "${candidate}" == "${SELF}" || "${candidate}" == "${SOURCE_PATH}" ]] && continue
+	grep -qsF -- "${BOUNDED}" "${candidate}" && continue
 	REAL_TS="${candidate}"
 	break
 done < <(type -ap tree-sitter 2>/dev/null || true)
@@ -36,4 +38,4 @@ if [[ -z "${REAL_TS}" ]]; then
 	exit 127
 fi
 
-exec bash "${SCRIPT_DIR}/../languages/tree-sitter-github-actions/scripts/ts-bounded.sh" "${REAL_TS}" "$@"
+exec bash "${SCRIPT_DIR}/../${BOUNDED}" "${REAL_TS}" "$@"
