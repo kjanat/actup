@@ -1,3 +1,4 @@
+import { type ActupProvider, checkRefs, parseConfig } from "actup-wasm";
 import { beforeEach, describe, expect, test } from "bun:test";
 import * as vscode from "vscode";
 import { ConfigStore, type FolderConfig, loadFolderConfig, watchConfig } from "../config.ts";
@@ -179,6 +180,32 @@ describe("the repo config in diagnostics and fix-all", () => {
 		file("actup.toml", "[policy]\ntracking = 1\n");
 		store.clear();
 		expect(await diagnose("invalid.yml")).toEqual([]);
+	});
+
+	test("reaches fix-all, which pins a branch ref under policy.branch = update", async () => {
+		addFolder();
+		file("actup.toml", "[policy]\nbranch = \"update\"\n");
+		const head = "d".repeat(40);
+		const branchProvider: ActupProvider = {
+			...provider,
+			getVersions: () =>
+				Promise.resolve({ semverTags: [{ version: "v1.0.0", sha: "a".repeat(40) }], defaultBranch: { name: "main", sha: head } }),
+		};
+		const text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@main\n";
+		const document = new FakeDocument("repo/.github/workflows/branch.yml", text);
+		mockWorkspace.documents.push(document);
+		const store = new ConfigStore(() => {});
+
+		const [result] = await checkRefs(text, branchProvider, parseConfig("actup.toml", "[policy]\nbranch = \"update\"\n"));
+		await fixAllInWorkspace(branchProvider, new FakeLogOutputChannel(), store.configFor);
+
+		expect(result?.status).toEqual({ PinBranch: { ref_name: "main", sha: head } });
+		const line = document.lineAt(3).text;
+		const pinned = mockWorkspace.appliedEdits
+			.flatMap(edit => edit.entries().flatMap(([, edits]) => edits))
+			.map(edit => line.slice(0, edit.range.start.character) + edit.newText + line.slice(edit.range.end.character));
+		expect(pinned).toEqual([`      - uses: actions/checkout@${head} # main`]);
+		expect(mockWindow.messages).toEqual(["actup: Updated 1 action ref(s) across 1 file(s)."]);
 	});
 
 	test("reaches fix-all, which pins through an override and skips a file under an invalid config", async () => {
