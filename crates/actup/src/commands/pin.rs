@@ -1651,7 +1651,7 @@ mod tests {
         let pinned = line(&sha('b'), &sha('a'));
         let repinned = line(&sha('b'), &sha('b'));
         let registry = unpin_registry()?;
-        let config = Config::default();
+        let config = uncached();
 
         for (mode, expected) in [
             (Mode::Pin, &pinned),
