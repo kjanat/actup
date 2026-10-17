@@ -310,7 +310,15 @@ fn format_duration(d: Duration) -> String {
 
 /// Format size for human display
 fn format_size(bytes: u64) -> String {
-    let tenths = |unit: u64| (u128::from(bytes) * 10 + u128::from(unit) / 2) / u128::from(unit);
+    let tenths = |unit: u64| {
+        let (scaled, unit) = (u128::from(bytes) * 10, u128::from(unit));
+        let (quotient, remainder) = (scaled / unit, scaled % unit);
+        match (remainder * 2).cmp(&unit) {
+            std::cmp::Ordering::Greater => quotient + 1,
+            std::cmp::Ordering::Equal => quotient + quotient % 2,
+            std::cmp::Ordering::Less => quotient,
+        }
+    };
     if bytes >= 1024 * 1024 {
         let t = tenths(1024 * 1024);
         format!("{}.{} MB", t / 10, t % 10)
@@ -404,6 +412,9 @@ mod tests {
         assert_eq!(format_size(1024 * 1024 + 512 * 1024), "1.5 MB");
         assert_eq!(format_size(1075), "1.0 KB");
         assert_eq!(format_size(1076), "1.1 KB");
+        assert_eq!(format_size(1280), "1.2 KB");
+        assert_eq!(format_size(2304), "2.2 KB");
+        assert_eq!(format_size(1792), "1.8 KB");
         assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
         assert_eq!(format_size(u64::MAX), "17592186044416.0 MB");
     }
