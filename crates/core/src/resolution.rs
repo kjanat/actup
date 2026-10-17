@@ -1963,6 +1963,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_missing_prerelease_ref_above_every_tag_is_unresolvable() {
+        let versions = prerelease_set(&["v3.0.0-rc.1"]);
+        let action = make_action_ref("actions", "checkout", "v3.0.0-rc.9");
+        let missing = unresolvable(NO_VERSIONS_FOUND_REASON, false);
+        for flag in [false, true] {
+            let config = Config {
+                policy: Policy {
+                    prerelease: flag,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            assert_eq!(
+                check_action(&action, &versions, &config).status(),
+                &missing,
+                "prerelease = {flag}"
+            );
+            assert_eq!(
+                status_with(&action, &versions, &config, Resolve::Missing).await,
+                missing,
+                "prerelease = {flag}"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn test_flow_style_major_ref_sees_newer_major() -> Result<(), Box<dyn std::error::Error>>
     {
         let v4 = make_version_info("v4", &"4".repeat(40));

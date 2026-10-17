@@ -61,9 +61,8 @@ fn parse_action_query(input: &str) -> Option<ActionQuery> {
 /// Pick the best version to display from a [`version::Set`].
 ///
 /// If a constraint is given (e.g. `v4`), returns the latest within that major.
-/// Otherwise returns the global latest. Also returns an optional "exact version"
-/// string when the best match is a major-only tag with a more precise semver
-/// available.
+/// Otherwise returns the global latest. When the best match is a major-only tag,
+/// also returns the full tag on that tag's commit.
 fn pick_best<'a>(
     versions: &'a version::Set,
     constraint: Option<&str>,
@@ -73,12 +72,7 @@ fn pick_best<'a>(
         if let version::Version::Semver { major, .. } = &parsed {
             // Try major tag first, then latest_per_major
             if let Some(major_tag) = versions.major_tags().get(major) {
-                let exact = versions
-                    .latest_per_major()
-                    .get(major)
-                    .filter(|lpm| lpm.version() != major_tag.version())
-                    .map(|lpm| lpm.version().to_string());
-                return Some((major_tag, exact));
+                return Some((major_tag, full_tag_on(versions, major_tag)));
             }
             if let Some(lpm) = versions.latest_per_major().get(major) {
                 return Some((lpm, None));
@@ -93,15 +87,16 @@ fn pick_best<'a>(
         if let version::Version::Semver { major, .. } = latest.version()
             && let Some(major_tag) = versions.major_tags().get(major)
         {
-            let exact = if major_tag.version() == latest.version() {
-                None
-            } else {
-                Some(latest.version().to_string())
-            };
-            return Some((major_tag, exact));
+            return Some((major_tag, full_tag_on(versions, major_tag)));
         }
         Some((latest, None))
     }
+}
+
+fn full_tag_on(versions: &version::Set, major_tag: &version::Info) -> Option<String> {
+    versions
+        .full_tag_on(major_tag.sha())
+        .map(|t| t.version().to_string())
 }
 
 /// Run the latest-version lookup.
@@ -322,6 +317,29 @@ mod tests {
         let (best, exact) = pick_best(&set, Some("v4")).unwrap();
         assert_eq!(best.version().to_string(), "v4");
         assert_eq!(exact.as_deref(), Some("v4.2.1"));
+    }
+
+    #[test]
+    fn pick_best_names_the_tag_on_a_lagging_major_tag() {
+        use std::{collections::HashMap, sync::Arc};
+
+        let older = Arc::new(version::Info::new(version::Version::parse("v6.0.1"), "old"));
+        let newer = Arc::new(version::Info::new(version::Version::parse("v6.0.2"), "new"));
+        let major = Arc::new(version::Info::new(version::Version::parse("v6"), "old"));
+        let set = version::Set::build(
+            vec![Arc::clone(&older), Arc::clone(&newer), Arc::clone(&major)],
+            HashMap::from([(6, Arc::clone(&newer))]),
+            HashMap::from([(6, major)]),
+            Some(newer),
+        );
+
+        for constraint in [None, Some("v6")] {
+            let Some((best, exact)) = pick_best(&set, constraint) else {
+                panic!("expected a pick for {constraint:?}");
+            };
+            assert_eq!(best.version().as_str(), "v6", "{constraint:?}");
+            assert_eq!(exact.as_deref(), Some("v6.0.1"), "{constraint:?}");
+        }
     }
 
     #[test]

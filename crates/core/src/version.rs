@@ -566,12 +566,28 @@ impl Set {
             .any(|t| t.version().as_str() == ref_str)
     }
 
+    /// Find the highest full `major.minor.patch` tag on commit `sha`.
+    #[must_use]
+    pub fn full_tag_on(&self, sha: &str) -> Option<&Arc<Info>> {
+        self.semver_tags
+            .iter()
+            .filter(|t| t.sha() == sha && t.version().patch().is_some())
+            .max_by(|a, b| {
+                a.version()
+                    .cmp(b.version())
+                    .then_with(|| b.version().as_str().cmp(a.version().as_str()))
+            })
+    }
+
     /// Find the latest version that `bump` allows for a current version
     ///
     /// A component that `current` leaves out matches any value, so `v4` under
     /// [`policy::Update::Patch`] covers every `v4.x.y`. Prereleases count when
     /// `allow_prerelease` is set or when `current` is a prerelease of the same
-    /// `major.minor.patch`.
+    /// `major.minor.patch`. Returns `None` when every candidate ranks below
+    /// `current`. Among equal-ranked tags it picks the one with the most
+    /// version components, then the one without build metadata, then the
+    /// lowest tag name.
     #[must_use]
     pub fn find_latest_for(
         &self,
@@ -597,13 +613,16 @@ impl Set {
         self.semver_tags
             .iter()
             .filter(|t| allows(t.version()))
-            .reduce(|best, t| {
-                if t.version() > best.version() {
-                    t
-                } else {
-                    best
-                }
+            .max_by(|a, b| {
+                let (a, b) = (a.version(), b.version());
+                let parts = |v: &Version| (v.minor().is_some(), v.patch().is_some());
+                let has_build = |v: &Version| v.as_str().contains('+');
+                a.cmp(b)
+                    .then_with(|| parts(a).cmp(&parts(b)))
+                    .then_with(|| has_build(b).cmp(&has_build(a)))
+                    .then_with(|| b.as_str().cmp(a.as_str()))
             })
+            .filter(|t| t.version() >= current)
     }
 
     /// Set the default branch information
@@ -1194,7 +1213,7 @@ mod tests {
 
     #[test]
     fn test_find_latest_for_filters_prerelease() {
-        let beta = Arc::new(Info::new(Version::parse("v4.0.0-beta"), "aaa"));
+        let beta = Arc::new(Info::new(Version::parse("v4.1.0-beta"), "aaa"));
 
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(4, Arc::clone(&beta));
@@ -1223,36 +1242,98 @@ mod tests {
     #[test]
     fn find_latest_for_scans_unsorted_tags() -> Result<(), Box<dyn std::error::Error>> {
         let tag = |name: &str, sha: &str| Arc::new(Info::new(Version::parse(name), sha));
+        let tags = vec![
+            tag("v1.0.0", "a"),
+            tag("nightly", "b"),
+            tag("v2.0.0-rc.1", "c"),
+            tag("v1.2.0+build.1", "e"),
+            tag("v1.2.0", "d"),
+            tag("v1.3.0-beta.1", "f"),
+        ];
+        let reversed = tags.iter().rev().cloned().collect();
+        for semver_tags in [tags, reversed] {
+            let vs = Set::build(semver_tags, HashMap::new(), HashMap::new(), None);
+            let pick = |current: &str, bump: policy::Update, allow_prerelease: bool| {
+                vs.find_latest_for(&Version::parse(current), bump, allow_prerelease)
+                    .map(|t| t.sha().to_string())
+            };
+
+            let (major, minor) = (policy::Update::Major, policy::Update::Minor);
+            assert_eq!(pick("v1.0.0", major, false).as_deref(), Some("d"));
+            assert_eq!(pick("v1.0.0", minor, true).as_deref(), Some("f"));
+            assert_eq!(pick("v1.0.0", major, true).as_deref(), Some("c"));
+            assert_eq!(pick("nightly", major, false).as_deref(), Some("d"));
+            assert_eq!(pick("nightly", minor, true), None);
+            let Some(latest) = vs.find_latest_for(&Version::parse("v1.3.0-beta.1"), minor, false)
+            else {
+                return Err("expected a target for a prerelease current".into());
+            };
+            assert_eq!(latest.version().as_str(), "v1.3.0-beta.1");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn full_tag_on_skips_partial_tags_and_other_commits() {
+        let tag = |name: &str, sha: &str| Arc::new(Info::new(Version::parse(name), sha));
         let vs = Set::build(
             vec![
-                tag("v1.0.0", "a"),
-                tag("nightly", "b"),
-                tag("v2.0.0-rc.1", "c"),
-                tag("v1.2.0", "d"),
-                tag("v1.2.0+build.1", "e"),
-                tag("v1.3.0-beta.1", "f"),
+                tag("v3", "a"),
+                tag("v3.1", "a"),
+                tag("v3.1.0+b", "a"),
+                tag("v3.1.0", "a"),
+                tag("v3.0.0", "a"),
+                tag("v3.2.0", "b"),
             ],
             HashMap::new(),
             HashMap::new(),
             None,
         );
-        let pick = |current: &str, bump: policy::Update, allow_prerelease: bool| {
-            vs.find_latest_for(&Version::parse(current), bump, allow_prerelease)
-                .map(|t| t.sha().to_string())
-        };
+        assert_eq!(
+            vs.full_tag_on("a").map(|t| t.version().as_str()),
+            Some("v3.1.0")
+        );
+        assert!(vs.full_tag_on("c").is_none());
+    }
 
-        let (major, minor) = (policy::Update::Major, policy::Update::Minor);
-        assert_eq!(pick("v1.0.0", major, false).as_deref(), Some("d"));
-        assert_eq!(pick("v1.0.0", minor, true).as_deref(), Some("f"));
-        assert_eq!(pick("v1.0.0", major, true).as_deref(), Some("c"));
-        assert_eq!(pick("nightly", major, false).as_deref(), Some("d"));
-        assert_eq!(pick("nightly", minor, true), None);
-        let Some(latest) = vs.find_latest_for(&Version::parse("v1.3.0-beta.1"), minor, false)
-        else {
-            return Err("expected a target for a prerelease current".into());
-        };
-        assert_eq!(latest.version().as_str(), "v1.3.0-beta.1");
-        Ok(())
+    #[test]
+    fn find_latest_for_breaks_ties_by_tag_name() {
+        let tag = |name: &str| Arc::new(Info::new(Version::parse(name), name));
+        let cases: [(&[&str], &str); 3] = [
+            (&["v1.2.0+build.2", "v1.2.0+build.1"], "v1.2.0+build.1"),
+            (&["v1.2.0+build.1", "v1.2.0"], "v1.2.0"),
+            (&["v1.2", "v1.2.0+build.1"], "v1.2.0+build.1"),
+        ];
+        for (names, want) in cases {
+            let tags: Vec<_> = names.iter().map(|n| tag(n)).collect();
+            let reversed = tags.iter().rev().cloned().collect();
+            for semver_tags in [tags, reversed] {
+                let vs = Set::build(semver_tags, HashMap::new(), HashMap::new(), None);
+                let latest =
+                    vs.find_latest_for(&Version::parse("v1.0.0"), policy::Update::Latest, false);
+                assert_eq!(latest.map(|t| t.sha()), Some(want), "{names:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn find_latest_for_never_picks_a_lower_version() {
+        let tag = |name: &str| Arc::new(Info::new(Version::parse(name), name));
+        let vs = Set::build(
+            vec![tag("v3.0.0-rc.1"), tag("v2.0.0")],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        for (current, want) in [
+            ("v3.0.0-rc.9", None),
+            ("v3.0.1", None),
+            ("v3.0.0-rc.1", Some("v3.0.0-rc.1")),
+            ("v2.5.0", Some("v3.0.0-rc.1")),
+        ] {
+            let latest = vs.find_latest_for(&Version::parse(current), policy::Update::Latest, true);
+            assert_eq!(latest.map(|t| t.sha()), want, "{current}");
+        }
     }
 
     #[test]

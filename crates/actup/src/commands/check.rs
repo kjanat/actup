@@ -18,23 +18,16 @@ use crate::{
 
 /// Convert core [`CheckStatus`] to CLI [`FindingStatus`].
 ///
-/// When `versions` is provided, computes the exact version for major-only suggestions.
+/// When `versions` is provided, a major-only target also names the full tag on its commit.
 fn to_finding_status(status: CheckStatus, versions: Option<&version::Set>) -> FindingStatus {
     match status {
         CheckStatus::UpToDate => FindingStatus::UpToDate,
         CheckStatus::Ignored => FindingStatus::Ignored,
         CheckStatus::Outdated { current, target } => {
-            // If target is major-only (v6) but we have a full version (v6.0.2), include it
-            // Must use latest_per_major to get the correct major's latest, not global latest
-            // Only set exact_version when it differs from target (avoids redundant "v6 (v6)")
             let exact_version = if target.version().is_major_only() {
-                let target_str = target.version().to_string();
-                target.version().major().and_then(|major| {
-                    versions
-                        .and_then(|v| v.latest_per_major().get(&major))
-                        .map(|l| l.version().to_string())
-                        .filter(|ev| ev != &target_str)
-                })
+                versions
+                    .and_then(|v| v.full_tag_on(target.sha()))
+                    .map(|t| t.version().to_string())
             } else {
                 None
             };
@@ -419,12 +412,12 @@ mod tests {
         Arc::new(version::Info::new(version::Version::parse(tag), sha))
     }
 
-    /// Test that `exact_version` uses major-scoped latest, not global latest.
+    /// Test that `exact_version` names the full tag on the target's commit, not global latest.
     ///
     /// Scenario: user is on v4, target is v6 (major-only), global latest is v8.0.0.
-    /// `exact_version` should be v6.0.2 (latest for major 6), NOT v8.0.0.
+    /// `exact_version` should be v6.0.2 (on the v6 commit), NOT v8.0.0.
     #[test]
-    fn test_exact_version_uses_major_scoped_latest() {
+    fn test_exact_version_takes_full_tag_on_target_commit() {
         // Build version::Set with multiple majors
         let v6_0_2 = make_version_info("v6.0.2", "aaa");
         let v8_0_0 = make_version_info("v8.0.0", "bbb");
@@ -444,7 +437,7 @@ mod tests {
         // CheckStatus::Outdated has current: String, target: VersionInfo
         let status = CheckStatus::Outdated {
             current: "v4".to_string(),
-            target: make_version_info("v6", "ccc"), // major-only tag
+            target: make_version_info("v6", "aaa"), // major-only tag
         };
 
         let finding_status = to_finding_status(status, Some(&versions));
@@ -460,6 +453,30 @@ mod tests {
             }
             _ => panic!("expected Outdated status"),
         }
+    }
+
+    #[test]
+    fn test_exact_version_follows_major_tag_onto_prerelease() {
+        let v3_0_0 = make_version_info("v3.0.0", "stable");
+        let v3_1_rc = make_version_info("v3.1.0-rc.1", "rc");
+        let v3 = make_version_info("v3", "rc");
+        let versions = version::Set::build(
+            vec![v3_0_0.clone(), v3_1_rc, v3.clone()],
+            HashMap::from([(3, v3_0_0.clone())]),
+            HashMap::from([(3, v3.clone())]),
+            Some(v3_0_0),
+        );
+        let status = CheckStatus::Outdated {
+            current: "v2".to_string(),
+            target: v3,
+        };
+
+        let FindingStatus::Outdated { exact_version, .. } =
+            to_finding_status(status, Some(&versions))
+        else {
+            panic!("expected Outdated status");
+        };
+        assert_eq!(exact_version.as_deref(), Some("v3.1.0-rc.1"));
     }
 
     /// Test that `exact_version` is None for fully-qualified versions (not major-only).
@@ -517,7 +534,7 @@ mod tests {
         }
     }
 
-    /// Test that `exact_version` is None when major is not found in `latest_per_major`.
+    /// Test that `exact_version` is None when no full tag shares the target commit.
     #[test]
     fn test_exact_version_none_when_major_not_in_map() {
         let v8_0_0 = make_version_info("v8.0.0", "bbb");
