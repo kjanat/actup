@@ -11,7 +11,9 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Gap, Labels, Named, Rewrite, Trailing, after_value, closer, labeled_head},
+    rewrite::{
+        Gap, Labels, LineShare, Named, Rewrite, Trailing, after_value, closer, labeled_head,
+    },
     version,
 };
 
@@ -336,11 +338,11 @@ impl<L> FileEdits<L> {
             .value_range()
             .filter(|_| !self.comment_lines.contains(&loc.line()))
             .map(|range| {
-                let values = match self.uses_by_line.get(&loc.line()) {
-                    Some(LineUses::One { .. }) => 1,
-                    Some(LineUses::Many) | None => 2,
+                let share = match self.uses_by_line.get(&loc.line()) {
+                    Some(LineUses::One { .. }) => LineShare::Sole,
+                    Some(LineUses::Many) | None => LineShare::Shared,
                 };
-                labeled_head(Gap::after(self.format, values), raw, range.end)
+                labeled_head(Gap::after(self.format, share), raw, range.end)
             });
         head.map_or_else(
             || loc.clone(),

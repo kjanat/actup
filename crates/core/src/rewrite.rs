@@ -126,11 +126,20 @@ pub enum Gap {
     Closer,
 }
 
+/// Whether a `uses:` value is the only one on its line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineShare {
+    /// The line holds this value and no other.
+    Sole,
+    /// The line holds another `uses:` value too.
+    Shared,
+}
+
 impl Gap {
-    /// [`Gap::Closer`] after the only `uses:` value of a [`SourceFormat::Text`] line, else [`Gap::Spaces`].
+    /// [`Gap::Closer`] after a [`LineShare::Sole`] value of a [`SourceFormat::Text`] line, else [`Gap::Spaces`].
     #[must_use]
-    pub fn after(format: SourceFormat, values_on_line: usize) -> Self {
-        if format == SourceFormat::Text && values_on_line == 1 {
+    pub fn after(format: SourceFormat, share: LineShare) -> Self {
+        if format == SourceFormat::Text && share == LineShare::Sole {
             Self::Closer
         } else {
             Self::Spaces
@@ -629,13 +638,13 @@ mod tests {
         assert_eq!(label_span(Gap::Spaces, " }] # v4"), 0);
         assert_eq!(label_span(Gap::Spaces, "\" # v4"), 0);
         let gaps = [
-            (SourceFormat::Text, 1, Gap::Closer),
-            (SourceFormat::Text, 2, Gap::Spaces),
-            (SourceFormat::Yaml, 1, Gap::Spaces),
-            (SourceFormat::Markdown, 1, Gap::Spaces),
+            (SourceFormat::Text, LineShare::Sole, Gap::Closer),
+            (SourceFormat::Text, LineShare::Shared, Gap::Spaces),
+            (SourceFormat::Yaml, LineShare::Sole, Gap::Spaces),
+            (SourceFormat::Markdown, LineShare::Sole, Gap::Spaces),
         ];
-        for (format, values, gap) in gaps {
-            assert_eq!(Gap::after(format, values), gap, "{format:?} {values}");
+        for (format, share, gap) in gaps {
+            assert_eq!(Gap::after(format, share), gap, "{format:?} {share:?}");
         }
     }
 

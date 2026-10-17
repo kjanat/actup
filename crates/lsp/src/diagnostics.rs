@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
     check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
-    rewrite::{Gap, Labels, Rewrite, Trailing, after_value, closer, labeled_head},
+    rewrite::{Gap, Labels, LineShare, Rewrite, Trailing, after_value, closer, labeled_head},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -302,8 +302,12 @@ fn locate_uses(
                 let read = if takes_comment {
                     raw_line
                 } else {
-                    let values = values_on_line.get(&loc.line()).copied().unwrap_or(0);
-                    labeled_head(Gap::after(format, values), raw_line, r.end)
+                    let share = if values_on_line.get(&loc.line()) == Some(&1) {
+                        LineShare::Sole
+                    } else {
+                        LineShare::Shared
+                    };
+                    labeled_head(Gap::after(format, share), raw_line, r.end)
                 };
                 (
                     col_start,
