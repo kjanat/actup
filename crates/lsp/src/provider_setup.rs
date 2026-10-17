@@ -59,7 +59,7 @@ pub fn build_file_cache(config: &Config) -> crate::file_cache::FileCache {
 mod tests {
     use std::collections::HashSet;
 
-    use actup_core::{HostConfig, HostKind};
+    use actup_core::{HostKind, config::Host};
 
     use super::*;
 
@@ -99,7 +99,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".to_string(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: None,
@@ -118,7 +118,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "UPPERCASE.COM".to_string(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: None,
@@ -183,7 +183,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "gitlab.com".to_string(),
-            HostConfig {
+            Host {
                 kind: None,
                 api_base: Some(format!("{}/api/v4", server.uri())),
                 token_env: Some("_ACTUP_TEST_UNSET_GITLAB_TOKEN".to_string()),
@@ -223,7 +223,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe1.corp.com".to_string(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: None,
@@ -233,7 +233,7 @@ mod tests {
         );
         config.hosts.insert(
             "ghe2.corp.com".to_string(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: None,
                 token_env: None,

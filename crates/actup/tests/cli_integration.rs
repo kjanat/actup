@@ -847,7 +847,7 @@ ignore = ["internal/*", "deprecated/action"]
 mod new_config_format_tests {
     use std::{fs, num::NonZeroU8};
 
-    use actup_core::{ApiMode, Config, FetchSettings, HostConfig, HostKind};
+    use actup_core::{ApiMode, Config, FetchSettings, HostKind, config::Host};
     use tempfile::TempDir;
 
     use super::test_support::ok_or_panic;
@@ -1056,7 +1056,7 @@ token_env = "GHE_TOKEN"
                 let mut m = std::collections::HashMap::new();
                 m.insert(
                     "ghe.corp.com".to_string(),
-                    HostConfig {
+                    Host {
                         kind: Some(HostKind::GitHub),
                         api_base: Some("https://ghe.corp.com/api/v3".to_string()),
                         token_env: Some("GHE_TOKEN".to_string()),
@@ -1119,7 +1119,7 @@ token_env = "GHE_TOKEN"
                 let mut m = std::collections::HashMap::new();
                 m.insert(
                     "ghe.corp.com".to_string(),
-                    HostConfig {
+                    Host {
                         kind: Some(HostKind::GitHub),
                         api_base: None,
                         token_env: None,

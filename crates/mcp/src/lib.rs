@@ -19,7 +19,7 @@ use std::{
     time::SystemTime,
 };
 
-use actup_core::{Clock, Config, FileCache, Registration, SystemClock, provider::Registry};
+use actup_core::{Clock, Config, FileCache, Registration, clock, provider::Registry};
 pub use confine::{Refusal, Root};
 use rust_mcp_sdk::{
     McpServer, StdioTransport, ToMcpServerHandler, TransportOptions,
@@ -101,7 +101,7 @@ impl Server {
     /// Serve `registry` under `config` with version sets read through `file_cache`, confining every path to `root`.
     #[must_use]
     pub fn new(config: Config, registry: Registry, root: Root, file_cache: FileCache) -> Self {
-        Self::with_clock(config, registry, root, file_cache, Arc::new(SystemClock))
+        Self::with_clock(config, registry, root, file_cache, Arc::new(clock::System))
     }
 
     fn with_clock(

@@ -248,9 +248,9 @@ mod tests {
 
     use super::*;
 
-    /// Construct a `HostConfig` with only `kind` set (no Default impl available).
-    fn host_config_with_kind(kind: HostKind) -> actup_core::HostConfig {
-        actup_core::HostConfig {
+    /// Construct a `config::Host` with only `kind` set (no Default impl available).
+    fn host_config_with_kind(kind: HostKind) -> actup_core::config::Host {
+        actup_core::config::Host {
             kind: Some(kind),
             api_base: None,
             token_env: None,
@@ -259,9 +259,9 @@ mod tests {
         }
     }
 
-    /// Construct an empty `HostConfig` (all None).
-    fn host_config_empty() -> actup_core::HostConfig {
-        actup_core::HostConfig {
+    /// Construct an empty `config::Host` (all None).
+    fn host_config_empty() -> actup_core::config::Host {
+        actup_core::config::Host {
             kind: None,
             api_base: None,
             token_env: None,
@@ -558,7 +558,7 @@ mod tests {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".to_string(),
-            actup_core::HostConfig {
+            actup_core::config::Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some("no-scheme.example.com/api".to_string()),
                 token_env: None,

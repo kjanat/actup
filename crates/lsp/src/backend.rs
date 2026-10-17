@@ -1623,11 +1623,11 @@ fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
         || hosts_differ(&old.hosts, &new.hosts)
 }
 
-/// Compare host config maps by serialized form since [`HostConfig`](actup_core::HostConfig) may
+/// Compare host config maps by serialized form since [`config::Host`](actup_core::config::Host) may
 /// not implement `PartialEq`.
 fn hosts_differ(
-    old: &std::collections::HashMap<String, actup_core::HostConfig>,
-    new: &std::collections::HashMap<String, actup_core::HostConfig>,
+    old: &std::collections::HashMap<String, actup_core::config::Host>,
+    new: &std::collections::HashMap<String, actup_core::config::Host>,
 ) -> bool {
     if old.len() != new.len() {
         return true;
@@ -3144,7 +3144,7 @@ mod tests {
         let mut b = std::collections::HashMap::new();
         b.insert(
             "github.com".to_owned(),
-            actup_core::HostConfig {
+            actup_core::config::Host {
                 kind: Some(actup_core::HostKind::GitHub),
                 api_base: None,
                 token_env: None,

@@ -10,9 +10,9 @@ use std::{
 };
 
 use actup_core::{
-    ActionRef, Clock, Config, SourceFormat, SystemClock,
+    ActionRef, Clock, Config, SourceFormat,
     cache::Staleness,
-    check_action_with_provider, parse_uses, provider,
+    check_action_with_provider, clock, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     version,
 };
@@ -113,7 +113,7 @@ impl ActionMetaCache {
 
 /// Create a new empty action metadata cache.
 pub fn new_action_meta_cache() -> ActionMetaCache {
-    ActionMetaCache::with_clock(Arc::new(SystemClock))
+    ActionMetaCache::with_clock(Arc::new(clock::System))
 }
 
 /// A parsed action located at a specific position in the document.

@@ -3,8 +3,10 @@
 use std::{collections::HashMap, num::NonZeroU8, sync::Arc};
 
 use actup_core::{
-    ActionRepoId, ApiMode, Config, Error, HostConfig, HostKind, Provider, Retention, cache,
-    config::registration::ProviderConfig, fetch::Silent, provider, version,
+    ActionRepoId, ApiMode, Config, Error, HostKind, Provider, Retention, cache,
+    config::{Host, registration::ProviderConfig},
+    fetch::Silent,
+    provider, version,
 };
 use actup_provider_github::{GitHubProvider, REGISTRATION, create_batch_fetcher};
 use wiremock::{
@@ -199,7 +201,7 @@ fn registry_config(server: &MockServer) -> Config {
     Config {
         hosts: HashMap::from([(
             HOST.to_string(),
-            HostConfig {
+            Host {
                 kind: Some(HostKind::GitHub),
                 api_base: Some(api_base(server)),
                 token_env: Some(TOKEN_ENV.into()),
