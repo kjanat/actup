@@ -945,7 +945,30 @@ fn update_file_refreshes_version_comments(client: &mut Client, ws: &Workspace) -
     let written = ws.read(".github/workflows/noted.yml")?;
     expect(written == expected, || {
         format!("SHA edits wrote {written:?}")
-    })
+    })?;
+
+    ws.write(
+        ".github/workflows/noted.yml",
+        &format!(
+            "steps:\n  - uses: actions/checkout@{} # v4.0.0 keep\n",
+            sha('b')
+        ),
+    )?;
+    let unpinned = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/noted.yml",
+            "edits": [{ "line": 2, "action": "actions/checkout", "ref": "v4.2.0" }],
+        }),
+    )?;
+    expect(!is_error(&unpinned), || {
+        format!("tag over a SHA pin failed: {unpinned}")
+    })?;
+    let written = ws.read(".github/workflows/noted.yml")?;
+    expect(
+        written == "steps:\n  - uses: actions/checkout@v4.2.0 # keep\n",
+        || format!("tag over a SHA pin wrote {written:?}"),
+    )
 }
 
 fn mutators_refuse_paths_outside_the_root(client: &mut Client, ws: &Workspace) -> TestResult {

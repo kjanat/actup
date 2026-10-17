@@ -57,7 +57,7 @@ refKind names what currentRef is (tag, branch or sha); sameCommit names a target
 Mutators (write files; pass dryRun: true to plan without writing):
 - updateFile: replace the ref of named `uses:` values in one file. Every edit applies or none does, \
 and every edit names an action on the same host. \
-A trailing version comment (`# v4.0.0 note`) names a new tag written over a tag or branch and keeps its note; \
+A trailing version comment (`# v4.0.0 note`) names a new tag written over any ref except a SHA pin and keeps its note; \
 a new SHA, or a tag written over a SHA pin, drops the version and keeps the note. Any other trailing comment stays as written. \
 It also replaces an invalid ref when the rewritten value parses, and refuses a value without `@`.
 - updateAllUsesToVersion: move every reference to one action under workspaceRoot to targetRef. \
