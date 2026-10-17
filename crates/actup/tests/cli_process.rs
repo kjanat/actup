@@ -140,6 +140,8 @@ async fn check_exits_0_and_reports_every_format() -> TestResult {
     );
     assert!(text.contains("o/new@v1.1.0  up to date"), "{text}");
     assert!(text.contains("Scanned 2 actions: 1 up to date"), "{text}");
+    let log = String::from_utf8(human.stderr)?;
+    assert!(!log.contains("resolving"), "{log}");
 
     let json = repo.run(&["check", ".", "--format", "json"]).await?;
     assert_eq!(json.status.code(), Some(0));

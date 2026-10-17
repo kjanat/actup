@@ -12,6 +12,7 @@ use tracing::debug;
 use crate::{
     common::{ErrorTally, WorkflowScanner},
     file_cache::FileCache,
+    progress::Spinner,
 };
 
 /// Fetched versions keyed by repo without subpath, or the error that stopped the fetch.
@@ -146,7 +147,13 @@ pub async fn batch_fetch_versions(
         FileCache::disabled()
     });
 
-    actup_provider_github::fetch_versions_with_registry(repos, config, registry, cache).await
+    let spinner = Spinner::stderr();
+    let versions = actup_provider_github::fetch_versions_with_registry(
+        repos, config, registry, cache, &spinner,
+    )
+    .await;
+    spinner.finish();
+    versions
 }
 
 #[cfg(test)]

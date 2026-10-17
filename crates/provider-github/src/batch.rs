@@ -12,7 +12,9 @@ use std::{
 use actup_core::{
     ActionRepoId, Config, Provider,
     cache::{self, Cache},
-    effective_host, provider, version,
+    effective_host,
+    fetch::{Outcome, Progress},
+    provider, version,
 };
 use futures::StreamExt;
 use tracing::{debug, warn};
@@ -99,6 +101,7 @@ async fn fetch_github_host_groups<C: Cache>(
     config: &Config,
     cache: Arc<C>,
     results: &mut HashMap<ActionRepoId, actup_core::Result<version::Set>>,
+    progress: &dyn Progress,
 ) -> Vec<ActionRepoId> {
     let github_registration = [&crate::REGISTRATION];
     let mut fallback_repos = Vec::new();
@@ -108,7 +111,7 @@ async fn fetch_github_host_groups<C: Cache>(
             Ok(provider_config) => {
                 match crate::create_batch_fetcher(&provider_config, Arc::clone(&cache)) {
                     Ok(fetcher) => {
-                        results.extend(fetcher.fetch_versions(&host_repos).await);
+                        results.extend(fetcher.fetch_versions(&host_repos, progress).await);
                     }
                     Err(e) => {
                         debug!(host = %host, error = %e, "failed to build GitHub batch fetcher, falling back to provider fetches");
@@ -131,6 +134,7 @@ async fn fetch_fallback_repos<C: Cache>(
     registry: &provider::Registry,
     cache: &C,
     results: &mut HashMap<ActionRepoId, actup_core::Result<version::Set>>,
+    progress: &dyn Progress,
 ) {
     let fetched: Vec<_> = futures::stream::iter(fallback_repos)
         .map(|repo| async move {
@@ -138,6 +142,11 @@ async fn fetch_fallback_repos<C: Cache>(
             let cache_ns = provider.cache_namespace().to_string();
             let host = provider.host().to_string();
             let result = provider.get_versions(&repo).await;
+            progress.finished(if result.is_ok() {
+                Outcome::Provider
+            } else {
+                Outcome::Failed
+            });
             Some((repo, cache_ns, host, result))
         })
         .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
@@ -163,7 +172,7 @@ async fn fetch_fallback_repos<C: Cache>(
     }
 }
 
-/// Fetch versions for repo ids using GitHub batching when available.
+/// Fetch versions for repo ids using GitHub batching when available, reporting each repo to `progress`.
 ///
 /// GitHub repos are grouped by host, resolved through config, and fetched via
 /// [`BatchFetcher`], which returns each repo's version set or its error.
@@ -175,6 +184,7 @@ pub async fn fetch_versions_with_registry<C: Cache>(
     config: &Config,
     registry: &provider::Registry,
     cache: Arc<C>,
+    progress: &dyn Progress,
 ) -> HashMap<ActionRepoId, actup_core::Result<version::Set>> {
     let RegistryFetchPlan {
         mut results,
@@ -182,11 +192,36 @@ pub async fn fetch_versions_with_registry<C: Cache>(
         mut fallback_repos,
     } = classify_repos_for_registry_fetch(repos, registry, cache.as_ref()).await;
 
+    progress.start(
+        results.len() + github_hosts.values().map(Vec::len).sum::<usize>() + fallback_repos.len(),
+    );
+    for result in results.values() {
+        progress.finished(if result.is_ok() {
+            Outcome::Cache
+        } else {
+            Outcome::Failed
+        });
+    }
+
     fallback_repos.extend(
-        fetch_github_host_groups(github_hosts, config, Arc::clone(&cache), &mut results).await,
+        fetch_github_host_groups(
+            github_hosts,
+            config,
+            Arc::clone(&cache),
+            &mut results,
+            progress,
+        )
+        .await,
     );
 
-    fetch_fallback_repos(fallback_repos, registry, cache.as_ref(), &mut results).await;
+    fetch_fallback_repos(
+        fallback_repos,
+        registry,
+        cache.as_ref(),
+        &mut results,
+        progress,
+    )
+    .await;
 
     results
 }
@@ -201,6 +236,10 @@ pub struct BatchFetcher<C: Cache> {
     cache: Arc<C>,
     /// Maximum tags to fetch per repo
     max_tags: u8,
+}
+
+fn finish(progress: &dyn Progress, ok: bool, outcome: Outcome) {
+    progress.finished(if ok { outcome } else { Outcome::Failed });
 }
 
 impl<C: Cache> BatchFetcher<C> {
@@ -248,10 +287,12 @@ impl<C: Cache> BatchFetcher<C> {
     ///    that GraphQL leaves out)
     /// 4. Store successful results in cache
     ///
-    /// Returns every input repo's version set or its fetch error.
+    /// Returns every input repo's version set or its fetch error, and reports
+    /// each repo to `progress`.
     pub async fn fetch_versions(
         &self,
         repos: &[ActionRepoId],
+        progress: &dyn Progress,
     ) -> HashMap<ActionRepoId, actup_core::Result<version::Set>> {
         let mut results = HashMap::new();
         let mut uncached = Vec::new();
@@ -269,6 +310,7 @@ impl<C: Cache> BatchFetcher<C> {
                         "cache hit"
                     );
                     results.insert(repo.clone(), Ok(entry.versions().clone()));
+                    progress.finished(Outcome::Cache);
                 }
                 Err(cache::Error::NotFound | cache::Error::Disabled) => {
                     uncached.push(repo.clone());
@@ -301,6 +343,7 @@ impl<C: Cache> BatchFetcher<C> {
                     unlisted.push(repo);
                 }
                 result => {
+                    finish(progress, result.is_ok(), Outcome::Git);
                     fetched.insert(repo, result);
                 }
             }
@@ -321,6 +364,9 @@ impl<C: Cache> BatchFetcher<C> {
                 .filter(|repo| !via_api.contains_key(repo))
                 .collect();
             via_api.extend(self.fetch_parallel_rest(&missing).await);
+            for result in via_api.values() {
+                finish(progress, result.is_ok(), Outcome::Api);
+            }
             fetched.extend(via_api);
         }
 

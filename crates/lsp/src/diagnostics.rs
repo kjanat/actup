@@ -261,6 +261,7 @@ pub async fn batch_fetch_versions(
         config,
         registry,
         std::sync::Arc::new(file_cache.clone()),
+        &actup_core::fetch::Silent,
     )
     .await
 }

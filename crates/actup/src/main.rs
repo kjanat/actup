@@ -8,6 +8,7 @@ mod common;
 mod file_cache;
 mod offline;
 mod output;
+mod progress;
 mod scan;
 
 use anstream::{eprintln, println};

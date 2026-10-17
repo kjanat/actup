@@ -333,6 +333,7 @@ async fn batch_fetch_reports_a_failed_repo_after_one_attempt()
         &config,
         &registry,
         Arc::new(cache::Noop),
+        &actup_core::fetch::Silent,
     )
     .await;
 
@@ -378,7 +379,9 @@ async fn batch_fetch_asks_rest_about_repos_graphql_leaves_out()
     let fetcher = BatchFetcher::with_graphql(provider, Arc::new(cache::Noop), Some("token"), 10);
     let gone = ActionRepoId::new(Some("ghe.invalid".to_string()), "o", "gone", None);
 
-    let results = fetcher.fetch_versions(std::slice::from_ref(&gone)).await;
+    let results = fetcher
+        .fetch_versions(std::slice::from_ref(&gone), &actup_core::fetch::Silent)
+        .await;
 
     assert!(fetcher.has_graphql());
     assert!(
@@ -393,4 +396,183 @@ async fn batch_fetch_asks_rest_about_repos_graphql_leaves_out()
     let paths: Vec<&str> = requests.iter().map(|request| request.url.path()).collect();
     assert_eq!(paths, ["/api/graphql", "/repos/o/gone/tags"]);
     Ok(())
+}
+
+struct Recorder {
+    events: std::sync::Mutex<Vec<String>>,
+}
+
+impl actup_core::fetch::Progress for Recorder {
+    fn start(&self, repos: usize) {
+        self.events.lock().unwrap().push(format!("start {repos}"));
+    }
+
+    fn finished(&self, outcome: actup_core::fetch::Outcome) {
+        self.events.lock().unwrap().push(format!("{outcome:?}"));
+    }
+}
+
+struct Hits(Vec<String>);
+
+impl actup_core::cache::Cache for Hits {
+    fn get(
+        &self,
+        key: &str,
+    ) -> actup_core::BoxFuture<'_, actup_core::cache::Result<actup_core::cache::Entry>> {
+        let hit = self.0.iter().any(|k| k == key);
+        Box::pin(async move {
+            if hit {
+                Ok(actup_core::cache::Entry::new(
+                    actup_core::version::Set::new(),
+                ))
+            } else {
+                Err(actup_core::cache::Error::NotFound)
+            }
+        })
+    }
+
+    fn set(
+        &self,
+        _key: &str,
+        _entry: actup_core::cache::Entry,
+    ) -> actup_core::BoxFuture<'_, actup_core::cache::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn remove(&self, _key: &str) -> actup_core::BoxFuture<'_, actup_core::cache::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn clear(&self) -> actup_core::BoxFuture<'_, actup_core::cache::Result<()>> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct Listed;
+
+impl Provider for Listed {
+    fn kind(&self) -> actup_core::provider::Kind {
+        actup_core::provider::Kind::GitLab
+    }
+
+    fn host(&self) -> &'static str {
+        "lab.example"
+    }
+
+    fn get_versions(
+        &self,
+        repo: &ActionRepoId,
+    ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::version::Set>> {
+        let result = if repo.repo() == "ok" {
+            Ok(actup_core::version::Set::new())
+        } else {
+            Err(actup_core::Error::NotFound {
+                owner: repo.owner().to_string(),
+                repo: repo.repo().to_string(),
+                host: None,
+            })
+        };
+        Box::pin(async move { result })
+    }
+
+    fn resolve_ref_to_sha(
+        &self,
+        _repo: &ActionRepoId,
+        _ref_name: &str,
+    ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::Sha40>> {
+        unimplemented!()
+    }
+
+    fn get_default_branch(
+        &self,
+        _repo: &ActionRepoId,
+    ) -> actup_core::BoxFuture<'_, actup_core::Result<String>> {
+        unimplemented!()
+    }
+
+    fn get_readme(
+        &self,
+        _repo: &ActionRepoId,
+        _ref_name: Option<&str>,
+    ) -> actup_core::BoxFuture<'_, actup_core::Result<Option<String>>> {
+        unimplemented!()
+    }
+
+    fn get_action_yml(
+        &self,
+        _repo: &ActionRepoId,
+        _ref_name: &str,
+    ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::ActionYml>> {
+        unimplemented!()
+    }
+}
+
+#[tokio::test]
+async fn test_registry_fetch_reports_each_repo_once() {
+    let mock_server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/tags"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(TAGS_RESPONSE))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(REPO_RESPONSE))
+        .mount(&mock_server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/branches/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(BRANCH_RESPONSE))
+        .mount(&mock_server)
+        .await;
+    let mut config = actup_core::Config::default();
+    config.hosts.insert(
+        "gh.invalid".to_string(),
+        actup_core::config::HostConfig {
+            kind: Some(actup_core::config::HostKind::GitHub),
+            api_base: Some(mock_server.uri()),
+            token_env: Some("_ACTUP_TEST_NO_TOKEN".to_string()),
+            api_mode: Some(actup_core::config::ApiMode::Rest),
+            max_tags_per_repo: None,
+        },
+    );
+    let mut registry = actup_core::provider::Registry::new();
+    registry.set_default_host("lab.example");
+    registry.register(Box::new(Listed));
+    registry.register(Box::new(
+        GitHubProvider::with_host(&mock_server.uri(), "gh.invalid", None).unwrap(),
+    ));
+    let repos = [
+        ActionRepoId::new(Some("lab.example".into()), "o", "ok", None),
+        ActionRepoId::new(Some("lab.example".into()), "o", "bad", None),
+        ActionRepoId::new(Some("gh.invalid".into()), "o", "r", None),
+        ActionRepoId::new(Some("none.invalid".into()), "o", "x", None),
+        ActionRepoId::new(Some("lab.example".into()), "o", "cached", None),
+        ActionRepoId::new(Some("gh.invalid".into()), "o", "hit", None),
+    ];
+    let cache = Hits(vec![
+        repos[4].cache_key("gitlab", "lab.example"),
+        repos[5].cache_key("github", "gh.invalid"),
+    ]);
+    let recorder = Recorder {
+        events: std::sync::Mutex::new(Vec::new()),
+    };
+
+    let results = actup_provider_github::fetch_versions_with_registry(
+        &repos,
+        &config,
+        &registry,
+        std::sync::Arc::new(cache),
+        &recorder,
+    )
+    .await;
+
+    assert_eq!(results.len(), 6);
+    let mut events = recorder.events.into_inner().unwrap();
+    assert_eq!(events.remove(0), "start 6");
+    events.sort_unstable();
+    assert_eq!(
+        events,
+        ["Api", "Cache", "Cache", "Failed", "Failed", "Provider"]
+    );
 }

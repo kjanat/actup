@@ -20,6 +20,7 @@ pub mod compat;
 pub mod config;
 pub mod discovery;
 pub mod error;
+pub mod fetch;
 pub mod parser;
 pub mod patch;
 pub mod policy;

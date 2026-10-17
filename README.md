@@ -102,6 +102,9 @@ line and adds `suggestion` to the JSON and TOML entry. The LSP offers a
 of each repo that an unignored ref names, once per repo and in one batch through
 the version cache, before they report or edit.
 
+While they fetch, they draw a one-line `resolving N repos` counter on stderr
+when stderr is a terminal. Piped and redirected runs print no progress.
+
 `--offline` reads versions only from the cache. A repo missing from the cache,
 or cached longer ago than `cache.ttl`, makes its refs environment errors (exit
 3), and no command touches the network. `--no-cache` neither reads nor writes
