@@ -913,6 +913,11 @@ fn binary_exits_on_a_bad_root_config_or_host(ws: &Workspace) -> TestResult {
     expect(code == Some(2) && stderr.contains("invalid root"), || {
         format!("missing root: {code:?} {stderr}")
     })?;
+    fs::write(ws.dir.path().join("actup.toml"), "policy = 3\n")?;
+    let (code, stderr) = run(&ws.root())?;
+    expect(code == Some(0), || {
+        format!("config above the root: {code:?} {stderr}")
+    })?;
     ws.write("actup.toml", "policy = 3\n")?;
     let (code, stderr) = run(&ws.root())?;
     expect(code == Some(2) && stderr.contains("actup.toml"), || {

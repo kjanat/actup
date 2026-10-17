@@ -39,7 +39,12 @@ async fn main() -> ExitCode {
         Ok(root) => root,
         Err(e) => return fail(2, &format!("invalid root {}: {e}", dir.display())),
     };
-    let config = match Config::load(None, user_config_path().as_deref(), root.path()) {
+    let config = match Config::load(
+        None,
+        user_config_path().as_deref(),
+        root.path(),
+        Some(root.path()),
+    ) {
         Ok(config) => config,
         Err(e) => return fail(2, &e.to_string()),
     };
