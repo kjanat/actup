@@ -46,8 +46,10 @@ build.
 | `github-token`      | `${{ github.token }}` | Passed to actup as `GITHUB_TOKEN`                       |
 
 A ref that is neither a release tag like `v1.2.3` nor paired with `version`
-fails the step. Outputs: `exit-code` (see [Exit Codes](#exit-codes)) and
-`actup-bin`, the path of the verified binary for later steps.
+fails the step. Inside another composite action, `github.action_ref` names that
+outer action, and actup then needs `version`. The download always comes from the
+`kjanat/actup-v2` releases. Outputs: `exit-code` (see [Exit Codes](#exit-codes))
+and `actup-bin`, the path of the verified binary for later steps.
 
 `examples/workflows/` holds a check workflow and a reusable workflow that opens
 an update pull request with the `token` secret it receives. After tagging a

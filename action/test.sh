@@ -63,7 +63,7 @@ install() {
 bin_of() { sed -n 's/^actup-bin=//p' "${work}/output"; }
 
 publish kjanat/actup-v2 v1.2.3 >/dev/null
-publish kjanat/fork v2.0.0-rc.1 >/dev/null
+publish kjanat/actup-v2 v2.0.0-rc.1 >/dev/null
 
 if install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=kjanat/actup-v2 RUNNER_OS=Linux RUNNER_ARCH=X64 \
 	&& [[ -x "$(bin_of)" ]] \
@@ -73,15 +73,46 @@ else
 	fail "a release tag ref installs the musl asset of that release"
 fi
 
-if install ACTUP_ACTION_REF=3d3c42e5aac5ba805825da76410c181273ba90b1 ACTUP_VERSION=v2.0.0-rc.1 ACTUP_REPOSITORY=kjanat/fork RUNNER_OS=macOS RUNNER_ARCH=ARM64 \
+if install ACTUP_ACTION_REF=3d3c42e5aac5ba805825da76410c181273ba90b1 ACTUP_VERSION=v2.0.0-rc.1 ACTUP_REPOSITORY=kjanat/actup-v2 RUNNER_OS=macOS RUNNER_ARCH=ARM64 \
 	&& [[ -x "$(bin_of)" ]] \
-	&& grep -q "/kjanat/fork/releases/download/v2.0.0-rc.1/actup-v2.0.0-rc.1-aarch64-apple-darwin.tar.gz$" "${work}/curl.log"; then
-	pass "a SHA ref installs the version input from the action's repository"
+	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v2.0.0-rc.1/actup-v2.0.0-rc.1-aarch64-apple-darwin.tar.gz" "${work}/curl.log"; then
+	pass "a SHA ref installs the version input"
 else
-	fail "a SHA ref installs the version input from the action's repository"
+	fail "a SHA ref installs the version input"
 fi
 
-if ! install ACTUP_ACTION_REF=v9.9.9 ACTUP_VERSION=v1.2.3 RUNNER_OS=Windows RUNNER_ARCH=X64 \
+if install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=KJanat/Actup-V2 RUNNER_OS=Linux RUNNER_ARCH=X64 \
+	&& [[ -x "$(bin_of)" ]] && grep -q "/download/v1.2.3/" "${work}/curl.log"; then
+	pass "the repository name matches without regard to case"
+else
+	fail "the repository name matches without regard to case"
+fi
+
+if ! install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=acme/wrapper RUNNER_OS=Linux RUNNER_ARCH=X64 \
+	&& grep -q "set the version input" "${work}/install.log" && [[ ! -s "${work}/curl.log" ]]; then
+	pass "a tag ref of an enclosing action needs the version input"
+else
+	fail "a tag ref of an enclosing action needs the version input"
+fi
+
+if install ACTUP_ACTION_REF=v9.9.9 ACTUP_REPOSITORY=acme/wrapper ACTUP_VERSION=v1.2.3 RUNNER_OS=Linux RUNNER_ARCH=X64 \
+	&& [[ -x "$(bin_of)" ]] \
+	&& [[ "$(wc -l <"${work}/curl.log")" -eq 2 ]] \
+	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v1.2.3/SHA256SUMS.txt" "${work}/curl.log" \
+	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v1.2.3/actup-v1.2.3-x86_64-unknown-linux-musl.tar.gz" "${work}/curl.log"; then
+	pass "an enclosing action downloads the version input from kjanat/actup-v2"
+else
+	fail "an enclosing action downloads the version input from kjanat/actup-v2"
+fi
+
+if ! install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY= RUNNER_OS=Linux RUNNER_ARCH=X64 \
+	&& grep -q "set the version input" "${work}/install.log"; then
+	pass "an empty action repository needs the version input"
+else
+	fail "an empty action repository needs the version input"
+fi
+
+if ! install ACTUP_ACTION_REF=v9.9.9 ACTUP_REPOSITORY=kjanat/actup-v2 ACTUP_VERSION=v1.2.3 RUNNER_OS=Windows RUNNER_ARCH=X64 \
 	&& grep -q "/download/v9.9.9/" "${work}/curl.log" && ! grep -q "/download/v1.2.3/" "${work}/curl.log"; then
 	pass "a release tag ref wins over the version input"
 else
@@ -97,7 +128,7 @@ fi
 
 mkdir "${work}/no-unzip"
 cp "${work}/bin/curl" "${work}/no-unzip/curl"
-for tool in bash awk sha256sum mktemp mkdir tar gzip 7z chmod cp; do
+for tool in bash awk sha256sum mktemp mkdir tar gzip 7z chmod cp tr; do
 	ln -s "$(command -v "${tool}")" "${work}/no-unzip/${tool}"
 done
 : >"${work}/output"
@@ -175,6 +206,13 @@ if run ACTUP_COMMAND=pin ACTUP_ARGS= ACTUP_FAKE_EXIT=0 && [[ "$(cat "${work}/arg
 	pass "run passes no arguments for empty args"
 else
 	fail "run passes no arguments for empty args"
+fi
+
+if run ACTUP_COMMAND=check ACTUP_ARGS=$'--strict\n--format json\n' ACTUP_FAKE_EXIT=0 \
+	&& [[ "$(cat "${work}/args")" == $'check\n--strict\n--format\njson' ]]; then
+	pass "run passes every line of multi-line args"
+else
+	fail "run passes every line of multi-line args"
 fi
 
 status=0

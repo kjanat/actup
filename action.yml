@@ -20,7 +20,7 @@ inputs:
     required: false
     default: "."
   version:
-    description: "Release tag to run (e.g. `v1.2.3`) when the action ref is not a release tag, such as a commit SHA."
+    description: "Release tag to run (e.g. `v1.2.3`) when the action ref is not a release tag, such as a commit SHA, or when another action calls this one."
     required: false
     default: ""
   github-token:

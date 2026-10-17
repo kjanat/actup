@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repository="kjanat/actup-v2"
 release_tag='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
-if [[ "${ACTUP_ACTION_REF:-}" =~ $release_tag ]]; then
+action_repository="$(printf '%s' "${ACTUP_REPOSITORY:-}" | tr '[:upper:]' '[:lower:]')"
+if [[ "${action_repository}" == "${repository}" && "${ACTUP_ACTION_REF:-}" =~ $release_tag ]]; then
 	tag="${ACTUP_ACTION_REF}"
 elif [[ -n "${ACTUP_VERSION:-}" ]]; then
 	if [[ ! "${ACTUP_VERSION}" =~ $release_tag ]]; then
@@ -11,7 +13,7 @@ elif [[ -n "${ACTUP_VERSION:-}" ]]; then
 	fi
 	tag="${ACTUP_VERSION}"
 else
-	echo "::error::the action ref '${ACTUP_ACTION_REF:-}' is not a release tag; pin the action to one or set the version input to a release tag like v1.2.3"
+	echo "::error::set the version input to a release tag like v1.2.3: the action ref '${ACTUP_ACTION_REF:-}' of '${ACTUP_REPOSITORY:-}' is not a release tag of ${repository}"
 	exit 1
 fi
 
@@ -28,7 +30,6 @@ case "${RUNNER_OS:-}/${RUNNER_ARCH:-}" in
 		;;
 esac
 
-repository="${ACTUP_REPOSITORY:-kjanat/actup-v2}"
 base="https://github.com/${repository}/releases/download/${tag}"
 asset="actup-${tag}-${target}${ext}"
 dest="$(mktemp -d "${RUNNER_TEMP}/actup-bin.XXXXXX")"
