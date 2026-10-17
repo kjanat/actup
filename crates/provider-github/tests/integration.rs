@@ -811,7 +811,10 @@ async fn repo_state_reads_archived_and_disabled() -> Result<(), Box<dyn std::err
 mod stale {
     use std::{
         collections::{BTreeMap, HashMap},
-        sync::{Arc, Mutex},
+        sync::{
+            Arc, Mutex,
+            atomic::{AtomicUsize, Ordering},
+        },
         time::{Duration, SystemTime},
     };
 
@@ -1440,6 +1443,98 @@ mod stale {
         ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
             Box::pin(async { Ok(ActionYml::default()) })
         }
+    }
+
+    struct ListingProvider(Arc<AtomicUsize>);
+
+    impl Provider for ListingProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitLab
+        }
+
+        fn host(&self) -> &'static str {
+            "gitlab.invalid"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Ok(cached_versions()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            Box::pin(async {
+                Err(actup_core::Error::ProviderNotFound {
+                    host: String::new(),
+                })
+            })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_provider_without_batching_stores_its_versions_under_its_cache_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("gitlab.invalid");
+        registry.register(Box::new(ListingProvider(Arc::clone(&calls))));
+        let repo = ActionRepoId::new(Some("gitlab.invalid".to_string()), "g", "p", None);
+        let provider = registry.find_for_repo(&repo).ok_or("no provider")?;
+        let key = repo.cache_key(provider.cache_namespace(), provider.host());
+        let cache = Arc::new(MemoryCache::default());
+
+        for _ in 0..2 {
+            let results = actup_provider_github::fetch_versions_with_registry(
+                std::slice::from_ref(&repo),
+                &actup_core::Config::default(),
+                &registry,
+                Arc::clone(&cache),
+                &actup_core::fetch::Silent,
+            )
+            .await;
+            let versions = results
+                .get(&repo)
+                .ok_or("no result")?
+                .as_ref()
+                .map_err(ToString::to_string)?;
+            assert_eq!(latest(versions), Some("v1.0.0".to_string()));
+        }
+
+        let entry = cache
+            .entry(&key)
+            .ok_or("no entry under the provider's cache key")?;
+        assert_eq!(latest(entry.versions()), Some("v1.0.0".to_string()));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     #[tokio::test]
