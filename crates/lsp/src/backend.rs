@@ -1057,12 +1057,7 @@ fn major_target(
 ) -> Option<String> {
     let ref_str = action_ref.ref_str();
     let current_major = if action_ref.is_sha() {
-        versions.and_then(|v| {
-            v.semver_tags()
-                .iter()
-                .find(|t| t.sha() == ref_str)
-                .and_then(|t| t.version().major())
-        })
+        versions.and_then(|v| v.tag_on(ref_str).and_then(|t| t.version().major()))
     } else {
         actup_core::version::Version::parse(ref_str).major()
     };
@@ -1721,6 +1716,24 @@ mod tests {
             None
         );
         Ok(())
+    }
+
+    #[test]
+    fn major_target_for_sha_ignores_tag_order() {
+        let sha = "d".repeat(40);
+        let tags = [
+            crate::test_utils::make_version_info("v3.9.0", &sha),
+            crate::test_utils::make_version_info("v4.0.0", &sha),
+        ];
+        for list in [tags.to_vec(), tags.iter().rev().cloned().collect()] {
+            let v = actup_core::version::Set::build(
+                list,
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                None,
+            );
+            assert_eq!(major_target(&aref(&sha), Some(&v)).as_deref(), Some("v4"));
+        }
     }
 
     #[test]
