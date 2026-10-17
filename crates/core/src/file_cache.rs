@@ -284,7 +284,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::version;
+    use crate::{test_log::logged, version};
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();
@@ -611,37 +611,6 @@ mod tests {
         };
         assert_eq!(names, [name]);
         Ok(())
-    }
-
-    fn logged(
-        make: impl FnOnce() -> FileCache,
-    ) -> Result<(FileCache, String), Box<dyn std::error::Error>> {
-        #[derive(Clone, Default)]
-        struct Buffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Buffer {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0
-                    .lock()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?
-                    .extend_from_slice(buf);
-                Ok(buf.len())
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let buffer = Buffer::default();
-        let writer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .without_time()
-            .with_target(false)
-            .finish();
-        let cache = tracing::subscriber::with_default(subscriber, make);
-        let bytes = buffer.0.lock().map_err(|e| e.to_string())?.clone();
-        Ok((cache, String::from_utf8(bytes)?))
     }
 
     #[test]

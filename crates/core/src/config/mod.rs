@@ -1102,6 +1102,7 @@ fn error_origin(error: &figment::Error, loaded_from: Option<&Path>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_log::logged;
 
     fn action(uses: &str) -> ActionRef {
         let Ok(Some(action)) = crate::parse_uses(uses) else {
@@ -2578,31 +2579,8 @@ mod tests {
         explicit: Option<&str>,
         env: &[(&str, &str)],
     ) -> Result<Layered, Box<dyn std::error::Error>> {
-        #[derive(Clone, Default)]
-        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
-        impl std::io::Write for Buffer {
-            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-                self.0
-                    .lock()
-                    .map_err(|e| std::io::Error::other(e.to_string()))?
-                    .extend_from_slice(buf);
-                Ok(buf.len())
-            }
-
-            fn flush(&mut self) -> std::io::Result<()> {
-                Ok(())
-            }
-        }
-        let buffer = Buffer::default();
-        let writer = buffer.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_writer(move || writer.clone())
-            .with_ansi(false)
-            .without_time()
-            .with_target(false)
-            .finish();
         let repo = FileContents::new(Path::new("repo/actup.toml"), SETS_REPO_ONLY_KEYS)?;
-        let config = tracing::subscriber::with_default(subscriber, || {
+        let (config, log) = logged(|| {
             let mut layers = Layers::default();
             if let Some(user) = user {
                 layers = layers.trusted(
@@ -2623,7 +2601,7 @@ mod tests {
             }
             layers.extract(EnvOverrides::from_vars(env.iter().copied()))
         })?;
-        let log = String::from_utf8(buffer.0.lock().map_err(|e| e.to_string())?.clone())?;
+        let config = config?;
         let warned = log
             .lines()
             .filter(|line| line.contains("ignoring a key"))
