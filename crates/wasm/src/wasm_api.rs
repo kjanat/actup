@@ -253,9 +253,10 @@ struct UpdateEdit {
 /// Plan text edits from located check results.
 ///
 /// Takes a JSON array of [`LocatedCheckResult`]s (as returned by
-/// [`checkRefs`]) and returns one [`UpdateEdit`] for each outdated result
-/// whose `location` has a ref range. `config.policy.pin` picks tag or SHA
-/// output, as in `actup update`.
+/// [`checkRefs`]) and returns one [`UpdateEdit`] for each outdated or
+/// pin-branch result whose `location` has a ref range. `config.policy.pin`
+/// picks tag or SHA output, as in `actup update`. A pin-branch result pins
+/// the branch or non-semver tag to its commit with a `# <ref>` comment.
 ///
 /// This is a pure, synchronous function. The caller applies the edits.
 ///
@@ -285,9 +286,6 @@ pub fn plan_updates(
     let edits: Vec<UpdateEdit> = results
         .iter()
         .filter_map(|result| {
-            let CheckStatus::Outdated { target, .. } = &result.status else {
-                return None;
-            };
             let location = &result.location;
             let range = location.ref_range()?;
             let raw_line = location.raw_line();
@@ -300,12 +298,16 @@ pub fn plan_updates(
             } else {
                 (Trailing::Foreign, "")
             };
-            let rewrite = Rewrite::outdated(
-                config.policy_for(&result.action_ref).pin,
-                result.action_ref.is_sha(),
-                target,
-                trailing,
-            );
+            let rewrite = match &result.status {
+                CheckStatus::Outdated { target, .. } => Rewrite::outdated(
+                    config.policy_for(&result.action_ref).pin,
+                    result.action_ref.is_sha(),
+                    target,
+                    trailing,
+                ),
+                CheckStatus::PinBranch { ref_name, sha } => Rewrite::pin(sha, ref_name, trailing),
+                _ => return None,
+            };
             let (new_text, to_line_end) = rewrite.splice(closing);
             Some(UpdateEdit {
                 line: location.line(),

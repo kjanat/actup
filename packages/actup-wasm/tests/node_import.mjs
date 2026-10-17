@@ -419,6 +419,28 @@ assert.equal(
 
 console.log("PASS: closers stay before the comment");
 
+// Test 17: a pin-branch result pins the ref to its commit with a `# <ref>` comment.
+const branchSha = "c".repeat(40);
+const branchYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@main
+      - uses: "actions/checkout@nightly" # keep me
+      - { uses: actions/checkout@main } # v1.0.0
+`;
+const branchResults = (await checkRefs(branchYaml, mockProvider)).map((r) => ({
+	...r,
+	status: { PinBranch: { ref_name: r.action_ref.ref_str, sha: branchSha } },
+}));
+assert.equal(
+	applyEdits(branchYaml, planUpdates(branchResults)),
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@${branchSha} # main\n      - uses: "actions/checkout@${branchSha}" # keep me\n      - { uses: actions/checkout@${branchSha} } # main\n`,
+	"pin-branch results pin to the commit",
+);
+
+console.log("PASS: pin-branch results get an edit");
+
 // Test 16: sortVersionTags orders by semver precedence, newest first.
 const sorted = sortVersionTags([
 	{ version: "v1.9.0", sha: "a".repeat(40) },

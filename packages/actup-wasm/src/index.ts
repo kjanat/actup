@@ -213,8 +213,9 @@ export async function checkRefs(
 /**
  * Plan minimal text edits from located check results.
  *
- * Returns one edit for each outdated result, placed at that result's
- * `location`. A result whose location has no `ref_range` gets no edit.
+ * Returns one edit for each outdated or pin-branch result, placed at that
+ * result's `location`. A pin-branch result pins the ref to its commit with a
+ * `# <ref>` comment. A result whose location has no `ref_range` gets no edit.
  * Each edit replaces `refStart..replaceEnd` of its line with `newText`.
  *
  * Pure, synchronous. The caller applies the edits.

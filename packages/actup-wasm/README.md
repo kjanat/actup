@@ -121,11 +121,12 @@ Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 Compute minimal text edits from the `LocatedCheckResult[]` that `checkRefs`
 returns. Pure, synchronous.
 
-Returns `UpdateEdit[]` with one entry per outdated result, placed at that
-result's `location`. Each entry has `line`, `refStart`, `refEnd`, `replaceEnd`,
-`original`, `newRef` and `newText`. Replace the bytes `refStart..replaceEnd` of
-the line with `newText`. A result whose `location.ref_range` is `null` gets no
-edit.
+Returns `UpdateEdit[]` with one entry per outdated or pin-branch result, placed
+at that result's `location`. A pin-branch result pins the branch or non-semver
+tag to its commit as `@<sha> # <ref>`. Each entry has `line`, `refStart`,
+`refEnd`, `replaceEnd`, `original`, `newRef` and `newText`. Replace the bytes
+`refStart..replaceEnd` of the line with `newText`. A result whose
+`location.ref_range` is `null` gets no edit.
 
 `config.policy.pin` picks the written form, as in `actup update`. `preserve`
 (the default) keeps a tag a tag and re-pins a SHA to the new SHA with a
