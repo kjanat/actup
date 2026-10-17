@@ -206,7 +206,6 @@ export function editsOf(action: vscode.CodeAction | undefined): { range: vscode.
 	return (action?.edit?.entries() ?? []).flatMap(([, edits]) => edits.map(({ range, newText }) => ({ range, newText })));
 }
 
-/** The status rows of a hover: every row except the header, blank rows and the repository link. */
 export function hoverStatusRows(hover: vscode.Hover | undefined): string[] {
 	const rows = (hover?.contents ?? []).flatMap(content => (typeof content === "string" ? content : content.value).split("\n"));
 	return rows.slice(1).filter(row => row !== "" && !row.startsWith("[View on "));

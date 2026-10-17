@@ -119,7 +119,6 @@ export function diagnosticKey(d: vscode.Diagnostic): string {
 	return `${d.range.start.line}:${d.range.start.character}:${d.range.end.character}`;
 }
 
-/** Name the ref and the target on the commit the ref already names, when the result has one. */
 function sameCommitDetail(result: LocatedCheckResult): string | undefined {
 	const target = result.same_commit;
 	if (target === null) {
