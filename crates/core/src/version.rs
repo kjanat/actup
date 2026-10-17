@@ -410,8 +410,8 @@ pub struct Set {
     #[serde(default)]
     other_tags: std::collections::HashMap<String, String>,
 
-    /// Whether the tag and branch maps hold every ref of the repository.
-    #[serde(default)]
+    /// Whether the tag and branch maps held every ref of the repository at fetch time.
+    #[serde(skip)]
     listing: Listing,
 
     /// When this data was fetched (skipped in serialization — platform-dependent)
@@ -1207,6 +1207,22 @@ mod tests {
                 tag: "2024-01-15".to_string(),
             }
         );
+        Ok(())
+    }
+
+    #[test]
+    fn restored_set_reads_as_partial() -> Result<(), Box<dyn std::error::Error>> {
+        let mut set = Set::new();
+        set.set_listing(Listing::Complete);
+        let json = serde_json::to_string(&set)?;
+        assert!(!json.contains("listing"), "{json}");
+        let restored: Set = serde_json::from_str(&json)?;
+        assert_eq!(restored.listing(), Listing::Partial);
+
+        let old = r#"{"semver_tags": [], "latest_per_major": {}, "major_tags": {},
+            "latest": null, "default_branch": null, "listing": "complete"}"#;
+        let restored: Set = serde_json::from_str(old)?;
+        assert_eq!(restored.listing(), Listing::Partial);
         Ok(())
     }
 

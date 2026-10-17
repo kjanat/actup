@@ -2414,6 +2414,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_restored_complete_listing_asks_the_provider()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let versions = complete(prerelease_set(&["v1.0.0"]));
+        let restored: version::Set = serde_json::from_str(&serde_json::to_string(&versions)?)?;
+        let provider = ResolveMockProvider::with(Resolve::Found);
+        let action = make_action_ref("actions", "checkout", "nightly");
+        let warn = branch_config(policy::Branch::Warn);
+        let result = check_action_with_provider(&action, &restored, &warn, &provider).await;
+        assert_eq!(
+            result.status(),
+            &CheckStatus::Floating {
+                ref_name: "nightly".to_string()
+            }
+        );
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_complete_listing_keeps_unlisted_v_major_outdated() {
         let versions = complete(prerelease_set(&["v2.0.4"]));
         let provider = ResolveMockProvider::with(Resolve::Found);
