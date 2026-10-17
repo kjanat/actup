@@ -248,6 +248,7 @@ pub struct LspBackend {
     /// `--config` flag).
     config_path: RwLock<Option<PathBuf>>,
     user_config: Option<PathBuf>,
+    config_reload: Mutex<()>,
     config_watchers_registered: Mutex<bool>,
     /// Negotiated position encoding for `Position::character` columns.
     ///
@@ -280,6 +281,7 @@ impl LspBackend {
             error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
             config_path: RwLock::new(None),
             user_config,
+            config_reload: Mutex::new(()),
             config_watchers_registered: Mutex::new(false),
             position_encoding: OnceLock::new(),
         }
@@ -1221,6 +1223,7 @@ impl LspBackend {
     /// Compares old and new policy to decide whether diagnostics need refreshing.
     /// A load error pauses diagnostics until a later reload succeeds.
     async fn reload_config(&self) {
+        let _reload = self.config_reload.lock().await;
         let workspace_root = self.workspace_root.read().await.clone();
         let config_path = self.config_path.read().await.clone();
         let start_dir = workspace_root
@@ -2219,6 +2222,60 @@ mod tests {
             backend.pin_actions_at(&uri, position, Some(1), true).await,
             []
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn interleaved_reloads_keep_latest_workspace_root()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use futures::StreamExt as _;
+
+        let temp = tempfile::tempdir()?;
+        let stale = temp.path().join("stale");
+        let latest = temp.path().join("latest");
+        std::fs::create_dir(&stale)?;
+        std::fs::create_dir(&latest)?;
+        std::fs::write(stale.join("actup.toml"), "[policy]\nbump = \"sideways\"\n")?;
+        let latest_config = latest.join("actup.toml");
+        std::fs::write(&latest_config, "[cache]\nenabled = false\n")?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+
+        while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(50), socket.next()).await
+        {
+        }
+        backend.client.log_message(MessageType::INFO, "fill").await;
+        *backend.workspace_root.write().await = Some(stale);
+
+        let drain = async {
+            while let Ok(Some(_)) =
+                tokio::time::timeout(Duration::from_millis(200), socket.next()).await
+            {}
+        };
+        tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                backend.reload_config(),
+                async {
+                    *backend.workspace_root.write().await = Some(latest.clone());
+                    backend.reload_config().await;
+                },
+                drain
+            )
+        })
+        .await?;
+
+        assert_eq!(
+            backend.workspace_root.read().await.as_deref(),
+            Some(latest.as_path())
+        );
+        let stored = backend.config.read().await.clone();
+        let ConfigState::Loaded(config) = stored else {
+            panic!("stale reload stored {stored:?}");
+        };
+        assert_eq!(config.loaded_from.as_deref(), Some(latest_config.as_path()));
+        assert!(!config.cache.enabled);
+        assert!(backend.registry.read().await.is_some());
+        assert!(backend.file_cache.read().await.is_some());
         Ok(())
     }
 
