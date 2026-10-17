@@ -7,7 +7,7 @@ Model Context Protocol server for AI agents, served over stdio with
 
 | File                      | Purpose                                                             |
 | ------------------------- | ------------------------------------------------------------------- |
-| `src/main.rs`             | Binary: `--root`, config load, `Registry::from_config`, stdio       |
+| `src/main.rs`             | Binary: `--root`, `--config`, `Registry::from_config`, stdio        |
 | `src/lib.rs`              | `Server` (`ServerHandler`), tool list, `INSTRUCTIONS`, read cache   |
 | `src/args.rs`             | Tool argument structs, `schemars` input schemas, ref validation     |
 | `src/read.rs`             | `actionGetReadme`, `actionGetActionYml`, `getVersions`, `getLatest` |

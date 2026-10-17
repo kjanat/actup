@@ -107,11 +107,9 @@ impl Provider for MockProvider {
         Box::pin(async move { result })
     }
 
-    fn get_default_branch(
-        &self,
-        _repo: &ActionRepoId,
-    ) -> BoxFuture<'_, actup_core::Result<String>> {
-        Box::pin(async { Ok("main".to_string()) })
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<String>> {
+        let result = Self::failure(repo).map_or_else(|| Ok("main".to_string()), Err);
+        Box::pin(async move { result })
     }
 
     fn get_readme(
@@ -498,6 +496,23 @@ fn read_tools_classify_provider_failures(client: &mut Client, _ws: &Workspace) -
         &json!("unresolvable"),
         "readme of a missing repo",
     )?;
+    let yml = client.call(
+        "actionGetActionYml",
+        json!({ "owner": "offline", "repo": "x" }),
+    )?;
+    expect(is_error(&yml), || {
+        format!("default branch failure must fail: {yml}")
+    })?;
+    expect_eq(
+        &body(&yml)["status"],
+        &json!("unknown"),
+        "action.yml without a default branch",
+    )?;
+    expect_eq(
+        &body(&yml)["provider"],
+        &json!("github"),
+        "action.yml provider",
+    )?;
     let missing_ref = client.call(
         "getLatest",
         json!({ "owner": "actions", "repo": "checkout", "currentRef": "v9.9.9" }),
@@ -749,6 +764,51 @@ fn update_file_dry_run_and_refusals_write_nothing(
     )
 }
 
+fn update_file_refuses_escaped_values_and_overlapping_edits(
+    client: &mut Client,
+    ws: &Workspace,
+) -> TestResult {
+    let escaped = "jobs:\n  build:\n    steps:\n      - uses: \"actions/checkout@v4.0.\\x30\"\n";
+    ws.write(".github/workflows/escaped.yml", escaped)?;
+    let result = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/escaped.yml",
+            "edits": [{ "line": 4, "action": "actions/checkout", "ref": "v4.2.0" }],
+        }),
+    )?;
+    expect(is_error(&result), || {
+        format!("escaped value must be refused: {result}")
+    })?;
+    expect(
+        error_text(&result).contains("line 4: `actions/checkout@v4.0.0` is escaped or spans lines"),
+        || error_text(&result),
+    )?;
+    expect(ws.read(".github/workflows/escaped.yml")? == escaped, || {
+        "a refused escaped edit wrote the file".into()
+    })?;
+
+    let overlap = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/ci.yml",
+            "edits": [
+                { "line": 7, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 7, "action": "actions/checkout", "ref": "v5" },
+            ],
+        }),
+    )?;
+    expect(is_error(&overlap), || {
+        format!("overlapping edits must be refused: {overlap}")
+    })?;
+    expect(error_text(&overlap).contains("line 7"), || {
+        error_text(&overlap)
+    })?;
+    expect(ws.read(".github/workflows/ci.yml")? == WORKFLOW, || {
+        "overlapping edits wrote the file".into()
+    })
+}
+
 fn mutators_refuse_paths_outside_the_root(client: &mut Client, ws: &Workspace) -> TestResult {
     let outside = ws.dir.path().join("outside.yml");
     let edit = json!([{ "line": 7, "action": "actions/checkout", "ref": "v4.2.0" }]);
@@ -996,6 +1056,46 @@ fn binary_serves_the_tools_from_its_working_directory(ws: &Workspace) -> TestRes
     })
 }
 
+fn binary_loads_the_config_from_flag_or_env(ws: &Workspace) -> TestResult {
+    let config = ws.dir.path().join("custom.toml");
+    fs::write(
+        &config,
+        "default_host = \"ghe.corp.com\"\n[hosts.\"ghe.corp.com\"]\nkind = \"github\"\n",
+    )?;
+    let served_host = |mut command: Command| -> Result<Value, Box<dyn Error>> {
+        command.current_dir(ws.root());
+        let mut client = Client::spawn(command)?;
+        let result = client.call(
+            "updateFile",
+            json!({
+                "path": ".github/workflows/ci.yml",
+                "edits": [{ "line": 7, "action": "actions/checkout", "ref": "v4.2.0" }],
+                "dryRun": true,
+            }),
+        )?;
+        Ok(body(&result)["changes"][0]["host"].clone())
+    };
+    let mut flag = binary(ws);
+    flag.arg("--config").arg(&config);
+    expect_eq(&served_host(flag)?, &json!("ghe.corp.com"), "--config")?;
+    let mut env = binary(ws);
+    env.env("ACTUP_CONFIG", "../custom.toml");
+    expect_eq(&served_host(env)?, &json!("ghe.corp.com"), "ACTUP_CONFIG")?;
+
+    let output = binary(ws)
+        .arg("--root")
+        .arg(ws.root())
+        .arg("-c")
+        .arg(ws.dir.path().join("missing.toml"))
+        .stdin(Stdio::null())
+        .output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    expect(
+        output.status.code() == Some(2) && stderr.contains("missing.toml"),
+        || format!("missing config: {:?} {stderr}", output.status.code()),
+    )
+}
+
 fn binary_exits_on_a_bad_root_config_or_host(ws: &Workspace) -> TestResult {
     let run = |root: &Path| -> Result<(Option<i32>, String), Box<dyn Error>> {
         let output = binary(ws)
@@ -1037,10 +1137,14 @@ type Case = fn(&mut Client, &Workspace) -> TestResult;
 
 type BinaryCase = fn(&Workspace) -> TestResult;
 
-const BINARY_CASES: [(&str, BinaryCase); 2] = [
+const BINARY_CASES: [(&str, BinaryCase); 3] = [
     (
         "binary_serves_the_tools_from_its_working_directory",
         binary_serves_the_tools_from_its_working_directory,
+    ),
+    (
+        "binary_loads_the_config_from_flag_or_env",
+        binary_loads_the_config_from_flag_or_env,
     ),
     (
         "binary_exits_on_a_bad_root_config_or_host",
@@ -1048,7 +1152,7 @@ const BINARY_CASES: [(&str, BinaryCase); 2] = [
     ),
 ];
 
-const CASES: [(&str, Case); 9] = [
+const CASES: [(&str, Case); 10] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -1072,6 +1176,10 @@ const CASES: [(&str, Case); 9] = [
     (
         "update_file_dry_run_and_refusals_write_nothing",
         update_file_dry_run_and_refusals_write_nothing,
+    ),
+    (
+        "update_file_refuses_escaped_values_and_overlapping_edits",
+        update_file_refuses_escaped_values_and_overlapping_edits,
     ),
     (
         "mutators_refuse_paths_outside_the_root",

@@ -187,13 +187,14 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 
 ### Config Discovery
 
-1. `-c, --config <path>` (or `ACTUP_CONFIG`) or LSP `configPath` (explicit). A
-   relative path resolves against the CLI working directory or the LSP workspace
-   root. A missing file is an error (exit code 2).
+1. `-c, --config <path>` (or `ACTUP_CONFIG`) of the CLI and `actup-mcp`, or LSP
+   `configPath` (explicit). A relative path resolves against the working
+   directory or the LSP workspace root. A missing file is an error (exit code
+   2).
 2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`, searched from the
    scanned path upward. The search stops at the first directory that contains
    `.git` (a directory, or a file in a worktree). The LSP searches only its
-   workspace folder.
+   workspace folder, and `actup-mcp` only its `--root`.
 3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
    (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)
@@ -275,9 +276,11 @@ cargo install --git https://github.com/kjanat/actup-v2 actup-mcp
 }
 ```
 
-The server loads config from `--root` (default: its working directory) like the
-CLI, and refuses every path outside that root, including symlinks that point out
-of it.
+The server discovers config from `--root` (default: its working directory) like
+the CLI, and refuses every path outside that root, including symlinks that point
+out of it. `-c, --config <path>` (or `ACTUP_CONFIG`) loads an explicit config
+file over the repo and user config. A relative path resolves against the working
+directory. A config that fails to load exits with code 2.
 
 | Tool                     | Kind    | Purpose                                                 |
 | ------------------------ | ------- | ------------------------------------------------------- |

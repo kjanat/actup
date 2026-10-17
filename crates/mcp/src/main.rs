@@ -4,7 +4,7 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use actup_core::{Config, provider::Registry, user_config_path};
+use actup_core::{Config, config::CONFIG_VAR, provider::Registry, user_config_path};
 use actup_mcp::{Root, Server, serve_stdio};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -16,6 +16,10 @@ struct Args {
     /// Directory that confines every path the tools read or write [default: current directory]
     #[arg(long, value_name = "DIR")]
     root: Option<PathBuf>,
+
+    /// Config file to load over the repo and user config
+    #[arg(short, long, env = CONFIG_VAR, value_name = "PATH")]
+    config: Option<PathBuf>,
 }
 
 #[tokio::main]
@@ -40,7 +44,7 @@ async fn main() -> ExitCode {
         Err(e) => return fail(2, &format!("invalid root {}: {e}", dir.display())),
     };
     let config = match Config::load(
-        None,
+        args.config.as_deref(),
         user_config_path().as_deref(),
         root.path(),
         Some(root.path()),

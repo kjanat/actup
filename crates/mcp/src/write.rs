@@ -635,6 +635,12 @@ pub async fn update_all(
 
 #[cfg(test)]
 mod tests {
+    use actup_core::{
+        BoxFuture,
+        provider::{ActionYml, Kind, Provider, Sha40},
+    };
+    use serde_json::{Value, json};
+
     use super::*;
 
     fn loc(line_body: &str) -> Result<(UsesLocation, ActionRef), Box<dyn std::error::Error>> {
@@ -921,6 +927,148 @@ mod tests {
         assert!(outcome.errors.is_empty());
         assert_eq!(outcome.diff, "");
         assert_eq!(fs::read_to_string(&path)?, content);
+        Ok(())
+    }
+
+    struct Resolving;
+
+    impl Provider for Resolving {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            let sha = Sha40::new("b".repeat(40)).ok_or_else(|| actup_core::Error::Internal {
+                context: "test".into(),
+                message: "sha".into(),
+            });
+            Box::pin(async move { sha })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    fn update_all_args(host: Option<&str>) -> Result<args::UpdateAll, serde_json::Error> {
+        serde_json::from_value(json!({
+            "workspaceRoot": ".",
+            "match": { "host": host, "owner": "actions", "repo": "checkout" },
+            "targetRef": "v4.2.0",
+            "dryRun": true,
+        }))
+    }
+
+    fn body(reply: Reply) -> Result<(Option<bool>, Value), Box<dyn std::error::Error>> {
+        let result = reply.into_result();
+        let body = result.structured_content.ok_or("structured content")?;
+        Ok((result.is_error, Value::Object(body)))
+    }
+
+    #[tokio::test]
+    async fn update_all_skips_ignored_refs_and_files_outside_the_root()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir_all(dir.path().join("repo/.github/workflows"))?;
+        fs::write(
+            dir.path().join("repo/.github/workflows/ci.yml"),
+            "steps:\n  - uses: actions/checkout@v4.0.0\n  - uses: actions/checkout@v3\n",
+        )?;
+        let outside = "steps:\n  - uses: actions/checkout@v3\n";
+        fs::write(dir.path().join("outside.yml"), outside)?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            dir.path().join("outside.yml"),
+            dir.path().join("repo/link.yml"),
+        )?;
+        let root = Root::new(&dir.path().join("repo"))?;
+        let mut config = Config::default();
+        config.scan.ignore = vec!["actions/checkout@v4.0.0".parse()?];
+        config.scan.extra_paths = vec!["link.yml".parse()?];
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(Resolving));
+
+        let reply = update_all("t", &registry, &config, &root, &update_all_args(None)?)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (is_error, body) = body(reply)?;
+        assert_ne!(is_error, Some(true));
+        assert_eq!(
+            body["skipped"],
+            json!([{
+                "path": ".github/workflows/ci.yml",
+                "line": 2,
+                "provider": "github",
+                "host": "github.com",
+                "action": "actions/checkout@v4.0.0",
+                "reason": "ignored",
+            }])
+        );
+        assert_eq!(body["changes"][0]["line"], json!(3));
+        assert_eq!(body["changes"][0]["to"], json!("v4.2.0"));
+        assert_eq!(body["errors"], json!([]));
+        assert_eq!(body["changes"].as_array().map(Vec::len), Some(1));
+        assert_eq!(fs::read_to_string(dir.path().join("outside.yml"))?, outside);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_all_reports_an_unserved_host() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let root = Root::new(dir.path())?;
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(Resolving));
+        let args = update_all_args(Some("ghe.corp.com"))?;
+        let reply = update_all("t", &registry, &Config::default(), &root, &args)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (is_error, body) = body(reply)?;
+        assert_eq!(is_error, Some(true));
+        assert_eq!(
+            body,
+            json!({
+                "provider": "unknown",
+                "host": "ghe.corp.com",
+                "status": "unknown",
+                "error": "no provider configured for host: ghe.corp.com",
+            })
+        );
         Ok(())
     }
 }
