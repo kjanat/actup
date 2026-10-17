@@ -1861,9 +1861,10 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("gen.py");
         let content = format!(
-            "f.write(\"  - uses: o/a@{}\\n\")\nf.write(\"  - uses: o/c@{} # mine\\n\")\n",
+            "f.write(\"  - uses: o/a@{}\\n\")\nf.write(\"  - uses: o/c@{} # mine\\n\")\nf.write(\"  - uses: o/d@{}\")  # v4.1.0\n",
             sha('a'),
-            sha('b')
+            sha('b'),
+            sha('a')
         );
         std::fs::write(&file, &content)?;
         let mut registry = provider::Registry::new();
