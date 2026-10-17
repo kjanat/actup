@@ -867,6 +867,27 @@ mod tests {
     }
 
     #[test]
+    fn test_a_sha_retarget_refreshes_a_build_metadata_version_comment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let target = version::Info::new(version::Version::parse("v4.2.0"), sha40('b'));
+        let line = format!(
+            "      - uses: actions/checkout@{} # v4.0.0+build keep",
+            sha40('a')
+        );
+        let edit =
+            retarget_edit(&sha_loc(&line)?, true, &target, Style::Preserve).ok_or("no edit")?;
+        assert_eq!(edit.inline_comment.as_deref(), Some(" # v4.2.0 keep"));
+        assert_eq!(
+            apply_line(&line, edit).ok_or("edit did not apply")?,
+            format!(
+                "      - uses: actions/checkout@{} # v4.2.0 keep",
+                sha40('b')
+            )
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_retarget_edit_skips_value_not_written_verbatim() {
         let line = "      - uses: \"actions/checkout@v4.0.\\x30\"".to_string();
         let loc = UsesLocation::new(1, 16, "actions/checkout@v4.0.0".to_string(), line);

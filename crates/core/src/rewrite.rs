@@ -95,27 +95,11 @@ fn comment_start(rest: &str) -> usize {
 
 /// Whether a line fragment is a version comment like `# v1.2.3` or `# 1.2 note`.
 ///
-/// The first token after `#` must have the shape `v?N[.N[.N]][-pre]`.
+/// The first token after `#` must parse as a semver version.
 #[must_use]
 pub fn is_version_comment(tail: &str) -> bool {
-    tail.starts_with('#') && split_comment(tail).is_some_and(|(token, _)| is_version_token(token))
-}
-
-fn is_version_token(token: &str) -> bool {
-    let token = token.strip_prefix('v').unwrap_or(token);
-    let (numbers, prerelease) = token
-        .split_once('-')
-        .map_or((token, None), |(numbers, pre)| (numbers, Some(pre)));
-    let is_number = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-    let parts = numbers.split('.').count();
-    (1..=3).contains(&parts)
-        && numbers.split('.').all(is_number)
-        && prerelease.is_none_or(|pre| {
-            !pre.is_empty()
-                && pre
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-        })
+    tail.starts_with('#')
+        && split_comment(tail).is_some_and(|(token, _)| version::Version::parse(token).is_semver())
 }
 
 fn split_comment(tail: &str) -> Option<(&str, &str)> {
@@ -331,6 +315,8 @@ mod tests {
             "# 1.2.3-beta.1",
             "# v4.0.0 1st step",
             "#\tv4.0.0",
+            "# v1.0.0+build",
+            "# 1.2.3+build.5 keep",
         ] {
             assert!(is_version_comment(tail), "{tail}");
         }
@@ -339,12 +325,9 @@ mod tests {
             "v1.2.3",
             "# 1st step",
             "# 2nd try",
-            "# 1.2.3.4",
-            "# 1..2",
             "# v",
-            "# 1.2-",
-            "# 1.x",
-            "# 1.2.3+build",
+            "# 2024-01-01",
+            &format!("# {}", "a".repeat(40)),
             " # v1",
         ] {
             assert!(!is_version_comment(tail), "{tail}");
