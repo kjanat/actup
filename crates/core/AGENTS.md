@@ -47,17 +47,17 @@ configs.
 
 ## Where to Look
 
-| Task                    | Start Here                           |
-| ----------------------- | ------------------------------------ |
-| Parse `uses:` string    | `action_ref.rs` → `ActionRef::parse` |
-| Add new ref format      | `parser.rs` → regex + `UsesLocation` |
-| Implement new provider  | `provider.rs` → `Provider` trait     |
-| Change resolution logic | `resolution.rs` → `check_action`     |
-| Add policy type         | `policy.rs` → `Update` enum          |
-| Modify config schema    | `config/mod.rs` + root `schemas/`    |
-| Add provider preset     | `config/registration.rs`             |
-| Change host resolution  | `config/resolution.rs`               |
-| Add config validation   | `config/validation.rs`               |
+| Task                    | Start Here                                                 |
+| ----------------------- | ---------------------------------------------------------- |
+| Parse `uses:` string    | `parser.rs` → `parse_uses`                                 |
+| Add new ref format      | `parser.rs` → `parse_uses` + `action_ref.rs` → `ActionRef` |
+| Implement new provider  | `provider.rs` → `Provider` trait                           |
+| Change resolution logic | `resolution.rs` → `check_action`                           |
+| Add policy type         | `policy.rs` → `Update` enum                                |
+| Modify config schema    | `config/mod.rs` + root `schemas/`                          |
+| Add provider preset     | `config/registration.rs`                                   |
+| Change host resolution  | `config/resolution.rs`                                     |
+| Add config validation   | `config/validation.rs`                                     |
 
 ## Anti-Patterns (This Crate)
 
@@ -74,6 +74,5 @@ configs.
 - `Error::Network`/`RateLimit`/`Auth` = environment error (actionable)
 - A foreign error goes in the variant's `source`; show errors with
   `error::chain`, which appends every cause
-- All public types re-exported in `lib.rs`
 - Tests use `#[allow(clippy::unwrap_used)]` in `#[cfg(test)]` blocks
 - `#![forbid(unsafe_code)]`
