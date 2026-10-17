@@ -957,21 +957,25 @@ mod tests {
     }
 
     #[test]
-    fn outdated_edit_extends_to_the_line_end_only_when_asked() {
+    fn outdated_edit_extends_to_the_line_end_over_trailing_space() {
         let rewrite = |to_line_end| Rewrite {
             new_ref: "v8.2.0".into(),
             comment: Some(" # x".into()),
             to_line_end,
         };
-        let end = LineEnd {
-            closer: " ",
+        let end = |closer| LineEnd {
+            closer,
             line_end_col: 70,
         };
-        let edit = OutdatedEdit::new(rewrite(true), end);
-        assert_eq!(edit.target_ref, "v8.2.0");
+        for to_line_end in [true, false] {
+            let edit = OutdatedEdit::new(rewrite(to_line_end), end("  "));
+            assert_eq!(edit.target_ref, "v8.2.0");
+            assert_eq!(edit.repin_comment.as_deref(), Some(" # x"));
+            assert_eq!(edit.replace_end_col, Some(70));
+        }
+        let edit = OutdatedEdit::new(rewrite(false), end(""));
         assert_eq!(edit.repin_comment.as_deref(), Some(" # x"));
-        assert_eq!(edit.replace_end_col, Some(70));
-        assert_eq!(OutdatedEdit::new(rewrite(false), end).replace_end_col, None);
+        assert_eq!(edit.replace_end_col, None);
     }
 
     #[test]

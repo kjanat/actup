@@ -152,9 +152,9 @@ version comment refreshed to the new version. A note after the version, as in
 An edit writes or rewrites a comment only for a result whose `takes_comment` is
 `true`. It adds a missing comment only when nothing but a closing quote, flow
 `}`, `]` and `,`, and spaces follows the value, and writes the comment after
-them, as in `{ uses: "o/b@<sha>" } # v4.2.0`. It refreshes a version comment at
-the end of the line, also after other flow keys, and leaves any other comment
-alone.
+them in place of trailing spaces, as in `{ uses: "o/b@<sha>" } # v4.2.0`. It
+refreshes a version comment at the end of the line, also after other flow keys,
+and leaves any other comment alone.
 
 ### `parseConfig(path, contents)`
 

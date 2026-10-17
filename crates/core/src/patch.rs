@@ -364,7 +364,8 @@ impl<L> FileEdits<L> {
     /// all apply. A
     /// comment is appended only when its line holds a single `uses:` value, no
     /// `#`, no other applied edit with a comment, and is in
-    /// [`SourceFormat::commentable_lines`].
+    /// [`SourceFormat::commentable_lines`]. The comment replaces the
+    /// trailing whitespace of its line.
     #[must_use]
     pub fn plan(self) -> EditPlan<L> {
         let spans = line_spans(&self.content);
@@ -385,27 +386,28 @@ impl<L> FileEdits<L> {
             starts_inside || shares_start
         });
         let mut splices: Vec<(Range<usize>, bool, &str)> = Vec::new();
-        let mut applied: Vec<usize> = Vec::new();
+        let mut applied: Vec<(usize, usize)> = Vec::new();
         for (i, range) in placed {
             if overlaps {
                 outcomes[i] = EditOutcome::Skipped(SkipReason::Overlap);
                 continue;
             }
             let EditKind::ReplaceRange { new, .. } = &self.edits[i].0.kind;
+            let range_end = range.end;
             splices.push((range, false, new));
             outcomes[i] = EditOutcome::Applied {
                 comment: self.edits[i].0.inline_comment.clone(),
             };
-            applied.push(i);
+            applied.push((i, range_end));
         }
 
         let mut commented_per_line: HashMap<usize, usize> = HashMap::new();
-        for &i in &applied {
+        for &(i, _) in &applied {
             if self.edits[i].0.comment.is_some() {
                 *commented_per_line.entry(self.edits[i].0.line).or_insert(0) += 1;
             }
         }
-        for &i in &applied {
+        for &(i, edit_end) in &applied {
             let edit = &self.edits[i].0;
             let Some(comment) = &edit.comment else {
                 continue;
@@ -418,7 +420,8 @@ impl<L> FileEdits<L> {
             let uncommented = !self.content[span.clone()].contains('#');
             let commentable = self.commentable_lines.contains(&edit.line);
             if sole_uses && sole_comment && uncommented && commentable {
-                splices.push((span.end..span.end, true, comment));
+                let text_end = span.start + self.content[span.clone()].trim_end().len();
+                splices.push((text_end.max(edit_end)..span.end, true, comment));
                 outcomes[i] = EditOutcome::Applied {
                     comment: Some(comment.clone()),
                 };
@@ -432,7 +435,7 @@ impl<L> FileEdits<L> {
             .collect();
         let edited_lines: BTreeSet<usize> = applied
             .iter()
-            .filter_map(|&i| self.edits[i].0.line.checked_sub(1))
+            .filter_map(|&(i, _)| self.edits[i].0.line.checked_sub(1))
             .collect();
         let lines = edited_lines
             .into_iter()
@@ -692,6 +695,48 @@ mod tests {
                 applied(&line, unpin_edit(&loc, "v7.0.0"))?,
                 at("v7.0.0", unpinned),
                 "{line}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_a_new_comment_replaces_trailing_whitespace() -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        for (line, expected) in [
+            (
+                format!("      - uses: a/b@{old}   \n"),
+                format!("      - uses: a/b@{new} # v7.0.1\n"),
+            ),
+            (
+                format!("      - uses: \"a/b@{old}\" \t\n"),
+                format!("      - uses: \"a/b@{new}\" # v7.0.1\n"),
+            ),
+            (
+                format!("      - {{ uses: 'a/b@{old}' }}  \r\n"),
+                format!("      - {{ uses: 'a/b@{new}' }} # v7.0.1\r\n"),
+            ),
+            (
+                format!("      - uses: a/b@{old} # v7.0.0  \n"),
+                format!("      - uses: a/b@{new} # v7.0.1\n"),
+            ),
+            (
+                format!("      - uses: a/b@{old} # mine  \n"),
+                format!("      - uses: a/b@{new} # mine  \n"),
+            ),
+        ] {
+            let loc = quoted_loc(&line)?;
+            assert_eq!(
+                applied(&line, repin_sha_edit(&loc, &target))?,
+                expected,
+                "{line:?}"
+            );
+            assert_eq!(
+                applied(&line, pin_edit(&loc, &new, "v7.0.1"))?,
+                expected,
+                "{line:?}"
             );
         }
         Ok(())

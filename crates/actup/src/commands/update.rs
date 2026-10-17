@@ -541,6 +541,10 @@ mod tests {
             "  - { uses: o/y@OLD, with: { b: 'it''s # v9' } }",
             "  - { uses: o/z@OLD, with: { b: 'it''s # x' } } # v4.0.0",
             "  - { uses: o/q@OLD, with: { b: !!str 'x # v9' } }",
+            "  - uses: o/r@OLD   ",
+            "  - uses: \"o/p@OLD\" \t",
+            "  - { uses: o/o@OLD }  ",
+            "  - uses: o/n@OLD # v4.0.0  ",
             "",
         ]
         .join("\n")
@@ -557,6 +561,10 @@ mod tests {
             "  - { uses: o/y@NEW, with: { b: 'it''s # v9' } }",
             "  - { uses: o/z@NEW, with: { b: 'it''s # x' } } # v4.2.0",
             "  - { uses: o/q@NEW, with: { b: !!str 'x # v9' } }",
+            "  - uses: o/r@NEW # v4.2.0",
+            "  - uses: \"o/p@NEW\" # v4.2.0",
+            "  - { uses: o/o@NEW } # v4.2.0",
+            "  - uses: o/n@NEW # v4.2.0",
             "",
         ]
         .join("\n")
@@ -579,6 +587,7 @@ mod tests {
             "  - { uses: 'o/g@main', with: { b: 'x # v9' } }",
             "  - { uses: o/h@main, with: { b: !!str 'x # v9' } }",
             "  - uses: o/i@main # keep me",
+            "  - uses: o/j@main   ",
             "",
         ]
         .join("\n");
@@ -595,6 +604,7 @@ mod tests {
             "  - { uses: 'o/g@PIN', with: { b: 'x # v9' } }",
             "  - { uses: o/h@PIN, with: { b: !!str 'x # v9' } }",
             "  - uses: o/i@PIN # keep me",
+            "  - uses: o/j@PIN # main",
             "",
         ]
         .join("\n")

@@ -309,18 +309,19 @@ impl Rewrite {
 
     /// The text written from the start of the ref after which `closer` follows, and whether it runs to the line end.
     ///
-    /// A comment or a replacement to the line end writes `closer` again
-    /// between the ref and the comment.
+    /// A comment after a non-empty `closer`, or a replacement to the line
+    /// end, runs to the line end and writes `closer` again without its
+    /// trailing whitespace between the ref and the comment.
     #[must_use]
     pub fn splice(&self, closer: &str) -> (String, bool) {
-        let closer = closer.trim_end();
-        if closer.is_empty() || (self.comment.is_none() && !self.to_line_end) {
-            return (self.text(), self.to_line_end);
+        if (self.comment.is_none() || closer.is_empty()) && !self.to_line_end {
+            return (self.text(), false);
         }
         (
             format!(
-                "{}{closer}{}",
+                "{}{}{}",
                 self.new_ref,
+                closer.trim_end(),
                 self.comment.as_deref().unwrap_or("")
             ),
             true,
@@ -721,7 +722,10 @@ mod tests {
             (rewrite("S", Some(" # v2"), false), "\"", "S\" # v2", true),
             (rewrite("S", Some(" # v2"), true), "' } ", "S' } # v2", true),
             (rewrite("v2", None, true), "\" ", "v2\"", true),
-            (rewrite("S", Some(" # v2"), false), " ", "S # v2", false),
+            (rewrite("S", Some(" # v2"), false), " ", "S # v2", true),
+            (rewrite("S", Some(" # v2"), false), "", "S # v2", false),
+            (rewrite("S", None, false), "  ", "S", false),
+            (rewrite("S", None, true), "\"\t ", "S\"", true),
             (rewrite("S", Some(" # v2"), true), "", "S # v2", true),
             (
                 rewrite("S", Some(" # v2"), true),
