@@ -28,28 +28,6 @@ struct RegistryFetchPlan {
     fallback_repos: Vec<ActionRepoId>,
 }
 
-fn collect_fetched(
-    results: Vec<(ActionRepoId, actup_core::Result<version::Set>)>,
-) -> HashMap<ActionRepoId, version::Set> {
-    let mut map = HashMap::new();
-    for (repo, result) in results {
-        match result {
-            Ok(versions) => {
-                map.insert(repo, versions);
-            }
-            Err(e) => {
-                warn!(
-                    owner = %repo.owner(),
-                    repo = %repo.repo(),
-                    error = %e,
-                    "failed to fetch versions"
-                );
-            }
-        }
-    }
-    map
-}
-
 fn provider_not_found_error(
     repo: &ActionRepoId,
     registry: &provider::Registry,
@@ -130,14 +108,7 @@ async fn fetch_github_host_groups<C: Cache>(
             Ok(provider_config) => {
                 match crate::create_batch_fetcher(&provider_config, Arc::clone(&cache)) {
                     Ok(fetcher) => {
-                        let batch_results = fetcher.fetch_versions(&host_repos).await;
-                        for repo in host_repos {
-                            if let Some(versions) = batch_results.get(&repo) {
-                                results.insert(repo, Ok(versions.clone()));
-                            } else {
-                                fallback_repos.push(repo);
-                            }
-                        }
+                        results.extend(fetcher.fetch_versions(&host_repos).await);
                     }
                     Err(e) => {
                         debug!(host = %host, error = %e, "failed to build GitHub batch fetcher, falling back to provider fetches");
@@ -195,8 +166,10 @@ async fn fetch_fallback_repos<C: Cache>(
 /// Fetch versions for repo ids using GitHub batching when available.
 ///
 /// GitHub repos are grouped by host, resolved through config, and fetched via
-/// [`BatchFetcher`]. Repos that cannot be batched fall back to their
-/// registered provider with shared cache reads/writes.
+/// [`BatchFetcher`], which returns each repo's version set or its error.
+/// Repos on a host whose batch fetcher cannot be built, and repos of other
+/// providers, fall back to their registered provider with shared cache
+/// reads and writes.
 pub async fn fetch_versions_with_registry<C: Cache>(
     repos: &[ActionRepoId],
     config: &Config,
@@ -269,21 +242,22 @@ impl<C: Cache> BatchFetcher<C> {
     ///
     /// Strategy:
     /// 1. Check cache for each repo
-    /// 2. Batch fetch missing repos (GraphQL if available, else parallel REST)
-    /// 3. Store results in cache
+    /// 2. List refs over the git protocol
+    /// 3. For repos whose git listing hit an environment error, query the API
+    ///    (GraphQL if available, else parallel REST; REST also covers repos
+    ///    that GraphQL leaves out)
+    /// 4. Store successful results in cache
     ///
-    /// Returns map of repo -> version set (errors logged but don't fail batch)
+    /// Returns every input repo's version set or its fetch error.
     pub async fn fetch_versions(
         &self,
         repos: &[ActionRepoId],
-    ) -> HashMap<ActionRepoId, version::Set> {
+    ) -> HashMap<ActionRepoId, actup_core::Result<version::Set>> {
         let mut results = HashMap::new();
         let mut uncached = Vec::new();
 
-        // Deduplicate input repos to avoid repeated cache reads and duplicate fetches
         let unique_repos: HashSet<_> = repos.iter().cloned().collect();
 
-        // 1. Check cache for each unique repo
         for repo in &unique_repos {
             let cache_key = repo.cache_key("github", self.provider.host());
 
@@ -294,7 +268,7 @@ impl<C: Cache> BatchFetcher<C> {
                         repo = %repo.repo(),
                         "cache hit"
                     );
-                    results.insert(repo.clone(), entry.versions().clone());
+                    results.insert(repo.clone(), Ok(entry.versions().clone()));
                 }
                 Err(cache::Error::NotFound | cache::Error::Disabled) => {
                     uncached.push(repo.clone());
@@ -318,39 +292,60 @@ impl<C: Cache> BatchFetcher<C> {
 
         debug!(count = uncached.len(), "fetching uncached repos");
 
-        // 2. Batch fetch missing repos
-        let mut fetched = self.fetch_parallel_git(&uncached).await;
-
-        let unlisted: Vec<_> = uncached
-            .iter()
-            .filter(|repo| !fetched.contains_key(*repo))
-            .cloned()
-            .collect();
-
-        if !unlisted.is_empty() {
-            let recovered = if let Some(graphql) = &self.graphql {
-                self.fetch_graphql(graphql, &unlisted).await
-            } else {
-                self.fetch_parallel_rest(&unlisted).await
-            };
-            fetched.extend(recovered);
+        let mut fetched = HashMap::new();
+        let mut unlisted = Vec::new();
+        for (repo, result) in self.fetch_parallel_git(&uncached).await {
+            match result {
+                Err(e) if e.is_environment_error() => {
+                    debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "git protocol unavailable, using the API");
+                    unlisted.push(repo);
+                }
+                result => {
+                    fetched.insert(repo, result);
+                }
+            }
         }
 
-        // 3. Store results in cache and collect
-        for (repo, versions) in fetched {
-            let cache_key = repo.cache_key("github", self.provider.host());
-            let entry = cache::Entry::new(versions.clone());
+        if !unlisted.is_empty() {
+            let mut via_api: HashMap<_, _> = match &self.graphql {
+                Some(graphql) => self
+                    .fetch_graphql(graphql, &unlisted)
+                    .await
+                    .into_iter()
+                    .map(|(repo, versions)| (repo, Ok(versions)))
+                    .collect(),
+                None => HashMap::new(),
+            };
+            let missing: Vec<_> = unlisted
+                .into_iter()
+                .filter(|repo| !via_api.contains_key(repo))
+                .collect();
+            via_api.extend(self.fetch_parallel_rest(&missing).await);
+            fetched.extend(via_api);
+        }
 
-            if let Err(e) = self.cache.set(&cache_key, entry).await {
-                warn!(
-                    owner = %repo.owner(),
-                    repo = %repo.repo(),
-                    error = %e,
-                    "failed to cache versions"
-                );
+        for (repo, result) in fetched {
+            match &result {
+                Ok(versions) => {
+                    let cache_key = repo.cache_key("github", self.provider.host());
+                    if let Err(e) = self
+                        .cache
+                        .set(&cache_key, cache::Entry::new(versions.clone()))
+                        .await
+                    {
+                        warn!(
+                            owner = %repo.owner(),
+                            repo = %repo.repo(),
+                            error = %e,
+                            "failed to cache versions"
+                        );
+                    }
+                }
+                Err(e) => {
+                    debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "failed to fetch versions");
+                }
             }
-
-            results.insert(repo, versions);
+            results.insert(repo, result);
         }
 
         results
@@ -364,51 +359,47 @@ impl<C: Cache> BatchFetcher<C> {
     ) -> HashMap<ActionRepoId, version::Set> {
         debug!(count = repos.len(), "using GraphQL batch fetch");
 
-        match client.batch_get_versions(repos, self.max_tags).await {
-            Ok(results) => results,
-            Err(e) => {
-                warn!(error = %e, "GraphQL batch fetch failed, falling back to REST");
-                self.fetch_parallel_rest(repos).await
-            }
-        }
+        client
+            .batch_get_versions(repos, self.max_tags)
+            .await
+            .unwrap_or_else(|e| {
+                debug!(error = %e, "GraphQL batch fetch failed, using REST");
+                HashMap::new()
+            })
     }
 
     /// Fetch using parallel git ls-refs with bounded concurrency
     async fn fetch_parallel_git(
         &self,
         repos: &[ActionRepoId],
-    ) -> HashMap<ActionRepoId, version::Set> {
+    ) -> Vec<(ActionRepoId, actup_core::Result<version::Set>)> {
         debug!(count = repos.len(), "using parallel git ls-refs fetch");
 
-        let results: Vec<_> = futures::stream::iter(repos.iter().cloned())
+        futures::stream::iter(repos.iter().cloned())
             .map(|repo| async move {
                 let result = self.provider.versions_via_git(&repo).await;
                 (repo, result)
             })
             .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
             .collect()
-            .await;
-
-        collect_fetched(results)
+            .await
     }
 
     /// Fetch using parallel REST requests with bounded concurrency
     async fn fetch_parallel_rest(
         &self,
         repos: &[ActionRepoId],
-    ) -> HashMap<ActionRepoId, version::Set> {
+    ) -> HashMap<ActionRepoId, actup_core::Result<version::Set>> {
         debug!(count = repos.len(), "using parallel REST fetch");
 
-        let results: Vec<_> = futures::stream::iter(repos.iter().cloned())
+        futures::stream::iter(repos.iter().cloned())
             .map(|repo| async move {
                 let result = self.provider.versions_via_rest(&repo).await;
                 (repo, result)
             })
             .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)
             .collect()
-            .await;
-
-        collect_fetched(results)
+            .await
     }
 
     /// Get access to the underlying provider for single-repo operations
@@ -452,7 +443,4 @@ mod tests {
         // No token = no GraphQL
         assert!(!fetcher.has_graphql());
     }
-
-    // Integration tests for actual fetching would require mocking
-    // TODO: implement GitHub API mocking and add integration tests
 }

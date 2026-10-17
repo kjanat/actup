@@ -274,3 +274,123 @@ async fn resolve_unknown_short_sha_is_ref_not_found() -> Result<(), Box<dyn std:
     assert_eq!(ref_name, "abc1234");
     Ok(())
 }
+
+#[tokio::test]
+async fn batch_fetch_reports_a_failed_repo_after_one_attempt()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use actup_core::{
+        Config, Retention, cache,
+        config::{ApiMode, HostConfig, HostKind},
+        provider::Registry,
+    };
+
+    let server = MockServer::start().await;
+    // RFC 2606 reserves `.invalid`, so no server answers the git listing.
+    let host = "ghe.invalid".to_string();
+    Mock::given(method("GET"))
+        .and(path("/repos/o/gone/tags"))
+        .respond_with(ResponseTemplate::new(404).set_body_string(r#"{"message": "Not Found"}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/limited/tags"))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-remaining", "0")
+                .set_body_string(r#"{"message": "API rate limit exceeded"}"#),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut config = Config {
+        default_host: Some(host.clone()),
+        ..Config::default()
+    };
+    config.hosts.insert(
+        host.clone(),
+        HostConfig {
+            kind: Some(HostKind::GitHub),
+            api_base: Some(server.uri()),
+            token_env: Some("ACTUP_TEST_TOKEN_THAT_IS_NEVER_SET".to_string()),
+            api_mode: Some(ApiMode::Rest),
+            max_tags_per_repo: None,
+        },
+    );
+    let registry = Registry::from_config(
+        &config,
+        &[&actup_provider_github::REGISTRATION],
+        &Retention::Run,
+    )?;
+    let gone = ActionRepoId::new(Some(host.clone()), "o", "gone", None);
+    let limited = ActionRepoId::new(Some(host.clone()), "o", "limited", None);
+
+    let results = actup_provider_github::fetch_versions_with_registry(
+        &[gone.clone(), limited.clone()],
+        &config,
+        &registry,
+        Arc::new(cache::Noop),
+    )
+    .await;
+
+    assert!(
+        matches!(
+            results.get(&gone),
+            Some(Err(actup_core::Error::NotFound { .. }))
+        ),
+        "{:?}",
+        results.get(&gone)
+    );
+    assert!(
+        matches!(
+            results.get(&limited),
+            Some(Err(actup_core::Error::RateLimited { .. }))
+        ),
+        "{:?}",
+        results.get(&limited)
+    );
+    let requests = server.received_requests().await.unwrap_or_default();
+    let paths: Vec<&str> = requests.iter().map(|request| request.url.path()).collect();
+    assert_eq!(paths.len(), 2, "{paths:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn batch_fetch_asks_rest_about_repos_graphql_leaves_out()
+-> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use actup_core::cache;
+    use actup_provider_github::BatchFetcher;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(r#"{"data": {"repo0": null}}"#))
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_not_found(&server, "/repos/o/gone/tags").await;
+    let provider = GitHubProvider::with_host(&server.uri(), "ghe.invalid", Some("token"))?;
+    let fetcher = BatchFetcher::with_graphql(provider, Arc::new(cache::Noop), Some("token"), 10);
+    let gone = ActionRepoId::new(Some("ghe.invalid".to_string()), "o", "gone", None);
+
+    let results = fetcher.fetch_versions(std::slice::from_ref(&gone)).await;
+
+    assert!(fetcher.has_graphql());
+    assert!(
+        matches!(
+            results.get(&gone),
+            Some(Err(actup_core::Error::NotFound { .. }))
+        ),
+        "{:?}",
+        results.get(&gone)
+    );
+    let requests = server.received_requests().await.unwrap_or_default();
+    let paths: Vec<&str> = requests.iter().map(|request| request.url.path()).collect();
+    assert_eq!(paths, ["/api/graphql", "/repos/o/gone/tags"]);
+    Ok(())
+}
