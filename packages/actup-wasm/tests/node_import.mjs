@@ -216,4 +216,13 @@ await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { pin: "sh
 
 console.log("PASS: unknown config keys are rejected");
 
+// Test 9: configs without a JSON form are rejected.
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, () => {}), /invalid config: expected an object/);
+await assert.rejects(
+	checkRefs(outdatedYaml, majorProvider, Symbol("config")),
+	/invalid config: expected an object/,
+);
+
+console.log("PASS: function and Symbol configs are rejected");
+
 console.log("\nAll npm package integration tests PASSED");

@@ -136,19 +136,27 @@ for (const edit of edits) {
 	}
 }
 
-// Test with custom config (major policy — allows cross-major updates)
-const majorConfig = JSON.stringify({ policy: { bump: "major" } });
-const majorResults = await checkRefs(yaml, mockProvider, majorConfig);
-
-console.log("PASS: checkRefs with major policy returned", majorResults.length, "results");
-for (const r of majorResults) {
-	console.log(
-		"  ",
-		JSON.stringify(r.action_ref),
-		"->",
-		JSON.stringify(r.status),
+const pinnedYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: actions/setup-node@v3.0.0
+`;
+const [defaultSetupNode] = await checkRefs(pinnedYaml, mockProvider);
+const defaultTarget = defaultSetupNode?.status?.Outdated?.target?.version;
+if (defaultTarget !== "v4.0.0") {
+	throw new Error(
+		`Expected default policy to target setup-node v4.0.0, got ${JSON.stringify(defaultSetupNode?.status)}`,
 	);
 }
+const [minorSetupNode] = await checkRefs(pinnedYaml, mockProvider, { policy: { bump: "minor" } });
+const minorTarget = minorSetupNode?.status?.Outdated?.target?.version;
+if (minorTarget !== "v3.1.0") {
+	throw new Error(
+		`Expected policy.bump = minor to target setup-node v3.1.0, got ${JSON.stringify(minorSetupNode?.status)}`,
+	);
+}
+console.log("PASS: policy.bump = minor targets setup-node v3.1.0");
 
 // Test empty YAML
 const emptyResults = await checkRefs("", mockProvider);
