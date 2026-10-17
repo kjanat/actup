@@ -8,6 +8,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    BoxFuture,
     action_ref::ActionRef,
     config::{Config, Policy},
     error::Error,
@@ -355,44 +356,39 @@ enum Found {
 ///
 /// Asks the provider whether the ref exists when `versions` does not list it
 /// and the answer changes the status.
-#[cfg_attr(
-    target_arch = "wasm32",
-    allow(
-        clippy::future_not_send,
-        reason = "wasm32 providers intentionally use non-Send boxed futures"
-    )
-)]
-pub async fn check_action_with_provider(
-    action_ref: &ActionRef,
-    versions: &version::Set,
-    config: &Config,
-    provider: &dyn provider::Provider,
-) -> CheckResult {
-    let (status, lookup) = classify(action_ref, versions, config);
-    let Some(lookup) = lookup else {
-        return CheckResult::described(action_ref, status, versions, config, None);
-    };
+pub fn check_action_with_provider<'a>(
+    action_ref: &'a ActionRef,
+    versions: &'a version::Set,
+    config: &'a Config,
+    provider: &'a dyn provider::Provider,
+) -> BoxFuture<'a, CheckResult> {
+    Box::pin(async move {
+        let (status, lookup) = classify(action_ref, versions, config);
+        let Some(lookup) = lookup else {
+            return CheckResult::described(action_ref, status, versions, config, None);
+        };
 
-    let repo_id = action_ref.to_repo_id().without_subpath();
-    let resolved = provider
-        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-        .await;
-    let status = match &resolved {
-        Ok(sha) => match (lookup.commit, lookup.found) {
-            (Some(commit), _) if action_ref.abbreviates(sha.as_str()) => commit,
-            (_, Found::Status(status)) => status,
-            (_, Found::Floating(branch_policy)) => {
-                status_for_non_semver(action_ref.ref_str(), branch_policy, sha.as_str())
-            }
-        },
-        Err(e) if e.is_environment_error() => CheckStatus::Unresolvable {
-            reason: crate::error::chain(e),
-            is_environment_error: true,
-        },
-        Err(_) => lookup.missing,
-    };
-    let resolved = resolved.as_ref().ok().map(provider::Sha40::as_str);
-    CheckResult::described(action_ref, status, versions, config, resolved)
+        let repo_id = action_ref.to_repo_id().without_subpath();
+        let resolved = provider
+            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
+            .await;
+        let status = match &resolved {
+            Ok(sha) => match (lookup.commit, lookup.found) {
+                (Some(commit), _) if action_ref.abbreviates(sha.as_str()) => commit,
+                (_, Found::Status(status)) => status,
+                (_, Found::Floating(branch_policy)) => {
+                    status_for_non_semver(action_ref.ref_str(), branch_policy, sha.as_str())
+                }
+            },
+            Err(e) if e.is_environment_error() => CheckStatus::Unresolvable {
+                reason: crate::error::chain(e),
+                is_environment_error: true,
+            },
+            Err(_) => lookup.missing,
+        };
+        let resolved = resolved.as_ref().ok().map(provider::Sha40::as_str);
+        CheckResult::described(action_ref, status, versions, config, resolved)
+    })
 }
 
 /// Check action against already-fetched versions.
@@ -666,76 +662,71 @@ fn find_best_target(
 ///
 /// # Errors
 /// Returns error if provider not found or version fetch fails.
-#[cfg_attr(
-    target_arch = "wasm32",
-    allow(
-        clippy::future_not_send,
-        reason = "wasm32 providers intentionally use non-Send boxed futures"
-    )
-)]
-pub async fn check_action_fetched(
-    action_ref: &ActionRef,
-    config: &Config,
-    registry: &provider::Registry,
-) -> Result<(CheckResult, Option<version::Set>), Error> {
-    // Performance optimization: check ignore list early to skip [`provider::Registry::find`]
-    // and [`provider.get_versions()`] network calls. Note: [`check_action()`] repeats this guard
-    // for correctness when called directly with pre-fetched versions.
-    if config.should_ignore(action_ref) {
-        return Ok((
-            CheckResult::new(action_ref.clone(), CheckStatus::Ignored),
-            None,
-        ));
-    }
-
-    let provider = registry
-        .find(action_ref.host())
-        .ok_or_else(|| Error::ProviderNotFound {
-            host: action_ref
-                .host()
-                .map_or_else(|| "(default)".into(), String::from),
-        })?;
-
-    let repo_id = action_ref.to_repo_id().without_subpath();
-    let versions = provider.get_versions(&repo_id).await?;
-    let result = check_action_with_provider(action_ref, &versions, config, provider).await;
-
-    // Fallback: if batch fetch returned no versions but the ref actually exists,
-    // treat as up-to-date. This handles edge cases like:
-    // - Repos with only lightweight tags that aren't returned by the versions API
-    // - Refs that exist but aren't semver-tagged (branches, commits)
-    //
-    // Trade-off: We can't determine if there's a newer version without fetching
-    // all tags, so we optimistically assume up-to-date.
-    if matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
-    {
-        match provider
-            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-            .await
-        {
-            Ok(_) => {
-                return Ok((
-                    CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
-                    Some(versions),
-                ));
-            }
-            Err(e) if e.is_environment_error() => {
-                return Ok((
-                    CheckResult::new(
-                        action_ref.clone(),
-                        CheckStatus::Unresolvable {
-                            reason: crate::error::chain(&e),
-                            is_environment_error: true,
-                        },
-                    ),
-                    Some(versions),
-                ));
-            }
-            Err(_) => {}
+pub fn check_action_fetched<'a>(
+    action_ref: &'a ActionRef,
+    config: &'a Config,
+    registry: &'a provider::Registry,
+) -> BoxFuture<'a, Result<(CheckResult, Option<version::Set>), Error>> {
+    Box::pin(async move {
+        // Performance optimization: check ignore list early to skip [`provider::Registry::find`]
+        // and [`provider.get_versions()`] network calls. Note: [`check_action()`] repeats this guard
+        // for correctness when called directly with pre-fetched versions.
+        if config.should_ignore(action_ref) {
+            return Ok((
+                CheckResult::new(action_ref.clone(), CheckStatus::Ignored),
+                None,
+            ));
         }
-    }
 
-    Ok((result, Some(versions)))
+        let provider = registry
+            .find(action_ref.host())
+            .ok_or_else(|| Error::ProviderNotFound {
+                host: action_ref
+                    .host()
+                    .map_or_else(|| "(default)".into(), String::from),
+            })?;
+
+        let repo_id = action_ref.to_repo_id().without_subpath();
+        let versions = provider.get_versions(&repo_id).await?;
+        let result = check_action_with_provider(action_ref, &versions, config, provider).await;
+
+        // Fallback: if batch fetch returned no versions but the ref actually exists,
+        // treat as up-to-date. This handles edge cases like:
+        // - Repos with only lightweight tags that aren't returned by the versions API
+        // - Refs that exist but aren't semver-tagged (branches, commits)
+        //
+        // Trade-off: We can't determine if there's a newer version without fetching
+        // all tags, so we optimistically assume up-to-date.
+        if matches!(result.status(), CheckStatus::Unresolvable { reason, .. } if reason == NO_VERSIONS_FOUND_REASON)
+        {
+            match provider
+                .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
+                .await
+            {
+                Ok(_) => {
+                    return Ok((
+                        CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
+                        Some(versions),
+                    ));
+                }
+                Err(e) if e.is_environment_error() => {
+                    return Ok((
+                        CheckResult::new(
+                            action_ref.clone(),
+                            CheckStatus::Unresolvable {
+                                reason: crate::error::chain(&e),
+                                is_environment_error: true,
+                            },
+                        ),
+                        Some(versions),
+                    ));
+                }
+                Err(_) => {}
+            }
+        }
+
+        Ok((result, Some(versions)))
+    })
 }
 
 #[cfg(test)]
