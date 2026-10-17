@@ -7,7 +7,7 @@ use actup_core::{
     ActionRef, CheckStatus, Config, FileCache, UsesLocation, check_action_with_provider,
     patch::{FileEdits, PendingEdit, SkipReason, pin_edit, repin_sha_edit, rewrite_edit},
     provider,
-    rewrite::{PinMarker, Rewrite, after_value},
+    rewrite::{Labels, PinMarker, Rewrite, after_value},
     sanitize_line, version,
 };
 use owo_colors::OwoColorize;
@@ -111,7 +111,8 @@ async fn pin_action_edit(
         let CheckStatus::Outdated { target, .. } = result.status() else {
             return PinStep::Nothing;
         };
-        let Some(edit) = repin_sha_edit(loc, target) else {
+        let labels = Labels::fetched(action_ref.ref_str(), versions);
+        let Some(edit) = repin_sha_edit(loc, target, &labels) else {
             return PinStep::Unplaceable;
         };
         let short = &target.sha()[..7.min(target.sha().len())];
@@ -127,6 +128,7 @@ async fn pin_action_edit(
         else {
             return PinStep::Unplaceable;
         };
+        let labels = Labels::fetched(action_ref.ref_str(), versions);
         let pin = match resolve_sha(provider, action_ref, versions).await {
             Ok(pin) => pin,
             Err(e) => return PinStep::Failed(e.into()),
@@ -136,7 +138,7 @@ async fn pin_action_edit(
                 sha,
                 tag: Some(tag),
             } => {
-                let Some(edit) = repin_sha_edit(loc, &tag) else {
+                let Some(edit) = repin_sha_edit(loc, &tag, &labels) else {
                     return PinStep::Unplaceable;
                 };
                 let target = format!("{prefix}@{sha} # {}", tag.version());
@@ -148,7 +150,7 @@ async fn pin_action_edit(
                 (edit, sha, new_uses, false)
             }
             PinTarget::Named { sha } => {
-                let Some(edit) = pin_edit(loc, &sha, action_ref.ref_str()) else {
+                let Some(edit) = pin_edit(loc, &sha, action_ref.ref_str(), &labels) else {
                     return PinStep::Unplaceable;
                 };
                 (edit, sha.clone(), format!("{prefix}@{sha}"), true)
@@ -741,6 +743,9 @@ mod tests {
             "  - uses: o/b@v1 # v0.9.0",
             "  - { name: \"Build #1\", uses: o/b@main }",
             "  - { name: \"Build #1\", uses: o/b@v1 }",
+            "  - uses: o/b@main # main keep",
+            "  - uses: o/b@v1 # v1 keep",
+            "  - uses: o/b@main # lint keep",
             "",
         ]
         .join("\n");
@@ -756,6 +761,9 @@ mod tests {
             "  - uses: o/b@CCC # v1",
             "  - { name: \"Build #1\", uses: o/b@CCC } # main",
             "  - { name: \"Build #1\", uses: o/b@CCC } # v1",
+            "  - uses: o/b@CCC # main keep",
+            "  - uses: o/b@CCC # v1 keep",
+            "  - uses: o/b@CCC # lint keep",
             "",
         ]
         .join("\n")

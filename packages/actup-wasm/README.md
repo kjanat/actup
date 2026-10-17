@@ -107,16 +107,17 @@ Check `uses:` references against a provider. Async.
 Parses the YAML, resolves each non-local ref through the provider, and returns
 `LocatedCheckResult[]`. Each entry has the `location` (`UsesLocation`) of the
 value it checked, the parsed `action_ref`, a status (`"UpToDate"`,
-`{ Outdated: ... }`, or `{ Unresolvable: ... }`), and `takes_comment`, which is
-`true` when the line can hold a comment and holds no other `uses:` value.
-`ref_kind` says whether the ref names a `"tag"`, `"branch"` or `"sha"` (or
-`null` when the version list lacks it). `same_commit` holds the target
-(`{ version, sha }`) when the suggested update sits on the commit the ref
-already names, and `null` otherwise. `same_commit_pins` is `true` when that
-target names more version components than the ref, such as `v1.0.5` for `v1`. A
-value that is not a valid reference reaches no provider: its result is
-`Unresolvable` with `is_environment_error: false`, and its `action_ref` holds
-the parts as written.
+`{ Outdated: ... }`, or `{ Unresolvable: ... }`), `takes_comment`, which is
+`true` when the line can hold a comment and holds no other `uses:` value, and
+`label_listed`, which is `true` when the fetched tags and branches list the
+first word of the comment after the ref. `ref_kind` says whether the ref names a
+`"tag"`, `"branch"` or `"sha"` (or `null` when the version list lacks it).
+`same_commit` holds the target (`{ version, sha }`) when the suggested update
+sits on the commit the ref already names, and `null` otherwise.
+`same_commit_pins` is `true` when that target names more version components than
+the ref, such as `v1.0.5` for `v1`. A value that is not a valid reference
+reaches no provider: its result is `Unresolvable` with
+`is_environment_error: false`, and its `action_ref` holds the parts as written.
 
 Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `[policy]` table of `actup.toml` with the same defaults: `bump` is `"patch"` |
@@ -145,16 +146,17 @@ tag to its commit as `@<sha> # <ref>`. Each entry has `line`, `refStart`,
 (the default) keeps a tag a tag and re-pins a SHA to the new SHA with a
 `# vX.Y.Z` comment. `sha` writes every target as a SHA with that comment.
 **`tag` unpins:** it writes outdated SHA pins as mutable tags and drops the
-version from their version comment. A tag ref written as a new tag gets its
-version comment refreshed to the new version. A note after the version, as in
+label from their comment. A tag ref written as a new tag gets the new version as
+the label of its comment. A note after the label, as in
 `# v4.0.0 pinned for node16`, stays in every case.
 
 An edit writes or rewrites a comment only for a result whose `takes_comment` is
 `true`. It adds a missing comment only when nothing but a closing quote, flow
 `}`, `]` and `,`, and spaces follows the value, and writes the comment after
 them in place of trailing spaces, as in `{ uses: "o/b@<sha>" } # v4.2.0`. It
-refreshes a version comment at the end of the line, also after other flow keys,
-and leaves any other comment alone.
+rewrites a label comment at the end of the line, also after other flow keys, and
+keeps its note. A label is a version, the result's own ref, or a ref that
+`label_listed` marks. It leaves any other comment alone.
 
 ### `parseConfig(path, contents)`
 

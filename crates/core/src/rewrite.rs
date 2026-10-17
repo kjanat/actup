@@ -7,9 +7,9 @@ use crate::{policy::Style, version};
 pub enum Trailing<'a> {
     /// Nothing but a closing quote, flow `}`, `]` and `,`, and spaces.
     None,
-    /// A version comment like `# v8.1.0 pinned for node16` at the end of the line.
-    Version {
-        /// The text after the version, trimmed, like `pinned for node16`.
+    /// A comment whose first word [`Labels::names`] accepts, like `# v8.1.0 keep` or `# main`.
+    Label {
+        /// The text after the first word, trimmed, like `keep`.
         note: &'a str,
     },
     /// Another comment, or other text such as more flow keys and no comment.
@@ -19,20 +19,21 @@ pub enum Trailing<'a> {
 impl<'a> Trailing<'a> {
     /// Classify the text of `raw_line` after the ref that ends at byte offset `ref_end`.
     #[must_use]
-    pub fn after(raw_line: &'a str, ref_end: usize) -> Self {
-        Self::of(closer(raw_line, ref_end), after_value(raw_line, ref_end))
+    pub fn after(raw_line: &'a str, ref_end: usize, labels: &Labels<'_>) -> Self {
+        Self::of(
+            closer(raw_line, ref_end),
+            after_value(raw_line, ref_end),
+            labels,
+        )
     }
 
     /// Classify a ref followed by `closer` and then `comment`, as [`closer`] and [`after_value`] split them.
     #[must_use]
-    pub fn of(closer: &'a str, comment: &'a str) -> Self {
+    pub fn of(closer: &str, comment: &'a str, labels: &Labels<'_>) -> Self {
         if !comment.is_empty() {
-            return if is_version_comment(comment) {
-                Self::Version {
-                    note: split_comment(comment).map_or("", |(_, note)| note),
-                }
-            } else {
-                Self::Foreign
+            return match split_comment(comment) {
+                Some((label, note)) if labels.names(label) => Self::Label { note },
+                _ => Self::Foreign,
             };
         }
         let bare = closer
@@ -40,6 +41,67 @@ impl<'a> Trailing<'a> {
             .chars()
             .all(|c| c.is_whitespace() || matches!(c, '}' | ']' | ','));
         if bare { Self::None } else { Self::Foreign }
+    }
+}
+
+/// The refs that the first word of a comment after a ref may name.
+///
+/// A writer rewrites a comment whose first word is a version token like
+/// `v4.2.0`, the ref it replaces, or a tag or branch that its fetched
+/// version set lists. It keeps any other comment.
+#[derive(Debug, Clone, Copy)]
+pub struct Labels<'a> {
+    current: &'a str,
+    fetched: Fetched<'a>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Fetched<'a> {
+    Nothing,
+    Set(&'a version::Set),
+    Checked(bool),
+}
+
+impl<'a> Labels<'a> {
+    /// The labels for the ref `current` with no fetched refs.
+    #[must_use]
+    pub const fn unfetched(current: &'a str) -> Self {
+        Self {
+            current,
+            fetched: Fetched::Nothing,
+        }
+    }
+
+    /// The labels for the ref `current` and the tags and branches `versions` lists.
+    #[must_use]
+    pub const fn fetched(current: &'a str, versions: &'a version::Set) -> Self {
+        Self {
+            current,
+            fetched: Fetched::Set(versions),
+        }
+    }
+
+    /// The labels for the ref `current` and, when `listed` holds, the [`comment_label`] after it.
+    ///
+    /// `listed` records whether a version set listed that label when the ref was checked.
+    #[must_use]
+    pub const fn checked(current: &'a str, listed: bool) -> Self {
+        Self {
+            current,
+            fetched: Fetched::Checked(listed),
+        }
+    }
+
+    /// Whether a comment whose first word is `label` names the ref a writer replaces.
+    #[must_use]
+    pub fn names(&self, label: &str) -> bool {
+        is_version_token(label)
+            || label == self.current
+            || match self.fetched {
+                Fetched::Nothing => false,
+                Fetched::Set(versions) => versions.names_ref(label),
+                Fetched::Checked(listed) => listed,
+            }
     }
 }
 
@@ -130,14 +192,22 @@ const fn is_flow_indicator(c: char) -> bool {
 
 /// Whether a line fragment is a version comment like `# v1.2.3` or `# 1.2 note`.
 ///
-/// The first token after `#` must have the shape `v?N[.N[.N]][-pre][+build]`,
-/// with pre-release and build identifiers as `SemVer` 2.0.0 §9 and §10
-/// define them, and must not be an ISO date.
+/// The first word after `#` must be a version token as [`Labels::names`]
+/// reads it.
 #[must_use]
 pub fn is_version_comment(tail: &str) -> bool {
-    tail.starts_with('#') && split_comment(tail).is_some_and(|(token, _)| is_version_token(token))
+    tail.starts_with('#') && split_comment(tail).is_some_and(|(label, _)| is_version_token(label))
 }
 
+/// The first word of the comment `tail`, like `v4` in `# v4 keep`.
+#[must_use]
+pub fn comment_label(tail: &str) -> Option<&str> {
+    split_comment(tail)
+        .map(|(label, _)| label)
+        .filter(|label| !label.is_empty())
+}
+
+// Pre-release and build identifiers follow SemVer 2.0.0 §9 and §10.
 fn is_version_token(token: &str) -> bool {
     let token = token.strip_prefix('v').unwrap_or(token);
     if version::is_iso_date(token) {
@@ -235,13 +305,32 @@ pub struct Rewrite {
     pub to_line_end: bool,
 }
 
+/// Whether a ref written by name is a tag or a branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Named {
+    /// A tag, like `v4.2.0`.
+    Tag,
+    /// A branch, like `main`.
+    Branch,
+}
+
+impl Named {
+    /// A branch when `versions` lists a branch `name` and no tag of that name, else a tag.
+    #[must_use]
+    pub fn listed(name: &str, versions: &version::Set) -> Self {
+        let tagged = versions.has_exact_tag(name) || versions.other_tag_sha(name).is_some();
+        if !tagged && versions.branch_sha(name).is_some() {
+            Self::Branch
+        } else {
+            Self::Tag
+        }
+    }
+}
+
 impl Rewrite {
-    /// Write `target` for an outdated ref under `style`.
+    /// Write the tag `target` for an outdated ref under `style`.
     ///
-    /// A SHA gets a ` # <version>` comment unless foreign text follows the ref.
-    /// A tag rewritten to a tag refreshes a trailing version comment to the
-    /// new version. A SHA pin rewritten to a tag loses the version of its
-    /// trailing version comment. Both keep the note after the version.
+    /// A SHA is written by [`Rewrite::pin`] and the tag by [`Rewrite::named`].
     #[must_use]
     pub fn outdated(
         style: Style,
@@ -251,21 +340,31 @@ impl Rewrite {
     ) -> Self {
         let version = target.version().to_string();
         if style.writes_sha(current_is_sha) {
-            return Self::pin(target.sha(), &version, trailing);
+            Self::pin(target.sha(), &version, trailing)
+        } else {
+            Self::named(&version, Named::Tag, current_is_sha, trailing)
         }
+    }
+
+    /// Write the tag or branch `new_ref` over a ref followed by `trailing`.
+    ///
+    /// A label comment keeps its note. A tag written over a tag or branch
+    /// gets ` # <new_ref> <note>`. A branch, or a tag written over a SHA pin,
+    /// gets ` # <note>` or no comment.
+    #[must_use]
+    pub fn named(new_ref: &str, kind: Named, current_is_sha: bool, trailing: Trailing<'_>) -> Self {
         match trailing {
-            Trailing::Version { note } if current_is_sha => Self {
-                new_ref: version,
-                comment: note_comment(note),
-                to_line_end: true,
-            },
-            Trailing::Version { note } => Self {
-                comment: Some(labeled_comment(&version, note)),
-                new_ref: version,
+            Trailing::Label { note } => Self {
+                new_ref: new_ref.to_string(),
+                comment: if kind == Named::Tag && !current_is_sha {
+                    Some(labeled_comment(new_ref, note))
+                } else {
+                    note_comment(note)
+                },
                 to_line_end: true,
             },
             Trailing::None | Trailing::Foreign => Self {
-                new_ref: version,
+                new_ref: new_ref.to_string(),
                 comment: None,
                 to_line_end: false,
             },
@@ -274,14 +373,13 @@ impl Rewrite {
 
     /// Pin to `sha` with a ` # <label>` comment.
     ///
-    /// The version of a trailing version comment is replaced and its note
-    /// kept, a missing comment is added, and foreign text after the ref is
-    /// kept without a comment.
+    /// A label comment gets `label` and keeps its note, a missing comment is
+    /// added, and foreign text after the ref is kept without a comment.
     #[must_use]
     pub fn pin(sha: &str, label: &str, trailing: Trailing<'_>) -> Self {
         let (comment, to_line_end) = match trailing {
             Trailing::None => (Some(labeled_comment(label, "")), false),
-            Trailing::Version { note } => (Some(labeled_comment(label, note)), true),
+            Trailing::Label { note } => (Some(labeled_comment(label, note)), true),
             Trailing::Foreign => (None, false),
         };
         Self {
@@ -345,19 +443,21 @@ mod tests {
         }
     }
 
-    const VERSION: Trailing<'static> = Trailing::Version { note: "" };
+    const LABEL: Trailing<'static> = Trailing::Label { note: "" };
+
+    const V1: Labels<'static> = Labels::unfetched("v1");
 
     fn trailing(line: &str) -> Trailing<'_> {
         let ref_end = line.find("@v1").map_or(0, |at| at + 3);
-        Trailing::after(line, ref_end)
+        Trailing::after(line, ref_end, &V1)
     }
 
     #[test]
     fn trailing_classifies_the_text_after_the_ref() {
-        assert_eq!(trailing("  - uses: a/b@v1   # v1.2.0"), VERSION);
+        assert_eq!(trailing("  - uses: a/b@v1   # v1.2.0"), LABEL);
         assert_eq!(
             trailing("  - uses: a/b@v1 #v1.2.0   pinned for node16 "),
-            Trailing::Version {
+            Trailing::Label {
                 note: "pinned for node16"
             }
         );
@@ -369,7 +469,58 @@ mod tests {
             trailing("  - uses: a/b@v1 # 1. checkout code"),
             Trailing::Foreign
         );
-        assert_eq!(Trailing::after("  - uses: a/b@v1", 99), Trailing::None);
+        assert_eq!(trailing("  - uses: a/b@v1 # lint keep"), Trailing::Foreign);
+        assert_eq!(trailing("  - uses: a/b@v1 # TODO fix"), Trailing::Foreign);
+        assert_eq!(Trailing::after("  - uses: a/b@v1", 99, &V1), Trailing::None);
+    }
+
+    #[test]
+    fn labels_name_versions_the_current_ref_and_listed_refs() {
+        let mut versions = version::Set::new();
+        versions.set_branches(std::collections::HashMap::from([(
+            "main".to_string(),
+            "c".repeat(40),
+        )]));
+        versions.set_other_tags(std::collections::HashMap::from([(
+            "nightly".to_string(),
+            "d".repeat(40),
+        )]));
+        let unfetched = Labels::unfetched("dev");
+        let fetched = Labels::fetched("dev", &versions);
+        for (label, by_unfetched, by_fetched) in [
+            ("v4.2.0", true, true),
+            ("4", true, true),
+            ("dev", true, true),
+            ("main", false, true),
+            ("nightly", false, true),
+            ("lint", false, false),
+            ("TODO", false, false),
+            ("1st", false, false),
+        ] {
+            assert_eq!(unfetched.names(label), by_unfetched, "{label}");
+            assert_eq!(fetched.names(label), by_fetched, "{label}");
+        }
+        assert!(Labels::checked("dev", true).names("main"));
+        assert!(!Labels::checked("dev", false).names("main"));
+        assert!(Labels::checked("dev", false).names("dev"));
+        let line = "  - uses: a/b@dev # main keep";
+        let ref_end = line.find(" #").unwrap_or(0);
+        assert_eq!(
+            Trailing::after(line, ref_end, &fetched),
+            Trailing::Label { note: "keep" }
+        );
+        assert_eq!(
+            Trailing::after(line, ref_end, &unfetched),
+            Trailing::Foreign
+        );
+    }
+
+    #[test]
+    fn comment_label_is_the_first_word() {
+        assert_eq!(comment_label("# main keep"), Some("main"));
+        assert_eq!(comment_label("#\tv4"), Some("v4"));
+        assert_eq!(comment_label("#"), None);
+        assert_eq!(comment_label("main"), None);
     }
 
     #[test]
@@ -419,6 +570,71 @@ mod tests {
     }
 
     #[test]
+    fn named_labels_tags_and_keeps_notes() {
+        let noted = Trailing::Label { note: "keep" };
+        for (kind, is_sha, trailing, expected) in [
+            (
+                Named::Tag,
+                false,
+                noted,
+                rewrite("v4", Some(" # v4 keep"), true),
+            ),
+            (Named::Tag, false, LABEL, rewrite("v4", Some(" # v4"), true)),
+            (
+                Named::Tag,
+                true,
+                noted,
+                rewrite("v4", Some(" # keep"), true),
+            ),
+            (Named::Tag, true, LABEL, rewrite("v4", None, true)),
+            (
+                Named::Branch,
+                false,
+                noted,
+                rewrite("v4", Some(" # keep"), true),
+            ),
+            (Named::Branch, true, LABEL, rewrite("v4", None, true)),
+            (
+                Named::Tag,
+                false,
+                Trailing::None,
+                rewrite("v4", None, false),
+            ),
+            (
+                Named::Branch,
+                true,
+                Trailing::Foreign,
+                rewrite("v4", None, false),
+            ),
+        ] {
+            assert_eq!(
+                Rewrite::named("v4", kind, is_sha, trailing),
+                expected,
+                "{kind:?} {is_sha} {trailing:?}"
+            );
+        }
+        let sha = "b".repeat(40);
+        assert_eq!(
+            Rewrite::pin(&sha, "main", noted),
+            rewrite(&sha, Some(" # main keep"), true)
+        );
+        let mut versions = version::Set::new();
+        versions.set_branches(std::collections::HashMap::from([
+            ("main".to_string(), "c".repeat(40)),
+            ("nightly".to_string(), "c".repeat(40)),
+        ]));
+        versions.set_other_tags(std::collections::HashMap::from([(
+            "nightly".to_string(),
+            "d".repeat(40),
+        )]));
+        assert_eq!(Named::listed("main", &versions), Named::Branch);
+        assert_eq!(Named::listed("nightly", &versions), Named::Tag);
+        assert_eq!(Named::listed("v9", &versions), Named::Tag);
+        assert_eq!(labeled_comment("v1", ""), " # v1");
+        assert_eq!(note_comment(""), None);
+    }
+
+    #[test]
     fn outdated_follows_the_pin_style() {
         let target = info("v4.2.0", 'b');
         let sha = "b".repeat(40);
@@ -438,7 +654,7 @@ mod tests {
             (
                 Style::Preserve,
                 true,
-                VERSION,
+                LABEL,
                 rewrite(&sha, Some(" # v4.2.0"), true),
             ),
             (
@@ -462,20 +678,26 @@ mod tests {
             (
                 Style::Tag,
                 false,
-                VERSION,
+                LABEL,
                 rewrite("v4.2.0", Some(" # v4.2.0"), true),
             ),
             (
                 Style::Preserve,
                 false,
-                VERSION,
-                rewrite("v4.2.0", Some(" # v4.2.0"), true),
+                Trailing::Label { note: "keep" },
+                rewrite("v4.2.0", Some(" # v4.2.0 keep"), true),
             ),
             (
                 Style::Preserve,
-                false,
-                Trailing::Foreign,
-                rewrite("v4.2.0", None, false),
+                true,
+                Trailing::Label { note: "keep" },
+                rewrite(&sha, Some(" # v4.2.0 keep"), true),
+            ),
+            (
+                Style::Tag,
+                true,
+                Trailing::Label { note: "keep" },
+                rewrite("v4.2.0", Some(" # keep"), true),
             ),
             (
                 Style::Tag,
@@ -483,7 +705,7 @@ mod tests {
                 Trailing::None,
                 rewrite("v4.2.0", None, false),
             ),
-            (Style::Tag, true, VERSION, rewrite("v4.2.0", None, true)),
+            (Style::Tag, true, LABEL, rewrite("v4.2.0", None, true)),
             (
                 Style::Tag,
                 true,
@@ -504,7 +726,7 @@ mod tests {
     fn rewriting_a_version_comment_keeps_its_note() {
         let target = info("v4.2.0", 'b');
         let sha = "b".repeat(40);
-        let noted = Trailing::Version {
+        let noted = Trailing::Label {
             note: "pinned for node16",
         };
         for (style, is_sha, expected) in [
@@ -625,11 +847,11 @@ mod tests {
     #[test]
     fn trailing_skips_the_closer() {
         for (line, closing, trailing) in [
-            ("  - uses: \"a/b@v1\" # v1.2.0", "\" ", VERSION),
+            ("  - uses: \"a/b@v1\" # v1.2.0", "\" ", LABEL),
             ("  - uses: 'a/b@v1' # mine", "' ", Trailing::Foreign),
             ("  - uses: \"a/b@v1\"", "\"", Trailing::None),
             ("  - { uses: 'a/b@v1' }", "' }", Trailing::None),
-            ("  - { uses: a/b@v1 } # v1.2.0", " } ", VERSION),
+            ("  - { uses: a/b@v1 } # v1.2.0", " } ", LABEL),
             ("  - [{ uses: a/b@v1 }]  ", " }]  ", Trailing::None),
             (
                 "  - { uses: a/b@v1, with: { x: 1 } }",
@@ -639,24 +861,24 @@ mod tests {
             (
                 "  - { uses: a/b@v1, with: { x: 1 } } # v1.0.0 keep",
                 ", with: { x: 1 } } ",
-                Trailing::Version { note: "keep" },
+                Trailing::Label { note: "keep" },
             ),
             (
                 "  - { uses: \"a/b@v1\", with: { x: \"a #b\\\" #c\", y: 'd #e' } } # mine",
                 "\", with: { x: \"a #b\\\" #c\", y: 'd #e' } } ",
                 Trailing::Foreign,
             ),
-            ("  - uses: a/b@v1 # v1.2.0", " ", VERSION),
+            ("  - uses: a/b@v1 # v1.2.0", " ", LABEL),
             (
                 "  - uses: 'a/b@v1' # v1.2.0 keep me",
                 "' ",
-                Trailing::Version { note: "keep me" },
+                Trailing::Label { note: "keep me" },
             ),
             ("  - uses: a/b@v1#x", "#x", Trailing::Foreign),
             (
                 "  - { uses: a/b@v1, with: { msg: it's } } # v1.0.0",
                 ", with: { msg: it's } } ",
-                VERSION,
+                LABEL,
             ),
             (
                 "  - { uses: a/b@v1, with: { a: it's, b: 'x # v9' } }",
@@ -671,7 +893,7 @@ mod tests {
             (
                 "  - { uses: a/b@v1, with: { b: 'it''s # x' } } # v1.0.0",
                 ", with: { b: 'it''s # x' } } ",
-                VERSION,
+                LABEL,
             ),
             (
                 "  - { uses: a/b@v1, with: { b: !!str 'x # v9' } }",
@@ -696,12 +918,12 @@ mod tests {
             (
                 "  - { uses: a/b@v1, with: { b: &a !!str \"x # v9\" } } # v1.0.0",
                 ", with: { b: &a !!str \"x # v9\" } } ",
-                VERSION,
+                LABEL,
             ),
             (
                 "  - { uses: a/b@v1, with: { b: x!'y } } # v1.0.0",
                 ", with: { b: x!'y } } ",
-                VERSION,
+                LABEL,
             ),
         ] {
             let ref_end = line.find("@v1").map_or(0, |at| at + 3);
@@ -711,7 +933,7 @@ mod tests {
                 &line[ref_end + closing.len()..],
                 "{line}"
             );
-            assert_eq!(Trailing::after(line, ref_end), trailing, "{line}");
+            assert_eq!(Trailing::after(line, ref_end, &V1), trailing, "{line}");
         }
     }
 

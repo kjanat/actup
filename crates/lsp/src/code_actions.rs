@@ -20,7 +20,7 @@ use tower_lsp_server::ls_types::{
 
 use actup_core::{
     SourceFormat,
-    rewrite::{Rewrite, Trailing, note_comment},
+    rewrite::{Named, Rewrite, Trailing},
 };
 
 use crate::{
@@ -308,15 +308,18 @@ pub struct PinTargets {
     pub branch: Option<String>,
     /// Unpin to the tag a SHA pin's `# <tag>` marker names, when that tag is on the pinned commit.
     pub unpin: Option<Rewrite>,
+    /// Whether the ref under the cursor is a SHA pin.
+    pub current_is_sha: bool,
 }
 
 /// Build "Pin to …" and unpin refactor actions for the ref under the cursor.
 ///
 /// `ref_range` is the ref portion's range; `trailing` and `end` describe the
-/// text after it, so the SHA pin refreshes a `# vX.Y.Z` note, the floating
-/// pins (major/branch) drop a now-stale one, and a quoted value keeps its
-/// closing quote before the comment. The unpin action replaces the marker
-/// comment with its note. None of these is a `source.fixAll` action.
+/// text after it. The SHA pin and the major tag write their own label over a
+/// label comment as [`Rewrite::pin`] and [`Rewrite::named`] do, the branch
+/// keeps only the note, and a quoted value keeps its closing quote before the
+/// comment. The unpin action replaces the marker comment with its note. None
+/// of these is a `source.fixAll` action.
 pub fn pin_code_actions(
     uri: &Uri,
     version: Option<i32>,
@@ -326,19 +329,8 @@ pub fn pin_code_actions(
     end: LineEnd<'_>,
     targets: &PinTargets,
 ) -> Vec<CodeActionOrCommand> {
-    // Switching to a floating ref drops the version of a now-inaccurate version comment.
-    let floating = |new_ref: &str| match trailing {
-        Trailing::Version { note } => Rewrite {
-            new_ref: new_ref.to_string(),
-            comment: note_comment(note),
-            to_line_end: true,
-        },
-        Trailing::None | Trailing::Foreign => Rewrite {
-            new_ref: new_ref.to_string(),
-            comment: None,
-            to_line_end: false,
-        },
-    };
+    let floating =
+        |new_ref: &str, kind| Rewrite::named(new_ref, kind, targets.current_is_sha, trailing);
     let placed = |rewrite: Rewrite| {
         let e = OutdatedEdit::new(rewrite, end);
         outdated_text_edit(
@@ -365,7 +357,7 @@ pub fn pin_code_actions(
             version,
             supports_document_changes,
             format!("Pin to major tag {major}"),
-            placed(floating(major)),
+            placed(floating(major, Named::Tag)),
         ));
     }
     if let Some(branch) = &targets.branch {
@@ -374,7 +366,7 @@ pub fn pin_code_actions(
             version,
             supports_document_changes,
             format!("Pin to branch {branch}"),
-            placed(floating(branch)),
+            placed(floating(branch, Named::Branch)),
         ));
     }
     if let Some(unpin) = &targets.unpin {
@@ -767,6 +759,7 @@ mod tests {
             major: Some("v7".to_string()),
             branch: Some("main".to_string()),
             unpin: None,
+            current_is_sha: false,
         };
         let actions = pin_code_actions(
             &uri,
@@ -803,31 +796,52 @@ mod tests {
     }
 
     #[test]
-    fn pin_to_major_strips_stale_version_comment() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
-        let targets = PinTargets {
-            sha: None,
-            major: Some("v7".to_string()),
-            branch: None,
-            unpin: None,
-        };
-        // trailing Version + end col 86 => the edit overwrites the old comment.
-        let actions = pin_code_actions(
-            &uri,
-            TEST_VERSION,
-            true,
-            make_range(0, 31, 71),
-            Trailing::Version { note: "" },
-            unquoted(86),
-            &targets,
-        );
-        assert_eq!(actions.len(), 1);
-        let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
-            panic!("expected CodeAction");
-        };
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
-        assert_eq!(edits[0].new_text, "v7");
-        assert_eq!(edits[0].range.end.character, 86);
+    fn pin_to_major_and_branch_rewrite_the_label() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        for (current_is_sha, trailing, major, branch) in [
+            (true, Trailing::Label { note: "" }, "v7", "main"),
+            (
+                true,
+                Trailing::Label { note: "keep" },
+                "v7 # keep",
+                "main # keep",
+            ),
+            (
+                false,
+                Trailing::Label { note: "keep" },
+                "v7 # v7 keep",
+                "main # keep",
+            ),
+            (false, Trailing::Label { note: "" }, "v7 # v7", "main"),
+        ] {
+            let targets = PinTargets {
+                sha: None,
+                major: Some("v7".to_string()),
+                branch: Some("main".to_string()),
+                unpin: None,
+                current_is_sha,
+            };
+            let actions = pin_code_actions(
+                &uri,
+                None,
+                false,
+                make_range(0, 31, 71),
+                trailing,
+                unquoted(86),
+                &targets,
+            );
+            let texts: Vec<(String, u32)> = actions
+                .iter()
+                .flat_map(|action| edits_of(action, &uri))
+                .map(|edit| (edit.new_text, edit.range.end.character))
+                .collect();
+            assert_eq!(
+                texts,
+                [(major.to_string(), 86), (branch.to_string(), 86)],
+                "{current_is_sha} {trailing:?}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -840,13 +854,14 @@ mod tests {
             major: Some("v7".to_string()),
             branch: Some("main".to_string()),
             unpin: None,
+            current_is_sha: true,
         };
         let actions = pin_code_actions(
             &uri,
             TEST_VERSION,
             true,
             make_range(0, 31, 71),
-            Trailing::Version {
+            Trailing::Label {
                 note: "pinned for node16",
             },
             unquoted(104),
@@ -898,6 +913,7 @@ mod tests {
                 tag: "v4",
                 note: "keep",
             })),
+            current_is_sha: true,
         };
         let actions = pin_code_actions(
             &uri,
@@ -932,6 +948,7 @@ mod tests {
             major: None,
             branch: None,
             unpin: None,
+            current_is_sha: false,
         };
         let actions = pin_code_actions(
             &uri,
@@ -1402,6 +1419,7 @@ mod tests {
             major: Some("v1".to_string()),
             branch: Some("main\n  - [".to_string()),
             unpin: None,
+            current_is_sha: false,
         };
         let pins = pin_code_actions(
             &uri,
@@ -1790,7 +1808,7 @@ mod tests {
     {
         let old = "a".repeat(40);
         let text = format!(
-            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n  - {{ uses: o/k@{old}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{old}, with: {{ x: 1 }} }} # v1.0.0\n  - {{ uses: o/m@{old}, with: {{ msg: it's }} }} # v1.0.0\n  - {{ uses: o/n@{old}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{old}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{old}, with: {{ b: 'it''s # x' }} }} # v1.0.0\n  - {{ uses: o/r@{old}, with: {{ b: !!str 'x # v9' }} }}\n  - {{ uses: o/w@main, with: {{ b: &a 'x # v9' }} }}\n  - {{ uses: o/x@{old}, with: {{ ? 'x # v9' : y }} }}\n  - {{ uses: o/y@{old}, with: {{ b: &a !!str \"x # v9\" }} }} # v1.0.0\n  - uses: o/z@{old}   \n  - uses: \"o/v@main\" \t\n  - {{ uses: o/a@{old} }}  \n  - uses: o/c@{old} # v1.0.0  \n  - {{ name: \"Build #1\", uses: o/d@{old} }}\n  - {{ name: \"Build #1\", uses: o/e@main }}\n  - {{ name: \"Build #1\", uses: o/j@v1.0.0 }}\n"
+            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n  - {{ uses: o/k@{old}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{old}, with: {{ x: 1 }} }} # v1.0.0\n  - {{ uses: o/m@{old}, with: {{ msg: it's }} }} # v1.0.0\n  - {{ uses: o/n@{old}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{old}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{old}, with: {{ b: 'it''s # x' }} }} # v1.0.0\n  - {{ uses: o/r@{old}, with: {{ b: !!str 'x # v9' }} }}\n  - {{ uses: o/w@main, with: {{ b: &a 'x # v9' }} }}\n  - {{ uses: o/x@{old}, with: {{ ? 'x # v9' : y }} }}\n  - {{ uses: o/y@{old}, with: {{ b: &a !!str \"x # v9\" }} }} # v1.0.0\n  - uses: o/z@{old}   \n  - uses: \"o/v@main\" \t\n  - {{ uses: o/a@{old} }}  \n  - uses: o/c@{old} # v1.0.0  \n  - {{ name: \"Build #1\", uses: o/d@{old} }}\n  - {{ name: \"Build #1\", uses: o/e@main }}\n  - {{ name: \"Build #1\", uses: o/j@v1.0.0 }}\n  - uses: o/b@v1.0.0 # v1.0.0 keep\n  - uses: o/b@{old} # main keep\n  - uses: o/b@main # main keep\n  - uses: o/b@{old} # lint keep\n  - uses: o/b@v1.0.0 # TODO fix\n"
         );
         let new = test_utils::make_version_info("v1.2.0", &"b".repeat(40));
         let mut versions = actup_core::version::Set::build(
@@ -1838,7 +1856,7 @@ mod tests {
         assert_eq!(
             fixed,
             format!(
-                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n  - {{ uses: o/k@{b}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{b}, with: {{ x: 1 }} }} # v1.2.0\n  - {{ uses: o/m@{b}, with: {{ msg: it's }} }} # v1.2.0\n  - {{ uses: o/n@{b}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{b}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{b}, with: {{ b: 'it''s # x' }} }} # v1.2.0\n  - {{ uses: o/r@{b}, with: {{ b: !!str 'x # v9' }} }}\n  - {{ uses: o/w@{c}, with: {{ b: &a 'x # v9' }} }}\n  - {{ uses: o/x@{b}, with: {{ ? 'x # v9' : y }} }}\n  - {{ uses: o/y@{b}, with: {{ b: &a !!str \"x # v9\" }} }} # v1.2.0\n  - uses: o/z@{b} # v1.2.0\n  - uses: \"o/v@{c}\" # main\n  - {{ uses: o/a@{b} }} # v1.2.0\n  - uses: o/c@{b} # v1.2.0\n  - {{ name: \"Build #1\", uses: o/d@{b} }} # v1.2.0\n  - {{ name: \"Build #1\", uses: o/e@{c} }} # main\n  - {{ name: \"Build #1\", uses: o/j@v1.2.0 }}\n",
+                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n  - {{ uses: o/k@{b}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{b}, with: {{ x: 1 }} }} # v1.2.0\n  - {{ uses: o/m@{b}, with: {{ msg: it's }} }} # v1.2.0\n  - {{ uses: o/n@{b}, with: {{ a: it's, b: 'x # v9' }} }}\n  - {{ uses: o/p@{b}, with: {{ b: 'it''s # v9' }} }}\n  - {{ uses: o/q@{b}, with: {{ b: 'it''s # x' }} }} # v1.2.0\n  - {{ uses: o/r@{b}, with: {{ b: !!str 'x # v9' }} }}\n  - {{ uses: o/w@{c}, with: {{ b: &a 'x # v9' }} }}\n  - {{ uses: o/x@{b}, with: {{ ? 'x # v9' : y }} }}\n  - {{ uses: o/y@{b}, with: {{ b: &a !!str \"x # v9\" }} }} # v1.2.0\n  - uses: o/z@{b} # v1.2.0\n  - uses: \"o/v@{c}\" # main\n  - {{ uses: o/a@{b} }} # v1.2.0\n  - uses: o/c@{b} # v1.2.0\n  - {{ name: \"Build #1\", uses: o/d@{b} }} # v1.2.0\n  - {{ name: \"Build #1\", uses: o/e@{c} }} # main\n  - {{ name: \"Build #1\", uses: o/j@v1.2.0 }}\n  - uses: o/b@v1.2.0 # v1.2.0 keep\n  - uses: o/b@{b} # v1.2.0 keep\n  - uses: o/b@{c} # main keep\n  - uses: o/b@{b} # lint keep\n  - uses: o/b@v1.2.0 # TODO fix\n",
                 b = "b".repeat(40),
                 c = "c".repeat(40),
                 d = "d".repeat(40),
@@ -1855,6 +1873,7 @@ mod tests {
             major: Some("v7".to_string()),
             branch: None,
             unpin: None,
+            current_is_sha: false,
         };
         let end = LineEnd {
             closer: "\" ",
@@ -1865,7 +1884,7 @@ mod tests {
             None,
             false,
             make_range(0, 31, 37),
-            Trailing::Version { note: "" },
+            Trailing::Label { note: "keep" },
             end,
             &targets,
         );
@@ -1878,11 +1897,11 @@ mod tests {
             [
                 TextEdit {
                     range: make_range(0, 31, 47),
-                    new_text: format!("{}\" # v7.2.3", "c".repeat(40)),
+                    new_text: format!("{}\" # v7.2.3 keep", "c".repeat(40)),
                 },
                 TextEdit {
                     range: make_range(0, 31, 47),
-                    new_text: "v7\"".to_string(),
+                    new_text: "v7\" # v7 keep".to_string(),
                 },
             ]
         );

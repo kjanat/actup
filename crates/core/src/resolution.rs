@@ -681,11 +681,37 @@ pub async fn check_action_remote(
     config: &Config,
     registry: &provider::Registry,
 ) -> Result<CheckResult, Error> {
+    check_action_fetched(action_ref, config, registry)
+        .await
+        .map(|(result, _)| result)
+}
+
+/// Fetch versions and check like [`check_action_remote`], returning the fetched versions too.
+///
+/// The versions are `None` for an ignored action.
+///
+/// # Errors
+/// Returns error if provider not found or version fetch fails.
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::future_not_send,
+        reason = "wasm32 providers intentionally use non-Send boxed futures"
+    )
+)]
+pub async fn check_action_fetched(
+    action_ref: &ActionRef,
+    config: &Config,
+    registry: &provider::Registry,
+) -> Result<(CheckResult, Option<version::Set>), Error> {
     // Performance optimization: check ignore list early to skip [`provider::Registry::find`]
     // and [`provider.get_versions()`] network calls. Note: [`check_action()`] repeats this guard
     // for correctness when called directly with pre-fetched versions.
     if config.should_ignore(action_ref) {
-        return Ok(CheckResult::new(action_ref.clone(), CheckStatus::Ignored));
+        return Ok((
+            CheckResult::new(action_ref.clone(), CheckStatus::Ignored),
+            None,
+        ));
     }
 
     let provider = registry
@@ -714,22 +740,28 @@ pub async fn check_action_remote(
             .await
         {
             Ok(_) => {
-                return Ok(CheckResult::new(action_ref.clone(), CheckStatus::UpToDate));
+                return Ok((
+                    CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
+                    Some(versions),
+                ));
             }
             Err(e) if e.is_environment_error() => {
-                return Ok(CheckResult::new(
-                    action_ref.clone(),
-                    CheckStatus::Unresolvable {
-                        reason: crate::error::chain(&e),
-                        is_environment_error: true,
-                    },
+                return Ok((
+                    CheckResult::new(
+                        action_ref.clone(),
+                        CheckStatus::Unresolvable {
+                            reason: crate::error::chain(&e),
+                            is_environment_error: true,
+                        },
+                    ),
+                    Some(versions),
                 ));
             }
             Err(_) => {}
         }
     }
 
-    Ok(result)
+    Ok((result, Some(versions)))
 }
 
 #[cfg(test)]
@@ -2308,6 +2340,30 @@ mod tests {
             result.status(),
             &unresolvable("network error during resolve: offline", true)
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_check_action_fetched_returns_the_fetched_versions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(ResolveMockProvider::with(Resolve::Found)));
+        let action = make_action_ref("actions", "checkout", "v1");
+        let (result, versions) =
+            check_action_fetched(&action, &Config::default(), &registry).await?;
+        assert_eq!(result.status(), &CheckStatus::UpToDate);
+        assert!(versions.is_some_and(|v| v.semver_tags().is_empty()));
+        let ignoring = Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[scan]\nignore = [\"actions/checkout\"]\n",
+            )),
+            crate::config::EnvOverrides::default(),
+        )?;
+        let (result, versions) = check_action_fetched(&action, &ignoring, &registry).await?;
+        assert_eq!(result.status(), &CheckStatus::Ignored);
+        assert!(versions.is_none());
         Ok(())
     }
 

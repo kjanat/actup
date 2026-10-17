@@ -805,4 +805,55 @@ assert.throws(() => parseRepoAndExplicitConfig({ path: "actup.toml" }), /invalid
 
 console.log("PASS: parseRepoAndExplicitConfig layers the named file over the repo file");
 
+// Test 23: a label comment after a ref names a version, the ref itself, or a fetched branch.
+const branchProvider = {
+	...mockProvider,
+	async getVersions(host, owner, repo) {
+		return { ...(await mockProvider.getVersions(host, owner, repo)), defaultBranch: { name: "main", sha: "c".repeat(40) } };
+	},
+};
+const labelYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4.0.0 # v4.0.0 keep
+      - uses: actions/checkout@${oldSha} # main keep
+      - uses: actions/checkout@${oldSha} # lint keep
+      - uses: actions/checkout@v4.0.0 # TODO fix
+      - uses: actions/checkout@${oldSha} # v4.0.0 keep
+`;
+const labelResults = await checkRefs(labelYaml, branchProvider);
+assert.deepEqual(
+	labelResults.map((r) => r.label_listed),
+	[true, true, false, false, true],
+	"checkRefs records whether the fetched refs list the comment label",
+);
+assert.equal(
+	applyEdits(labelYaml, planUpdates(labelResults)),
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.2.0 # v4.2.0 keep\n      - uses: actions/checkout@${newSha} # v4.2.0 keep\n      - uses: actions/checkout@${newSha} # lint keep\n      - uses: actions/checkout@v4.2.0 # TODO fix\n      - uses: actions/checkout@${newSha} # v4.2.0 keep\n`,
+	"labels are rewritten and other comments kept",
+);
+assert.equal(
+	applyEdits(labelYaml, planUpdates(await checkRefs(labelYaml, mockProvider))),
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.2.0 # v4.2.0 keep\n      - uses: actions/checkout@${newSha} # main keep\n      - uses: actions/checkout@${newSha} # lint keep\n      - uses: actions/checkout@v4.2.0 # TODO fix\n      - uses: actions/checkout@${newSha} # v4.2.0 keep\n`,
+	"an unlisted branch label is kept",
+);
+assert.equal(
+	applyEdits(labelYaml, planUpdates(labelResults, { policy: { pin: "tag" } })),
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.2.0 # v4.2.0 keep\n      - uses: actions/checkout@v4.2.0 # keep\n      - uses: actions/checkout@v4.2.0 # lint keep\n      - uses: actions/checkout@v4.2.0 # TODO fix\n      - uses: actions/checkout@v4.2.0 # keep\n`,
+	"a SHA pin unpinned to a tag keeps the note",
+);
+const labelBranchYaml = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@main # main keep\n";
+const labelBranchResults = (await checkRefs(labelBranchYaml, mockProvider)).map((r) => ({
+	...r,
+	status: { PinBranch: { ref_name: "main", sha: branchSha } },
+}));
+assert.equal(
+	applyEdits(labelBranchYaml, planUpdates(labelBranchResults)),
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@${branchSha} # main keep\n`,
+	"a branch pin keeps the note",
+);
+
+console.log("PASS: label comments follow the fetched refs");
+
 console.log("\nAll npm package integration tests PASSED");

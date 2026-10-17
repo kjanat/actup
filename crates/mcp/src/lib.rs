@@ -386,7 +386,7 @@ mod tests {
         );
     }
 
-    struct CountingProvider(Arc<AtomicUsize>);
+    struct CountingProvider(Arc<AtomicUsize>, AtomicUsize);
 
     impl Provider for CountingProvider {
         fn kind(&self) -> Kind {
@@ -410,9 +410,10 @@ mod tests {
             _repo: &ActionRepoId,
             ref_name: &str,
         ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
-            let calls = self.0.fetch_add(1, Ordering::SeqCst);
+            self.0.fetch_add(1, Ordering::SeqCst);
+            let resolves = self.1.fetch_add(1, Ordering::SeqCst);
             let result = ["b", "c"]
-                .get(calls)
+                .get(resolves)
                 .and_then(|c| Sha40::new(c.repeat(40)))
                 .ok_or_else(|| actup_core::Error::RefNotFound {
                     owner: String::new(),
@@ -466,7 +467,10 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
-        registry.register(Box::new(CountingProvider(Arc::clone(&calls))));
+        registry.register(Box::new(CountingProvider(
+            Arc::clone(&calls),
+            AtomicUsize::new(0),
+        )));
         let clock = Arc::new(StepClock(Mutex::new(SystemTime::UNIX_EPOCH)));
         let dyn_clock: Arc<dyn Clock> = clock.clone();
         let config = Config::default();
@@ -523,7 +527,10 @@ mod tests {
         for _ in 0..2 {
             let mut registry = Registry::new();
             registry.set_default_host("github.com");
-            registry.register(Box::new(CountingProvider(Arc::clone(&calls))));
+            registry.register(Box::new(CountingProvider(
+                Arc::clone(&calls),
+                AtomicUsize::new(0),
+            )));
             let config = Config::default();
             let file_cache = FileCache::with_path(cache_dir.path().to_path_buf(), config.cache.ttl);
             let server = Server::new(config, registry, Root::new(dir.path())?, file_cache);
@@ -559,7 +566,7 @@ mod tests {
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(CachingProvider::with_retention(
-            CountingProvider(Arc::new(AtomicUsize::new(0))),
+            CountingProvider(Arc::new(AtomicUsize::new(0)), AtomicUsize::new(0)),
             Retention::expiring(Config::default().cache.ttl),
         )));
         let server = Server::new(

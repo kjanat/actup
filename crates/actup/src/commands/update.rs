@@ -6,7 +6,9 @@ use std::{path::Path, sync::Arc};
 use actup_core::{
     ActionRef, CheckStatus, Config, FileCache, check_action_with_provider,
     patch::{FileEdits, SkipReason, pin_edit, retarget_edit},
-    policy, provider, sanitize_line, version,
+    policy, provider,
+    rewrite::{Labels, Named},
+    sanitize_line, version,
 };
 use owo_colors::OwoColorize;
 
@@ -104,15 +106,16 @@ async fn edit(
             // Use core check_action to determine if update needed
             let check = check_action_with_provider(action_ref, versions, config, provider).await;
             let style = config.policy_for(action_ref).pin;
+            let labels = Labels::fetched(action_ref.ref_str(), versions);
             let (edit, new_ref, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
-                    retarget_edit(loc, action_ref.is_sha(), target, style),
+                    retarget_edit(loc, action_ref.is_sha(), target, Named::Tag, style, &labels),
                     new_ref(action_ref, target, style),
                     target_display(action_ref, target, style),
                     false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
-                    pin_edit(loc, sha, ref_name),
+                    pin_edit(loc, sha, ref_name, &labels),
                     sha.clone(),
                     sha[..7.min(sha.len())].to_string(),
                     true,
@@ -214,12 +217,13 @@ mod tests {
                 version::Version::parse(self.latest),
                 sha40('b'),
             ));
-            let set = version::Set::build(
+            let mut set = version::Set::build(
                 vec![Arc::clone(&old), Arc::clone(&new)],
                 HashMap::from([(4, Arc::clone(&new))]),
                 HashMap::new(),
                 Some(new),
             );
+            set.set_branches(HashMap::from([("dev".to_string(), sha40('c'))]));
             let set = match actup_core::cache::Staleness::after(
                 &actup_core::Error::RateLimited {
                     provider: "github".to_string(),
@@ -644,6 +648,48 @@ mod tests {
             update_with_config_runs("[policy]\nbranch = \"update\"\n", &line("main", ""), 1)
                 .await?;
         assert_eq!(written, line(&old, " # main"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_rewrites_labels_after_named_refs() -> Result<(), Box<dyn std::error::Error>> {
+        let content = [
+            "steps:",
+            "  - uses: o/a@v4.0.0 # v4.0.0 keep",
+            "  - uses: o/b@v4.0.0 # lint keep",
+            "  - uses: o/c@OLD # dev keep",
+            "  - uses: o/d@OLD # TODO fix",
+            "  - { uses: \"o/e@v4.0.0\" } # v4.0.0 keep",
+            "",
+        ]
+        .join("\n")
+        .replace("OLD", &sha40('a'));
+        let expected = [
+            "steps:",
+            "  - uses: o/a@v4.2.0 # v4.2.0 keep",
+            "  - uses: o/b@v4.2.0 # lint keep",
+            "  - uses: o/c@NEW # v4.2.0 keep",
+            "  - uses: o/d@NEW # TODO fix",
+            "  - { uses: \"o/e@v4.2.0\" } # v4.2.0 keep",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW", &sha40('b'));
+        let written = update_with_config("[policy]\npin = \"preserve\"\n", &content).await?;
+        assert_eq!(written, expected);
+
+        let pinned = format!("steps:\n  - uses: o/f@{} # v4.0.0 keep\n", sha40('a'));
+        let written = update_with_config("[policy]\npin = \"tag\"\n", &pinned).await?;
+        assert_eq!(written, "steps:\n  - uses: o/f@v4.2.0 # keep\n");
+
+        let branches = "steps:\n  - uses: o/g@main # main keep\n  - uses: o/h@main # v1.0.0 keep\n  - uses: o/i@main # lint keep\n";
+        let written =
+            update_with_config_runs("[policy]\nbranch = \"update\"\n", branches, 1).await?;
+        assert_eq!(
+            written,
+            "steps:\n  - uses: o/g@PIN # main keep\n  - uses: o/h@PIN # main keep\n  - uses: o/i@PIN # lint keep\n"
+                .replace("PIN", &sha40('a'))
+        );
         Ok(())
     }
 
@@ -1178,7 +1224,8 @@ mod tests {
             (" # mine", " # mine"),
         ] {
             let line = format!("      - uses: a/b@main{tail}");
-            let edit = pin_edit(&sha_loc(&line)?, &sha, "main").ok_or("no edit")?;
+            let edit = pin_edit(&sha_loc(&line)?, &sha, "main", &Labels::unfetched("main"))
+                .ok_or("no edit")?;
             assert_eq!(
                 apply_at(&line, edit)?,
                 format!("      - uses: a/b@{sha}{written}"),
@@ -1199,7 +1246,7 @@ mod tests {
             let [loc] = found.as_slice() else {
                 return Err(format!("expected one `uses:` in {line:?}").into());
             };
-            let edit = pin_edit(loc, &sha, "main").ok_or("no edit")?;
+            let edit = pin_edit(loc, &sha, "main", &Labels::unfetched("main")).ok_or("no edit")?;
             assert_eq!(apply_at(line, edit)?, written, "{line}");
         }
         Ok(())
@@ -1212,9 +1259,21 @@ mod tests {
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
         let tag = make_action_ref("actions", "checkout", "v4");
         let pinned = make_action_ref("actions", "checkout", &sha40('b'));
-        assert!(retarget_edit(&loc, tag.is_sha(), &target, policy::Style::Preserve).is_none());
-        assert!(retarget_edit(&loc, pinned.is_sha(), &target, policy::Style::Preserve).is_none());
-        assert!(pin_edit(&loc, &sha40('c'), "v4").is_none());
+        for action in [&tag, &pinned] {
+            let labels = Labels::unfetched(action.ref_str());
+            assert!(
+                retarget_edit(
+                    &loc,
+                    action.is_sha(),
+                    &target,
+                    Named::Tag,
+                    policy::Style::Preserve,
+                    &labels,
+                )
+                .is_none()
+            );
+        }
+        assert!(pin_edit(&loc, &sha40('c'), "v4", &Labels::unfetched("v4")).is_none());
     }
 
     #[test]
@@ -1263,8 +1322,15 @@ mod tests {
         let loc = sha_loc(line)?;
         let action_ref = make_action_ref("actions", "checkout", "v4");
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
-        let edit = retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
-            .ok_or("no edit")?;
+        let edit = retarget_edit(
+            &loc,
+            action_ref.is_sha(),
+            &target,
+            Named::Tag,
+            policy::Style::Preserve,
+            &Labels::unfetched(action_ref.ref_str()),
+        )
+        .ok_or("no edit")?;
         assert_eq!(
             apply_at(line, edit)?,
             "      - uses: actions/checkout@v5.0.0"
@@ -1281,8 +1347,15 @@ mod tests {
         let loc = sha_loc(&line)?;
         let action_ref = make_action_ref("actions", "checkout", &old);
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let edit = retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
-            .ok_or("no edit")?;
+        let edit = retarget_edit(
+            &loc,
+            action_ref.is_sha(),
+            &target,
+            Named::Tag,
+            policy::Style::Preserve,
+            &Labels::unfetched(action_ref.ref_str()),
+        )
+        .ok_or("no edit")?;
         assert_eq!(
             apply_at(&line, edit)?,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -1329,8 +1402,15 @@ mod tests {
         let mut seen = 0;
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             file_edits.add(
-                retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
-                    .ok_or("no edit")?,
+                retarget_edit(
+                    &loc,
+                    action_ref.is_sha(),
+                    &target,
+                    Named::Tag,
+                    policy::Style::Preserve,
+                    &Labels::unfetched(action_ref.ref_str()),
+                )
+                .ok_or("no edit")?,
                 (),
             );
             seen += 1;

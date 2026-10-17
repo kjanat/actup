@@ -8,8 +8,8 @@ use actup_core::{
     error::chain,
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
-    resolution::{CheckResult, CheckStatus, RefKind, check_action_remote},
-    rewrite::{Rewrite, Trailing, closer},
+    resolution::{CheckResult, CheckStatus, RefKind, check_action_fetched},
+    rewrite::{Labels, Rewrite, Trailing, after_value, closer, comment_label},
     version,
 };
 use serde::{Deserialize, Serialize};
@@ -244,10 +244,24 @@ struct LocatedCheckResult {
     /// comment and holds no other `uses:` value
     #[serde(default)]
     takes_comment: bool,
+    /// Whether the fetched tags and branches list the first word of the
+    /// comment after the ref, like `main` in `# main keep`
+    #[serde(default)]
+    label_listed: bool,
 }
 
 impl LocatedCheckResult {
-    fn new(location: &UsesLocation, result: &CheckResult, takes_comment: bool) -> Self {
+    fn new(
+        location: &UsesLocation,
+        result: &CheckResult,
+        takes_comment: bool,
+        versions: Option<&version::Set>,
+    ) -> Self {
+        let label_listed = takes_comment
+            && location.ref_range().is_some_and(|range| {
+                comment_label(after_value(location.raw_line(), range.end))
+                    .is_some_and(|label| versions.is_some_and(|versions| versions.names_ref(label)))
+            });
         Self {
             location: location.clone(),
             action_ref: result.action_ref().clone(),
@@ -256,6 +270,7 @@ impl LocatedCheckResult {
             same_commit: result.same_commit().cloned(),
             same_commit_pins: result.same_commit_pins(),
             takes_comment,
+            label_listed,
         }
     }
 }
@@ -326,25 +341,30 @@ pub fn check_refs(
                         loc,
                         &result,
                         comment_lines.contains(&loc.line()),
+                        None,
                     ));
                     continue;
                 }
             };
 
-            let result = match check_action_remote(&parsed, &config, &registry).await {
-                Ok(result) => result,
-                Err(e) => CheckResult::new(
-                    parsed,
-                    CheckStatus::Unresolvable {
-                        reason: chain(&e),
-                        is_environment_error: e.is_environment_error(),
-                    },
+            let (result, versions) = match check_action_fetched(&parsed, &config, &registry).await {
+                Ok(fetched) => fetched,
+                Err(e) => (
+                    CheckResult::new(
+                        parsed,
+                        CheckStatus::Unresolvable {
+                            reason: chain(&e),
+                            is_environment_error: e.is_environment_error(),
+                        },
+                    ),
+                    None,
                 ),
             };
             results.push(LocatedCheckResult::new(
                 loc,
                 &result,
                 comment_lines.contains(&loc.line()),
+                versions.as_ref(),
             ));
         }
 
@@ -408,9 +428,10 @@ pub fn plan_updates(
             let location = &result.location;
             let range = location.ref_range()?;
             let raw_line = location.raw_line();
+            let labels = Labels::checked(result.action_ref.ref_str(), result.label_listed);
             let (trailing, closing) = if result.takes_comment {
                 (
-                    Trailing::after(raw_line, range.end),
+                    Trailing::after(raw_line, range.end, &labels),
                     closer(raw_line, range.end),
                 )
             } else {

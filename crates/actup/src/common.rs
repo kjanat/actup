@@ -215,7 +215,7 @@ pub struct EditedRef {
     pub site: RefSite,
     /// The ref after `@` as written.
     pub to: String,
-    /// The version comment written on the line.
+    /// The comment written after the ref, like `# v4.2.0 keep`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }

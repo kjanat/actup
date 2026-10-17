@@ -996,7 +996,7 @@ impl LspBackend {
             doc_version,
             supports_doc_changes,
             ref_range,
-            action.trailing(),
+            action.trailing(version_sets.get(&repo_id)),
             action.line_end(),
             &targets,
         )
@@ -1070,6 +1070,7 @@ async fn compute_pin_targets(
         major,
         branch,
         unpin,
+        current_is_sha: action_ref.is_sha(),
     }
 }
 
@@ -1704,13 +1705,14 @@ mod tests {
             major: None,
             branch: None,
             unpin: targets.unpin,
+            current_is_sha: true,
         };
         let actions = crate::code_actions::pin_code_actions(
             &uri,
             None,
             false,
             ref_range,
-            action.trailing(),
+            action.trailing(Some(versions)),
             action.line_end(),
             &only_unpin,
         );

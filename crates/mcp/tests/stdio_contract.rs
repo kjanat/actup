@@ -1149,6 +1149,69 @@ fn update_all_comments_lines_with_a_hash_before_the_value(
     })
 }
 
+fn update_all_rewrites_labels_after_named_refs(client: &mut Client, ws: &Workspace) -> TestResult {
+    let steps = |lines: &[String]| {
+        format!(
+            "on: push\njobs:\n  build:\n    runs-on: x\n    steps:\n{}",
+            lines
+                .iter()
+                .map(|line| format!("      - uses: actions/checkout@{line}\n"))
+                .collect::<Vec<_>>()
+                .concat()
+        )
+    };
+    let (a, b, c) = (sha('a'), sha('b'), sha('c'));
+    ws.write(
+        ".github/workflows/build.yml",
+        &steps(&[
+            "v4.0.0 # v4.0.0 keep".into(),
+            "main # main keep".into(),
+            format!("{a} # dev keep"),
+            "v4.0.0 # lint keep".into(),
+            format!("{a} # TODO fix"),
+        ]),
+    )?;
+    let call = |client: &mut Client, target: &str| {
+        client.call(
+            "updateAllUsesToVersion",
+            json!({
+                "workspaceRoot": ".",
+                "match": { "owner": "actions", "repo": "checkout" },
+                "targetRef": target,
+            }),
+        )
+    };
+    let tagged = call(client, "v4.2.0")?;
+    expect(!is_error(&tagged), || format!("updateAll failed: {tagged}"))?;
+    let expected = steps(&[
+        "v4.2.0 # v4.2.0 keep".into(),
+        "v4.2.0 # v4.2.0 keep".into(),
+        format!("{b} # v4.2.0 keep"),
+        "v4.2.0 # lint keep".into(),
+        format!("{b} # TODO fix"),
+    ]);
+    let actual = ws.read(".github/workflows/build.yml")?;
+    expect(actual == expected, || {
+        format!("build.yml:\n{actual}\nexpected:\n{expected}")
+    })?;
+
+    let branched = call(client, "main")?;
+    expect(!is_error(&branched), || {
+        format!("updateAll failed: {branched}")
+    })?;
+    let expected = steps(&[
+        "main # keep".into(),
+        "main # keep".into(),
+        format!("{c} # main keep"),
+        "main # lint keep".into(),
+        format!("{c} # TODO fix"),
+    ]);
+    let actual = ws.read(".github/workflows/build.yml")?;
+    expect(actual == expected, || {
+        format!("build.yml:\n{actual}\nexpected:\n{expected}")
+    })
+}
+
 fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) -> TestResult {
     fs::create_dir_all(ws.path("docs"))?;
     fs::create_dir_all(ws.path("infra"))?;
@@ -1473,7 +1536,7 @@ const BINARY_CASES: [(&str, BinaryCase); 4] = [
     ),
 ];
 
-const CASES: [(&str, Case); 13] = [
+const CASES: [(&str, Case); 14] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -1513,6 +1576,10 @@ const CASES: [(&str, Case); 13] = [
     (
         "update_all_comments_lines_with_a_hash_before_the_value",
         update_all_comments_lines_with_a_hash_before_the_value,
+    ),
+    (
+        "update_all_rewrites_labels_after_named_refs",
+        update_all_rewrites_labels_after_named_refs,
     ),
     (
         "mutators_read_markdown_and_text_files",

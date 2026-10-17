@@ -172,14 +172,15 @@ With `--format json` or `toml`, `check` prints one entry per finding and
 `skipped` and `errors`. Every entry names the file, line, action, owner, repo,
 host, provider and `reference` (the ref as found). `host` is the ref's own host,
 or the default host for a ref without one. An `edited` entry adds `to` (the ref
-written) and `comment` when the line gets a version comment. A `skipped` entry
-adds `reason`: `ignored` when `scan.ignore` matches the ref, or `unplaceable`,
-`overlap` or `out_of_bounds` when the writer cannot edit it. Only the last three
-make `update` and `pin` exit 1. When two edits of a file overlap, every edit of
-that file is skipped with `overlap` and the file stays unchanged. An `errors`
-entry adds `kind` (such as `invalid_ref`, `not_found`, `rate_limited`,
-`provider_not_found`, `write`, `changed` or `invalid_edit`) and `message`. With
-no workflow files, the report has empty lists and `check` prints no findings.
+written) and `comment` when the edit writes a comment after it. A `skipped`
+entry adds `reason`: `ignored` when `scan.ignore` matches the ref, or
+`unplaceable`, `overlap` or `out_of_bounds` when the writer cannot edit it. Only
+the last three make `update` and `pin` exit 1. When two edits of a file overlap,
+every edit of that file is skipped with `overlap` and the file stays unchanged.
+An `errors` entry adds `kind` (such as `invalid_ref`, `not_found`,
+`rate_limited`, `provider_not_found`, `write`, `changed` or `invalid_edit`) and
+`message`. With no workflow files, the report has empty lists and `check` prints
+no findings.
 
 A remote `uses:` value without `@`, with an empty ref, or with a ref that is not
 a git ref name (such as `o/r@a~1` or `o/r@v1.lock`) reaches no provider. `check`
@@ -316,16 +317,24 @@ action.
 | `sha`      | `@<new> # v4.2.0` | `@<new> # v4.2.0`         |
 | `tag`      | `@v4.2.0`         | `@v4.2.0`                 |
 
-The `# vX.Y.Z` comment replaces the version of an old version comment and keeps
+A comment after the ref whose first word is a label gets the new label and keeps
 the note after it: `# v4.0.0 pinned for node16` becomes
-`# v4.2.0 pinned for node16`. A tag ref moved to a new tag refreshes its version
-comment the same way. It is added only where the line can take it: never next to
+`# v4.2.0 pinned for node16`. A label is a version such as `v4.0.0`, the ref
+being replaced, or a tag or branch that the fetched refs of the action list. A
+SHA pin gets `# <version> <note>`, a tag written over a tag or branch gets
+`# <tag> <note>`, and a branch, or a tag written over a SHA pin, gets
+`# <note>`. `@main # main keep` moved to `v4.2.0` becomes
+`@v4.2.0 # v4.2.0 keep`, and `@<sha> # main keep` re-pinned becomes
+`@<new> # v4.2.0 keep`. Any other comment, such as `# lint keep` or
+`# TODO fix`, stays as written.
+
+A new `# vX.Y.Z` comment is added only where the line can take it: never next to
 another comment, never on a line that holds other `uses:` values or ends inside
 a scalar, and never in a plain-text file. The comment goes after the closing
 quote and the flow `}` or `]` that close the value, as in
 `{ uses: "o/b@<sha>" } # v4.2.0`, and replaces the trailing whitespace of the
 line. Other text after the value, such as more flow keys, means no new comment,
-but a version comment at the end of the line is still refreshed and keeps its
+but a label comment at the end of the line is still rewritten and keeps its
 note. `actup pin` and `branch = "update"` place their `# <ref>` comment the same
 way. The CLI, the LSP, the MCP server and the wasm package follow the same rule.
 
@@ -337,9 +346,9 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 
 > [!WARNING]
 > `pin = "tag"` unpins. It rewrites an outdated SHA pin to its target's tag,
-> which the action's owner can move, and drops the version from its version
-> comment. A note after the version stays as the comment. Set `tag` only to
-> leave SHA pins on purpose.
+> which the action's owner can move, and drops the label from its comment. A
+> note after the label stays as the comment. Set `tag` only to leave SHA pins on
+> purpose.
 
 ### Archived Repositories
 

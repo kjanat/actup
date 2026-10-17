@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
     check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
-    rewrite::{Rewrite, Trailing, after_value, closer},
+    rewrite::{Labels, Rewrite, Trailing, after_value, closer},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -156,13 +156,17 @@ pub fn uri_format(uri: &Uri) -> SourceFormat {
 }
 
 impl LocatedAction {
-    /// What follows the ref on its line, [`Trailing::Foreign`] on a line that takes no comment.
-    pub fn trailing(&self) -> Trailing<'_> {
-        if self.takes_comment {
-            Trailing::of(&self.closer, &self.tail)
-        } else {
-            Trailing::Foreign
+    /// What follows the ref on its line read with the labels `versions` lists, [`Trailing::Foreign`] on a line that takes no comment.
+    pub fn trailing(&self, versions: Option<&actup_core::version::Set>) -> Trailing<'_> {
+        if !self.takes_comment {
+            return Trailing::Foreign;
         }
+        let current = self.action_ref.ref_str();
+        let labels = versions.map_or_else(
+            || Labels::unfetched(current),
+            |versions| Labels::fetched(current, versions),
+        );
+        Trailing::of(&self.closer, &self.tail, &labels)
     }
 }
 
@@ -427,12 +431,12 @@ async fn compute_diagnostics_for_actions(
                     config.policy_for(&action.action_ref).pin,
                     action.action_ref.is_sha(),
                     target,
-                    action.trailing(),
+                    action.trailing(versions),
                 ),
                 action.line_end(),
             )),
             CheckStatus::PinBranch { ref_name, sha } => Some(OutdatedEdit::new(
-                Rewrite::pin(sha, ref_name, action.trailing()),
+                Rewrite::pin(sha, ref_name, action.trailing(versions)),
                 action.line_end(),
             )),
             CheckStatus::Unresolvable {
@@ -455,7 +459,7 @@ async fn compute_diagnostics_for_actions(
             if diag.data.is_none()
                 && let Some(tag) = result.suggestion()
             {
-                diag.data = suggestion_data(action, config, tag);
+                diag.data = suggestion_data(action, config, tag, versions);
             }
             if !action.editable {
                 diag.data = None;
@@ -569,7 +573,7 @@ async fn expand_edit(
             .and_then(|v| v.tag_on(sha))
             .map_or_else(untagged, |tag| {
                 OutdatedEdit::new(
-                    Rewrite::pin(sha, tag.version().as_str(), action.trailing()),
+                    Rewrite::pin(sha, tag.version().as_str(), action.trailing(versions)),
                     action.line_end(),
                 )
             }),
@@ -708,13 +712,14 @@ fn suggestion_data(
     action: &LocatedAction,
     config: &Config,
     tag: &actup_core::version::Info,
+    versions: Option<&actup_core::version::Set>,
 ) -> Option<serde_json::Value> {
     let edit = OutdatedEdit::new(
         Rewrite::outdated(
             config.policy_for(&action.action_ref).pin,
             action.action_ref.is_sha(),
             tag,
-            action.trailing(),
+            action.trailing(versions),
         ),
         action.line_end(),
     );
@@ -1238,7 +1243,7 @@ jobs:
                     a.line,
                     a.col_start,
                     a.col_end,
-                    a.trailing(),
+                    a.trailing(None),
                 )
             })
             .collect();
@@ -1248,7 +1253,7 @@ jobs:
                 ("v4".to_string(), 1, 16, 18, Trailing::Foreign),
                 ("v1".to_string(), 2, 17, 19, Trailing::None),
                 ("v2".to_string(), 3, 30, 32, Trailing::None),
-                (sha, 4, 16, 56, Trailing::Version { note: "" }),
+                (sha, 4, 16, 56, Trailing::Label { note: "" }),
             ]
         );
     }
@@ -1307,7 +1312,7 @@ jobs:
             let line_len = line.encode_utf16().count();
             assert!(!action.editable, "{yaml:?}");
             assert_eq!(
-                (action.col_start, action.col_end, action.trailing()),
+                (action.col_start, action.col_end, action.trailing(None)),
                 (0, u32::try_from(line_len)?, Trailing::None),
                 "{yaml:?}"
             );
@@ -2748,7 +2753,7 @@ jobs:
             panic!("expected one action, got {}", text.len());
         };
         assert_eq!(
-            (action.trailing(), action.tail.as_str()),
+            (action.trailing(None), action.tail.as_str()),
             (Trailing::Foreign, "")
         );
         let yaml = extract_located_actions(
@@ -2760,8 +2765,8 @@ jobs:
             panic!("expected one action, got {}", yaml.len());
         };
         assert_eq!(
-            (action.trailing(), action.tail.as_str()),
-            (Trailing::Version { note: "" }, "# v4")
+            (action.trailing(None), action.tail.as_str()),
+            (Trailing::Label { note: "" }, "# v4")
         );
     }
 
@@ -2778,9 +2783,9 @@ jobs:
         );
         let located: Vec<(Trailing<'_>, &str, &str)> = actions
             .iter()
-            .map(|a| (a.trailing(), a.closer.as_str(), a.tail.as_str()))
+            .map(|a| (a.trailing(None), a.closer.as_str(), a.tail.as_str()))
             .collect();
-        let version = Trailing::Version { note: "" };
+        let version = Trailing::Label { note: "" };
         assert_eq!(
             located,
             [
@@ -2790,6 +2795,33 @@ jobs:
                 (version, " } ", "# v1"),
                 (Trailing::Foreign, "", ""),
                 (Trailing::Foreign, "", ""),
+            ]
+        );
+    }
+
+    #[test]
+    fn located_actions_read_labels_from_the_fetched_refs() {
+        let yaml = "- uses: o/p@dev # main keep\n- uses: o/q@dev # dev keep\n- uses: o/r@dev # lint keep\n";
+        let mut versions = actup_core::version::Set::new();
+        versions.set_branches(HashMap::from([("main".to_string(), "c".repeat(40))]));
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
+        let read: Vec<(Trailing<'_>, Trailing<'_>)> = actions
+            .iter()
+            .map(|a| (a.trailing(None), a.trailing(Some(&versions))))
+            .collect();
+        assert_eq!(
+            read,
+            [
+                (Trailing::Foreign, Trailing::Label { note: "keep" }),
+                (
+                    Trailing::Label { note: "keep" },
+                    Trailing::Label { note: "keep" }
+                ),
+                (Trailing::Foreign, Trailing::Foreign),
             ]
         );
     }

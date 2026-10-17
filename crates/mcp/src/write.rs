@@ -15,6 +15,7 @@ use actup_core::{
     },
     policy::Style,
     provider::Registry,
+    rewrite::{Labels, Named},
     rewrite_atomic, version,
 };
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
@@ -417,9 +418,10 @@ fn ref_edit(
     reference: &str,
 ) -> Result<PendingEdit, String> {
     let value = loc.value();
-    let Some((base, _)) = value.split_once('@') else {
+    let Some((base, current)) = value.split_once('@') else {
         return Err(format!("`{value}` has no `@`"));
     };
+    let labels = Labels::unfetched(current);
     let unplaceable = || format!("`{value}` is escaped or spans lines; edit it by hand");
     if loc.ref_range().is_none() {
         return Err(unplaceable());
@@ -431,11 +433,11 @@ fn ref_edit(
         Uses::Local => return Err(format!("`{rewritten}` names no remote action")),
     };
     let edit = if action.is_sha() {
-        sha_edit(loc, reference)
+        sha_edit(loc, reference, &labels)
     } else if current_is_sha {
-        unpin_edit(loc, reference)
+        unpin_edit(loc, reference, &labels)
     } else {
-        retag_edit(loc, reference)
+        retag_edit(loc, reference, &labels)
     };
     edit.ok_or_else(unplaceable)
 }
@@ -551,9 +553,11 @@ fn retarget(
     loc: &UsesLocation,
     action: &ActionRef,
     target: &Info,
+    kind: Named,
     style: Style,
+    labels: &Labels<'_>,
 ) -> Option<(PendingEdit, String)> {
-    let edit = retarget_edit(loc, action.is_sha(), target, style)?;
+    let edit = retarget_edit(loc, action.is_sha(), target, kind, style, labels)?;
     let to = if style.writes_sha(action.is_sha()) {
         target.sha().to_string()
     } else {
@@ -568,6 +572,12 @@ struct Job<'a> {
     root: &'a Root,
     wanted: &'a ActionRepoId,
     default_host: &'a str,
+}
+
+struct Target {
+    info: Info,
+    kind: Named,
+    versions: version::Set,
 }
 
 struct Scanned {
@@ -635,7 +645,7 @@ impl Job<'_> {
     fn update(
         &self,
         scanned: Scanned,
-        target: Option<&Info>,
+        target: Option<&Target>,
         outcome: &mut Outcome,
     ) -> Result<(), FileError> {
         let Scanned {
@@ -649,8 +659,15 @@ impl Job<'_> {
         if let Some(target) = target {
             for (loc, action, site) in wanted {
                 let style = self.config.policy_for(&action).pin;
-                let Some((pending, to)) = retarget(&edits.writable(&loc), &action, target, style)
-                else {
+                let labels = Labels::fetched(action.ref_str(), &target.versions);
+                let Some((pending, to)) = retarget(
+                    &edits.writable(&loc),
+                    &action,
+                    &target.info,
+                    target.kind,
+                    style,
+                    &labels,
+                ) else {
                     outcome.skipped.push(Skipped {
                         site,
                         reason: SkipCause::Unplaceable,
@@ -753,16 +770,22 @@ pub async fn update_all(
                 &actup_core::Error::ProviderNotFound { host },
             ));
         }
-        Some(provider) => match provider
-            .refresh_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
-            .await
-        {
-            Ok(sha) => Some(Info::new(
-                version::Version::parse(&args.target_ref),
-                sha.as_str(),
-            )),
-            Err(e) => return Ok(Reply::failure(&served, &e)),
-        },
+        Some(provider) => {
+            let repo = wanted.without_subpath();
+            let sha = match provider.refresh_ref_to_sha(&repo, &args.target_ref).await {
+                Ok(sha) => sha,
+                Err(e) => return Ok(Reply::failure(&served, &e)),
+            };
+            let versions = match provider.get_versions(&repo).await {
+                Ok(versions) => versions,
+                Err(e) => return Ok(Reply::failure(&served, &e)),
+            };
+            Some(Target {
+                info: Info::new(version::Version::parse(&args.target_ref), sha.as_str()),
+                kind: Named::listed(&args.target_ref, &versions),
+                versions,
+            })
+        }
     };
     for file in scanned {
         if let Err(error) = job.update(file, target.as_ref(), &mut outcome) {
@@ -887,7 +910,15 @@ mod tests {
         let sha_line = format!("- uses: a/b@{}\n", "a".repeat(40));
         let (sha_loc, sha) = loc(&sha_line)?;
         let to = |loc: &UsesLocation, action: &ActionRef, style: Style| {
-            retarget(loc, action, &target(), style).map(|(_, to)| to)
+            retarget(
+                loc,
+                action,
+                &target(),
+                Named::Tag,
+                style,
+                &Labels::unfetched(action.ref_str()),
+            )
+            .map(|(_, to)| to)
         };
         assert_eq!(
             to(&tag_loc, &tag, Style::Preserve).as_deref(),
@@ -935,7 +966,9 @@ mod tests {
             ),
         ] {
             let (l, action) = loc(content)?;
-            let (edit, to) = retarget(&l, &action, &target(), style).ok_or("no edit")?;
+            let labels = Labels::unfetched(action.ref_str());
+            let (edit, to) =
+                retarget(&l, &action, &target(), Named::Tag, style, &labels).ok_or("no edit")?;
             let site = Site {
                 path: "f".into(),
                 line: 1,
@@ -974,8 +1007,15 @@ mod tests {
                 ),
             ] {
                 let (l, action) = loc(&line)?;
-                let (edit, to) =
-                    retarget(&l, &action, &target(), style).ok_or("no retarget edit")?;
+                let (edit, to) = retarget(
+                    &l,
+                    &action,
+                    &target(),
+                    Named::Tag,
+                    style,
+                    &Labels::unfetched(action.ref_str()),
+                )
+                .ok_or("no retarget edit")?;
                 let site = Site {
                     path: "f".into(),
                     line: 1,
@@ -1011,8 +1051,15 @@ mod tests {
             let line = at(&old, comment);
             let expected = at(&new, retargeted);
             let (l, action) = loc(&line)?;
-            let (edit, to) =
-                retarget(&l, &action, &target(), Style::Preserve).ok_or("no retarget edit")?;
+            let (edit, to) = retarget(
+                &l,
+                &action,
+                &target(),
+                Named::Tag,
+                Style::Preserve,
+                &Labels::unfetched(action.ref_str()),
+            )
+            .ok_or("no retarget edit")?;
             let site = Site {
                 path: "f".into(),
                 line: 1,
@@ -1031,7 +1078,17 @@ mod tests {
     #[test]
     fn retarget_skips_a_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>> {
         let (escaped, action) = loc("- uses: \"a/b@v4.0.\\x30\"\n")?;
-        assert!(retarget(&escaped, &action, &target(), Style::Preserve).is_none());
+        assert!(
+            retarget(
+                &escaped,
+                &action,
+                &target(),
+                Named::Tag,
+                Style::Preserve,
+                &Labels::unfetched(action.ref_str())
+            )
+            .is_none()
+        );
         Ok(())
     }
 
@@ -1368,7 +1425,8 @@ mod tests {
         ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
             self.versions
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Box::pin(async { Ok(version::Set::new()) })
+            let listed = version::Set::from_tags([("v4.2.0".to_string(), "d".repeat(40))]);
+            Box::pin(async { Ok(listed) })
         }
 
         fn resolve_ref_to_sha(
@@ -1455,7 +1513,7 @@ mod tests {
         let (is_error, body) = body(reply)?;
         assert_ne!(is_error, Some(true));
         assert_eq!(body["changes"][0]["to"], json!("c".repeat(40)));
-        assert_eq!(versions.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(versions.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(resolves.load(std::sync::atomic::Ordering::SeqCst), 0);
         Ok(())
     }

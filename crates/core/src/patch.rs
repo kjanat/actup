@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Rewrite, Trailing, after_value, closer, labeled_comment, note_comment},
+    rewrite::{Labels, Named, Rewrite, Trailing, after_value, closer},
     version,
 };
 
@@ -36,7 +36,7 @@ pub struct PendingEdit {
     pub kind: EditKind,
     /// Optional comment to append (for pin command).
     pub comment: Option<String>,
-    /// Version comment that `new` writes in place of an old one.
+    /// Comment that `new` writes in place of an old label comment.
     pub inline_comment: Option<String>,
 }
 
@@ -59,7 +59,7 @@ impl PendingEdit {
         self
     }
 
-    /// Record the version comment that the replacement text ends with.
+    /// Record the comment that the replacement text ends with.
     #[must_use]
     pub fn with_inline_comment(mut self, comment: String) -> Self {
         self.inline_comment = Some(comment);
@@ -67,81 +67,110 @@ impl PendingEdit {
     }
 }
 
-/// Build an edit that writes the tag `tag` over the ref at `loc`.
-///
-/// A trailing version comment names `tag` and keeps its note. Returns `None`
-/// when the line does not hold the value verbatim.
-#[must_use]
-pub fn retag_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
-    let range = loc.ref_range()?;
-    match Trailing::after(loc.raw_line(), range.end) {
-        Trailing::Version { note } => {
-            let comment = labeled_comment(tag, note);
-            let rewrite = Rewrite {
-                new_ref: tag.to_string(),
-                comment: Some(comment.clone()),
-                to_line_end: true,
-            };
-            Some(rewrite_edit(loc, &rewrite)?.with_inline_comment(comment))
-        }
-        Trailing::None | Trailing::Foreign => Some(PendingEdit::replace_range(
-            loc.line(),
-            range,
-            tag.to_string(),
-        )),
-    }
-}
-
 /// Build the edit that moves the ref at `loc` to `target` under the `style` pin style.
 ///
-/// A version comment after the ref names the new version and keeps its
-/// note. A SHA pin rewritten to a tag (`pin = "tag"`) drops the version and
-/// keeps the note. Returns `None` when the line does not hold the value
-/// verbatim.
+/// `kind` says whether `target` names a tag or a branch, and `labels` which
+/// comments after the ref name it. A SHA is written by [`Rewrite::pin`] and
+/// a tag or branch by [`Rewrite::named`]. Returns `None` when the line does
+/// not hold the value verbatim.
 #[must_use]
 pub fn retarget_edit(
     loc: &UsesLocation,
     current_is_sha: bool,
     target: &version::Info,
+    kind: Named,
     style: Style,
+    labels: &Labels<'_>,
 ) -> Option<PendingEdit> {
-    let tag = target.version().to_string();
+    let range = loc.ref_range()?;
+    let trailing = Trailing::after(loc.raw_line(), range.end, labels);
+    let name = target.version().to_string();
     if style.writes_sha(current_is_sha) {
-        repin_sha_edit(loc, target)
-    } else if current_is_sha {
-        unpin_edit(loc, &tag)
+        place_edit(loc, &Rewrite::pin(target.sha(), &name, trailing), true)
     } else {
-        retag_edit(loc, &tag)
+        let labeled = kind == Named::Tag && !current_is_sha;
+        place_edit(
+            loc,
+            &Rewrite::named(&name, kind, current_is_sha, trailing),
+            labeled,
+        )
     }
 }
 
-/// Build an edit that pins a ref to the `target` commit SHA with a ` # <version>` comment.
-///
-/// Shared by `update` and `pin`. See [`pin_edit`].
+/// Build the [`pin_edit`] that pins a ref to the `target` commit SHA with a ` # <version>` comment.
 #[must_use]
-pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<PendingEdit> {
-    pin_edit(loc, target.sha(), &target.version().to_string())
+pub fn repin_sha_edit(
+    loc: &UsesLocation,
+    target: &version::Info,
+    labels: &Labels<'_>,
+) -> Option<PendingEdit> {
+    pin_edit(loc, target.sha(), &target.version().to_string(), labels)
 }
 
-/// Build an edit that writes the tag `tag` over a SHA pin.
-///
-/// A trailing version comment loses its version and keeps its note.
+/// Build an edit that writes the tag `tag` over the ref at `loc`, as [`Rewrite::named`] writes a tag over a tag.
 #[must_use]
-pub fn unpin_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
+pub fn retag_edit(loc: &UsesLocation, tag: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
+    named_edit(loc, tag, false, labels)
+}
+
+/// Build an edit that writes the tag `tag` over a SHA pin, keeping only the note of a label comment.
+#[must_use]
+pub fn unpin_edit(loc: &UsesLocation, tag: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
+    named_edit(loc, tag, true, labels)
+}
+
+/// Build an edit that writes `sha` over the ref at `loc`, keeping only the note of a label comment.
+#[must_use]
+pub fn sha_edit(loc: &UsesLocation, sha: &str, labels: &Labels<'_>) -> Option<PendingEdit> {
+    named_edit(loc, sha, true, labels)
+}
+
+fn named_edit(
+    loc: &UsesLocation,
+    new_ref: &str,
+    current_is_sha: bool,
+    labels: &Labels<'_>,
+) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
-    let rewrite = match Trailing::after(loc.raw_line(), range.end) {
-        Trailing::Version { note } => Rewrite {
-            new_ref: tag.to_string(),
-            comment: note_comment(note),
-            to_line_end: true,
-        },
-        Trailing::None | Trailing::Foreign => Rewrite {
-            new_ref: tag.to_string(),
-            comment: None,
-            to_line_end: false,
-        },
-    };
-    rewrite_edit(loc, &rewrite)
+    let trailing = Trailing::after(loc.raw_line(), range.end, labels);
+    place_edit(
+        loc,
+        &Rewrite::named(new_ref, Named::Tag, current_is_sha, trailing),
+        !current_is_sha,
+    )
+}
+
+/// Build an edit that pins the ref at `loc` to `sha` with a ` # <label>` comment, as [`Rewrite::pin`] writes it.
+#[must_use]
+pub fn pin_edit(
+    loc: &UsesLocation,
+    sha: &str,
+    label: &str,
+    labels: &Labels<'_>,
+) -> Option<PendingEdit> {
+    let range = loc.ref_range()?;
+    place_edit(
+        loc,
+        &Rewrite::pin(
+            sha,
+            label,
+            Trailing::after(loc.raw_line(), range.end, labels),
+        ),
+        true,
+    )
+}
+
+fn place_edit(loc: &UsesLocation, rewrite: &Rewrite, labeled: bool) -> Option<PendingEdit> {
+    let range = loc.ref_range()?;
+    Some(match rewrite.comment.clone() {
+        Some(comment) if rewrite.to_line_end && labeled => {
+            rewrite_edit(loc, rewrite)?.with_inline_comment(comment)
+        }
+        Some(_) if rewrite.to_line_end => rewrite_edit(loc, rewrite)?,
+        Some(comment) => PendingEdit::replace_range(loc.line(), range, rewrite.new_ref.clone())
+            .with_comment(comment),
+        None => rewrite_edit(loc, rewrite)?,
+    })
 }
 
 /// Build the edit that writes `rewrite` at the ref of `loc`, keeping the [`closer`] of the value.
@@ -156,41 +185,6 @@ pub fn rewrite_edit(loc: &UsesLocation, rewrite: &Rewrite) -> Option<PendingEdit
         range.start..end,
         text,
     ))
-}
-
-/// Build an edit that writes `sha` over the ref at `loc` without naming its version.
-///
-/// A trailing version comment loses its version and keeps its note.
-#[must_use]
-pub fn sha_edit(loc: &UsesLocation, sha: &str) -> Option<PendingEdit> {
-    unpin_edit(loc, sha)
-}
-
-/// Build an edit that pins the ref at `loc` to `sha` with a ` # <label>` comment.
-///
-/// A trailing version comment gets `label` in place of its version and keeps
-/// its note. A line that ends at the ref, or at the closing quotes and
-/// brackets of [`closer`], gets the comment after the value. After any other
-/// text, such as more flow-mapping keys or a foreign comment, the edit writes
-/// the SHA alone.
-#[must_use]
-pub fn pin_edit(loc: &UsesLocation, sha: &str, label: &str) -> Option<PendingEdit> {
-    let range = loc.ref_range()?;
-    let sha_only = PendingEdit::replace_range(loc.line(), range.clone(), sha.to_string());
-
-    Some(match Trailing::after(loc.raw_line(), range.end) {
-        Trailing::Version { note } => {
-            let comment = labeled_comment(label, note);
-            let rewrite = Rewrite {
-                new_ref: sha.to_string(),
-                comment: Some(comment.clone()),
-                to_line_end: true,
-            };
-            rewrite_edit(loc, &rewrite)?.with_inline_comment(comment)
-        }
-        Trailing::None => sha_only.with_comment(labeled_comment(label, "")),
-        Trailing::Foreign => sha_only,
-    })
 }
 
 /// Why a planned edit leaves an action reference unchanged.
@@ -222,8 +216,8 @@ impl SkipReason {
 pub enum EditOutcome {
     /// The edit is written.
     Applied {
-        /// The version comment the edit writes, appended to its line or in
-        /// place of an old one.
+        /// The comment the edit writes, appended to its line or in place of
+        /// an old label comment.
         comment: Option<String>,
     },
     /// The edit is left out.
@@ -500,6 +494,8 @@ fn absolute_range(
 mod tests {
     use super::*;
 
+    const NO_REFS: Labels<'static> = Labels::unfetched("");
+
     fn apply_line(line: &str, edit: PendingEdit) -> Option<String> {
         let mut fe = FileEdits::new(PathBuf::from("/test"), line.to_string(), SourceFormat::Yaml);
         fe.add(edit, ());
@@ -609,8 +605,11 @@ mod tests {
         let line = format!("      - uses: actions/checkout@{old}");
         let loc = sha_loc(&line)?;
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = apply_line(&line, repin_sha_edit(&loc, &target).ok_or("no edit")?)
-            .ok_or("edit did not apply")?;
+        let result = apply_line(
+            &line,
+            repin_sha_edit(&loc, &target, &NO_REFS).ok_or("no edit")?,
+        )
+        .ok_or("edit did not apply")?;
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -625,8 +624,11 @@ mod tests {
         let line = format!("      - uses: actions/checkout@{old} # v7.0.0");
         let loc = sha_loc(&line)?;
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = apply_line(&line, repin_sha_edit(&loc, &target).ok_or("no edit")?)
-            .ok_or("edit did not apply")?;
+        let result = apply_line(
+            &line,
+            repin_sha_edit(&loc, &target, &NO_REFS).ok_or("no edit")?,
+        )
+        .ok_or("edit did not apply")?;
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -683,22 +685,25 @@ mod tests {
                 };
             let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
                 at(&new, " # v7.0.1")
             );
             let (line, loc) = wrap(at(&old, ""))?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
                 at(&new, " # v7.0.1")
             );
             let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
             assert_eq!(
-                applied(&line, unpin_edit(&loc, "v7.0.1"))?,
+                applied(&line, unpin_edit(&loc, "v7.0.1", &NO_REFS))?,
                 at("v7.0.1", "")
             );
             let (line, loc) = wrap(at("v7.0.0", " # v7.0.0 keep"))?;
             assert_eq!(
-                applied(&line, retarget_edit(&loc, false, &target, Style::Preserve))?,
+                applied(
+                    &line,
+                    retarget_edit(&loc, false, &target, Named::Tag, Style::Preserve, &NO_REFS)
+                )?,
                 at("v7.0.1", " # v7.0.1 keep")
             );
         }
@@ -727,12 +732,12 @@ mod tests {
             let line = at(&old, comment);
             let loc = quoted_loc(&line)?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
                 at(&new, repinned),
                 "{line}"
             );
             assert_eq!(
-                applied(&line, unpin_edit(&loc, "v7.0.0"))?,
+                applied(&line, unpin_edit(&loc, "v7.0.0", &NO_REFS))?,
                 at("v7.0.0", unpinned),
                 "{line}"
             );
@@ -769,12 +774,12 @@ mod tests {
         ] {
             let loc = quoted_loc(&line)?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
                 expected,
                 "{line:?}"
             );
             assert_eq!(
-                applied(&line, pin_edit(&loc, &new, "v7.0.1"))?,
+                applied(&line, pin_edit(&loc, &new, "v7.0.1", &NO_REFS))?,
                 expected,
                 "{line:?}"
             );
@@ -801,7 +806,10 @@ mod tests {
             let line = at(current, comment);
             let loc = quoted_loc(&line)?;
             assert_eq!(
-                applied(&line, retarget_edit(&loc, is_sha, &target, style))?,
+                applied(
+                    &line,
+                    retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS)
+                )?,
                 at(written, written_comment),
                 "{line} {style}"
             );
@@ -809,15 +817,94 @@ mod tests {
         let line = at("main", "");
         let loc = quoted_loc(&line)?;
         assert_eq!(
-            applied(&line, pin_edit(&loc, new, "main"))?,
+            applied(&line, pin_edit(&loc, new, "main", &NO_REFS))?,
             at(new, " # main")
         );
         let line = at("main", " # mine");
         let loc = quoted_loc(&line)?;
         assert_eq!(
-            applied(&line, pin_edit(&loc, new, "main"))?,
+            applied(&line, pin_edit(&loc, new, "main", &NO_REFS))?,
             at(new, " # mine")
         );
+        Ok(())
+    }
+
+    fn retargeted(
+        line: &str,
+        is_sha: bool,
+        target: &version::Info,
+        kind: Named,
+        style: Style,
+        labels: &Labels<'_>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let loc = quoted_loc(line)?;
+        applied(
+            line,
+            retarget_edit(&loc, is_sha, target, kind, style, labels),
+        )
+    }
+
+    #[test]
+    fn test_labels_after_named_refs_follow_the_writer() -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let tag = version::Info::new(version::Version::parse("v4.2.0"), &new);
+        let main = version::Info::new(version::Version::parse("main"), sha40('c'));
+        let mut versions = version::Set::new();
+        versions.set_branches(HashMap::from([("main".to_string(), sha40('c'))]));
+        let at = |r: &str, comment: &str| format!("      - uses: o/a@{r}{comment}\n");
+        let fetched = |current| Labels::fetched(current, &versions);
+        let (preserve, branch) = (Style::Preserve, Named::Branch);
+
+        let line = at("main", " # main keep");
+        let written = retargeted(
+            &line,
+            false,
+            &tag,
+            Named::Tag,
+            preserve,
+            &Labels::unfetched("main"),
+        )?;
+        assert_eq!(written, at("v4.2.0", " # v4.2.0 keep"));
+        let loc = quoted_loc(&line)?;
+        let pinned = applied(
+            &line,
+            pin_edit(&loc, &new, "main", &Labels::unfetched("main")),
+        )?;
+        assert_eq!(pinned, at(&new, " # main keep"));
+
+        let line = at(&old, " # main keep");
+        let written = retargeted(&line, true, &tag, Named::Tag, preserve, &fetched(&old))?;
+        assert_eq!(written, at(&new, " # v4.2.0 keep"));
+        let written = retargeted(
+            &line,
+            true,
+            &tag,
+            Named::Tag,
+            preserve,
+            &Labels::unfetched(&old),
+        )?;
+        assert_eq!(written, at(&new, " # main keep"));
+
+        let line = at("v4.0.0", " # v4.0.0 keep");
+        let unfetched = Labels::unfetched("v4.0.0");
+        let written = retargeted(&line, false, &tag, Named::Tag, preserve, &unfetched)?;
+        assert_eq!(written, at("v4.2.0", " # v4.2.0 keep"));
+        let written = retargeted(&line, false, &main, branch, preserve, &unfetched)?;
+        assert_eq!(written, at("main", " # keep"));
+        let written = retargeted(&line, false, &main, branch, Style::Sha, &unfetched)?;
+        assert_eq!(written, at(&sha40('c'), " # main keep"));
+
+        let line = at(&old, " # v4.0.0 keep");
+        let written = retargeted(&line, true, &tag, Named::Tag, Style::Tag, &fetched(&old))?;
+        assert_eq!(written, at("v4.2.0", " # keep"));
+
+        let line = at("v4.0.0", " # lint keep");
+        let written = retargeted(&line, false, &tag, Named::Tag, preserve, &fetched("v4.0.0"))?;
+        assert_eq!(written, at("v4.2.0", " # lint keep"));
+        let line = at(&old, " # TODO fix");
+        let written = retargeted(&line, true, &tag, Named::Tag, preserve, &fetched(&old))?;
+        assert_eq!(written, at(&new, " # TODO fix"));
         Ok(())
     }
 
@@ -835,7 +922,7 @@ mod tests {
             FileEdits::<()>::new(PathBuf::from("/t.yml"), line.clone(), SourceFormat::Yaml);
         let loc = file_edits.writable(loc);
         assert_eq!(
-            applied(&line, repin_sha_edit(&loc, &target))?,
+            applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
             line.replace(&old, &new)
         );
         Ok(())
@@ -848,8 +935,11 @@ mod tests {
         let line = format!("      - uses: actions/checkout@{old} # managed by bot");
         let loc = sha_loc(&line)?;
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = apply_line(&line, repin_sha_edit(&loc, &target).ok_or("no edit")?)
-            .ok_or("edit did not apply")?;
+        let result = apply_line(
+            &line,
+            repin_sha_edit(&loc, &target, &NO_REFS).ok_or("no edit")?,
+        )
+        .ok_or("edit did not apply")?;
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # managed by bot")
@@ -887,7 +977,8 @@ mod tests {
         ];
         for (line, is_sha, style, written) in cases {
             let loc = sha_loc(&line)?;
-            let edit = retarget_edit(&loc, is_sha, &target, style).ok_or("no edit")?;
+            let edit = retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS)
+                .ok_or("no edit")?;
             let result = apply_line(&line, edit).ok_or("edit did not apply")?;
             assert_eq!(
                 result,
@@ -913,7 +1004,8 @@ mod tests {
             ),
             (Style::Tag, "v4.2.0 # pinned for node16".to_string(), None),
         ] {
-            let edit = retarget_edit(&loc, true, &target, style).ok_or("no edit")?;
+            let edit =
+                retarget_edit(&loc, true, &target, Named::Tag, style, &NO_REFS).ok_or("no edit")?;
             assert_eq!(edit.inline_comment.as_deref(), comment, "{style}");
             let result = apply_line(&line, edit).ok_or("edit did not apply")?;
             assert_eq!(
@@ -923,7 +1015,7 @@ mod tests {
             );
         }
         let bare = format!("      - uses: actions/checkout@{old} # v4.0.0");
-        let edit = unpin_edit(&sha_loc(&bare)?, "v4.2.0").ok_or("no edit")?;
+        let edit = unpin_edit(&sha_loc(&bare)?, "v4.2.0", &NO_REFS).ok_or("no edit")?;
         assert_eq!(
             apply_line(&bare, edit).ok_or("edit did not apply")?,
             "      - uses: actions/checkout@v4.2.0"
@@ -959,7 +1051,8 @@ mod tests {
         ] {
             for style in [Style::Preserve, Style::Tag] {
                 let edit =
-                    retarget_edit(&sha_loc(line)?, false, &target, style).ok_or("no edit")?;
+                    retarget_edit(&sha_loc(line)?, false, &target, Named::Tag, style, &NO_REFS)
+                        .ok_or("no edit")?;
                 assert_eq!(edit.inline_comment.as_deref(), comment, "{line} {style}");
                 assert_eq!(
                     apply_line(line, edit).ok_or("edit did not apply")?,
@@ -989,8 +1082,15 @@ mod tests {
                 Style::Preserve,
             ),
         ] {
-            let edit =
-                retarget_edit(&sha_loc(&line)?, current_is_sha, &target, style).ok_or("no edit")?;
+            let edit = retarget_edit(
+                &sha_loc(&line)?,
+                current_is_sha,
+                &target,
+                Named::Tag,
+                style,
+                &NO_REFS,
+            )
+            .ok_or("no edit")?;
             assert_eq!(edit.inline_comment, None, "{line}");
             assert_eq!(
                 apply_line(&line, edit).ok_or("edit did not apply")?,
@@ -1032,7 +1132,7 @@ mod tests {
             let [loc] = found.as_slice() else {
                 return Err(format!("expected one `uses:` in {line:?}").into());
             };
-            let edit = pin_edit(loc, &sha, "main").ok_or("no edit")?;
+            let edit = pin_edit(loc, &sha, "main", &NO_REFS).ok_or("no edit")?;
             assert_eq!(
                 apply_line(line, edit).ok_or("edit did not apply")?,
                 written,
@@ -1050,8 +1150,15 @@ mod tests {
             "      - uses: actions/checkout@{} # v4.0.0+build keep",
             sha40('a')
         );
-        let edit =
-            retarget_edit(&sha_loc(&line)?, true, &target, Style::Preserve).ok_or("no edit")?;
+        let edit = retarget_edit(
+            &sha_loc(&line)?,
+            true,
+            &target,
+            Named::Tag,
+            Style::Preserve,
+            &NO_REFS,
+        )
+        .ok_or("no edit")?;
         assert_eq!(edit.inline_comment.as_deref(), Some(" # v4.2.0 keep"));
         assert_eq!(
             apply_line(&line, edit).ok_or("edit did not apply")?,
@@ -1073,7 +1180,7 @@ mod tests {
             (false, Style::Sha),
             (true, Style::Tag),
         ] {
-            assert!(retarget_edit(&loc, is_sha, &target, style).is_none());
+            assert!(retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS).is_none());
         }
     }
 
@@ -1083,7 +1190,7 @@ mod tests {
         let line = format!("      - uses: \"actions/checkout@\\x61{}\"", &old[1..]);
         let loc = UsesLocation::new(1, 16, format!("actions/checkout@{old}"), line);
         let target = version::Info::new(version::Version::parse("v7.0.1"), sha40('b'));
-        assert!(repin_sha_edit(&loc, &target).is_none());
+        assert!(repin_sha_edit(&loc, &target, &NO_REFS).is_none());
     }
 
     #[test]
@@ -1131,7 +1238,15 @@ mod tests {
                 .map_err(|_| "one `uses:`")?;
             assert_eq!(loc.line(), line);
             let mut fe = FileEdits::new(PathBuf::from("/test"), content.clone(), format);
-            let edit = retarget_edit(&fe.writable(&loc), true, &target, style).ok_or("no edit")?;
+            let edit = retarget_edit(
+                &fe.writable(&loc),
+                true,
+                &target,
+                Named::Tag,
+                style,
+                &NO_REFS,
+            )
+            .ok_or("no edit")?;
             fe.add(edit, ());
             assert_eq!(fe.plan().content(), expected, "{format:?} {style}");
         }
@@ -1146,8 +1261,15 @@ mod tests {
             tagged.to_string(),
             SourceFormat::Text,
         );
-        let edit =
-            retarget_edit(&fe.writable(&loc), false, &target, Style::Preserve).ok_or("no edit")?;
+        let edit = retarget_edit(
+            &fe.writable(&loc),
+            false,
+            &target,
+            Named::Tag,
+            Style::Preserve,
+            &NO_REFS,
+        )
+        .ok_or("no edit")?;
         fe.add(edit, ());
         assert_eq!(
             fe.plan().content(),
@@ -1164,7 +1286,7 @@ mod tests {
             fresh.to_string(),
             SourceFormat::Text,
         );
-        let edit = repin_sha_edit(&fe.writable(&loc), &target).ok_or("no edit")?;
+        let edit = repin_sha_edit(&fe.writable(&loc), &target, &NO_REFS).ok_or("no edit")?;
         fe.add(edit, ());
         let plan = fe.plan();
         assert_eq!(plan.entries, [((), EditOutcome::Applied { comment: None })]);
