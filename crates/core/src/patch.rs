@@ -240,10 +240,16 @@ pub struct FileEdits<L> {
     /// Original file content.
     content: String,
     format: SourceFormat,
-    uses_per_line: HashMap<usize, usize>,
+    uses_by_line: HashMap<usize, LineUses>,
     commentable_lines: BTreeSet<usize>,
     comment_lines: BTreeSet<usize>,
     edits: Vec<(PendingEdit, L)>,
+}
+
+#[derive(Clone, Copy)]
+enum LineUses {
+    One { value_end: Option<usize> },
+    Many,
 }
 
 /// The planned result of a [`FileEdits`].
@@ -314,9 +320,13 @@ impl<L> FileEdits<L> {
     /// Create a new `FileEdits` for a file whose refs are read as `format`.
     #[must_use]
     pub fn new(path: PathBuf, content: String, format: SourceFormat) -> Self {
-        let mut uses_per_line = HashMap::new();
+        let mut uses_by_line = HashMap::new();
         for loc in format.extract_uses(&content) {
-            *uses_per_line.entry(loc.line()).or_insert(0) += 1;
+            let value_end = loc.ref_range().or_else(|| loc.value_range()).map(|r| r.end);
+            uses_by_line
+                .entry(loc.line())
+                .and_modify(|uses| *uses = LineUses::Many)
+                .or_insert(LineUses::One { value_end });
         }
         Self {
             path,
@@ -324,7 +334,7 @@ impl<L> FileEdits<L> {
             commentable_lines: format.commentable_lines(&content),
             comment_lines: format.comment_lines(&content),
             content,
-            uses_per_line,
+            uses_by_line,
             edits: Vec::new(),
         }
     }
@@ -363,7 +373,7 @@ impl<L> FileEdits<L> {
     /// the text stays unchanged; edits that share a line without overlapping
     /// all apply. A
     /// comment is appended only when its line holds a single `uses:` value, no
-    /// comment after the edit, no other applied edit with a comment, and is in
+    /// comment after that value, no other applied edit with a comment, and is in
     /// [`SourceFormat::commentable_lines`]. The comment replaces the
     /// trailing whitespace of its line.
     #[must_use]
@@ -415,12 +425,17 @@ impl<L> FileEdits<L> {
             let Some(span) = edit.line.checked_sub(1).and_then(|idx| spans.get(idx)) else {
                 continue;
             };
-            let sole_uses = self.uses_per_line.get(&edit.line).copied().unwrap_or(0) <= 1;
             let sole_comment = commented_per_line.get(&edit.line) == Some(&1);
             let line = &self.content[span.clone()];
-            let uncommented = after_value(line, edit_end - span.start).is_empty();
+            let uncommented_sole_uses = match self.uses_by_line.get(&edit.line) {
+                Some(LineUses::One {
+                    value_end: Some(end),
+                }) => after_value(line, *end).is_empty(),
+                Some(LineUses::One { value_end: None } | LineUses::Many) => false,
+                None => !line.contains('#'),
+            };
             let commentable = self.commentable_lines.contains(&edit.line);
-            if sole_uses && sole_comment && uncommented && commentable {
+            if uncommented_sole_uses && sole_comment && commentable {
                 let text_end = span.start + line.trim_end().len();
                 splices.push((text_end.max(edit_end)..span.end, true, comment));
                 outcomes[i] = EditOutcome::Applied {
@@ -539,6 +554,30 @@ mod tests {
         let result = apply_line(line, edit).ok_or("edit did not apply")?;
         // Comment not added because line already has one
         assert_eq!(result, "  - uses: actions/checkout@v2 # existing comment");
+        Ok(())
+    }
+
+    #[test]
+    fn test_comment_gate_reads_the_line_after_its_uses_value()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let line = "  - uses: o/a@v1 # c";
+        for range in [19..20, 18..19, 14..16, 0..1] {
+            let edit = PendingEdit::replace_range(1, range.clone(), "X".into())
+                .with_comment(" # v9".into());
+            let result = apply_line(line, edit).ok_or("edit did not apply")?;
+            assert!(!result.contains("# v9"), "{range:?}: {result}");
+        }
+        let line = "  - { name: \"#1\", uses: o/a@v1 }";
+        let edit = PendingEdit::replace_range(1, 0..1, " ".into()).with_comment(" # v9".into());
+        assert_eq!(
+            apply_line(line, edit).ok_or("edit did not apply")?,
+            "  - { name: \"#1\", uses: o/a@v1 } # v9"
+        );
+        let edit = PendingEdit::replace_range(1, 2..3, "#".into()).with_comment(" # v9".into());
+        assert_eq!(
+            apply_line("  - run: x # y", edit).ok_or("edit did not apply")?,
+            "  # run: x # y"
+        );
         Ok(())
     }
 
