@@ -92,7 +92,8 @@ pub fn repo_config_candidates() -> Vec<String> {
 ///
 /// Returns a JS array of serialized [`actup_core::UsesLocation`] objects
 /// (`line`, `column`, `value`, `raw_line`, `value_range`, `ref_range`,
-/// `scalar_range`).
+/// `scalar_range`, `action_key`). `action_key` is `false` for a `uses` key outside
+/// `jobs.<id>.uses`, `jobs.<id>.steps[*].uses` and `runs.steps[*].uses`.
 ///
 /// This is a pure, synchronous function — no network or filesystem access.
 ///

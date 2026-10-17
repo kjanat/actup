@@ -94,9 +94,11 @@ access.
 
 Returns `UsesLocation[]` — each entry has `line`, `column`, `value`, `raw_line`,
 `value_range` (byte offsets of the value, or `null` when the line holds it
-escaped), `ref_range` (byte offsets of the `@ref` portion, or `null`), and
+escaped), `ref_range` (byte offsets of the `@ref` portion, or `null`),
 `scalar_range` (byte offsets of the scalar as written, quotes included, up to
-the line end when the scalar continues on later lines).
+the line end when the scalar continues on later lines), and `action_key`
+(`false` when the `uses` key sits outside `jobs.<id>.uses`,
+`jobs.<id>.steps[*].uses` and `runs.steps[*].uses`, such as a step input).
 
 ### `checkRefs(yaml, provider, config?)`
 
@@ -110,10 +112,9 @@ value it checked, the parsed `action_ref`, a status (`"UpToDate"`,
 `ref_kind` says whether the ref names a `"tag"`, `"branch"` or `"sha"` (or
 `null` when the version list lacks it). `same_commit` holds the target
 (`{ version, sha }`) when the suggested update sits on the commit the ref
-already names, and `null` otherwise.
-A value that is not a valid reference reaches no provider: its result is
-`Unresolvable` with `is_environment_error: false`, and its `action_ref` holds
-the parts as written.
+already names, and `null` otherwise. A value that is not a valid reference
+reaches no provider: its result is `Unresolvable` with
+`is_environment_error: false`, and its `action_ref` holds the parts as written.
 
 Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `[policy]` table of `actup.toml` with the same defaults: `bump` is `"patch"` |

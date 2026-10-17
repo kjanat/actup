@@ -64,6 +64,9 @@ assert.deepEqual(first.value_range, { start: 14, end: 33 }, "value range covers 
 assert.deepEqual(locations[1].value_range, { start: 15, end: 36 }, "value range of a quoted value skips the quotes");
 assert.deepEqual(first.scalar_range, { start: 14, end: 33 }, "scalar range of a plain value");
 assert.deepEqual(locations[1].scalar_range, { start: 14, end: 37 }, "scalar range of a quoted value covers the quotes");
+assert.equal(first.action_key, true, "a step `uses` is an action key");
+const [input] = parseUsesRefs("jobs:\n  b:\n    steps:\n      - uses: ./x\n        with:\n          uses: lint\n").slice(1);
+assert.equal(input.action_key, false, "a step input named `uses` is no action key");
 
 console.log("PASS: parseUsesRefs returned", locations.length, "locations");
 console.log("  [0]", JSON.stringify(first));
