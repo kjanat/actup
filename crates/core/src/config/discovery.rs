@@ -117,8 +117,10 @@ pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf
 
 /// Return `path` resolved through symlinks and `..`, in the form the OS displays.
 ///
-/// A Windows `\\?\` verbatim prefix is removed when the path stays valid
-/// without it. When `path` cannot be resolved, the result is the absolute
+/// A Windows `\\?\` verbatim prefix is removed when the plain path is shorter
+/// than 260 bytes and no component ends in `.` or a space, is a reserved
+/// device name such as `NUL` or `com1.txt`, or holds a character that Win32
+/// paths reject. When `path` cannot be resolved, the result is the absolute
 /// path, else `path` itself.
 #[must_use]
 pub fn canonical_path(path: &Path) -> PathBuf {
@@ -140,21 +142,41 @@ pub fn canonical_path(path: &Path) -> PathBuf {
 const MAX_PATH: usize = 260;
 
 fn without_verbatim_prefix(path: &str) -> Option<String> {
-    let plain = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
-        format!(r"\\{unc}")
+    let (plain, components) = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        (format!(r"\\{unc}"), unc)
     } else {
         let disk = path.strip_prefix(r"\\?\")?;
-        let bytes = disk.as_bytes();
-        let drive = bytes.len() >= 3
-            && bytes[0].is_ascii_alphabetic()
-            && bytes[1] == b':'
-            && bytes[2] == b'\\';
-        if !drive {
+        let rest = disk.get(2..)?.strip_prefix('\\')?;
+        let drive = disk.as_bytes();
+        if !(drive[0].is_ascii_alphabetic() && drive[1] == b':') {
             return None;
         }
-        disk.to_owned()
+        (disk.to_owned(), rest)
     };
-    (plain.len() < MAX_PATH).then_some(plain)
+    let plain_components = components.is_empty() || components.split('\\').all(survives_win32);
+    (plain.len() < MAX_PATH && plain_components).then_some(plain)
+}
+
+const RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+fn survives_win32(component: &str) -> bool {
+    let stem = component
+        .split('.')
+        .next()
+        .unwrap_or(component)
+        .trim_end_matches(' ');
+    !component.is_empty()
+        && component.len() <= 255
+        && !component.ends_with(['.', ' '])
+        && !component
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/'))
+        && !RESERVED_NAMES
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(stem))
 }
 
 /// Find the first existing repo config in [`repo_search_dirs`].
@@ -297,13 +319,37 @@ mod tests {
             without_verbatim_prefix(r"\\?\UNC\server\share\repo").as_deref(),
             Some(r"\\server\share\repo")
         );
+        assert_eq!(without_verbatim_prefix(r"\\?\C:\").as_deref(), Some(r"C:\"));
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\C:\a.b\console\nul2\com10.txt\.x").as_deref(),
+            Some(r"C:\a.b\console\nul2\com10.txt\.x")
+        );
         let long = format!(r"\\?\C:\{}", "a".repeat(MAX_PATH));
+        let segment = format!(r"\\?\C:\{}", "a".repeat(256));
         for kept in [
             r"C:\Users\me",
             r"\\?\Volume{1234}\repo",
             r"\\?\C:",
             "/tmp/repo",
             long.as_str(),
+            segment.as_str(),
+            r"\\?\C:\repo.\x",
+            r"\\?\C:\repo\name ",
+            r"\\?\C:\repo\NUL",
+            r"\\?\C:\repo\con.txt",
+            r"\\?\C:\repo\Com1 .yml",
+            r"\\?\C:\repo\lpt9",
+            r"\\?\C:\a<b",
+            r"\\?\C:\a>b",
+            r"\\?\C:\a:b",
+            r#"\\?\C:\a"b"#,
+            r"\\?\C:\a|b",
+            r"\\?\C:\a?b",
+            r"\\?\C:\a*b",
+            r"\\?\C:\a/b",
+            "\\\\?\\C:\\a\u{1}b",
+            r"\\?\C:\a\\b",
+            r"\\?\UNC\server\share\aux",
         ] {
             assert_eq!(without_verbatim_prefix(kept), None, "{kept}");
         }
