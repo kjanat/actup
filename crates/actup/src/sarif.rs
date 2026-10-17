@@ -277,14 +277,27 @@ pub fn sarif(findings: &[Finding], unreadable: &[String]) -> Value {
     })
 }
 
+fn escape(text: &str, property: bool) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '%' => escaped.push_str("%25"),
+            '\r' => escaped.push_str("%0D"),
+            '\n' => escaped.push_str("%0A"),
+            ':' if property => escaped.push_str("%3A"),
+            ',' if property => escaped.push_str("%2C"),
+            c => escaped.push(c),
+        }
+    }
+    sanitize_for_terminal(&escaped).into_owned()
+}
+
 fn escape_data(text: &str) -> String {
-    sanitize_for_terminal(text)
-        .replace('%', "%25")
-        .replace('\n', "%0A")
+    escape(text, false)
 }
 
 fn escape_property(text: &str) -> String {
-    escape_data(text).replace(':', "%3A").replace(',', "%2C")
+    escape(text, true)
 }
 
 /// One `::error` or `::warning` workflow command per finding at error or warning level.
@@ -543,6 +556,15 @@ mod tests {
             },
         ));
         findings.push(finding(
+            "::error file=x::forged.yml",
+            8,
+            "o/esc@v1",
+            FindingStatus::Unresolvable {
+                reason: "ref 'v\r\n::error::lf' not found".to_string(),
+                is_environment_error: false,
+            },
+        ));
+        findings.push(finding(
             "/abs/ci.yml",
             9,
             "o/far@main",
@@ -557,6 +579,7 @@ mod tests {
                 "::error file=ci.yml,line=5::o/gone@v9: tag 'v9' not found",
                 "::warning file=ci.yml,line=7::o/pin@main: floating branch 'main', pin to a tag or SHA",
                 "::error file=a%2Cb%3Ac.yml,line=8::o/esc@v1: 100%25 gone\u{fffd}",
+                "::error file=%3A%3Aerror file=x%3A%3Aforged.yml,line=8::o/esc@v1: ref 'v%0D%0A::error::lf' not found",
                 "::warning file=/abs/ci.yml,line=9::o/far@main: floating ref 'main', pin to a tag or SHA",
             ]
         );

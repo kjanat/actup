@@ -27,16 +27,49 @@ fn replace(text: &str, reject: impl Fn(char) -> bool) -> Cow<'_, str> {
     }
 }
 
-/// Replace C0 and C1 controls other than tab and line feed, DEL, zero-width and bidi control characters, and the BOM in `text` with U+FFFD.
+fn opens_command(line: &str) -> bool {
+    line.trim_start().starts_with("::")
+}
+
+/// Replace the first `:` of each line of `text` that starts with `::` after leading whitespace with U+FFFD.
+///
+/// A GitHub Actions runner reads such a line on stdout or stderr as a workflow command.
+#[must_use]
+pub fn neutralize_workflow_commands(text: &str) -> Cow<'_, str> {
+    if !text.split('\n').any(opens_command) {
+        return Cow::Borrowed(text);
+    }
+    Cow::Owned(
+        text.split_inclusive('\n')
+            .map(|line| {
+                if opens_command(line) {
+                    let indent = line.len() - line.trim_start().len();
+                    format!("{}\u{fffd}{}", &line[..indent], &line[indent + 1..])
+                } else {
+                    line.to_string()
+                }
+            })
+            .collect(),
+    )
+}
+
+fn sanitize(text: &str, reject: impl Fn(char) -> bool) -> Cow<'_, str> {
+    match replace(text, reject) {
+        Cow::Borrowed(text) => neutralize_workflow_commands(text),
+        Cow::Owned(text) => Cow::Owned(neutralize_workflow_commands(&text).into_owned()),
+    }
+}
+
+/// Replace C0 and C1 controls other than tab and line feed, DEL, zero-width and bidi control characters, and the BOM in `text` with U+FFFD, and apply [`neutralize_workflow_commands`].
 #[must_use]
 pub fn sanitize_for_terminal(text: &str) -> Cow<'_, str> {
-    replace(text, is_unsafe)
+    sanitize(text, is_unsafe)
 }
 
 /// Replace what [`sanitize_for_terminal`] replaces, and line feeds, in a single-line field such as a path or a `uses:` value.
 #[must_use]
 pub fn sanitize_line(text: &str) -> Cow<'_, str> {
-    replace(text, |c| c == '\n' || is_unsafe(c))
+    sanitize(text, |c| c == '\n' || is_unsafe(c))
 }
 
 #[cfg(test)]
@@ -77,6 +110,27 @@ mod tests {
                 "{text:?}"
             );
         }
+    }
+
+    #[test]
+    fn workflow_commands_lose_their_leading_colon_on_every_line() {
+        assert_eq!(
+            neutralize_workflow_commands("::error::x\nok :: here\n  ::add-mask::y\n\t::z"),
+            "\u{fffd}:error::x\nok :: here\n  \u{fffd}:add-mask::y\n\t\u{fffd}:z"
+        );
+        assert!(matches!(
+            neutralize_workflow_commands("a::b\nc: :d"),
+            Cow::Borrowed("a::b\nc: :d")
+        ));
+        assert_eq!(
+            sanitize_line("::error file=x::forged.yml"),
+            "\u{fffd}:error file=x::forged.yml"
+        );
+        assert_eq!(
+            sanitize_for_terminal("bad\u{202e}\n::stop-commands::t"),
+            "bad\u{fffd}\n\u{fffd}:stop-commands::t"
+        );
+        assert_eq!(sanitize_line("x\n::error::y"), "x\u{fffd}::error::y");
     }
 
     #[test]

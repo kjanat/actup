@@ -16,8 +16,8 @@ use anstream::{eprintln, println};
 use std::process::ExitCode;
 
 use actup_core::{
-    Config, Registration, Retention, error::chain, provider, sanitize_for_terminal,
-    user_config_path, validate_no_duplicate_presets,
+    Config, Registration, Retention, error::chain, neutralize_workflow_commands, provider,
+    sanitize_for_terminal, user_config_path, validate_no_duplicate_presets,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -42,7 +42,7 @@ async fn main() -> ExitCode {
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
-        .with_writer(std::io::stderr)
+        .with_writer(|| CommandSafe(std::io::stderr()))
         .with_ansi(anstream::AutoStream::choice(&std::io::stderr()) != anstream::ColorChoice::Never)
         .init();
 
@@ -176,6 +176,21 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
+struct CommandSafe<W>(W);
+
+impl<W: std::io::Write> std::io::Write for CommandSafe<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        self.0
+            .write_all(neutralize_workflow_commands(&text).as_bytes())?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
 fn setup(
     cli: &Cli,
     start_dir: &std::path::Path,
@@ -258,6 +273,21 @@ mod tests {
             api_mode: None,
             max_tags_per_repo: None,
         }
+    }
+
+    #[test]
+    fn command_safe_writer_neutralizes_each_written_line() -> std::io::Result<()> {
+        use std::io::Write as _;
+
+        let mut writer = CommandSafe(Vec::new());
+        let line = b" DEBUG ref_str=v1\n::error::forged\n";
+        assert_eq!(writer.write(line)?, line.len());
+        writer.flush()?;
+        assert_eq!(
+            String::from_utf8_lossy(&writer.0),
+            " DEBUG ref_str=v1\n\u{fffd}:error::forged\n"
+        );
+        Ok(())
     }
 
     #[test]

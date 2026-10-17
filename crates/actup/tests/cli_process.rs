@@ -505,3 +505,75 @@ async fn actup_format_selects_check_only_formats() -> TestResult {
     }
     Ok(())
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "multi_thread")]
+async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
+    let server = remote().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/forge/tags"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("x\n::error::lf"))
+        .mount(&server)
+        .await;
+    let repo = Repo::new(
+        &server,
+        &[
+            "o/old@v1.0.0",
+            "\"o/old@::error::ref\"",
+            "\"o/old@v\\n::error::lf\"",
+            "o/forge@v1",
+        ],
+    )?;
+    let forged = "::error file=x::forged.yml";
+    fs::copy(
+        repo.path().join(".github/workflows/ci.yml"),
+        repo.path().join(".github/workflows").join(forged),
+    )?;
+    fs::copy(
+        repo.path().join(".github/workflows/ci.yml"),
+        repo.path().join(forged),
+    )?;
+
+    for args in [
+        &["check", ".", "--github-annotations", "--verbose"][..],
+        &["check", forged, "--github-annotations"],
+        &["check", forged, "--format", "table"],
+        &["update", forged, "--dry-run", "--verbose"],
+        &["pin", forged, "--dry-run"],
+    ] {
+        let output = repo.run(args).await?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8(output.stdout)?,
+            String::from_utf8(output.stderr)?
+        );
+        assert!(text.contains("forged"), "{args:?}: {text}");
+        if args.contains(&"--verbose") {
+            assert!(
+                text.lines()
+                    .any(|line| line.starts_with("\u{fffd}:error::lf")),
+                "{args:?}: {text}"
+            );
+        }
+        let commands: Vec<&str> = text
+            .lines()
+            .filter(|line| line.trim_start().starts_with("::"))
+            .collect();
+        for line in &commands {
+            assert!(
+                (line.starts_with("::error file=") || line.starts_with("::warning file="))
+                    && line.contains(",line="),
+                "{args:?}: {line}"
+            );
+        }
+        if args.contains(&"--github-annotations") {
+            assert!(
+                commands.iter().any(|line| line
+                    .contains("file=%3A%3Aerror file=x%3A%3Aforged.yml,")
+                    || line.contains("/%3A%3Aerror file=x%3A%3Aforged.yml,")),
+                "{args:?}: {text}"
+            );
+        }
+    }
+    Ok(())
+}
