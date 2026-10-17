@@ -1530,3 +1530,264 @@ jobs:
                               (not)
                               (context
                                 (identifier)))))))))))))))))
+
+============================================================================
+Bare if: a context index
+============================================================================
+jobs:
+  build:
+    if: a[matrix.k] == 'x'
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier)
+                            (property
+                              (index
+                                (context
+                                  (identifier)
+                                  (property
+                                    (property_deref)
+                                    (identifier))))))
+                          (operator
+                            (eq))
+                          (string
+                            (string_content)))))))))))))))
+
+============================================================================
+Bare if: a call index
+============================================================================
+jobs:
+  build:
+    if: vars[format('X_{0}', matrix.env)]
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier)
+                            (property
+                              (index
+                                (function_call
+                                  function: (identifier)
+                                  arguments: (arguments
+                                    (format_string
+                                      (string_content)
+                                      (format_variable
+                                        (format_index)))
+                                    (context
+                                      (identifier)
+                                      (property
+                                        (property_deref)
+                                        (identifier)))))))))))))))))))))
+
+============================================================================
+Bare if: an operator inside an index
+============================================================================
+jobs:
+  build:
+    if: a[b || 'c']
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier)
+                            (property
+                              (index
+                                (context
+                                  (identifier))
+                                (operator
+                                  (or))
+                                (string
+                                  (string_content))))))))))))))))))
+
+============================================================================
+Bare if: negation inside an index
+============================================================================
+jobs:
+  build:
+    if: a[!b]
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier)
+                            (property
+                              (index
+                                (not)
+                                (context
+                                  (identifier))))))))))))))))))
+
+============================================================================
+Bare if: a chained index
+============================================================================
+jobs:
+  build:
+    if: a[b][c].d
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier)
+                            (property
+                              (index
+                                (context
+                                  (identifier))))
+                            (property
+                              (index
+                                (context
+                                  (identifier))))
+                            (property
+                              (property_deref)
+                              (identifier))))))))))))))))
+
+============================================================================
+Bare if: a format string from a context
+============================================================================
+jobs:
+  build:
+    if: format(env.FMT, a)
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (context
+                                (identifier)
+                                (property
+                                  (property_deref)
+                                  (identifier)))
+                              (context
+                                (identifier)))))))))))))))))

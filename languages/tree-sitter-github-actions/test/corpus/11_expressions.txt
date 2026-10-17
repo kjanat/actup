@@ -1258,3 +1258,192 @@ if: ${{ contains(a, b || !!c) }}
                     (not)
                     (context
                       (identifier))))))))))))
+
+============================================================================
+Delimited expression: a context index
+============================================================================
+if: ${{ a[matrix.k] == 'x' }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (index
+                      (context
+                        (identifier)
+                        (property
+                          (property_deref)
+                          (identifier))))))
+                (operator
+                  (eq))
+                (string
+                  (string_content))))))))))
+
+============================================================================
+Delimited expression: a call index
+============================================================================
+if: ${{ vars[format('X_{0}', matrix.env)] }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (index
+                      (function_call
+                        function: (identifier)
+                        arguments: (arguments
+                          (format_string
+                            (string_content)
+                            (format_variable
+                              (format_index)))
+                          (context
+                            (identifier)
+                            (property
+                              (property_deref)
+                              (identifier))))))))))))))))
+
+============================================================================
+Delimited expression: an operator inside an index
+============================================================================
+if: ${{ a[b || 'c'] }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (index
+                      (context
+                        (identifier))
+                      (operator
+                        (or))
+                      (string
+                        (string_content)))))))))))))
+
+============================================================================
+Delimited expression: negation inside an index
+============================================================================
+if: ${{ a[!b] }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (index
+                      (not)
+                      (context
+                        (identifier)))))))))))))
+
+============================================================================
+Delimited expression: a chained index
+============================================================================
+if: ${{ a[b][c].d }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (index
+                      (context
+                        (identifier))))
+                  (property
+                    (index
+                      (context
+                        (identifier))))
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Delimited expression: a format string from a context
+============================================================================
+if: ${{ format(env.FMT, a) }}
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (function_call
+                  function: (identifier)
+                  arguments: (arguments
+                    (context
+                      (identifier)
+                      (property
+                        (property_deref)
+                        (identifier)))
+                    (context
+                      (identifier))))))))))))

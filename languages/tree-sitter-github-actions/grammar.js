@@ -196,6 +196,7 @@ const base = grammar({
 		[$.arguments],
 		[$._format_arguments],
 		[$._expr_seq],
+		[$._fmt_arg],
 	],
 
 	inline: $ => [
@@ -873,7 +874,7 @@ const base = grammar({
 
 		context: $ => seq($.identifier, repeat($.property)),
 		property: $ => choice(seq($.property_deref, choice($.identifier, $.asterisk)), $.index),
-		index: $ => seq("[", optional($._expr_ws), choice($.number, $.string), optional($._expr_ws), "]"),
+		index: $ => seq("[", optional($._expr_ws), $._expr_seq, optional($._expr_ws), "]"),
 
 		function_call: $ => choice($._format_function, $._function),
 		_function: $ =>
@@ -901,8 +902,23 @@ const base = grammar({
 			),
 		_format_arguments: $ =>
 			seq(
-				$.format_string,
+				$._fmt_arg,
 				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._expr_seq)),
+			),
+
+		_fmt_arg: $ =>
+			seq(
+				repeat(seq($.not, optional($._expr_ws))),
+				choice($.format_string, $.boolean, $.null, $.number, $.context, $._call, $._group),
+				repeat(
+					seq(
+						optional($._expr_ws),
+						$.operator,
+						optional($._expr_ws),
+						repeat(seq($.not, optional($._expr_ws))),
+						$._evaluation,
+					),
+				),
 			),
 
 		not: () => "!",
