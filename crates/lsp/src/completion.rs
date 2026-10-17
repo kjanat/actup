@@ -147,8 +147,7 @@ fn detect_completion_context(
     // Convert incoming cursor column (negotiated encoding) to byte offset.
     let cursor_byte = crate::position::col_to_byte(line_str, position.character, encoding);
 
-    // Find the last `uses:` before the cursor on this line.
-    let uses_idx = line_str.get(..cursor_byte)?.rfind("uses:")?;
+    let uses_idx = last_uses_key(line_str.get(..cursor_byte)?)?;
     let after_colon = &line_str[uses_idx + 5..]; // everything after "uses:"
 
     // Count spaces/tabs after `uses:` (YAML value separator).
@@ -216,6 +215,36 @@ fn detect_completion_context(
     Some(CompletionContext::ActionName {
         prefix: typed.to_owned(),
     })
+}
+
+fn last_uses_key(prefix: &str) -> Option<usize> {
+    let bytes = prefix.as_bytes();
+    let mut quote = None;
+    let mut found = None;
+    let mut i = 0;
+    while let Some(&b) = bytes.get(i) {
+        let prev = i.checked_sub(1).and_then(|p| bytes.get(p)).copied();
+        let at_boundary =
+            prev.is_none_or(|p| matches!(p, b' ' | b'\t' | b'-' | b'[' | b'{' | b','));
+        match quote {
+            Some(b'"') if b == b'\\' => i += 1,
+            Some(q) if b == q => quote = None,
+            None if b == b'#' && prev.is_none_or(|p| p == b' ' || p == b'\t') => break,
+            None if matches!(b, b'"' | b'\'') && (at_boundary || prev == Some(b':')) => {
+                quote = Some(b);
+            }
+            None if at_boundary
+                && bytes
+                    .get(i..)
+                    .is_some_and(|rest| rest.starts_with(b"uses:")) =>
+            {
+                found = Some(i);
+            }
+            Some(_) | None => {}
+        }
+        i += 1;
+    }
+    found
 }
 
 /// Parse `owner/repo` from a string, handling optional subpath.
@@ -985,6 +1014,58 @@ mod tests {
             let pos = Position { line: 0, character };
             assert_eq!(detect_completion_context(text, pos, ENC), None, "{text}");
         }
+    }
+
+    #[test]
+    fn detect_context_ignores_uses_text_outside_a_key() {
+        for (text, character) in [
+            ("      - { uses: a/b@v1, name: \"uses: x\" }\n", 39),
+            ("      - { uses: a/b@v1, name: 'uses: x' }\n", 39),
+            ("      - { uses: a/b@v1, reuses: x }\n", 33),
+            ("      - { uses: a/b@v1 } # uses: x\n", 35),
+        ] {
+            let pos = Position { line: 0, character };
+            assert_eq!(detect_completion_context(text, pos, ENC), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn detect_context_value_ended_by_bracket() {
+        let text = "steps: [uses: actions/setup-node@v]\n";
+        let pos = Position {
+            line: 0,
+            character: 33,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                owner: "actions".into(),
+                repo: "setup-node".into(),
+                version_prefix: "v".into(),
+            })
+        );
+        let past = Position {
+            line: 0,
+            character: 35,
+        };
+        assert_eq!(detect_completion_context(text, past, ENC), None);
+    }
+
+    #[test]
+    fn detect_context_apostrophe_inside_a_word_opens_no_quote() {
+        let text = "      - { name: don't, uses: a/b@v }\n";
+        let pos = Position {
+            line: 0,
+            character: 33,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                owner: "a".into(),
+                repo: "b".into(),
+                version_prefix: "v".into(),
+            })
+        );
     }
 
     #[test]
