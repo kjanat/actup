@@ -51,6 +51,8 @@ export type {
 	Info as VersionInfo,
 	LocatedCheckResult,
 	Policy as ActupPolicy,
+	RefKind,
+	RefRange,
 	RepoConfig,
 	Style as PinStyle,
 	Track as TrackPolicy,

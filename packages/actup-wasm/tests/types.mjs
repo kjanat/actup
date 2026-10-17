@@ -59,3 +59,27 @@ export const warn: ArchivedPolicy = "warn";
 		JSON.stringify(diagnostics),
 	);
 });
+
+test("RefKind and RefRange annotate check results and uses locations", () => {
+	const diagnostics = diagnose(`
+import type { LocatedCheckResult, RefKind, RefRange, UsesLocation } from "../dist/index.js";
+export const kinds: RefKind[] = ["tag", "branch", "sha"];
+export const kindOf = (result: LocatedCheckResult): RefKind | null => result.ref_kind;
+export const range: RefRange = { start: 0, end: 4 };
+export const refRangeOf = (location: UsesLocation): RefRange | null => location.ref_range;
+`);
+	assert.deepEqual(diagnostics, []);
+});
+
+test("RefKind and RefRange reject other shapes", () => {
+	const diagnostics = diagnose(`
+import type { RefKind, RefRange } from "../dist/index.js";
+export const kind: RefKind = "commit";
+export const range: RefRange = { start: 0 };
+`);
+	assert.deepEqual(
+		diagnostics.map((d) => d.code),
+		[2322, 2741],
+		JSON.stringify(diagnostics),
+	);
+});
