@@ -1181,6 +1181,144 @@ mod tests {
         Ok(())
     }
 
+    struct FailingProvider;
+
+    impl Provider for FailingProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            Box::pin(async {
+                Err(actup_core::Error::RateLimited {
+                    provider: "github".to_string(),
+                    retry_after: None,
+                })
+            })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            let err = actup_core::Error::InvalidRef {
+                input: ref_name.to_string(),
+                reason: "not resolved".to_string(),
+            };
+            Box::pin(async move { Err(err) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_unpin_reports_a_failed_tag_lookup_and_keeps_the_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let content = format!(
+            "steps:\n  - uses: o/a@{} # v4.1.0\n  - uses: o/b@{} # mine\n",
+            sha('a'),
+            sha('a')
+        );
+        let file = workflow(dir.path(), &content)?;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(FailingProvider));
+
+        let Some(result) = edit(
+            dir.path(),
+            Mode::Unpin,
+            false,
+            OutputFormat::Json,
+            &Config::default(),
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        assert_eq!(result.edited, []);
+        assert_eq!(result.skipped, []);
+        let errored: Vec<(usize, ErrorKind)> = result
+            .errored
+            .iter()
+            .map(|e| (e.site.line, e.kind))
+            .collect();
+        assert_eq!(errored, [(2, ErrorKind::RateLimited)]);
+        assert_eq!(
+            result.exit_code(false),
+            i32::from(CliExitCode::EnvironmentError)
+        );
+        assert_eq!(std::fs::read_to_string(&file)?, content);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_unpin_leaves_an_escaped_sha_value_alone() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let content = format!(
+            "steps:\n  - uses: \"o/a@\\x61{}\" # v4.1.0\n",
+            &sha('a')[1..]
+        );
+        let file = workflow(dir.path(), &content)?;
+        let registry = unpin_registry()?;
+
+        let Some(result) = edit(
+            dir.path(),
+            Mode::Unpin,
+            false,
+            OutputFormat::Json,
+            &Config::default(),
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        let refs: Vec<String> = WorkflowScanner::extract_actions(&content)
+            .map(|(_, action_ref)| action_ref.to_string())
+            .collect();
+        assert_eq!(refs, [format!("o/a@{}", sha('a'))]);
+        assert_eq!(result.edited, []);
+        assert_eq!(result.skipped, []);
+        assert_eq!(result.errored, []);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, content);
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_unpin_dry_run_reports_without_writing() -> Result<(), Box<dyn std::error::Error>>
     {
