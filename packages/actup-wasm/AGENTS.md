@@ -8,11 +8,11 @@ the Cargo workspace.
 
 ## Module Map
 
-| File          | Lines | Purpose                                      | Key Exports                                             |
-| ------------- | ----- | -------------------------------------------- | ------------------------------------------------------- |
-| `index.ts`    | 191   | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates` |
-| `provider.ts` | 428   | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`           |
-| `types.ts`    | 137   | TypeScript interfaces mirroring Rust serde   | `ActupProvider`, `CheckResult`, `VersionSet`, etc.      |
+| File          | Lines | Purpose                                      | Key Exports                                                                |
+| ------------- | ----- | -------------------------------------------- | -------------------------------------------------------------------------- |
+| `index.ts`    | 191   | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags` |
+| `provider.ts` | 428   | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                              |
+| `types.ts`    | 137   | TypeScript interfaces mirroring Rust serde   | `ActupProvider`, `CheckResult`, `VersionSet`, etc.                         |
 
 ## Package Exports
 

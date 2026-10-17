@@ -4,6 +4,7 @@
 //! - `parseUsesRefs` — pure, synchronous extraction of `uses:` references
 //! - `checkRefs` — async version checking via a host-provided JS provider
 //! - `planUpdates` — compute text edits from check results
+//! - `sortVersionTags`: sort version tags newest first
 //!
 //! Runs entirely in-browser or Node.js — no filesystem access.
 //!

@@ -86,6 +86,39 @@ export class CodeAction {
 	constructor(readonly title: string, readonly kind?: CodeActionKind) {}
 }
 
+export enum CompletionItemKind {
+	Value = 11,
+	Reference = 17,
+}
+
+export enum CompletionTriggerKind {
+	Invoke = 0,
+	TriggerCharacter = 1,
+	TriggerForIncompleteCompletions = 2,
+}
+
+export class CompletionItem {
+	detail?: string;
+	insertText?: string;
+	range?: Range;
+	sortText?: string;
+
+	constructor(readonly label: string, readonly kind?: CompletionItemKind) {}
+}
+
+export class CompletionList {
+	constructor(readonly items: CompletionItem[] = [], readonly isIncomplete = false) {}
+}
+
+export enum LogLevel {
+	Off = 0,
+	Trace = 1,
+	Debug = 2,
+	Info = 3,
+	Warning = 4,
+	Error = 5,
+}
+
 class DiagnosticCollection {
 	private readonly byUri = new Map<string, Diagnostic[]>();
 

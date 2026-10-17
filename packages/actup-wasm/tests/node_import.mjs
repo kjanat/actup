@@ -15,7 +15,7 @@ try {
 	process.exit(1);
 }
 
-const { checkRefs, initWasm, parseUsesRefs, planUpdates } = await import("../dist/index.js");
+const { checkRefs, initWasm, parseUsesRefs, planUpdates, sortVersionTags } = await import("../dist/index.js");
 
 // Test 1: initWasm + parseUsesRefs
 await initWasm();
@@ -279,5 +279,22 @@ assert.equal(statusName(escapedResults[0].status), "Outdated", "escaped ref is s
 assert.deepEqual(planUpdates(escapedYaml, escapedResults), [], "no edit for an escaped value");
 
 console.log("PASS: escaped value is checked but gets no edit");
+
+// Test 14: sortVersionTags orders by semver precedence, newest first.
+const sorted = sortVersionTags([
+	{ version: "v1.9.0", sha: "a".repeat(40) },
+	{ version: "v1.10.0", sha: "b".repeat(40) },
+	{ version: "v2.0.0-rc.1", sha: "c".repeat(40) },
+	{ version: "v2.0.0", sha: "d".repeat(40) },
+	{ version: "v1.10.0-beta", sha: "e".repeat(40) },
+]);
+assert.deepEqual(
+	sorted.map((tag) => tag.version),
+	["v2.0.0", "v2.0.0-rc.1", "v1.10.0", "v1.10.0-beta", "v1.9.0"],
+	"tags sorted newest first",
+);
+assert.equal(sorted[0].sha, "d".repeat(40), "each tag keeps its sha");
+
+console.log("PASS: sortVersionTags orders newest first");
 
 console.log("\nAll npm package integration tests PASSED");

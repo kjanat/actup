@@ -16,7 +16,7 @@
 
 /// <reference types="node" />
 
-import type { ActupConfig, CheckResult, UpdateEdit, UsesLocation } from "../wasm/actup_wasm.js";
+import type { ActupConfig, CheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
 import type { ActupProvider } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
@@ -125,6 +125,19 @@ function requireInit(): WasmBindings {
 export function parseUsesRefs(yaml: string): UsesLocation[] {
 	const w = requireInit();
 	return w.parseUsesRefs(yaml);
+}
+
+/**
+ * Sort version tags newest first by actup-core's version precedence.
+ *
+ * Pure, synchronous. Tags of equal precedence keep their input order.
+ *
+ * @param tags - Version tags, for example from `ActupProvider.getVersions`.
+ * @returns A new array of the same tags, newest first.
+ */
+export function sortVersionTags(tags: readonly VersionTag[]): VersionTag[] {
+	const w = requireInit();
+	return w.sortVersionTags([...tags]);
 }
 
 /**

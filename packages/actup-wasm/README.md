@@ -113,6 +113,11 @@ Compute minimal text edits from check results. Pure, synchronous.
 Returns `UpdateEdit[]` — each entry has `line`, `refStart`, `refEnd`,
 `original`, and `newRef`. Only generates edits for outdated refs.
 
+### `sortVersionTags(tags)`
+
+Sort `VersionTag[]` newest first by `actup-core` version precedence. Pure,
+synchronous. Tags of equal precedence keep their input order.
+
 ### `createGitHubProvider(options?)`
 
 *Import from `"actup-wasm/provider"`.*

@@ -81,6 +81,68 @@ export class FakeDocument implements vscode.TextDocument {
 	}
 }
 
+export class FakeLogOutputChannel implements vscode.LogOutputChannel {
+	readonly name = "actup";
+	readonly logLevel = vscode.LogLevel.Trace;
+	readonly lines: string[] = [];
+
+	onDidChangeLogLevel(): vscode.Disposable {
+		return { dispose: () => {} };
+	}
+
+	append(value: string): void {
+		this.lines.push(value);
+	}
+
+	appendLine(value: string): void {
+		this.lines.push(value);
+	}
+
+	replace(value: string): void {
+		this.lines.splice(0, this.lines.length, value);
+	}
+
+	clear(): void {
+		this.lines.splice(0);
+	}
+
+	show(): void {}
+
+	hide(): void {}
+
+	dispose(): void {}
+
+	trace(message: string): void {
+		this.lines.push(message);
+	}
+
+	debug(message: string): void {
+		this.lines.push(message);
+	}
+
+	info(message: string): void {
+		this.lines.push(message);
+	}
+
+	warn(message: string): void {
+		this.lines.push(message);
+	}
+
+	error(error: string | Error): void {
+		this.lines.push(String(error));
+	}
+}
+
+export const cancellationToken: vscode.CancellationToken = {
+	isCancellationRequested: false,
+	onCancellationRequested: () => ({ dispose: () => {} }),
+};
+
+export const invokeCompletion: vscode.CompletionContext = {
+	triggerKind: vscode.CompletionTriggerKind.Invoke,
+	triggerCharacter: undefined,
+};
+
 export function fakeProvider(tagsByRepo: Readonly<Record<string, VersionTag[]>>): ActupProvider {
 	return {
 		getVersions: (_host, owner, repo) => {

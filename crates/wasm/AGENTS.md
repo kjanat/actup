@@ -12,13 +12,14 @@ native builds see an empty crate.
 | `bridge.rs` | 326   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`           |
 | `clock.rs`  | 22    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                   |
 
-## WASM API (3 exports)
+## WASM API (4 exports)
 
-| Export          | Sync/Async | Purpose                                     |
-| --------------- | ---------- | ------------------------------------------- |
-| `parseUsesRefs` | sync       | Extract `uses:` locations from YAML         |
-| `checkRefs`     | async      | Check refs via JS-provided `ActupProvider`  |
-| `planUpdates`   | sync       | Compute text edits from `CheckResult` array |
+| Export            | Sync/Async | Purpose                                     |
+| ----------------- | ---------- | ------------------------------------------- |
+| `parseUsesRefs`   | sync       | Extract `uses:` locations from YAML         |
+| `checkRefs`       | async      | Check refs via JS-provided `ActupProvider`  |
+| `planUpdates`     | sync       | Compute text edits from `CheckResult` array |
+| `sortVersionTags` | sync       | Sort `VersionTag[]` newest first            |
 
 ## Where to Look
 

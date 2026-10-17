@@ -10,7 +10,7 @@ use actup_core::{
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-use crate::bridge::{JsProvider, JsProviderAdapter};
+use crate::bridge::{self, JsProvider, JsProviderAdapter, VersionTag};
 
 /// Subset of [`Config`] passable from JS callers.
 ///
@@ -83,6 +83,21 @@ fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
 pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
     let locations = extract_uses_from_yaml(yaml);
     serde_wasm_bindgen::to_value(&locations).map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
+/// Sort version tags newest first by semver precedence.
+///
+/// # Errors
+///
+/// Returns `JsValue` error if `tags` is not an array of `VersionTag` objects.
+#[wasm_bindgen(js_name = "sortVersionTags", unchecked_return_type = "VersionTag[]")]
+pub fn sort_version_tags(
+    #[wasm_bindgen(unchecked_param_type = "VersionTag[]")] tags: JsValue,
+) -> Result<JsValue, JsValue> {
+    let mut tags: Vec<VersionTag> =
+        serde_wasm_bindgen::from_value(tags).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    bridge::sort_newest_first(&mut tags);
+    serde_wasm_bindgen::to_value(&tags).map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
 /// Check `uses:` references in YAML against a host-provided JS provider.

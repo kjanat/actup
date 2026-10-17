@@ -1,5 +1,5 @@
 import type { ActupProvider } from "actup-wasm";
-import { GitHubProviderError } from "actup-wasm";
+import { GitHubProviderError, sortVersionTags } from "actup-wasm";
 import * as vscode from "vscode";
 
 /** Popular actions for name completion, matching the LSP's list. */
@@ -112,15 +112,17 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 		try {
 			const versions = await this.provider.getVersions(parsed.host, parsed.owner, parsed.repo);
 			const lower = versionPrefix.toLowerCase();
+			const tags = sortVersionTags(versions.semverTags ?? [])
+				.filter(tag => tag.version.toLowerCase().startsWith(lower));
+			const width = String(tags.length).length;
 
-			for (const tag of versions.semverTags ?? []) {
-				if (lower !== "" && !tag.version.toLowerCase().startsWith(lower)) continue;
-
+			for (const [index, tag] of tags.entries()) {
 				const item = new vscode.CompletionItem(
 					tag.version,
 					vscode.CompletionItemKind.Value,
 				);
 				item.detail = tag.sha.slice(0, 7);
+				item.sortText = String(index).padStart(width, "0");
 				items.push(item);
 			}
 		} catch (err) {

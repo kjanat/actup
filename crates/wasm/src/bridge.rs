@@ -89,12 +89,17 @@ pub struct VersionSet {
 }
 
 /// A single version tag as returned from JS.
-#[derive(serde::Deserialize, tsify_next::Tsify)]
+#[derive(serde::Deserialize, serde::Serialize, tsify_next::Tsify)]
 pub struct VersionTag {
     /// Tag string (e.g. "v4.2.0", "v1")
     version: String,
     /// Full 40-char commit SHA
     sha: String,
+}
+
+/// Sort tags newest first by core version precedence.
+pub fn sort_newest_first(tags: &mut [VersionTag]) {
+    tags.sort_by_cached_key(|tag| std::cmp::Reverse(version::Version::parse(&tag.version)));
 }
 
 /// Branch info as returned from JS.
