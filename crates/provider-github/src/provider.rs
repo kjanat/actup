@@ -99,8 +99,19 @@ impl GitHubProvider {
         self
     }
 
+    fn git_base(&self) -> String {
+        if self.host == crate::GITHUB_HOST {
+            return format!("https://{}", crate::GITHUB_HOST);
+        }
+        self.client
+            .api_base()
+            .trim_end_matches('/')
+            .strip_suffix("/api/v3")
+            .map_or_else(|| format!("https://{}", self.host), str::to_string)
+    }
+
     fn clone_url(&self, repo: &ActionRepoId) -> String {
-        format!("https://{}/{}/{}.git", self.host, repo.owner(), repo.repo())
+        format!("{}/{}/{}.git", self.git_base(), repo.owner(), repo.repo())
     }
 
     /// Fetch every tag and the default branch over the git wire protocol.
@@ -659,6 +670,37 @@ mod tests {
         // Non-semver should be ignored
         assert_eq!(result.semver_tags().len(), 1);
         assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+    }
+
+    #[test]
+    fn git_base_follows_the_api_base() {
+        let base = |api_base: &str, host: &str| {
+            GitHubProvider::with_host(api_base, host, None)
+                .unwrap()
+                .git_base()
+        };
+        assert_eq!(
+            base("https://api.github.com", "github.com"),
+            "https://github.com"
+        );
+        assert_eq!(
+            base("https://ghe.corp.com/api/v3", "ghe.corp.com"),
+            "https://ghe.corp.com"
+        );
+        assert_eq!(
+            base("http://127.0.0.1:8080/api/v3", "ghe.test"),
+            "http://127.0.0.1:8080"
+        );
+        assert_eq!(
+            base("https://custom.corp.com/github", "custom.corp.com"),
+            "https://custom.corp.com"
+        );
+        let provider =
+            GitHubProvider::with_host("https://ghe.corp.com/api/v3", "ghe.corp.com", None).unwrap();
+        assert_eq!(
+            provider.clone_url(&ActionRepoId::simple("o", "r")),
+            "https://ghe.corp.com/o/r.git"
+        );
     }
 
     #[test]

@@ -133,6 +133,10 @@ token_env = "GHE_TOKEN"
 
 **Token**: `GITHUB_TOKEN` environment variable (optional, but recommended)
 
+**Git listing**: tags and branches come from git `ls-refs` first. `github.com`
+clones from `https://github.com`. An `api_base` ending in `/api/v3` clones from
+the root before `/api/v3`. Any other host clones from `https://{host}`.
+
 ### GitLab (`actup-provider-gitlab`)
 
 **Status**: Registered by the CLI (feature `gitlab`, on by default), the LSP and
