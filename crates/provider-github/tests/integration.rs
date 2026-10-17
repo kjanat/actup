@@ -1086,6 +1086,74 @@ mod stale {
     }
 
     #[tokio::test]
+    async fn a_renamed_default_branch_is_fetched_without_the_old_branch_etag()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let ok = |etag: &str, body: &str| {
+            ResponseTemplate::new(200)
+                .insert_header("etag", etag)
+                .set_body_string(body)
+        };
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            Some("\"t1\""),
+            ResponseTemplate::new(304),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            None,
+            ok("\"t2\"", TAGS_RESPONSE),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r",
+            Some("\"r1\""),
+            ok(
+                "\"r2\"",
+                r#"{"full_name": "o/r", "default_branch": "trunk"}"#,
+            ),
+        )
+        .await;
+        answer(
+            &server,
+            "/repos/o/r/branches/trunk",
+            None,
+            ok("\"b2\"", BRANCH_RESPONSE),
+        )
+        .await;
+        let cache = MemoryCache::with(
+            &key("r"),
+            day_old_entry()?.with_validators(etags("\"t1\"", "\"r1\"", "\"b1\"")),
+        );
+
+        let versions = fetch_one(&server, &cache, "r").await??;
+
+        assert_eq!(
+            versions.default_branch().map(BranchInfo::name),
+            Some("trunk")
+        );
+        assert_eq!(latest(&versions), Some("v6.0.2".to_string()));
+        let entry = cache.entry(&key("r")).ok_or("entry gone")?;
+        assert_eq!(entry.validators(), &etags("\"t2\"", "\"r2\"", "\"b2\""));
+        let requests = server.received_requests().await.unwrap_or_default();
+        let paths: Vec<&str> = requests.iter().map(|request| request.url.path()).collect();
+        assert_eq!(
+            paths,
+            [
+                "/repos/o/r/tags",
+                "/repos/o/r",
+                "/repos/o/r/branches/trunk",
+                "/repos/o/r/tags"
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_fetch_without_stored_etags_sends_none_and_stores_the_answered_ones()
     -> Result<(), Box<dyn std::error::Error>> {
         let server = MockServer::start().await;
@@ -1235,6 +1303,84 @@ mod stale {
             ResponseTemplate::new(404).set_body_string(r#"{"message": "Not Found"}"#),
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn a_github_host_without_a_batch_config_falls_back_to_its_expired_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        answer(
+            &server,
+            "/repos/o/r/tags",
+            None,
+            ResponseTemplate::new(429).insert_header("retry-after", "60"),
+        )
+        .await;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host(HOST);
+        registry.register(Box::new(GitHubProvider::with_host(
+            &server.uri(),
+            HOST,
+            None,
+        )?));
+        let cache = MemoryCache::with(&key("r"), day_old_entry()?);
+
+        let results = actup_provider_github::fetch_versions_with_registry(
+            &[repo("r")],
+            &actup_core::Config::default(),
+            &registry,
+            cache,
+            &actup_core::fetch::Silent,
+        )
+        .await;
+
+        let versions = results
+            .get(&repo("r"))
+            .ok_or("no result")?
+            .as_ref()
+            .map_err(ToString::to_string)?;
+        assert_eq!(
+            versions.stale().map(|s| (s.reason(), s.retry_after())),
+            Some((StaleReason::RateLimited, Some(Duration::from_mins(1))))
+        );
+        assert_eq!(latest(versions), Some("v1.0.0".to_string()));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_github_host_without_a_batch_config_answers_a_fresh_entry_from_the_cache()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host(HOST);
+        registry.register(Box::new(GitHubProvider::with_host(
+            &server.uri(),
+            HOST,
+            None,
+        )?));
+        let cache = MemoryCache::with(&key("r"), Entry::new(cached_versions()));
+
+        let results = actup_provider_github::fetch_versions_with_registry(
+            &[repo("r")],
+            &actup_core::Config::default(),
+            &registry,
+            cache,
+            &actup_core::fetch::Silent,
+        )
+        .await;
+
+        let versions = results
+            .get(&repo("r"))
+            .ok_or("no result")?
+            .as_ref()
+            .map_err(ToString::to_string)?;
+        assert_eq!(versions.stale(), None);
+        assert_eq!(latest(versions), Some("v1.0.0".to_string()));
+        assert_eq!(
+            server.received_requests().await.unwrap_or_default().len(),
+            0
+        );
+        Ok(())
     }
 
     struct RateLimitedProvider;

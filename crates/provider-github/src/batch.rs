@@ -23,7 +23,7 @@ use tracing::{debug, warn};
 use crate::{
     GitHubProvider,
     graphql::GraphQLClient,
-    provider::{RestValidators, RestVersions},
+    provider::{RestListing, RestValidators, Revalidation},
 };
 
 /// Maximum concurrent fallback REST requests when registry batching misses.
@@ -35,8 +35,31 @@ struct RegistryFetchPlan {
     fallback_repos: Vec<(ActionRepoId, Option<cache::Entry>)>,
 }
 
-/// The versions of `repo` after `error`: the expired entry's, marked stale,
-/// for a rate limit or a network failure, else the error.
+enum Cached {
+    Fresh(version::Set),
+    Fetch(Option<cache::Entry>),
+}
+
+async fn read_cached<C: Cache>(cache: &C, repo: &ActionRepoId, key: &str) -> Cached {
+    match cache.lookup(key).await {
+        Ok(cache::Lookup::Fresh(entry)) => {
+            debug!(owner = %repo.owner(), repo = %repo.repo(), "cache hit");
+            Cached::Fresh(entry.versions().clone())
+        }
+        Ok(cache::Lookup::Expired(entry)) => Cached::Fetch(Some(entry)),
+        Err(cache::Error::NotFound | cache::Error::Disabled) => Cached::Fetch(None),
+        Err(e) => {
+            warn!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "cache read error, will fetch");
+            Cached::Fetch(None)
+        }
+    }
+}
+
+enum Refresh {
+    Listed(RestListing),
+    Renewed(cache::Entry),
+}
+
 fn stale_or_error(
     repo: &ActionRepoId,
     expired: Option<&cache::Entry>,
@@ -98,21 +121,11 @@ async fn classify_repos_for_registry_fetch<C: Cache>(
         }
 
         let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
-        match cache.lookup(&cache_key).await {
-            Ok(cache::Lookup::Fresh(entry)) => {
-                debug!(owner = %repo.owner(), repo = %repo.repo(), "cache hit");
-                plan.results.insert(repo, Ok(entry.versions().clone()));
+        match read_cached(cache, &repo, &cache_key).await {
+            Cached::Fresh(versions) => {
+                plan.results.insert(repo, Ok(versions));
             }
-            Ok(cache::Lookup::Expired(entry)) => {
-                plan.fallback_repos.push((repo, Some(entry)));
-            }
-            Err(cache::Error::NotFound | cache::Error::Disabled) => {
-                plan.fallback_repos.push((repo, None));
-            }
-            Err(e) => {
-                debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "cache read error, will fetch");
-                plan.fallback_repos.push((repo, None));
-            }
+            Cached::Fetch(expired) => plan.fallback_repos.push((repo, expired)),
         }
     }
 
@@ -226,18 +239,27 @@ pub async fn fetch_versions_with_registry<C: Cache>(
         });
     }
 
-    fallback_repos.extend(
-        fetch_github_host_groups(
-            github_hosts,
-            config,
-            Arc::clone(&cache),
-            &mut results,
-            progress,
-        )
-        .await
-        .into_iter()
-        .map(|repo| (repo, None)),
-    );
+    for repo in fetch_github_host_groups(
+        github_hosts,
+        config,
+        Arc::clone(&cache),
+        &mut results,
+        progress,
+    )
+    .await
+    {
+        let Some(provider) = registry.find_for_repo(&repo) else {
+            continue;
+        };
+        let cache_key = repo.cache_key(provider.cache_namespace(), provider.host());
+        match read_cached(cache.as_ref(), &repo, &cache_key).await {
+            Cached::Fresh(versions) => {
+                results.insert(repo, Ok(versions));
+                progress.finished(Outcome::Cache);
+            }
+            Cached::Fetch(expired) => fallback_repos.push((repo, expired)),
+        }
+    }
 
     fetch_fallback_repos(
         fallback_repos,
@@ -330,30 +352,15 @@ impl<C: Cache> BatchFetcher<C> {
         for repo in &unique_repos {
             let cache_key = repo.cache_key("github", self.provider.host());
 
-            match self.cache.lookup(&cache_key).await {
-                Ok(cache::Lookup::Fresh(entry)) => {
-                    debug!(
-                        owner = %repo.owner(),
-                        repo = %repo.repo(),
-                        "cache hit"
-                    );
-                    results.insert(repo.clone(), Ok(entry.versions().clone()));
+            match read_cached(self.cache.as_ref(), repo, &cache_key).await {
+                Cached::Fresh(versions) => {
+                    results.insert(repo.clone(), Ok(versions));
                     progress.finished(Outcome::Cache);
                 }
-                Ok(cache::Lookup::Expired(entry)) => {
-                    expired.insert(repo.clone(), entry);
-                    uncached.push(repo.clone());
-                }
-                Err(cache::Error::NotFound | cache::Error::Disabled) => {
-                    uncached.push(repo.clone());
-                }
-                Err(e) => {
-                    warn!(
-                        owner = %repo.owner(),
-                        repo = %repo.repo(),
-                        error = %e,
-                        "cache read error"
-                    );
+                Cached::Fetch(entry) => {
+                    if let Some(entry) = entry {
+                        expired.insert(repo.clone(), entry);
+                    }
                     uncached.push(repo.clone());
                 }
             }
@@ -366,9 +373,11 @@ impl<C: Cache> BatchFetcher<C> {
 
         debug!(count = uncached.len(), "fetching uncached repos");
 
-        let listed = |versions| RestVersions::Fetched {
-            versions: Box::new(versions),
-            validators: BTreeMap::new(),
+        let listed = |versions| {
+            Refresh::Listed(RestListing {
+                versions,
+                validators: BTreeMap::new(),
+            })
         };
         let mut fetched = HashMap::new();
         let mut unlisted = Vec::new();
@@ -415,29 +424,18 @@ impl<C: Cache> BatchFetcher<C> {
         results
     }
 
-    /// Store the outcome of fetching `repo` and return its versions.
-    ///
-    /// A 304 answer renews the `expired` entry. An error falls back to it
-    /// through [`stale_or_error`].
     async fn settle(
         &self,
         repo: &ActionRepoId,
-        result: actup_core::Result<RestVersions>,
+        result: actup_core::Result<Refresh>,
         expired: Option<cache::Entry>,
     ) -> actup_core::Result<version::Set> {
-        let entry = match (result, expired) {
-            (
-                Ok(RestVersions::Fetched {
-                    versions,
-                    validators,
-                }),
-                _,
-            ) => cache::Entry::new(*versions).with_validators(validators),
-            (Ok(RestVersions::NotModified), Some(entry)) => entry.renewed(),
-            (Ok(RestVersions::NotModified), None) => {
-                return Err(crate::client::not_modified_without_validator());
+        let entry = match result {
+            Ok(Refresh::Listed(listing)) => {
+                cache::Entry::new(listing.versions).with_validators(listing.validators)
             }
-            (Err(e), expired) => return stale_or_error(repo, expired.as_ref(), e),
+            Ok(Refresh::Renewed(entry)) => entry,
+            Err(e) => return stale_or_error(repo, expired.as_ref(), e),
         };
         let cache_key = repo.cache_key("github", self.provider.host());
         let versions = entry.versions().clone();
@@ -486,24 +484,34 @@ impl<C: Cache> BatchFetcher<C> {
             .await
     }
 
-    /// Fetch using parallel REST requests with bounded concurrency,
-    /// sending the `ETag`s of each repo's `expired` entry.
     async fn fetch_parallel_rest(
         &self,
         repos: &[ActionRepoId],
         expired: &HashMap<ActionRepoId, cache::Entry>,
-    ) -> HashMap<ActionRepoId, actup_core::Result<RestVersions>> {
+    ) -> HashMap<ActionRepoId, actup_core::Result<Refresh>> {
         debug!(count = repos.len(), "using parallel REST fetch");
 
         futures::stream::iter(repos.iter().cloned())
             .map(|repo| async move {
-                let since = expired.get(&repo).and_then(|entry| {
+                let stored = expired.get(&repo).and_then(|entry| {
                     RestValidators::from_entry(entry.validators(), entry.versions())
+                        .map(|since| (entry, since))
                 });
-                let result = self
-                    .provider
-                    .versions_via_rest_since(&repo, since.as_ref())
-                    .await;
+                let result = match stored {
+                    Some((entry, since)) => self
+                        .provider
+                        .revalidate_via_rest(&repo, &since)
+                        .await
+                        .map(|answer| match answer {
+                            Revalidation::NotModified => Refresh::Renewed(entry.clone().renewed()),
+                            Revalidation::Modified(listing) => Refresh::Listed(*listing),
+                        }),
+                    None => self
+                        .provider
+                        .list_via_rest(&repo)
+                        .await
+                        .map(Refresh::Listed),
+                };
                 (repo, result)
             })
             .buffer_unordered(FALLBACK_CONCURRENCY_LIMIT)

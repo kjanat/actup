@@ -25,9 +25,9 @@ use actup_core::{
     provider::Provider,
 };
 pub use batch::{BatchFetcher, fetch_versions_with_registry};
-pub use client::{Conditional, DEFAULT_PER_PAGE, GitHubClient};
+pub use client::{Conditional, DEFAULT_PER_PAGE, GitHubClient, Tagged};
 pub use graphql::{GITHUB_GRAPHQL_URL, GraphQLClient};
-pub use provider::{GitHubProvider, RestValidators, RestVersions};
+pub use provider::{GitHubProvider, RestListing, RestValidators, Revalidation};
 pub use types::*;
 
 /// Default GitHub API host

@@ -31,41 +31,22 @@ pub const ACTION_TOPIC: &str = "github-actions";
 /// Default items per page
 pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
 
-/// The result of a GET sent with an optional `If-None-Match` validator.
+/// A response body with the `ETag` the server sent for it.
+#[derive(Debug)]
+pub struct Tagged<T> {
+    /// The parsed response body.
+    pub body: T,
+    /// The response `ETag` header.
+    pub etag: Option<String>,
+}
+
+/// The answer to a GET sent with an `If-None-Match` validator.
 #[derive(Debug)]
 pub enum Conditional<T> {
     /// The server answered 304 to the validator.
     NotModified,
-    /// The server sent the resource, with its `ETag` when it set one.
-    Modified {
-        /// The parsed response body.
-        body: T,
-        /// The response `ETag` header.
-        etag: Option<String>,
-    },
-}
-
-impl<T> Conditional<T> {
-    /// The body and `ETag` of a modified response.
-    ///
-    /// # Errors
-    ///
-    /// Returns a network error for a 304 answer.
-    pub fn into_modified(self) -> Result<(T, Option<String>)> {
-        match self {
-            Self::Modified { body, etag } => Ok((body, etag)),
-            Self::NotModified => Err(not_modified_without_validator()),
-        }
-    }
-}
-
-/// The error for a 304 answer to a request that sent no validator.
-pub fn not_modified_without_validator() -> Error {
-    Error::Network {
-        operation: "API request".to_string(),
-        message: "status 304 Not Modified to a request without a validator".to_string(),
-        source: None,
-    }
+    /// The server sent the resource.
+    Modified(Tagged<T>),
 }
 
 /// HTTP client configured for GitHub API
@@ -243,43 +224,67 @@ impl GitHubClient {
         repo: &str,
         max_tags: NonZeroU8,
     ) -> Result<Vec<GitHubTag>> {
-        self.list_tags_limited_if_none_match(owner, repo, max_tags, None)
+        Ok(self
+            .list_tags_limited_tagged(owner, repo, max_tags)
             .await?
-            .into_modified()
-            .map(|(tags, _)| tags)
+            .body)
+    }
+
+    /// List the newest `max_tags` tags with the `ETag` of the first page.
+    pub async fn list_tags_limited_tagged(
+        &self,
+        owner: &str,
+        repo: &str,
+        max_tags: NonZeroU8,
+    ) -> Result<Tagged<Vec<GitHubTag>>> {
+        let response = self.get(&self.tags_url(owner, repo, max_tags)?).await?;
+        self.collect_tags(response, owner, repo, max_tags).await
     }
 
     /// List the newest `max_tags` tags, sending `etag` as `If-None-Match` on the first page.
     ///
-    /// A 304 to the first page answers [`Conditional::NotModified`]; the
-    /// `ETag` of a modified answer is the first page's.
+    /// A 304 to the first page answers [`Conditional::NotModified`].
     pub async fn list_tags_limited_if_none_match(
         &self,
         owner: &str,
         repo: &str,
         max_tags: NonZeroU8,
-        etag: Option<&str>,
+        etag: &str,
     ) -> Result<Conditional<Vec<GitHubTag>>> {
-        let max_tags = max_tags.get();
-        let per_page = max_tags.min(MAX_PER_PAGE);
+        let response = self
+            .get_if_none_match(&self.tags_url(owner, repo, max_tags)?, Some(etag))
+            .await?;
+        if response.status() == StatusCode::NOT_MODIFIED {
+            return Ok(Conditional::NotModified);
+        }
+        Ok(Conditional::Modified(
+            self.collect_tags(response, owner, repo, max_tags).await?,
+        ))
+    }
 
-        let first_url = format!("{}/tags?per_page={per_page}", self.repo_url(owner, repo)?);
-        debug!(url = %first_url, max_tags, "fetching first tags page");
-        let response = self.get_if_none_match(&first_url, etag).await?;
-        let mut url = Self::parse_next_link(&response);
-        let (first, first_etag) = match self
-            .handle_conditional::<Vec<GitHubTag>>(response, owner, repo, etag)
-            .await?
-        {
-            Conditional::NotModified => return Ok(Conditional::NotModified),
-            Conditional::Modified { body, etag } => (body, etag),
-        };
+    fn tags_url(&self, owner: &str, repo: &str, max_tags: NonZeroU8) -> Result<String> {
+        let per_page = max_tags.get().min(MAX_PER_PAGE);
+        let url = format!("{}/tags?per_page={per_page}", self.repo_url(owner, repo)?);
+        debug!(url = %url, max_tags, "fetching first tags page");
+        Ok(url)
+    }
 
-        let mut all_tags = Vec::with_capacity(usize::from(max_tags));
-        all_tags.extend(first.into_iter().take(usize::from(max_tags)));
+    async fn collect_tags(
+        &self,
+        first: Response,
+        owner: &str,
+        repo: &str,
+        max_tags: NonZeroU8,
+    ) -> Result<Tagged<Vec<GitHubTag>>> {
+        let max_tags = usize::from(max_tags.get());
+        let mut url = Self::parse_next_link(&first);
+        let Tagged { body: first, etag } =
+            self.tagged::<Vec<GitHubTag>>(first, owner, repo).await?;
+        let mut all_tags = Vec::with_capacity(max_tags);
+        all_tags.extend(first.into_iter().take(max_tags));
 
         while let Some(current_url) = url {
-            if all_tags.len() >= usize::from(max_tags) {
+            if all_tags.len() >= max_tags {
                 break;
             }
 
@@ -289,17 +294,13 @@ impl GitHubClient {
             url = Self::parse_next_link(&response);
 
             let tags: Vec<GitHubTag> = self.handle_response(response, owner, repo).await?;
-            let remaining = usize::from(max_tags).saturating_sub(all_tags.len());
+            let remaining = max_tags.saturating_sub(all_tags.len());
             all_tags.extend(tags.into_iter().take(remaining));
-
-            if all_tags.len() >= usize::from(max_tags) {
-                break;
-            }
         }
 
-        Ok(Conditional::Modified {
+        Ok(Tagged {
             body: all_tags,
-            etag: first_etag,
+            etag,
         })
     }
 
@@ -333,6 +334,15 @@ impl GitHubClient {
         self.handle_response(response, owner, repo).await
     }
 
+    /// Get repository info with its `ETag`.
+    pub async fn get_repo_tagged(&self, owner: &str, repo: &str) -> Result<Tagged<GitHubRepo>> {
+        let url = self.repo_url(owner, repo)?;
+        debug!(url = %url, "fetching repo info");
+
+        let response = self.get(&url).await?;
+        self.tagged(response, owner, repo).await
+    }
+
     /// Search repositories that match `query` and carry the `github-actions` topic
     ///
     /// # Errors
@@ -362,13 +372,13 @@ impl GitHubClient {
         &self,
         owner: &str,
         repo: &str,
-        etag: Option<&str>,
+        etag: &str,
     ) -> Result<Conditional<GitHubRepo>> {
         let url = self.repo_url(owner, repo)?;
         debug!(url = %url, "fetching repo info");
 
-        let response = self.get_if_none_match(&url, etag).await?;
-        self.handle_conditional(response, owner, repo, etag).await
+        let response = self.get_if_none_match(&url, Some(etag)).await?;
+        self.conditional(response, owner, repo).await
     }
 
     /// Get a specific git ref
@@ -437,13 +447,31 @@ impl GitHubClient {
         self.handle_response(response, owner, repo).await
     }
 
+    /// Get branch info with its `ETag`.
+    pub async fn get_branch_tagged(
+        &self,
+        owner: &str,
+        repo: &str,
+        branch: &str,
+    ) -> Result<Tagged<GitHubBranch>> {
+        let url = format!(
+            "{}/branches/{}",
+            self.repo_url(owner, repo)?,
+            encode_path(branch)?
+        );
+        debug!(url = %url, "fetching branch");
+
+        let response = self.get(&url).await?;
+        self.tagged(response, owner, repo).await
+    }
+
     /// Get branch info, sending `etag` as `If-None-Match`.
     pub async fn get_branch_if_none_match(
         &self,
         owner: &str,
         repo: &str,
         branch: &str,
-        etag: Option<&str>,
+        etag: &str,
     ) -> Result<Conditional<GitHubBranch>> {
         let url = format!(
             "{}/branches/{}",
@@ -452,8 +480,8 @@ impl GitHubClient {
         );
         debug!(url = %url, "fetching branch");
 
-        let response = self.get_if_none_match(&url, etag).await?;
-        self.handle_conditional(response, owner, repo, etag).await
+        let response = self.get_if_none_match(&url, Some(etag)).await?;
+        self.conditional(response, owner, repo).await
     }
 
     /// Get a commit by full or abbreviated SHA
@@ -509,7 +537,6 @@ impl GitHubClient {
         self.get_if_none_match(url, None).await
     }
 
-    /// Make a GET request with an optional `If-None-Match` header, with retry and exponential backoff
     async fn get_if_none_match(&self, url: &str, etag: Option<&str>) -> Result<Response> {
         let mut last_error = None;
 
@@ -568,25 +595,34 @@ impl GitHubClient {
         })
     }
 
-    /// Handle a response to a request that sent `etag` as `If-None-Match`.
-    async fn handle_conditional<T: serde::de::DeserializeOwned>(
+    async fn tagged<T: serde::de::DeserializeOwned>(
         &self,
         response: Response,
         owner: &str,
         repo: &str,
-        etag: Option<&str>,
-    ) -> Result<Conditional<T>> {
-        if etag.is_some() && response.status() == StatusCode::NOT_MODIFIED {
-            debug!(owner, repo, "not modified");
-            return Ok(Conditional::NotModified);
-        }
+    ) -> Result<Tagged<T>> {
         let etag = response
             .headers()
             .get(ETAG)
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned);
         let body = self.handle_response(response, owner, repo).await?;
-        Ok(Conditional::Modified { body, etag })
+        Ok(Tagged { body, etag })
+    }
+
+    async fn conditional<T: serde::de::DeserializeOwned>(
+        &self,
+        response: Response,
+        owner: &str,
+        repo: &str,
+    ) -> Result<Conditional<T>> {
+        if response.status() == StatusCode::NOT_MODIFIED {
+            debug!(owner, repo, "not modified");
+            return Ok(Conditional::NotModified);
+        }
+        Ok(Conditional::Modified(
+            self.tagged(response, owner, repo).await?,
+        ))
     }
 
     /// Handle response, checking for errors
@@ -639,8 +675,6 @@ impl GitHubClient {
     }
 }
 
-/// When a rate limited request may be retried: `retry-after`, else the
-/// `x-ratelimit-reset` epoch of an exhausted `x-ratelimit-remaining`.
 fn retry_after(headers: &HeaderMap, now: std::time::SystemTime) -> Option<Duration> {
     let number = |name: &str| {
         headers

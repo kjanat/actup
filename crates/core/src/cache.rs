@@ -27,12 +27,6 @@ pub struct Entry {
     /// When this entry was stored
     stored_at: SystemTime,
 
-    /// `ETag` from the provider (for conditional requests)
-    etag: Option<String>,
-
-    /// Last-Modified header value
-    last_modified: Option<String>,
-
     /// Opaque validators the provider sends with conditional requests, keyed by request.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     validators: BTreeMap<String, String>,
@@ -51,8 +45,6 @@ impl Entry {
         Self {
             versions,
             stored_at: clock.now(),
-            etag: None,
-            last_modified: None,
             validators: BTreeMap::new(),
         }
     }
@@ -81,32 +73,6 @@ impl Entry {
     #[must_use]
     pub const fn stored_at(&self) -> SystemTime {
         self.stored_at
-    }
-
-    /// Get the `ETag` if present
-    #[must_use]
-    pub fn etag(&self) -> Option<&str> {
-        self.etag.as_deref()
-    }
-
-    /// Get the Last-Modified header if present
-    #[must_use]
-    pub fn last_modified(&self) -> Option<&str> {
-        self.last_modified.as_deref()
-    }
-
-    /// Builder-style setter for `ETag`
-    #[must_use]
-    pub fn with_etag(mut self, etag: impl Into<String>) -> Self {
-        self.etag = Some(etag.into());
-        self
-    }
-
-    /// Builder-style setter for Last-Modified
-    #[must_use]
-    pub fn with_last_modified(mut self, last_modified: impl Into<String>) -> Self {
-        self.last_modified = Some(last_modified.into());
-        self
     }
 
     /// Get the conditional request validators
@@ -203,7 +169,6 @@ impl Staleness {
     }
 }
 
-/// Serializes as `{ age_secs, reason, retry_after_secs }`, leaving out an unknown reset.
 impl Serialize for Staleness {
     fn serialize<S: serde::Serializer>(
         &self,
@@ -447,8 +412,7 @@ mod tests {
     #[test]
     fn test_cache_entry_new() {
         let entry = Entry::new(version::Set::default());
-        assert!(entry.etag().is_none());
-        assert!(entry.last_modified().is_none());
+        assert!(entry.validators().is_empty());
         // stored_at should be set (age is computable)
         assert!(entry.age().is_some());
     }
@@ -475,16 +439,6 @@ mod tests {
             age.unwrap() < Duration::from_secs(5),
             "entry age {age:?} exceeded 5s threshold"
         );
-    }
-
-    #[test]
-    fn test_cache_entry_with_metadata() {
-        let entry = Entry::new(version::Set::default())
-            .with_etag("W/\"abc123\"")
-            .with_last_modified("Mon, 01 Jan 2024 00:00:00 GMT");
-
-        assert_eq!(entry.etag(), Some("W/\"abc123\""));
-        assert_eq!(entry.last_modified(), Some("Mon, 01 Jan 2024 00:00:00 GMT"));
     }
 
     fn rate_limited(retry_after: Option<Duration>) -> crate::Error {
@@ -711,32 +665,5 @@ mod tests {
         let key = build_cache_key("github", "ghe.corp.com", &repo);
         assert!(key.contains("ghe.corp.com"));
         assert!(key.contains("actions/build"));
-    }
-
-    #[test]
-    fn test_cache_entry_with_etag() {
-        let entry = Entry::new(version::Set::default()).with_etag("W/\"abc123\"");
-
-        assert_eq!(entry.etag(), Some("W/\"abc123\""));
-        assert_eq!(entry.last_modified(), None);
-    }
-
-    #[test]
-    fn test_cache_entry_with_last_modified() {
-        let entry =
-            Entry::new(version::Set::default()).with_last_modified("Mon, 01 Jan 2024 00:00:00 GMT");
-
-        assert_eq!(entry.last_modified(), Some("Mon, 01 Jan 2024 00:00:00 GMT"));
-        assert_eq!(entry.etag(), None);
-    }
-
-    #[test]
-    fn test_cache_entry_with_both_metadata() {
-        let entry = Entry::new(version::Set::default())
-            .with_etag("W/\"abc123\"")
-            .with_last_modified("Mon, 01 Jan 2024 00:00:00 GMT");
-
-        assert_eq!(entry.etag(), Some("W/\"abc123\""));
-        assert_eq!(entry.last_modified(), Some("Mon, 01 Jan 2024 00:00:00 GMT"));
     }
 }
