@@ -113,13 +113,10 @@ fn replace(
     let name = name.to_string_lossy();
     let (temp, mut file) =
         create_temp(dir, &name, || TEMP_COUNTER.fetch_add(1, Ordering::Relaxed))?;
-    let written = write(&mut file, contents)
-        .and_then(|()| file.sync_all())
-        .and_then(|()| {
-            permissions.map_or(Ok(()), |permissions| {
-                fs::set_permissions(&temp, permissions)
-            })
-        });
+    let written = permissions
+        .map_or(Ok(()), |permissions| file.set_permissions(permissions))
+        .and_then(|()| write(&mut file, contents))
+        .and_then(|()| file.sync_all());
     drop(file);
     let result = written.and_then(|()| fs::rename(&temp, target));
     if result.is_err() {
@@ -356,6 +353,28 @@ mod tests {
         write_atomic(&path, b"new")?;
 
         assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o7777, 0o640);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_file_takes_the_mode_before_any_byte_is_written() -> TestResult {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("secret.yml");
+        fs::write(&path, "old")?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+
+        let mut mode_before_write = None;
+        replace(&resolve(&path)?, b"new", |file, bytes| {
+            mode_before_write = Some(file.metadata()?.permissions().mode() & 0o7777);
+            file.write_all(bytes)
+        })?;
+
+        assert_eq!(mode_before_write, Some(0o600));
+        assert_eq!(fs::read_to_string(&path)?, "new");
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o7777, 0o600);
         Ok(())
     }
 
