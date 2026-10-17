@@ -3,6 +3,8 @@ import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from 
 import * as vscode from "vscode";
 import { byteToColumn } from "./position.ts";
 
+const DEFAULT_HOST = "github.com";
+
 export class ActupHoverProvider implements vscode.HoverProvider {
 	constructor(
 		private readonly provider: ActupProvider,
@@ -29,6 +31,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 			return undefined;
 		}
 
+		const host = ref.host ?? DEFAULT_HOST;
 		const results = this.resultCache.get(document.uri.toString());
 		const matchingResult = results?.find(r =>
 			r.location.line === loc.line && r.location.column === loc.column && r.location.value === loc.value
@@ -45,7 +48,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		// Try to fetch action metadata for description
 		try {
 			const actionYml = await this.provider.getActionYml(
-				ref.host ?? "github.com",
+				host,
 				ref.owner,
 				ref.repo,
 				ref.ref_str,
@@ -73,9 +76,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 			}
 		}
 
-		md.appendMarkdown(
-			`\n[View on GitHub](https://github.com/${ref.owner}/${ref.repo})`,
-		);
+		md.appendMarkdown(`\n[View on ${host}](https://${host}/${ref.owner}/${ref.repo})`);
 
 		const line = loc.line - 1;
 		return new vscode.Hover(md, new vscode.Range(line, columns.start, line, columns.end));

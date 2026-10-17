@@ -155,3 +155,22 @@ describe("hover range", () => {
 		expect(await hoverAt(document, 2, line.indexOf("}, {"))).toBeUndefined();
 	});
 });
+
+describe("hover repository link", () => {
+	async function linkRow(value: string): Promise<string | undefined> {
+		const document = new FakeDocument("hover-link.yml", `jobs:\n  build:\n    steps:\n      - uses: ${value}\n`);
+		return rows(await hoverAt(document, 3, 16)).find(row => row.startsWith("[View on "));
+	}
+
+	test("links a bare ref to the default host", async () => {
+		expect(await linkRow("actions/checkout@v1")).toBe("[View on github.com](https://github.com/actions/checkout)");
+	});
+
+	test("links a GHE ref to its host", async () => {
+		expect(await linkRow("ghe.corp.internal/o/r@v1")).toBe("[View on ghe.corp.internal](https://ghe.corp.internal/o/r)");
+	});
+
+	test("links a GitLab ref to GitLab", async () => {
+		expect(await linkRow("gitlab.com/group/project@v1")).toBe("[View on gitlab.com](https://gitlab.com/group/project)");
+	});
+});

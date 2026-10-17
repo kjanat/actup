@@ -235,12 +235,11 @@ async fn get_action_meta(
     Some(meta)
 }
 
-/// Build the repository URL for an action.
-fn repo_url(action_ref: &ActionRef, default_host: Option<&str>) -> String {
+/// Build the Markdown link to an action's repository on its host.
+fn repo_link(action_ref: &ActionRef, default_host: Option<&str>) -> String {
     let host = action_ref.host().or(default_host).unwrap_or("github.com");
     format!(
-        "https://{}/{}/{}",
-        host,
+        "[View on {host}](https://{host}/{}/{})",
         action_ref.owner(),
         action_ref.repo()
     )
@@ -366,9 +365,7 @@ fn build_hover_content(
         let _ = writeln!(md, "| **Runtime** | {runtime} |");
     }
 
-    // Repository link
-    let url = repo_url(action_ref, default_host);
-    let _ = writeln!(md, "\n[View on GitHub]({url})");
+    let _ = writeln!(md, "\n{}", repo_link(action_ref, default_host));
 
     // Deprecation warnings
     if let Some(meta) = meta
@@ -610,36 +607,69 @@ mod tests {
     }
 
     #[test]
-    fn repo_url_uses_default_host() {
-        let action_ref = ActionRef::simple("actions", "checkout", "v4");
-        assert_eq!(
-            repo_url(&action_ref, Some("github.com")),
-            "https://github.com/actions/checkout"
-        );
+    fn repo_link_names_the_host_of_the_ref() {
+        let cases = [
+            (
+                ActionRef::simple("actions", "checkout", "v4"),
+                Some("github.com"),
+                "[View on github.com](https://github.com/actions/checkout)",
+            ),
+            (
+                ActionRef::simple("actions", "checkout", "v4"),
+                Some("ghe.mycorp.internal"),
+                "[View on ghe.mycorp.internal](https://ghe.mycorp.internal/actions/checkout)",
+            ),
+            (
+                ActionRef::simple("actions", "checkout", "v4"),
+                None,
+                "[View on github.com](https://github.com/actions/checkout)",
+            ),
+            (
+                ActionRef::new(
+                    Some("ghe.mycorp.internal".to_owned()),
+                    "platform",
+                    "ci-actions",
+                    None,
+                    "v1",
+                ),
+                Some("github.com"),
+                "[View on ghe.mycorp.internal](https://ghe.mycorp.internal/platform/ci-actions)",
+            ),
+            (
+                ActionRef::new(
+                    Some("gitlab.com".to_owned()),
+                    "group",
+                    "project",
+                    None,
+                    "v1",
+                ),
+                Some("github.com"),
+                "[View on gitlab.com](https://gitlab.com/group/project)",
+            ),
+        ];
+        for (action_ref, default_host, link) in cases {
+            assert_eq!(repo_link(&action_ref, default_host), link, "{action_ref}");
+        }
     }
 
     #[test]
-    fn repo_url_uses_explicit_host() {
+    fn build_hover_content_links_a_gitlab_ref_to_gitlab() {
         let action_ref = ActionRef::new(
-            Some("ghe.mycorp.internal".to_owned()),
-            String::from("platform"),
-            String::from("ci-actions"),
+            Some("gitlab.com".to_owned()),
+            "group",
+            "project",
             None,
-            String::from("v1"),
+            "v1",
         );
-        assert_eq!(
-            repo_url(&action_ref, Some("github.com")),
-            "https://ghe.mycorp.internal/platform/ci-actions"
-        );
-    }
+        let result = CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
 
-    #[test]
-    fn repo_url_fallback_when_no_host() {
-        let action_ref = ActionRef::simple("actions", "checkout", "v4");
-        assert_eq!(
-            repo_url(&action_ref, None),
-            "https://github.com/actions/checkout"
+        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+
+        assert!(
+            content.contains("\n[View on gitlab.com](https://gitlab.com/group/project)\n"),
+            "{content}"
         );
+        assert!(!content.contains("GitHub"), "{content}");
     }
 
     #[test]
