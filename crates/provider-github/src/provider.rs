@@ -577,9 +577,9 @@ impl Provider for GitHubProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{GitHubTag, TagCommit};
 
     type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
-    use crate::types::{GitHubTag, TagCommit};
 
     // Helper to create a GitHubTag for testing
     fn make_tag(name: &str, sha: &str) -> GitHubTag {
