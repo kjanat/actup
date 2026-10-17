@@ -1,14 +1,16 @@
-import type { ActupProvider, UsesLocation } from "actup-wasm";
-import { checkRefs, type CheckStatus, type LocatedCheckResult } from "actup-wasm";
+import type { ActupProvider, UpdateEdit, UsesLocation } from "actup-wasm";
+import { checkRefs, type CheckStatus, type LocatedCheckResult, planUpdates } from "actup-wasm";
 import * as vscode from "vscode";
 import { byteToColumn } from "./position.ts";
 
 const DIAGNOSTIC_SOURCE = "actup";
 
-/** Stored data for outdated diagnostics, keyed by document URI string. */
+/** Stored edit for an outdated diagnostic, keyed by document URI string. */
 export interface DiagnosticData {
 	readonly kind: "outdated";
 	readonly targetRef: string;
+	readonly range: vscode.Range;
+	readonly newText: string;
 }
 
 /** Per-document diagnostic results for code actions to consume. */
@@ -42,28 +44,33 @@ export async function computeDiagnostics(
 		return;
 	}
 
-	let results: LocatedCheckResult[] | undefined;
+	let checked: { results: LocatedCheckResult[]; edits: UpdateEdit[] } | undefined;
 	try {
-		results = await checkRefs(text, provider);
+		const results = await checkRefs(text, provider);
+		checked = { results, edits: planUpdates(results) };
 	} catch {
-		results = undefined;
+		checked = undefined;
 	}
 
 	if (latestComputeByUri.get(key) !== compute) {
 		return;
 	}
-	if (results === undefined) {
+	if (checked === undefined) {
 		// Network/provider error — clear diagnostics rather than show stale data
 		collection.set(uri, []);
 		clearDiagnosticData(uri);
 		return;
 	}
 
+	const { results, edits } = checked;
+	const editByRef = new Map(edits.map(edit => [`${edit.line}:${edit.refStart}`, edit]));
 	const diagnostics: vscode.Diagnostic[] = [];
 	const dataMap = new Map<string, DiagnosticData>();
 
 	for (const result of results) {
-		const diag = statusToDiagnostic(result.status, result.location);
+		const refStart = result.location.ref_range?.start;
+		const edit = refStart === undefined ? undefined : editByRef.get(`${result.location.line}:${refStart}`);
+		const diag = statusToDiagnostic(result.status, result.location, edit);
 		if (diag === undefined) {
 			continue;
 		}
@@ -100,6 +107,7 @@ interface DiagResult {
 function statusToDiagnostic(
 	status: CheckStatus,
 	loc: UsesLocation,
+	edit: UpdateEdit | undefined,
 ): DiagResult | undefined {
 	// UpToDate — no diagnostic
 	if (status === "UpToDate") return undefined;
@@ -123,7 +131,16 @@ function statusToDiagnostic(
 		);
 		diag.source = DIAGNOSTIC_SOURCE;
 		diag.code = "outdated";
-		return refRange === null ? { diagnostic: diag } : { diagnostic: diag, data: { kind: "outdated", targetRef } };
+		if (edit === undefined) {
+			return { diagnostic: diag };
+		}
+		const editRange = new vscode.Range(
+			line,
+			byteToColumn(loc.raw_line, edit.refStart),
+			line,
+			byteToColumn(loc.raw_line, edit.replaceEnd),
+		);
+		return { diagnostic: diag, data: { kind: "outdated", targetRef, range: editRange, newText: edit.newText } };
 	}
 
 	if (typeof status === "object" && "Unresolvable" in status) {

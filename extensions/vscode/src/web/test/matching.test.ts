@@ -82,4 +82,28 @@ describe("results matched to located actions", () => {
 		]);
 		expect(mockWindow.messages).toEqual(["actup: Updated 2 action ref(s) across 1 file(s)."]);
 	});
+
+	test("give fix all in workspace a re-pin of a SHA and its version comment", async () => {
+		mockWorkspace.reset();
+		mockWindow.reset();
+		const pinned = [
+			"jobs:",
+			"  build:",
+			"    steps:",
+			`      - uses: actions/checkout@${"a".repeat(40)} # v1.0.0`,
+			"",
+		].join("\n");
+		const document = new FakeDocument("repo/.github/workflows/pinned.yml", pinned);
+		mockWorkspace.documents.push(document);
+		await fixAllInWorkspace(provider, new FakeLogOutputChannel());
+		const sha = rangeOf(document, 3, "a".repeat(40));
+
+		expect(mockWorkspace.appliedEdits.flatMap(edit => edit.entries().flatMap(([, edits]) => edits))).toEqual([
+			new vscode.TextEdit(
+				new vscode.Range(3, sha.start.character, 3, document.lineAt(3).text.length),
+				`${"b".repeat(40)} # v1.2.0`,
+			),
+		]);
+		expect(mockWindow.messages).toEqual(["actup: Updated 1 action ref(s) across 1 file(s)."]);
+	});
 });

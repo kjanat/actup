@@ -48,7 +48,7 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 				vscode.CodeActionKind.QuickFix,
 			);
 			const edit = new vscode.WorkspaceEdit();
-			edit.replace(document.uri, diagnostic.range, data.targetRef);
+			edit.replace(document.uri, data.range, data.newText);
 			action.edit = edit;
 			action.diagnostics = [diagnostic];
 			action.isPreferred = true;
@@ -71,8 +71,8 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 				SOURCE_FIX_ALL_ACTUP,
 			);
 			const edit = new vscode.WorkspaceEdit();
-			for (const { diagnostic, data } of allOutdated) {
-				edit.replace(document.uri, diagnostic.range, data.targetRef);
+			for (const { data } of allOutdated) {
+				edit.replace(document.uri, data.range, data.newText);
 			}
 			fixAll.edit = edit;
 			fixAll.diagnostics = allOutdated.map(d => d.diagnostic);

@@ -48,8 +48,8 @@ describe("computeDiagnostics", () => {
 		expect(ci?.code).toBe("outdated");
 		expect(lint?.range).toEqual(rangeOf(document, 4, "v1.0.0"));
 		expect([...(diagnosticDataByUri.get(document.uri.toString())?.values() ?? [])]).toEqual([
-			{ kind: "outdated", targetRef: "v1.2.0" },
-			{ kind: "outdated", targetRef: "v1.2.0" },
+			{ kind: "outdated", targetRef: "v1.2.0", range: rangeOf(document, 2, "v1.0.0"), newText: "v1.2.0" },
+			{ kind: "outdated", targetRef: "v1.2.0", range: rangeOf(document, 4, "v1.0.0"), newText: "v1.2.0" },
 		]);
 	});
 
@@ -204,5 +204,55 @@ describe("a check that finishes after a newer computation or a close", () => {
 		expect(collection.get(uri)).toBeUndefined();
 		expect(checkResultsByUri.has(uri.toString())).toBe(false);
 		expect(diagnosticDataByUri.has(uri.toString())).toBe(false);
+	});
+});
+
+describe("an outdated SHA pin with a version comment", () => {
+	const pinned = [
+		"jobs:",
+		"  ci:",
+		`    uses: acme/workflows/.github/workflows/ci.yml@${"a".repeat(40)} # v1.0.0`,
+		"  lint:",
+		`    uses: acme/workflows/.github/workflows/lint.yml@${"a".repeat(40)} # v1.0.0`,
+		"",
+	].join("\n");
+	const repinned = `${"b".repeat(40)} # v1.2.0`;
+
+	function toLineEnd(document: FakeDocument, line: number): vscode.Range {
+		const start = rangeOf(document, line, "a".repeat(40)).start;
+		return new vscode.Range(line, start.character, line, document.lineAt(line).text.length);
+	}
+
+	test("gets a quick fix that re-pins the SHA and its comment", async () => {
+		const { document, diagnostics } = await diagnose("sha-quick-fix.yml", pinned);
+		const ci = diagnostics.filter(diagnostic => diagnostic.range.start.line === 2);
+		const [quickFix] = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(2).range,
+			codeActionContext(ci),
+		);
+
+		expect(ci.map(diagnostic => diagnostic.range)).toEqual([rangeOf(document, 2, "a".repeat(40))]);
+		expect(quickFix?.title).toBe("Update to v1.2.0");
+		expect(editsOf(quickFix)).toEqual([{ range: toLineEnd(document, 2), newText: repinned }]);
+	});
+
+	test("gets a fix-all that re-pins every SHA and its comment", async () => {
+		const { document, diagnostics } = await diagnose("sha-fix-all.yml", pinned);
+		const actions = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(0).range,
+			codeActionContext(diagnostics),
+		);
+
+		expect(actions.map(action => action.title)).toEqual([
+			"Update to v1.2.0",
+			"Update to v1.2.0",
+			"Fix all outdated actions (2 refs)",
+		]);
+		expect(editsOf(actions[2])).toEqual([
+			{ range: toLineEnd(document, 2), newText: repinned },
+			{ range: toLineEnd(document, 4), newText: repinned },
+		]);
 	});
 });
