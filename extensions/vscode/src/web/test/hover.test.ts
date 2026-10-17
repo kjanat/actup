@@ -98,7 +98,7 @@ describe("hover range", () => {
 		expect((await hoverAt(document, 3, 20))?.range).toEqual(rangeOf(document, 3, "actions/checkout@v1.0.0"));
 	});
 
-	test("covers the whole line when the line holds the value escaped", async () => {
+	test("covers the quoted scalar when the line holds the value escaped", async () => {
 		const document = new FakeDocument(
 			"hover-escaped.yml",
 			"jobs:\n  build:\n    steps:\n      - uses: \"actions/checkout@v1.0.\\x30\"\n",
@@ -106,8 +106,23 @@ describe("hover range", () => {
 		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());
 		const hover = await hoverAt(document, 3, 20);
 
-		expect(hover?.range).toEqual(document.lineAt(3).range);
+		expect(hover?.range).toEqual(rangeOf(document, 3, "\"actions/checkout@v1.0.\\x30\""));
 		expect(rows(hover)).toContain("$(warning) Outdated: `v1.0.0` → `v1.2.0`");
+	});
+
+	test("describes the escaped value under the cursor on a line with two escaped values", async () => {
+		const line = "    steps: [{ uses: \"actions/checkout@v1.0.\\x30\" }, { uses: \"actions/setup-node@v1.2.\\x30\" }]";
+		const document = new FakeDocument("hover-two-escaped.yml", `jobs:\n  build:\n${line}\n`);
+		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());
+		const first = await hoverAt(document, 2, line.indexOf("checkout"));
+		const second = await hoverAt(document, 2, line.indexOf("setup-node"));
+
+		expect(first?.range).toEqual(rangeOf(document, 2, "\"actions/checkout@v1.0.\\x30\""));
+		expect(rows(first)).toEqual(expect.arrayContaining(["**actions/checkout**", "$(warning) Outdated: `v1.0.0` → `v1.2.0`"]));
+		expect(second?.range).toEqual(rangeOf(document, 2, "\"actions/setup-node@v1.2.\\x30\""));
+		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "$(check) Up to date at `v1.2.0`"]));
+		expect(await hoverAt(document, 2, line.indexOf("steps"))).toBeUndefined();
+		expect(await hoverAt(document, 2, line.indexOf("}, {"))).toBeUndefined();
 	});
 
 	test("describes the action under the cursor on a line with two actions", async () => {

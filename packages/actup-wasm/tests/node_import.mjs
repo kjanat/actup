@@ -53,6 +53,8 @@ if (first.line !== 7) {
 }
 assert.deepEqual(first.value_range, { start: 14, end: 33 }, "value range covers the value");
 assert.deepEqual(locations[1].value_range, { start: 15, end: 36 }, "value range of a quoted value skips the quotes");
+assert.deepEqual(first.scalar_range, { start: 14, end: 33 }, "scalar range of a plain value");
+assert.deepEqual(locations[1].scalar_range, { start: 14, end: 37 }, "scalar range of a quoted value covers the quotes");
 
 console.log("PASS: parseUsesRefs returned", locations.length, "locations");
 console.log("  [0]", JSON.stringify(first));
@@ -284,6 +286,11 @@ const [escapedLoc] = parseUsesRefs(escapedYaml);
 assert.equal(escapedLoc.value, "actions/checkout@v4.0.0", "escape is decoded");
 assert.equal(escapedLoc.ref_range, null, "no ref range for an escaped value");
 assert.equal(escapedLoc.value_range, null, "no value range for an escaped value");
+assert.equal(
+	escapedLoc.raw_line.slice(escapedLoc.scalar_range.start, escapedLoc.scalar_range.end),
+	"\"actions/checkout@v4.0.\\x30\"",
+	"scalar range covers the escaped scalar",
+);
 const escapedResults = await checkRefs(escapedYaml, mockProvider);
 assert.equal(statusName(escapedResults[0].status), "Outdated", "escaped ref is still checked");
 assert.deepEqual(planUpdates(escapedResults), [], "no edit for an escaped value");

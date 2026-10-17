@@ -387,16 +387,26 @@ fn build_location(
         ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted
     ));
     let bom_skip = usize::from(source.bom && line == 1);
-    let byte_col = raw_line
-        .char_indices()
-        .nth(span.start.col() + quote_skip + bom_skip)
-        .map_or(raw_line.len(), |(byte, _)| byte);
-    Some(UsesLocation::new(
-        line,
-        byte_col + 1,
-        value.to_string(),
-        raw_line,
-    ))
+    let byte_at = |col: usize| {
+        raw_line
+            .char_indices()
+            .nth(col + bom_skip)
+            .map_or(raw_line.len(), |(byte, _)| byte)
+    };
+    let byte_col = byte_at(span.start.col() + quote_skip);
+    let scalar_start = byte_at(span.start.col());
+    let span_end = if span.end.line() == line {
+        byte_at(span.end.col())
+    } else {
+        raw_line.len()
+    };
+    let scalar_range = raw_line.get(scalar_start..span_end).map(|text| RefRange {
+        start: scalar_start,
+        end: scalar_start + text.trim_end().len(),
+    });
+    let mut location = UsesLocation::new(line, byte_col + 1, value.to_string(), raw_line);
+    location.scalar_range = scalar_range;
+    Some(location)
 }
 
 /// Byte range of a substring within a line.
@@ -427,6 +437,10 @@ pub struct UsesLocation {
     /// Byte range of the ref portion (after `@`) within the line. Present
     /// only if the value contains `@` and `raw_line` holds the value verbatim.
     ref_range: Option<RefRange>,
+    /// Byte range of the scalar within the line, quotes included, up to the
+    /// line end when the scalar continues on later lines. Present only for
+    /// locations that [`extract_uses_from_yaml`] found.
+    scalar_range: Option<RefRange>,
 }
 
 impl UsesLocation {
@@ -451,6 +465,7 @@ impl UsesLocation {
             raw_line,
             value_range,
             ref_range,
+            scalar_range: None,
         }
     }
 
@@ -490,6 +505,12 @@ impl UsesLocation {
     #[must_use]
     pub fn ref_range(&self) -> Option<std::ops::Range<usize>> {
         self.ref_range.map(|r| r.start..r.end)
+    }
+
+    /// Get the byte range of the scalar in the line, quotes included.
+    #[must_use]
+    pub fn scalar_range(&self) -> Option<std::ops::Range<usize>> {
+        self.scalar_range.map(|r| r.start..r.end)
     }
 }
 
@@ -1016,6 +1037,37 @@ jobs:
             assert_eq!(loc.value_range(), None, "{yaml:?}");
             assert_eq!(loc.ref_range(), None, "{yaml:?}");
         }
+    }
+
+    #[test]
+    fn scalar_range_covers_the_scalar_and_its_quotes() {
+        let cases: [(&str, &str); 8] = [
+            ("steps:\n  - uses: a/b@v4\n", "a/b@v4"),
+            ("steps:\n  - uses: a/b@v4 # pin\n", "a/b@v4"),
+            ("steps:\n  - uses: \"a/b@v4\"\n", "\"a/b@v4\""),
+            ("steps:\n  - uses: 'a/b@v''4'\n", "'a/b@v''4'"),
+            ("\u{feff}{ uses: \"é/b@v\\x34\" }\n", "\"é/b@v\\x34\""),
+            ("steps:\n  - uses: a/b@v4\n      more\n", "a/b@v4"),
+            ("steps:\n  - uses: \"a/b@\\\n      v4\"\n", "\"a/b@\\"),
+            ("steps:\n  - { uses: a/b@v4, id: x }\n", "a/b@v4"),
+        ];
+        for (yaml, scalar) in cases {
+            let locations = extract_uses_from_yaml(yaml);
+            let Some(loc) = locations.first() else {
+                panic!("no location in {yaml:?}");
+            };
+            let text = loc.scalar_range().and_then(|r| loc.raw_line().get(r));
+            assert_eq!(text, Some(scalar), "{yaml:?}");
+        }
+        let locations =
+            extract_uses_from_yaml("steps: [{ uses: \"a/b@v\\x34\" }, { uses: \"c/d@v\\x31\" }]\n");
+        let scalars: Vec<Option<&str>> = locations
+            .iter()
+            .map(|loc| loc.scalar_range().and_then(|r| loc.raw_line().get(r)))
+            .collect();
+        assert_eq!(scalars, [Some("\"a/b@v\\x34\""), Some("\"c/d@v\\x31\"")]);
+        let built = UsesLocation::new(1, 9, "a/b@v1".into(), "  uses: a/b@v1".into());
+        assert_eq!(built.scalar_range(), None);
     }
 
     #[test]

@@ -13,15 +13,16 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		document: vscode.TextDocument,
 		position: vscode.Position,
 	): Promise<vscode.Hover | undefined> {
-		const text = document.getText();
-		const onLine = parseUsesRefs(text).filter(l => l.line - 1 === position.line);
-		const loc = onLine.find(l => {
-			const columns = valueColumns(l);
-			return columns !== undefined && position.character >= columns.start && position.character < columns.end;
-		}) ?? onLine.find(l => l.value_range === null);
-		if (loc === undefined) {
+		const hit = parseUsesRefs(document.getText()).flatMap(loc => {
+			const columns = loc.line - 1 === position.line ? hoverColumns(loc) : undefined;
+			return columns !== undefined && position.character >= columns.start && position.character < columns.end
+				? [{ loc, columns }]
+				: [];
+		})[0];
+		if (hit === undefined) {
 			return undefined;
 		}
+		const { loc, columns } = hit;
 
 		const ref = parseRef(loc.value);
 		if (ref === undefined) {
@@ -77,13 +78,12 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		);
 
 		const line = loc.line - 1;
-		const columns = valueColumns(loc) ?? { start: 0, end: loc.raw_line.length };
 		return new vscode.Hover(md, new vscode.Range(line, columns.start, line, columns.end));
 	}
 }
 
-function valueColumns(loc: UsesLocation): { start: number; end: number } | undefined {
-	const range = loc.value_range;
+function hoverColumns(loc: UsesLocation): { start: number; end: number } | undefined {
+	const range = loc.value_range ?? loc.scalar_range;
 	return range === null
 		? undefined
 		: { start: byteToColumn(loc.raw_line, range.start), end: byteToColumn(loc.raw_line, range.end) };

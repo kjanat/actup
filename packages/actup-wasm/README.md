@@ -94,7 +94,9 @@ access.
 
 Returns `UsesLocation[]` — each entry has `line`, `column`, `value`, `raw_line`,
 `value_range` (byte offsets of the value, or `null` when the line holds it
-escaped), and `ref_range` (byte offsets of the `@ref` portion, or `null`).
+escaped), `ref_range` (byte offsets of the `@ref` portion, or `null`), and
+`scalar_range` (byte offsets of the scalar as written, quotes included, up to
+the line end when the scalar continues on later lines).
 
 ### `checkRefs(yaml, provider, config?)`
 
