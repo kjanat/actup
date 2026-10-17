@@ -11,8 +11,9 @@ use std::{
 };
 
 use actup_core::{
-    ActionRef, Config, DiscoveredFile, Error as CoreError, Provider, UsesLocation, discover_files,
-    extract_uses_from_yaml, line_spans, lines_ending_in_scalars, parse_uses, provider, version,
+    ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
+    UsesLocation, discover_files, extract_uses_from_yaml, line_spans, lines_ending_in_scalars,
+    parse_uses, provider, validate_edit, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -43,6 +44,11 @@ impl ErrorTally {
     /// Record an environment error (for I/O failures, etc.).
     pub const fn record_env(&mut self) {
         self.env += 1;
+    }
+
+    /// Record a user error that has no [`CoreError`].
+    pub const fn record_user(&mut self) {
+        self.user += 1;
     }
 
     /// Total error count.
@@ -301,6 +307,8 @@ pub enum ErrorKind {
     Write,
     /// The file changed between the scan and the write.
     Changed,
+    /// The edited file fails YAML validation.
+    InvalidEdit,
 }
 
 impl From<&CoreError> for ErrorKind {
@@ -424,12 +432,18 @@ impl Splices {
         });
         intact.then(|| splice(current, &self.edits))
     }
+
+    /// The scanned text with every splice applied.
+    #[must_use]
+    pub fn planned(&self) -> String {
+        splice(&self.scanned, &self.edits)
+    }
 }
 
 #[cfg(test)]
 impl<L> EditPlan<L> {
     pub(crate) fn content(&self) -> String {
-        splice(&self.splices.scanned, &self.splices.edits)
+        self.splices.planned()
     }
 }
 
@@ -608,7 +622,8 @@ impl Change {
 /// Plan `file_edits`, report its skipped edits, and write it unless `dry_run`.
 ///
 /// The write re-reads the file and places the edits on it. A rewritten line
-/// that differs from the scan refuses the whole file. Returns each written
+/// that differs from the scan refuses the whole file, and so does an edited
+/// text that fails [`validate_edit`], in a dry run too. Returns each written
 /// change with its version comment, and records them in `result`. A refused or
 /// failed write records each change as an errored ref and returns nothing.
 pub fn commit_file(
@@ -631,11 +646,20 @@ pub fn commit_file(
     if written.is_empty() {
         return written;
     }
-    if !dry_run && let Err(refusal) = write_splices(&path, &splices) {
+    let outcome = if dry_run {
+        validate_edit(&splices.scanned, &splices.planned()).map_err(WriteRefusal::Invalid)
+    } else {
+        write_splices(&path, &splices)
+    };
+    if let Err(refusal) = outcome {
         let message = refusal.message(&path);
         eprintln!("{}: {message}", "Error".red());
         for (change, _) in written {
-            result.errors.record_env();
+            if matches!(refusal, WriteRefusal::Invalid(_)) {
+                result.errors.record_user();
+            } else {
+                result.errors.record_env();
+            }
             result.errored.push(ErroredRef {
                 site: change.site,
                 kind: refusal.kind(),
@@ -657,6 +681,7 @@ pub fn commit_file(
 enum WriteRefusal {
     Io(std::io::Error),
     Changed,
+    Invalid(EditValidationError),
 }
 
 impl WriteRefusal {
@@ -664,6 +689,7 @@ impl WriteRefusal {
         match self {
             Self::Io(_) => ErrorKind::Write,
             Self::Changed => ErrorKind::Changed,
+            Self::Invalid(_) => ErrorKind::InvalidEdit,
         }
     }
 
@@ -671,6 +697,7 @@ impl WriteRefusal {
         match self {
             Self::Io(e) => format!("writing {} failed: {e}", path.display()),
             Self::Changed => format!("edit refused: {} changed since scan", path.display()),
+            Self::Invalid(e) => format!("edit refused: {} after edit: {e}", path.display()),
         }
     }
 }
@@ -678,6 +705,7 @@ impl WriteRefusal {
 fn write_splices(path: &Path, splices: &Splices) -> Result<(), WriteRefusal> {
     let current = fs::read_to_string(path).map_err(WriteRefusal::Io)?;
     let content = splices.apply(&current).ok_or(WriteRefusal::Changed)?;
+    validate_edit(&current, &content).map_err(WriteRefusal::Invalid)?;
     fs::write(path, content).map_err(WriteRefusal::Io)
 }
 
@@ -1770,6 +1798,71 @@ mod tests {
         assert_eq!(written.len(), 1);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(fs::read_to_string(&path)?, "uses: a/b@v2\nname: renamed\n");
+        Ok(())
+    }
+
+    fn commit_injected(
+        dir: &Path,
+        content: &str,
+        new: &str,
+        dry_run: bool,
+    ) -> Result<(PathBuf, EditResult, usize), Box<dyn std::error::Error>> {
+        let path = dir.join("ci.yml");
+        fs::write(&path, content)?;
+        let mut fe = FileEdits::new(path.clone(), content.to_string());
+        fe.add(
+            PendingEdit::replace_range(2, 14..16, new.to_string()),
+            change(2, "v2", false),
+        );
+        let mut result = EditResult::default();
+        let written = commit_file(fe, dry_run, &mut result).len();
+        Ok((path, result, written))
+    }
+
+    #[test]
+    fn test_commit_file_refuses_an_edit_that_breaks_the_yaml()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = "steps:\n  - uses: a/b@v1\n";
+        for dry_run in [false, true] {
+            let dir = tempfile::tempdir()?;
+            let (path, result, written) =
+                commit_injected(dir.path(), content, "v2\n  - [", dry_run)?;
+
+            assert_eq!(written, 0);
+            assert_eq!(result.edited, []);
+            let [errored] = result.errored.as_slice() else {
+                panic!("expected one errored ref: {:?}", result.errored);
+            };
+            assert_eq!(errored.kind, ErrorKind::InvalidEdit);
+            let prefix = format!(
+                "edit refused: {} after edit: invalid YAML: ",
+                path.display()
+            );
+            assert!(errored.message.starts_with(&prefix), "{}", errored.message);
+            assert_eq!(result.errors.exit_code(), CliExitCode::UserError);
+            assert_eq!(fs::read_to_string(&path)?, content);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_commit_file_refuses_an_edit_that_changes_the_uses_count()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = "steps:\n  - uses: a/b@v1\n";
+        let dir = tempfile::tempdir()?;
+        let (path, result, written) =
+            commit_injected(dir.path(), content, "v2\n  - uses: c/d@v2", false)?;
+
+        assert_eq!(written, 0);
+        let messages: Vec<&str> = result.errored.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(
+            messages,
+            [format!(
+                "edit refused: {} after edit: `uses:` count changed from 1 to 2",
+                path.display()
+            )]
+        );
+        assert_eq!(fs::read_to_string(&path)?, content);
         Ok(())
     }
 

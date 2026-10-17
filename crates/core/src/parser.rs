@@ -157,6 +157,58 @@ fn is_port(port: &str) -> bool {
 /// stays part of line 1.
 #[must_use]
 pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
+    walk_uses(content).0
+}
+
+/// Why an edited document fails [`validate_edit`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EditValidationError {
+    /// The edited document is not valid YAML.
+    Syntax(String),
+    /// The edited document holds a different number of `uses:` values.
+    UsesCount {
+        /// `uses:` values before the edit.
+        before: usize,
+        /// `uses:` values after the edit.
+        after: usize,
+    },
+}
+
+impl std::fmt::Display for EditValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Syntax(reason) => write!(f, "invalid YAML: {reason}"),
+            Self::UsesCount { before, after } => {
+                write!(f, "`uses:` count changed from {before} to {after}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for EditValidationError {}
+
+/// Check that `after` parses as YAML to the end and holds as many `uses:` values as `before`.
+///
+/// # Errors
+///
+/// Returns the first YAML error in `after`, or the two `uses:` counts when they differ.
+pub fn validate_edit(before: &str, after: &str) -> std::result::Result<(), EditValidationError> {
+    let (locations, error) = walk_uses(after);
+    if let Some(reason) = error {
+        return Err(EditValidationError::Syntax(reason));
+    }
+    let before = extract_uses_from_yaml(before).len();
+    if locations.len() == before {
+        Ok(())
+    } else {
+        Err(EditValidationError::UsesCount {
+            before,
+            after: locations.len(),
+        })
+    }
+}
+
+fn walk_uses(content: &str) -> (Vec<UsesLocation>, Option<String>) {
     let body = content.strip_prefix('\u{feff}').unwrap_or(content);
     let source = Source {
         text: content,
@@ -167,8 +219,9 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
     let mut stack: Vec<Ctx> = Vec::new();
 
     for event in Parser::new_from_str(body) {
-        let Ok((event, span)) = event else {
-            break;
+        let (event, span) = match event {
+            Ok(parsed) => parsed,
+            Err(e) => return (results, Some(e.to_string())),
         };
 
         match event {
@@ -213,7 +266,7 @@ pub fn extract_uses_from_yaml(content: &str) -> Vec<UsesLocation> {
         }
     }
 
-    results
+    (results, None)
 }
 
 /// A collection context on the structural walk stack.
@@ -444,6 +497,48 @@ impl UsesLocation {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_edit_accepts_a_ref_change() {
+        let before = "steps:\n  - uses: a/b@v1\n  - { uses: c/d@v1 }\n";
+        let after = "steps:\n  - uses: a/b@v2 # v2\n  - { uses: c/d@v2 }\n";
+        assert_eq!(validate_edit(before, after), Ok(()));
+    }
+
+    #[test]
+    fn validate_edit_rejects_invalid_yaml() {
+        let before = "steps:\n  - uses: a/b@v1\n";
+        let Err(EditValidationError::Syntax(reason)) =
+            validate_edit(before, "steps:\n  - uses: a/b@v2\n  - [\n")
+        else {
+            panic!("expected a syntax error");
+        };
+        assert!(reason.contains("line"), "{reason}");
+    }
+
+    #[test]
+    fn validate_edit_rejects_a_changed_uses_count() {
+        let before = "steps:\n  - uses: a/b@v1\n";
+        let after = "steps:\n  - uses: a/b@v2\n  - uses: c/d@v2\n";
+        assert_eq!(
+            validate_edit(before, after),
+            Err(EditValidationError::UsesCount {
+                before: 1,
+                after: 2
+            })
+        );
+        assert_eq!(
+            validate_edit(before, after).map_err(|e| e.to_string()),
+            Err("`uses:` count changed from 1 to 2".to_string())
+        );
+        assert_eq!(
+            validate_edit(before, "steps: []\n"),
+            Err(EditValidationError::UsesCount {
+                before: 1,
+                after: 0
+            })
+        );
+    }
 
     #[test]
     fn test_parse_simple() {

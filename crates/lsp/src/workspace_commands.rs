@@ -21,13 +21,16 @@ use std::{
     },
 };
 
-use actup_core::{ActionRepoId, Config, DiscoveredFile, discover_files, provider};
+use actup_core::{
+    ActionRepoId, Config, DiscoveredFile, discover_files, line_spans, provider, validate_edit,
+};
 use dashmap::DashMap;
 use tower_lsp_server::{
     Client,
     ls_types::{
         Diagnostic, DocumentChanges, NumberOrString, OneOf,
-        OptionalVersionedTextDocumentIdentifier, TextDocumentEdit, TextEdit, Uri, WorkspaceEdit,
+        OptionalVersionedTextDocumentIdentifier, Position, TextDocumentEdit, TextEdit, Uri,
+        WorkspaceEdit,
     },
 };
 
@@ -35,6 +38,7 @@ use crate::{
     backend::DocumentState,
     diagnostics::{self, DIAGNOSTIC_SOURCE, DiagnosticData},
     file_cache::FileCache,
+    position::col_to_byte,
 };
 
 /// Command identifier registered in server capabilities.
@@ -490,15 +494,17 @@ async fn scan_files(
         };
 
         acc.total_actions += outcome.actions_checked;
-        if let (PreparedFile::Loaded(loaded), Some(_)) = (prepared, &outcome.edits)
-            && changed_since_scan(loaded, ctx.documents).await
-        {
+        let refusal = match (prepared, &outcome.edits) {
+            (PreparedFile::Loaded(loaded), Some((_, _, edits))) => refuse_edits(loaded, edits, ctx)
+                .await
+                .map(|reason| (loaded, reason)),
+            _ => None,
+        };
+        if let Some((loaded, reason)) = refusal {
             let rel = relative_display(&loaded.file, ctx.workspace_root);
-            tracing::warn!(path = %rel, "file changed since scan");
-            acc.failures.push((
-                rel.clone(),
-                format!("edit refused: {rel} changed since scan"),
-            ));
+            tracing::warn!(path = %rel, %reason, "edit refused");
+            acc.failures
+                .push((rel.clone(), format!("edit refused: {rel} {reason}")));
         } else if let Some((uri, version, edits)) = outcome.edits {
             acc.total_refs += edits.len();
             acc.all_edits.push(VersionedFileEdits {
@@ -524,6 +530,62 @@ async fn scan_files(
     // see total coverage, not just the last increment.
     acc.files_completed = file_count;
     acc.into_result(file_count, ctx.supports_document_changes, false)
+}
+
+async fn refuse_edits(
+    loaded: &LoadedFile,
+    edits: &[TextEdit],
+    ctx: &ScanContext<'_>,
+) -> Option<String> {
+    if changed_since_scan(loaded, ctx.documents).await {
+        return Some("changed since scan".to_string());
+    }
+    let Some(edited) = apply_text_edits(&loaded.text, edits, ctx.encoding) else {
+        return Some("edits do not fit the text".to_string());
+    };
+    validate_edit(&loaded.text, &edited)
+        .err()
+        .map(|e| format!("after edit: {e}"))
+}
+
+fn apply_text_edits(
+    text: &str,
+    edits: &[TextEdit],
+    encoding: crate::position::PositionEncoding,
+) -> Option<String> {
+    let spans = line_spans(text);
+    let offset = |pos: Position| -> Option<usize> {
+        let line = usize::try_from(pos.line).ok()?;
+        let span = match spans.get(line) {
+            Some(span) => span.clone(),
+            None if line == spans.len() => text.len()..text.len(),
+            None => return None,
+        };
+        let byte = span.start + col_to_byte(text.get(span)?, pos.character, encoding);
+        text.is_char_boundary(byte).then_some(byte)
+    };
+    let mut ranges = edits
+        .iter()
+        .map(|edit| {
+            Some((
+                offset(edit.range.start)?..offset(edit.range.end)?,
+                &edit.new_text,
+            ))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    ranges.sort_by_key(|(range, _)| (range.start, range.end));
+    let ordered = ranges.iter().all(|(range, _)| range.start <= range.end);
+    let disjoint = ranges
+        .windows(2)
+        .all(|pair| pair[0].0.end <= pair[1].0.start);
+    if !(ordered && disjoint) {
+        return None;
+    }
+    let mut edited = text.to_string();
+    for (range, new_text) in ranges.into_iter().rev() {
+        edited.replace_range(range, new_text);
+    }
+    Some(edited)
 }
 
 async fn changed_since_scan(loaded: &LoadedFile, documents: &DashMap<Uri, DocumentState>) -> bool {
@@ -1017,6 +1079,40 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&changed).unwrap(), edited);
     }
 
+    #[tokio::test]
+    async fn scan_files_refuses_edits_to_invalid_yaml() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workflows_dir = temp.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows_dir).unwrap();
+        let yaml = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v3\n  bad: [\n";
+        std::fs::write(workflows_dir.join("ci.yml"), yaml).unwrap();
+
+        let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = FileCache::disabled();
+        let documents = DashMap::new();
+        let cancelled = Cancelled::new();
+        let discovered = discover_files(temp.path(), &[]);
+        let config = Config::default();
+        let mut ctx = validation_ctx(&config, &registry, &cache, &documents, &cancelled);
+        ctx.workspace_root = temp.path();
+        let result = scan_files(&discovered, &ctx, None).await;
+
+        let [(path, message)] = result.failures.as_slice() else {
+            panic!("expected one failure: {:?}", result.failures);
+        };
+        assert_eq!(path, ".github/workflows/ci.yml");
+        assert!(
+            message
+                .starts_with("edit refused: .github/workflows/ci.yml after edit: invalid YAML: "),
+            "{message}"
+        );
+        assert_eq!((result.files_changed, result.refs_updated), (0, 0));
+        assert_eq!(result.edit, WorkspaceEdit::default());
+    }
+
     fn loaded(text: &str, version: Option<i32>) -> LoadedFile {
         let path = std::path::PathBuf::from("/test/ci.yml");
         LoadedFile {
@@ -1030,6 +1126,118 @@ mod tests {
     fn open_document(documents: &DashMap<Uri, DocumentState>, text: &str, version: i32) {
         let uri = Uri::from_file_path("/test/ci.yml").unwrap();
         documents.insert(uri, DocumentState::new(text.to_string(), version));
+    }
+
+    fn text_edit(line: u32, start: u32, end: u32, new_text: &str) -> TextEdit {
+        TextEdit {
+            range: tower_lsp_server::ls_types::Range {
+                start: Position {
+                    line,
+                    character: start,
+                },
+                end: Position {
+                    line,
+                    character: end,
+                },
+            },
+            new_text: new_text.to_string(),
+        }
+    }
+
+    #[test]
+    fn apply_text_edits_places_disjoint_edits() {
+        let text = "a: é\nuses: o/r@v1\nb: 1\n";
+        let utf16 = crate::position::PositionEncoding::Utf16;
+        let edits = [
+            text_edit(1, 10, 12, "v2"),
+            text_edit(0, 4, 4, "!"),
+            text_edit(2, 4, 4, "2"),
+            text_edit(3, 0, 0, "c: 3\n"),
+        ];
+        assert_eq!(
+            apply_text_edits(text, &edits, utf16),
+            Some("a: é!\nuses: o/r@v2\nb: 12\nc: 3\n".to_string())
+        );
+        assert_eq!(
+            apply_text_edits(
+                text,
+                &[text_edit(0, 3, 4, "e")],
+                crate::position::PositionEncoding::Utf8
+            ),
+            None
+        );
+        assert_eq!(
+            apply_text_edits(text, &[text_edit(4, 0, 0, "x")], utf16),
+            None
+        );
+        assert_eq!(
+            apply_text_edits(
+                text,
+                &[text_edit(1, 10, 12, "x"), text_edit(1, 11, 12, "y")],
+                utf16
+            ),
+            None
+        );
+        assert_eq!(
+            apply_text_edits(text, &[text_edit(1, 12, 10, "x")], utf16),
+            None
+        );
+    }
+
+    fn validation_ctx<'a>(
+        config: &'a Config,
+        registry: &'a provider::Registry,
+        cache: &'a FileCache,
+        documents: &'a DashMap<Uri, DocumentState>,
+        cancelled: &'a Cancelled,
+    ) -> ScanContext<'a> {
+        ScanContext {
+            workspace_root: Path::new("/test"),
+            config,
+            registry,
+            file_cache: cache,
+            documents,
+            cancelled,
+            supports_document_changes: true,
+            encoding: crate::position::PositionEncoding::Utf16,
+        }
+    }
+
+    #[tokio::test]
+    async fn refuse_edits_rejects_a_corrupting_edit() {
+        let text = "steps:\n  - uses: a/b@v1\n";
+        let documents = DashMap::new();
+        open_document(&documents, text, 2);
+        let (config, registry, cache, cancelled) = (
+            Config::default(),
+            provider::Registry::new(),
+            FileCache::disabled(),
+            Cancelled::new(),
+        );
+        let ctx = validation_ctx(&config, &registry, &cache, &documents, &cancelled);
+        let file = loaded(text, Some(2));
+
+        assert_eq!(
+            refuse_edits(&file, &[text_edit(1, 14, 16, "v2")], &ctx).await,
+            None
+        );
+        let Some(reason) = refuse_edits(&file, &[text_edit(1, 14, 16, "v2\n  - [")], &ctx).await
+        else {
+            panic!("a corrupting edit must be refused");
+        };
+        assert!(reason.starts_with("after edit: invalid YAML: "), "{reason}");
+        assert_eq!(
+            refuse_edits(&file, &[text_edit(1, 14, 16, "v2\n  - uses: c/d@v2")], &ctx).await,
+            Some("after edit: `uses:` count changed from 1 to 2".to_string())
+        );
+        assert_eq!(
+            refuse_edits(&file, &[text_edit(9, 0, 0, "x")], &ctx).await,
+            Some("edits do not fit the text".to_string())
+        );
+        assert_eq!(
+            refuse_edits(&loaded(text, Some(1)), &[text_edit(1, 14, 16, "v2")], &ctx).await,
+            Some("changed since scan".to_string())
+        );
     }
 
     #[tokio::test]
