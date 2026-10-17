@@ -9,7 +9,7 @@ use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result, error::Source};
 use actup_providers::{
-    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
+    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE, encode_path,
 };
 use reqwest::{
     Client, Response, StatusCode,
@@ -179,6 +179,15 @@ impl GitHubClient {
         &self.host
     }
 
+    fn repo_url(&self, owner: &str, repo: &str) -> String {
+        format!(
+            "{}/repos/{}/{}",
+            self.api_base,
+            encode_path(owner),
+            encode_path(repo)
+        )
+    }
+
     /// Get the API base URL this client targets.
     #[must_use]
     pub fn api_base(&self) -> &str {
@@ -207,8 +216,8 @@ impl GitHubClient {
 
         let mut all_tags = Vec::new();
         let mut url = Some(format!(
-            "{}/repos/{owner}/{repo}/tags?per_page={per_page}",
-            self.api_base
+            "{}/tags?per_page={per_page}",
+            self.repo_url(owner, repo)
         ));
 
         while let Some(current_url) = url {
@@ -255,8 +264,8 @@ impl GitHubClient {
         let per_page = max_tags.min(MAX_PER_PAGE);
 
         let first_url = format!(
-            "{}/repos/{owner}/{repo}/tags?per_page={per_page}",
-            self.api_base
+            "{}/tags?per_page={per_page}",
+            self.repo_url(owner, repo)
         );
         debug!(url = %first_url, max_tags, "fetching first tags page");
         let response = self.get_if_none_match(&first_url, etag).await?;
@@ -320,7 +329,7 @@ impl GitHubClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo(&self, owner: &str, repo: &str) -> Result<GitHubRepo> {
-        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        let url = self.repo_url(owner, repo);
         debug!(url = %url, "fetching repo info");
 
         let response = self.get(&url).await?;
@@ -358,7 +367,7 @@ impl GitHubClient {
         repo: &str,
         etag: Option<&str>,
     ) -> Result<Conditional<GitHubRepo>> {
-        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        let url = self.repo_url(owner, repo);
         debug!(url = %url, "fetching repo info");
 
         let response = self.get_if_none_match(&url, etag).await?;
@@ -374,7 +383,11 @@ impl GitHubClient {
         // GitHub API wants refs without the leading "refs/"
         let ref_path = ref_name.strip_prefix("refs/").unwrap_or(ref_name);
 
-        let url = format!("{}/repos/{owner}/{repo}/git/ref/{ref_path}", self.api_base);
+        let url = format!(
+            "{}/git/ref/{}",
+            self.repo_url(owner, repo),
+            encode_path(ref_path)
+        );
         debug!(url = %url, "fetching ref");
 
         let response = self.get(&url).await?;
@@ -393,11 +406,15 @@ impl GitHubClient {
         path: &str,
         ref_name: Option<&str>,
     ) -> Result<GitHubContent> {
-        let mut url = format!("{}/repos/{owner}/{repo}/contents/{path}", self.api_base);
+        let mut url = format!(
+            "{}/contents/{}",
+            self.repo_url(owner, repo),
+            encode_path(path)
+        );
 
         if let Some(r) = ref_name {
-            use std::fmt::Write;
-            let _ = write!(url, "?ref={r}"); // infallible for String
+            url.push_str("?ref=");
+            url.push_str(&encode_path(r));
         }
 
         debug!(url = %url, "fetching content");
@@ -412,7 +429,11 @@ impl GitHubClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or branch not found.
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GitHubBranch> {
-        let url = format!("{}/repos/{owner}/{repo}/branches/{branch}", self.api_base);
+        let url = format!(
+            "{}/branches/{}",
+            self.repo_url(owner, repo),
+            encode_path(branch)
+        );
         debug!(url = %url, "fetching branch");
 
         let response = self.get(&url).await?;
@@ -427,7 +448,11 @@ impl GitHubClient {
         branch: &str,
         etag: Option<&str>,
     ) -> Result<Conditional<GitHubBranch>> {
-        let url = format!("{}/repos/{owner}/{repo}/branches/{branch}", self.api_base);
+        let url = format!(
+            "{}/branches/{}",
+            self.repo_url(owner, repo),
+            encode_path(branch)
+        );
         debug!(url = %url, "fetching branch");
 
         let response = self.get_if_none_match(&url, etag).await?;
@@ -441,7 +466,11 @@ impl GitHubClient {
     /// Returns error on network failure, rate limit, auth failure, or commit not found.
     /// An unknown commit in an existing repository is [`Error::RefNotFound`].
     pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitHubCommit> {
-        let url = format!("{}/repos/{owner}/{repo}/commits/{sha}", self.api_base);
+        let url = format!(
+            "{}/commits/{}",
+            self.repo_url(owner, repo),
+            encode_path(sha)
+        );
         debug!(url = %url, "fetching commit");
 
         let response = self.get(&url).await?;
@@ -467,7 +496,11 @@ impl GitHubClient {
         repo: &str,
         sha: &str,
     ) -> Result<GitHubTagObject> {
-        let url = format!("{}/repos/{owner}/{repo}/git/tags/{sha}", self.api_base);
+        let url = format!(
+            "{}/git/tags/{}",
+            self.repo_url(owner, repo),
+            encode_path(sha)
+        );
         debug!(url = %url, "fetching tag object");
 
         let response = self.get(&url).await?;

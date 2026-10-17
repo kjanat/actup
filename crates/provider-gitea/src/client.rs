@@ -8,7 +8,9 @@
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
-use actup_providers::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE};
+use actup_providers::{
+    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, encode_path,
+};
 use reqwest::{
     Client, Response, StatusCode,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -25,13 +27,6 @@ fn has_next_page(response: &Response) -> bool {
         .get("link")
         .and_then(|value| value.to_str().ok())
         .is_some_and(|links| links.split(',').any(|link| link.contains("rel=\"next\"")))
-}
-
-fn encode_path(path: &str) -> String {
-    path.split('/')
-        .map(|segment| urlencoding::encode(segment).into_owned())
-        .collect::<Vec<_>>()
-        .join("/")
 }
 
 /// HTTP client configured for Gitea API
@@ -193,7 +188,7 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo_archive(&self, owner: &str, repo: &str) -> Result<GiteaArchive> {
-        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        let url = self.repo_url(owner, repo);
         debug!(url = %url, "fetching repo archive flag");
 
         let response = self.get(&url).await?;

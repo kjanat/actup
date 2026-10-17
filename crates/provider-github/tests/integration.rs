@@ -1397,3 +1397,57 @@ async fn minimal_rest_responses_parse() -> Result<(), Box<dyn std::error::Error>
     assert_eq!(action.name(), Some("Minimal"));
     Ok(())
 }
+
+#[tokio::test]
+async fn refs_are_percent_encoded_in_rest_urls() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let shas: Vec<String> = ('a'..='d').map(|c| c.to_string().repeat(40)).collect();
+    serve_body(
+        &server,
+        "/repos/o/r/git/ref/tags/v1.0.0%2Bbuild",
+        format!(
+            r#"{{"object": {{"type": "commit", "sha": "{}"}}}}"#,
+            shas[0]
+        ),
+    )
+    .await;
+    for (branch, sha) in [
+        ("feat%231", &shas[1]),
+        ("a%25b", &shas[2]),
+        ("what%3F", &shas[3]),
+    ] {
+        serve_body(
+            &server,
+            &format!("/repos/o/r/branches/{branch}"),
+            format!(r#"{{"commit": {{"sha": "{sha}"}}}}"#),
+        )
+        .await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/contents/action.yml"))
+        .and(query_param("ref", "v1.0.0+build"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"content": "bmFtZTogTWluaW1hbAo=", "encoding": "base64"}"#),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server)?;
+    let repo = ActionRepoId::simple("o", "r");
+
+    for (ref_name, sha) in [
+        ("v1.0.0+build", &shas[0]),
+        ("feat#1", &shas[1]),
+        ("a%b", &shas[2]),
+        ("what?", &shas[3]),
+    ] {
+        assert_eq!(
+            provider.resolve_ref_to_sha(&repo, ref_name).await?.as_str(),
+            sha.as_str(),
+            "{ref_name}"
+        );
+    }
+    let action = provider.get_action_yml(&repo, "v1.0.0+build").await?;
+    assert_eq!(action.name(), Some("Minimal"));
+    Ok(())
+}
