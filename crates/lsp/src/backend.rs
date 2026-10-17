@@ -991,9 +991,6 @@ impl LspBackend {
     }
 }
 
-/// Build the pin and unpin code actions for `action` from `cached` versions, or versions fetched now.
-///
-/// The targets and the label comment after the ref read the same version set.
 async fn pin_actions_for(
     action: &crate::diagnostics::LocatedAction,
     cached: Option<&actup_core::version::Set>,
@@ -1755,9 +1752,10 @@ mod tests {
         Ok(Some(format!("{}: {text}", unpin.title)))
     }
 
-    #[tokio::test]
-    async fn pin_actions_read_labels_from_the_versions_they_fetch()
-    -> std::result::Result<(), Box<dyn std::error::Error>> {
+    async fn pin_texts(
+        cached: Option<&actup_core::version::Set>,
+        provider: crate::test_utils::MockProvider,
+    ) -> std::result::Result<(usize, Vec<(String, String)>), Box<dyn std::error::Error>> {
         let line = "  - uses: actions/checkout@dev # main keep";
         let encoding = crate::position::PositionEncoding::Utf16;
         let action = crate::diagnostics::locate_action_at(
@@ -1770,20 +1768,10 @@ mod tests {
             encoding,
         )
         .ok_or("no action under the cursor")?;
-        let mut versions = actup_core::version::Set::new();
-        versions.set_branches(std::collections::HashMap::from([
-            ("main".to_string(), "c".repeat(40)),
-            ("dev".to_string(), "d".repeat(40)),
-        ]));
-        let dev = "d".repeat(40);
-        let provider = crate::test_utils::MockProvider::new("github.com")
-            .with_versions("actions", "checkout", versions)
-            .with_resolve(Ok(&dev));
         let calls = provider.call_count();
         let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
-        let actions = pin_actions_for(&action, None, &provider, &uri, None, false).await;
-        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-        let written: Vec<(String, String)> = actions
+        let actions = pin_actions_for(&action, cached, &provider, &uri, None, false).await;
+        let written = actions
             .iter()
             .filter_map(|action| match action {
                 tower_lsp_server::ls_types::CodeActionOrCommand::CodeAction(action) => {
@@ -1794,18 +1782,59 @@ mod tests {
                 tower_lsp_server::ls_types::CodeActionOrCommand::Command(_) => None,
             })
             .collect();
-        assert_eq!(
-            written,
-            [
+        Ok((calls.load(std::sync::atomic::Ordering::SeqCst), written))
+    }
+
+    fn dev_and_main() -> actup_core::version::Set {
+        let mut versions = actup_core::version::Set::new();
+        versions.set_branches(std::collections::HashMap::from([
+            ("main".to_string(), "c".repeat(40)),
+            ("dev".to_string(), "d".repeat(40)),
+        ]));
+        versions
+    }
+
+    #[tokio::test]
+    async fn pin_actions_read_labels_from_the_versions_they_use()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let dev = "d".repeat(40);
+        let listed = |pinned: &str, branch: &str| {
+            vec![
                 (
                     "Pin to commit SHA (dev)".to_string(),
-                    format!("  - uses: actions/checkout@{dev} # dev keep"),
+                    format!("  - uses: actions/checkout@{dev} # {pinned}"),
                 ),
                 (
                     "Pin to branch main".to_string(),
-                    "  - uses: actions/checkout@main # keep".to_string(),
+                    format!("  - uses: actions/checkout@main # {branch}"),
                 ),
             ]
+        };
+        let mock = || crate::test_utils::MockProvider::new("github.com").with_resolve(Ok(&dev));
+
+        let fetching = mock().with_versions("actions", "checkout", dev_and_main());
+        assert_eq!(
+            pin_texts(None, fetching).await?,
+            (1, listed("dev keep", "keep"))
+        );
+
+        let cached = dev_and_main();
+        assert_eq!(
+            pin_texts(Some(&cached), mock()).await?,
+            (0, listed("dev keep", "keep"))
+        );
+
+        let failing = mock().with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::RateLimited {
+                provider: "github".to_string(),
+                retry_after: None,
+            },
+        );
+        assert_eq!(
+            pin_texts(None, failing).await?,
+            (1, listed("main keep", "main keep"))
         );
         Ok(())
     }

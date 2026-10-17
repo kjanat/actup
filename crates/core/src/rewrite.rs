@@ -316,9 +316,6 @@ pub enum Named {
 
 impl Named {
     /// A tag when `versions` lists a tag `name`, or lists no ref `name` and `name` is a version token, else a branch.
-    ///
-    /// A provider's version set can leave out branches other than the
-    /// default one, so an unlisted name that is no version reads as a branch.
     #[must_use]
     pub fn listed(name: &str, versions: &version::Set) -> Self {
         let tagged = versions.has_exact_tag(name) || versions.other_tag_sha(name).is_some();
