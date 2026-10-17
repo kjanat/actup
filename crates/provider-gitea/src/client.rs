@@ -7,10 +7,8 @@
 
 use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
-use actup_core::{Error, Result};
-use actup_providers::{
-    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, encode_path,
-};
+use actup_core::{Error, Result, encode_path};
+use actup_providers::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE};
 use reqwest::{
     Client, Response, StatusCode,
     header::{HeaderMap, HeaderValue, USER_AGENT},

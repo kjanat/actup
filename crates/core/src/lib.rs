@@ -30,6 +30,7 @@ pub mod rewrite;
 pub mod suggest;
 pub mod syntax;
 pub mod text;
+pub mod url_path;
 pub mod version;
 
 // Re-export primary types at crate root
@@ -65,4 +66,5 @@ pub use resolution::{
 pub use suggest::closest_tag;
 pub use syntax::SourceFormat;
 pub use text::{sanitize_for_terminal, sanitize_line};
+pub use url_path::encode_path;
 pub use version::{BranchInfo, Info, Version};

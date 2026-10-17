@@ -14,7 +14,7 @@ use std::{
 
 use actup_core::{
     ActionRef, ActionRepoId, BoxFuture, CheckResult, CheckStatus, Config, Error,
-    check_action_with_provider,
+    check_action_with_provider, encode_path,
     provider::{ActionYml, Kind, Provider, Sha40},
     version,
 };
@@ -157,7 +157,11 @@ pub fn fetch_version_set(
     max_pages: u8,
     with_branches: bool,
 ) -> actup_core::Result<version::Set> {
-    let base = format!("{api_base}/repos/{owner}/{repo}");
+    let base = format!(
+        "{api_base}/repos/{}/{}",
+        encode_path(owner),
+        encode_path(repo)
+    );
     let not_found = || Error::NotFound {
         owner: owner.to_string(),
         repo: repo.to_string(),
@@ -306,10 +310,11 @@ impl<F: Fetch> RestProvider<F> {
 
     fn resolve(&self, repo: &ActionRepoId, ref_name: &str) -> actup_core::Result<Sha40> {
         let url = format!(
-            "{}/repos/{}/{}/commits/{ref_name}",
+            "{}/repos/{}/{}/commits/{}",
             self.api_base,
-            repo.owner(),
-            repo.repo()
+            encode_path(repo.owner()),
+            encode_path(repo.repo()),
+            encode_path(ref_name)
         );
         let not_found = || Error::RefNotFound {
             owner: repo.owner().to_string(),
@@ -698,6 +703,25 @@ mod tests {
             found.ok().map(|s| s.as_str().to_string()).as_deref(),
             Some(FULL_SHA)
         );
+    }
+
+    #[test]
+    fn resolve_percent_encodes_the_ref() {
+        let found = format!(r#"{{"sha": "{FULL_SHA}"}}"#);
+        let provider = rest(
+            MockFetch::default()
+                .route("https://api.test/repos/o/r/commits/feat%231", &found)
+                .route("https://api.test/repos/o/r/commits/v1.0.0%2Bbuild", &found)
+                .route("https://api.test/repos/o/r/commits/release/v1", &found),
+        );
+        for ref_name in ["feat#1", "v1.0.0+build", "release/v1"] {
+            let sha = provider.resolve(&ActionRepoId::simple("o", "r"), ref_name);
+            assert_eq!(
+                sha.ok().map(|s| s.as_str().to_string()).as_deref(),
+                Some(FULL_SHA),
+                "{ref_name}"
+            );
+        }
     }
 
     #[test]

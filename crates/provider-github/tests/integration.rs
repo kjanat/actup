@@ -1451,3 +1451,51 @@ async fn refs_are_percent_encoded_in_rest_urls() -> Result<(), Box<dyn std::erro
     assert_eq!(action.name(), Some("Minimal"));
     Ok(())
 }
+
+#[tokio::test]
+async fn slashes_survive_encoding_in_rest_urls() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    let (tagged, branched) = ("a".repeat(40), "b".repeat(40));
+    serve_body(
+        &server,
+        "/repos/o/r/git/ref/tags/release/v1",
+        format!(r#"{{"object": {{"type": "commit", "sha": "{tagged}"}}}}"#),
+    )
+    .await;
+    serve_body(
+        &server,
+        "/repos/o/r/branches/feature/x",
+        format!(r#"{{"commit": {{"sha": "{branched}"}}}}"#),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/contents/sub/dir/action.yml"))
+        .and(query_param("ref", "release/v1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(r#"{"content": "bmFtZTogTWluaW1hbAo=", "encoding": "base64"}"#),
+        )
+        .mount(&server)
+        .await;
+    let provider = provider(&server)?;
+    let repo = ActionRepoId::simple("o", "r");
+
+    assert_eq!(
+        provider
+            .resolve_ref_to_sha(&repo, "release/v1")
+            .await?
+            .as_str(),
+        tagged
+    );
+    assert_eq!(
+        provider
+            .resolve_ref_to_sha(&repo, "feature/x")
+            .await?
+            .as_str(),
+        branched
+    );
+    let nested = ActionRepoId::new(None, "o", "r", Some("sub/dir".into()));
+    let action = provider.get_action_yml(&nested, "release/v1").await?;
+    assert_eq!(action.name(), Some("Minimal"));
+    Ok(())
+}

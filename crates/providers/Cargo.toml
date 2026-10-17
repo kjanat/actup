@@ -23,7 +23,6 @@ serde         = { workspace = true }
 serde_yaml_ng = { workspace = true }
 tokio         = { workspace = true }
 tracing       = { workspace = true }
-urlencoding   = { workspace = true }  # URL path segment encoding
 
 [dev-dependencies]
 gix-hash = { version = "0.25", features = ["sha1"] }
