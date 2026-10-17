@@ -8,11 +8,11 @@ the Cargo workspace.
 
 ## Module Map
 
-| File          | Lines | Purpose                                      | Key Exports                                                                                                                 |
-| ------------- | ----- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `index.ts`    | 191   | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment` |
-| `provider.ts` | 428   | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                                                                               |
-| `types.ts`    | 18    | Hand-maintained provider interface           | `ActupProvider`                                                                                                             |
+| File          | Purpose                                      | Key Exports                                                                                                                 |
+| ------------- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`    | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment` |
+| `provider.ts` | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                                                                               |
+| `types.ts`    | Hand-maintained provider interface           | `ActupProvider`                                                                                                             |
 
 ## Package Exports
 
@@ -33,7 +33,7 @@ for the default GitHub provider.
 | Change provider methods | `src/types.ts` → `ActupProvider`               |
 | Change GitHub provider  | `src/provider.ts` → `createGitHubProvider`     |
 | Fix WASM initialization | `src/index.ts` → `doInit()` / `loadWasmNode()` |
-| Build WASM from Rust    | `scripts/build-wasm.sh`                        |
+| Build WASM from Rust    | `scripts/build-wasm.ts`                        |
 
 ## Build
 

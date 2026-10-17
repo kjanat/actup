@@ -6,11 +6,12 @@ native builds see an empty crate.
 
 ## Module Map
 
-| Module      | Lines | Purpose                                     | Key Types                                                                                                       |
-| ----------- | ----- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `lib.rs`    | 177   | Conditional compilation gate + WASM API     | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment` |
-| `bridge.rs` | 326   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                               |
-| `clock.rs`  | 22    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                       |
+| Module        | Purpose                                     | Key Types                                                                                                       |
+| ------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `lib.rs`      | Conditional compilation gate                | `bridge`, `wasm_api`                                                                                            |
+| `wasm_api.rs` | WASM API                                    | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment` |
+| `bridge.rs`   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                               |
+| `clock.rs`    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                       |
 
 ## WASM API (7 exports)
 
@@ -26,12 +27,12 @@ native builds see an empty crate.
 
 ## Where to Look
 
-| Task                       | Start Here                                         |
-| -------------------------- | -------------------------------------------------- |
-| Add new WASM export        | `lib.rs` → `wasm_api` module                       |
-| Change JS↔Rust bridging    | `bridge.rs` → `JsProviderAdapter`                  |
-| Fix serde round-trip issue | `bridge.rs` → `JsVersionSet` / `build_version_set` |
-| Change clock behavior      | `clock.rs` → `JsClock`                             |
+| Task                       | Start Here                                       |
+| -------------------------- | ------------------------------------------------ |
+| Add new WASM export        | `wasm_api.rs`                                    |
+| Change JS↔Rust bridging    | `bridge.rs` → `JsProviderAdapter`                |
+| Fix serde round-trip issue | `bridge.rs` → `VersionSet` / `build_version_set` |
+| Change clock behavior      | `clock.rs` → `JsClock`                           |
 
 ## Build
 
@@ -76,7 +77,10 @@ module. Lint the wasm32 build with `just clippy-wasm`.
 - Node.js integration tests in `tests/`:
   - `node_parse.mjs` — tests `parseUsesRefs` export
   - `node_check.mjs` — tests `checkRefs` + `planUpdates` with a JS mock provider
-- Run manually after `wasm-pack build`: `node crates/wasm/tests/node_check.mjs`
+- Run manually after
+  `wasm-pack build crates/wasm --target nodejs --out-dir ../../target/wasm-pkg`:
+  `node crates/wasm/tests/node_parse.mjs` and
+  `node crates/wasm/tests/node_check.mjs`
 - Tests use `console.log("PASS: ...")` / `throw new Error(...)` — no test
   framework
 
