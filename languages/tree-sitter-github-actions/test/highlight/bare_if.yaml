@@ -1,0 +1,15 @@
+env:
+  if: hello world
+#     ^^^^^^^^^^^ @string
+jobs:
+  build:
+    steps:
+      - if: github.ref == 'refs/heads/main' && !cancelled()
+#           ^^^^^^ @variable.builtin
+#                  ^^^ @variable.member
+#                      ^^ @operator
+#                         ^^^^^^^^^^^^^^^^^ @string
+#                                           ^^ @operator
+#                                              ^ @operator
+#                                               ^^^^^^^^^ @function.builtin
+        run: echo ok
