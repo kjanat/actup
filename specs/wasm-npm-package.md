@@ -13,8 +13,7 @@ Publish a thin TypeScript wrapper as `actup-wasm` on npm. Enable:
 
 - VS Code web extension (vscode.dev) — `wasm32-unknown-unknown` with JS
   `fetch()` bridge
-- Zed extension — `wasm32-wasip2`, embedding `actup-core` and fetching through
-  Zed's HTTP client
+- Zed extension — `wasm32-wasip2` with Zed's `http-client` host interface
 - Standalone Node.js/Bun/Deno usage — `actup-wasm` as a library
 - MCP server in JS/TS — wrapping the WASM module
 
@@ -84,7 +83,7 @@ packages/
     wasm/               # Built .wasm artifact (gitignored)
 ```
 
-`actup-wasm` is a workspace member.
+`actup-wasm` is a workspace member, as is `extensions/zed/`.
 
 ## Scope & Deliverables
 
@@ -308,7 +307,7 @@ Cloudflare Workers.
 | Consumer           | Target                   | HTTP            | Runtime                |
 | ------------------ | ------------------------ | --------------- | ---------------------- |
 | npm / VS Code web  | `wasm32-unknown-unknown` | JS fetch bridge | `wasm-bindgen-futures` |
-| Zed extension      | `wasm32-wasip2`          | Zed HTTP client | WASI reactor           |
+| Zed extension      | `wasm32-wasip2`          | Zed http-client | WASI reactor           |
 | Node.js standalone | `wasm32-unknown-unknown` | JS fetch bridge | Node WASM loader       |
 
 The `actup-wasm` crate targets `wasm32-unknown-unknown` (broadest compat). The
