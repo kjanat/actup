@@ -389,10 +389,12 @@ pub struct Scan {
     /// Additional paths to scan (beyond defaults)
     ///
     /// By default, actup scans:
-    /// - `.github/workflows/**/*.{yml,yaml}` (workflows)
-    /// - `.github/actions/**/action.{yml,yaml}` (composite actions)
+    /// - `.github/workflows/*.{yml,yaml}` (workflows)
+    /// - `action.{yml,yaml}` and `.github/actions/*/action.{yml,yaml}` (composite actions)
     ///
-    /// Use `extra_paths` to scan additional locations:
+    /// Use `extra_paths` to scan additional locations. A directory that an
+    /// entry matches expands to `*.{yml,yaml}` directly in it and
+    /// `*/action.{yml,yaml}` below it.
     ///
     /// Examples:
     /// - `".gitea/workflows"` - Gitea workflow directory

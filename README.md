@@ -441,11 +441,13 @@ and `sameCommit` (the target version) when the target sits on the commit that
 
 ## Files Scanned
 
-- `.github/workflows/**/*.yml` / `.yaml`
-- `.github/actions/**/action.yml` / `.yaml`
+- `.github/workflows/*.yml` / `.yaml`
+- `action.yml` / `.yaml` and `.github/actions/*/action.yml` / `.yaml`
 - Reusable workflows: `uses: owner/repo/.github/workflows/foo.yml@ref`
 - `scan.extra_paths` globs, relative to the scan root, and any file passed as
-  the path argument
+  the path argument. A directory that an entry matches, such as
+  `.gitea/workflows`, expands to the `*.yml` and `*.yaml` files directly in it
+  and to `*/action.yml` and `*/action.yaml` below it.
 
 actup reads a file by its extension. It parses `.yml` and `.yaml` files as YAML,
 and Markdown files (`.md`, `.markdown`) through their fenced `yaml` or `yml`

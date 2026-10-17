@@ -161,7 +161,9 @@ impl FileKind {
 /// - .github/actions/*/action.yml and .yaml
 /// - Any `scan.extra_paths` from config
 ///
-/// A match that resolves outside `root` after following symlinks is skipped.
+/// A directory that an extra path matches expands to `*.yml` and `*.yaml`
+/// directly in it and `*/action.yml` and `*/action.yaml` below it. A match
+/// that resolves outside `root` after following symlinks is skipped.
 #[must_use]
 pub fn discover_files(root: &Path, extra_patterns: &[ExtraPath]) -> Vec<DiscoveredFile> {
     let mut files = Vec::new();
@@ -192,18 +194,23 @@ pub fn discover_files(root: &Path, extra_patterns: &[ExtraPath]) -> Vec<Discover
         .iter()
         .map(|p| (p.as_str(), FileKind::Custom));
 
+    let mut add = |entry: PathBuf, kind: FileKind| {
+        if !canonical_inside(&canonical_root, &entry) {
+            tracing::debug!(path = %entry.display(), root = %root.display(), "skipping match outside the scan root");
+        } else if seen_paths.insert(entry.clone()) {
+            files.push(DiscoveredFile::new(entry, kind));
+        }
+    };
     for (pattern, kind) in defaults.chain(extras) {
-        let full_pattern = root.join(pattern);
-        let Some(pattern_str) = full_pattern.to_str() else {
-            continue;
-        };
-        for entry in glob::glob(pattern_str).into_iter().flatten().flatten() {
-            if !canonical_inside(&canonical_root, &entry) {
-                tracing::debug!(path = %entry.display(), root = %root.display(), "skipping match outside the scan root");
-                continue;
-            }
-            if seen_paths.insert(entry.clone()) {
-                files.push(DiscoveredFile::new(entry, kind));
+        for entry in glob_in(root, pattern) {
+            if !entry.is_dir() {
+                add(entry, kind);
+            } else if kind == FileKind::Custom {
+                for (shape, kind) in DIRECTORY_SHAPES {
+                    glob_in(&entry, shape)
+                        .filter(|nested| nested.is_file())
+                        .for_each(|nested| add(nested, kind));
+                }
             }
         }
     }
@@ -211,6 +218,25 @@ pub fn discover_files(root: &Path, extra_patterns: &[ExtraPath]) -> Vec<Discover
     // Sort for deterministic output
     files.sort_by(|a, b| a.path.cmp(&b.path));
     files
+}
+
+const DIRECTORY_SHAPES: [(&str, FileKind); 4] = [
+    ("*.yml", FileKind::Workflow),
+    ("*.yaml", FileKind::Workflow),
+    ("*/action.yml", FileKind::CompositeAction),
+    ("*/action.yaml", FileKind::CompositeAction),
+];
+
+fn glob_in(dir: &Path, pattern: &str) -> impl Iterator<Item = PathBuf> {
+    let full = dir
+        .to_str()
+        .map(|dir| PathBuf::from(glob::Pattern::escape(dir)).join(pattern));
+    full.as_deref()
+        .and_then(Path::to_str)
+        .and_then(|full| glob::glob(full).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
 }
 
 fn canonical_inside(canonical_root: &Path, path: &Path) -> bool {
@@ -408,6 +434,83 @@ mod tests {
         Ok(())
     }
 
+    fn found(
+        root: &Path,
+        extra: &[&str],
+    ) -> Result<Vec<(String, FileKind)>, Box<dyn std::error::Error>> {
+        let extra = extra
+            .iter()
+            .map(|e| e.parse())
+            .collect::<Result<Vec<ExtraPath>, _>>()?;
+        discover_files(root, &extra)
+            .into_iter()
+            .map(|f| {
+                let relative = f.path().strip_prefix(root)?;
+                Ok((relative.to_string_lossy().replace('\\', "/"), f.kind()))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_discover_files_expands_directory_extra_paths() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = make_temp_dir()?;
+        let root = temp.join("repo[1]");
+        for dir in [
+            ".github/workflows",
+            ".gitea/workflows/tool",
+            ".gitea/workflows/deep/er",
+            "ci/pipelines/lint",
+        ] {
+            fs::create_dir_all(root.join(dir))?;
+        }
+        for file in [
+            ".github/workflows/ci.yml",
+            ".gitea/workflows/ci.yml",
+            ".gitea/workflows/deploy.yaml",
+            ".gitea/workflows/notes.txt",
+            ".gitea/workflows/tool/action.yml",
+            ".gitea/workflows/deep/skip.yml",
+            ".gitea/workflows/deep/er/action.yml",
+            "ci/top.yml",
+            "ci/pipelines/a.yaml",
+            "ci/pipelines/lint/action.yaml",
+        ] {
+            fs::write(root.join(file), "name: x")?;
+        }
+
+        assert_eq!(
+            found(&root, &[".gitea/workflows", ".github/workflows"])?,
+            [
+                (".gitea/workflows/ci.yml".to_owned(), FileKind::Workflow),
+                (
+                    ".gitea/workflows/deploy.yaml".to_owned(),
+                    FileKind::Workflow
+                ),
+                (
+                    ".gitea/workflows/tool/action.yml".to_owned(),
+                    FileKind::CompositeAction
+                ),
+                (".github/workflows/ci.yml".to_owned(), FileKind::Workflow),
+            ]
+        );
+        assert_eq!(
+            found(&root, &["ci/*"])?,
+            [
+                (".github/workflows/ci.yml".to_owned(), FileKind::Workflow),
+                ("ci/pipelines/a.yaml".to_owned(), FileKind::Workflow),
+                (
+                    "ci/pipelines/lint/action.yaml".to_owned(),
+                    FileKind::CompositeAction
+                ),
+                ("ci/top.yml".to_owned(), FileKind::Custom),
+            ]
+        );
+
+        fs::remove_dir_all(temp)?;
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn test_discover_files_skips_symlinks_out_of_the_root() -> Result<(), Box<dyn std::error::Error>>
@@ -426,7 +529,7 @@ mod tests {
         symlink(workflows.join("ci.yml"), workflows.join("alias.yml"))?;
         symlink(&outside, root.join("linked"))?;
 
-        let extra = ["linked/*.yml".parse()?];
+        let extra = ["linked/*.yml".parse()?, "linked".parse()?];
         let found: Vec<_> = discover_files(&root, &extra)
             .into_iter()
             .map(|f| f.path().to_path_buf())
