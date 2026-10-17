@@ -313,8 +313,9 @@ The LSP asks the provider whether each action's repository is archived (GitHub,
 GitLab, Gitea) or disabled (GitHub). It asks once per repository per
 `cache.ttl`, and hover reuses the answer. An archived or disabled repository
 gets a hint diagnostic with code `archived` on each `uses:` line and a warning
-line in hover. A failed or rate-limited lookup reports nothing.
-`policy.archived = "ignore"` turns both off, also per `[[overrides]]` entry.
+line in hover. A failed or rate-limited lookup reports nothing, and an action
+that `scan.ignore` matches gets no lookup. `policy.archived = "ignore"` turns
+both off, also per `[[overrides]]` entry.
 
 ### Config Discovery
 

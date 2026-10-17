@@ -97,7 +97,7 @@ pub struct CachingProvider<P> {
     sha_cache: Memo<(ActionRepoId, String), Result<Sha40>>,
     branch_cache: Memo<ActionRepoId, String>,
     search_cache: Memo<String, provider::Search>,
-    state_cache: Memo<ActionRepoId, Option<provider::RepoState>>,
+    state_cache: Memo<ActionRepoId, Result<Option<provider::RepoState>>>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
     // zero permits; followers `acquire().await` on it. The leader holds a
@@ -180,8 +180,8 @@ fn claim_flight<K: Eq + Hash + Clone>(
     }
 }
 
-/// Whether a ref resolution outcome may be reused.
-fn settled(result: &Result<Sha40>) -> bool {
+/// Whether a provider answer may be reused.
+fn settled<T>(result: &Result<T>) -> bool {
     result
         .as_ref()
         .map_or_else(|e| !e.is_environment_error(), |_| true)
@@ -539,14 +539,14 @@ impl<P: Provider> Provider for CachingProvider<P> {
                 .retention
                 .fresh(self.state_cache.read().await.get(&repo));
             if let Some(state) = hit {
-                return Ok(state);
+                return state;
             }
             let result = self.inner.get_repo_state(&repo).await;
-            if let Ok(state) = result {
+            if settled(&result) {
                 self.state_cache
                     .write()
                     .await
-                    .insert(repo, self.retention.stamp(state));
+                    .insert(repo, self.retention.stamp(result.clone()));
             }
             result
         })
@@ -1518,10 +1518,15 @@ mod tests {
         ) -> BoxFuture<'_, Result<Option<provider::RepoState>>> {
             let calls = self.calls.fetch_add(1, Ordering::SeqCst);
             let result = match (repo.repo(), calls) {
-                ("gone", _) => Err(crate::Error::Network {
+                ("offline", _) => Err(crate::Error::Network {
                     operation: "repo".into(),
                     message: "offline".into(),
                     source: None,
+                }),
+                ("gone", _) => Err(crate::Error::NotFound {
+                    owner: repo.owner().into(),
+                    repo: repo.repo().into(),
+                    host: None,
                 }),
                 (_, 0) => Ok(Some(provider::RepoState::Active)),
                 _ => Ok(Some(provider::RepoState::Archived)),
@@ -1609,19 +1614,19 @@ mod tests {
             cached.get_repo_state(&repo).await?,
             Some(provider::RepoState::Archived)
         );
-        assert!(
-            cached
-                .get_repo_state(&make_repo("a", "gone"))
-                .await
-                .is_err()
-        );
-        assert!(
-            cached
-                .get_repo_state(&make_repo("a", "gone"))
-                .await
-                .is_err()
-        );
-        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 4);
+        for _ in 0..2 {
+            assert!(matches!(
+                cached.get_repo_state(&make_repo("a", "gone")).await,
+                Err(crate::Error::NotFound { .. })
+            ));
+            assert!(
+                cached
+                    .get_repo_state(&make_repo("a", "offline"))
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 5);
 
         let boxed: Box<dyn Provider> = Box::new(Moving {
             calls: AtomicUsize::new(0),

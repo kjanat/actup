@@ -431,6 +431,7 @@ impl<'de> Deserialize<'de> for Branch {
 
 /// How the LSP reports an action whose repository is archived or disabled.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 #[serde(rename_all = "lowercase")]
 pub enum Archived {
     /// A hint diagnostic with code `archived` and a hover warning.

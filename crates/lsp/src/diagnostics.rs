@@ -435,9 +435,6 @@ pub const fn repo_state_note(state: provider::RepoState) -> Option<&'static str>
     }
 }
 
-/// Hint diagnostics for actions whose repository is archived or disabled.
-///
-/// Asks each provider once per repository and reports nothing for a failed lookup.
 async fn archived_diagnostics(
     actions: &[LocatedAction],
     config: &Config,
@@ -445,7 +442,10 @@ async fn archived_diagnostics(
 ) -> Vec<Diagnostic> {
     let reported: Vec<&LocatedAction> = actions
         .iter()
-        .filter(|a| config.policy_for(&a.action_ref).archived == actup_core::policy::Archived::Hint)
+        .filter(|a| {
+            !config.should_ignore(&a.action_ref)
+                && config.policy_for(&a.action_ref).archived == actup_core::policy::Archived::Hint
+        })
         .collect();
     let mut repos: Vec<ActionRepoId> = reported
         .iter()
@@ -1616,6 +1616,32 @@ jobs:
     }
 
     #[tokio::test]
+    async fn unserved_hosts_get_no_archived_lookup() -> Result<(), Box<dyn std::error::Error>> {
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_repo_state(Ok(Some(provider::RepoState::Archived)));
+        let registry = test_utils::mock_registry(provider);
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let result = compute_diagnostics(
+            "    - uses: ghe.corp.com/actions/create-release@v1\n",
+            &uri,
+            &Config::default(),
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| d.code != Some(NumberOrString::String("archived".into()))),
+            "{:?}",
+            result.diagnostics
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn archived_policy_ignore_silences_the_hint() -> Result<(), Box<dyn std::error::Error>> {
         let ignore = Config {
             policy: actup_core::config::Policy {
@@ -1642,6 +1668,12 @@ jobs:
             archived_codes(Ok(Some(provider::RepoState::Archived)), &first_ref_ignored).await?;
         let lines: Vec<&str> = codes.iter().map(|(line, _)| line.as_str()).collect();
         assert_eq!(lines, ["1"]);
+        let mut scan_ignored = Config::default();
+        scan_ignored.scan.ignore = vec!["actions/create-release".parse()?];
+        assert_eq!(
+            archived_codes(Ok(Some(provider::RepoState::Archived)), &scan_ignored).await?,
+            []
+        );
         Ok(())
     }
 
