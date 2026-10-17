@@ -763,6 +763,31 @@ mod tests {
     }
 
     #[test]
+    fn retarget_writes_no_comment_after_other_flow_keys() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let old = "a".repeat(40);
+        let line = format!("- {{ uses: a/b@{old}, with: {{ x: 1 }} }}\n");
+        let (l, action) = loc(&line)?;
+        let (edit, to) =
+            retarget(&l, &action, &target(), Style::Preserve).ok_or("no retarget edit")?;
+        let site = Site {
+            path: "f".into(),
+            line: 1,
+            provider: "github".into(),
+            host: "github.com".into(),
+            action: action.to_string(),
+        };
+        let labelled = label(site, &edit, &l, action.ref_str(), &to);
+        let mut edits = FileEdits::new("f".into(), line.clone(), SourceFormat::Yaml);
+        edits.add(edit, labelled);
+        assert_eq!(
+            plan(&line, edits)?.content,
+            line.replace(&old, &"b".repeat(40))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn retarget_skips_a_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>> {
         let (escaped, action) = loc("- uses: \"a/b@v4.0.\\x30\"\n")?;
         assert!(retarget(&escaped, &action, &target(), Style::Preserve).is_none());

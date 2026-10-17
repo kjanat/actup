@@ -467,6 +467,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_writes_no_comment_after_other_flow_keys()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = [
+            "steps:",
+            "  - { uses: o/s@OLD, with: { x: 1 } }",
+            "  - { uses: o/t@v4.0.0, id: x }",
+            "  - { uses: \"o/u@OLD\" } # v4.0.0",
+            "",
+        ]
+        .join("\n")
+        .replace("OLD", &sha40('a'));
+        let written = update_with_config("[policy]\npin = \"sha\"\n", &content).await?;
+        let expected = [
+            "steps:",
+            "  - { uses: o/s@NEW, with: { x: 1 } }",
+            "  - { uses: o/t@NEW, id: x }",
+            "  - { uses: \"o/u@NEW\" } # v4.2.0",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW", &sha40('b'));
+        assert_eq!(written, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_pin_tag_unpins_outdated_shas() -> Result<(), Box<dyn std::error::Error>> {
         let written =
             update_with_config("[policy]\npin = \"tag\"\n", &pin_style_workflow()).await?;
@@ -900,7 +926,7 @@ mod tests {
             "  - {uses: \"a/b@v5.0.0\"} # keep",
             "  - [{ uses: 'c/d@v5.0.0' }]",
             "  - { name: \"déploiement ✓\", uses: e/f@v5.0.0 }",
-            "  - { uses: g/h@NEW_SHA, with: { x: 1 } } # v5.0.0",
+            "  - { uses: g/h@NEW_SHA, with: { x: 1 } }",
             "",
         ]
         .join("\n")

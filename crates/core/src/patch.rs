@@ -113,16 +113,17 @@ pub fn retarget_edit(
 /// Build an edit that pins a ref to the `target` commit SHA.
 ///
 /// Keeps a `# vX.Y.Z` version comment accurate: a stale version is
-/// refreshed and the note after it kept, a missing comment is added, and a
-/// foreign comment is left untouched. Shared by `update` and `pin`.
+/// refreshed and the note after it kept, a missing comment is added after
+/// the value [`closer`], and a foreign comment or other text after the value
+/// is left untouched with no comment. Shared by `update` and `pin`.
 #[must_use]
 pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<PendingEdit> {
     let new_sha = target.sha();
     let version = target.version().to_string();
     let range = loc.ref_range()?;
+    let sha_only = PendingEdit::replace_range(loc.line(), range.clone(), new_sha.to_string());
 
-    let raw = loc.raw_line();
-    Some(match Trailing::after(raw, range.end) {
+    Some(match Trailing::after(loc.raw_line(), range.end) {
         Trailing::Version { note } => {
             let comment = labeled_comment(&version, note);
             let rewrite = Rewrite {
@@ -132,12 +133,8 @@ pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<Pend
             };
             rewrite_edit(loc, &rewrite)?.with_inline_comment(comment)
         }
-        // `with_comment` adds the version note only when the line has none, so a
-        // foreign comment is preserved.
-        Trailing::None | Trailing::Foreign => {
-            PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
-                .with_comment(labeled_comment(&version, ""))
-        }
+        Trailing::None => sha_only.with_comment(labeled_comment(&version, "")),
+        Trailing::Foreign => sha_only,
     })
 }
 
@@ -642,6 +639,20 @@ mod tests {
                 at("v7.0.1", " # v7.0.1 keep")
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_repin_writes_no_comment_after_other_keys() -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
+        let line = format!("      - {{ uses: actions/checkout@{old}, with: {{ x: 1 }} }}\n");
+        let loc = quoted_loc(&line)?;
+        assert_eq!(
+            applied(&line, repin_sha_edit(&loc, &target))?,
+            line.replace(&old, &new)
+        );
         Ok(())
     }
 

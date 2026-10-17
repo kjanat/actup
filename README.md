@@ -286,8 +286,9 @@ comment the same way. It is added only where the line can take it: never next to
 another comment, never on a line that holds other `uses:` values or ends inside
 a scalar, and never in a plain-text file. The comment goes after the closing
 quote and the flow `}` or `]` that close the value, as in
-`{ uses: "o/b@<sha>" } # v4.2.0`. The CLI, the LSP, the MCP server and the wasm
-package follow the same rule.
+`{ uses: "o/b@<sha>" } # v4.2.0`. Other text after the value, such as more flow
+keys, means no comment. The CLI, the LSP, the MCP server and the wasm package
+follow the same rule.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose

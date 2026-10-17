@@ -403,17 +403,19 @@ jobs:
       - uses: 'actions/checkout@${oldSha}'
       - { uses: actions/checkout@${oldSha} } # v4.0.0
       - [{ uses: actions/checkout@${oldSha} }, { uses: actions/checkout@${oldSha} }]
+      - [{ uses: ./local }, { uses: actions/checkout@${oldSha} }]
+      - { uses: actions/checkout@${oldSha}, with: { x: 1 } }
 `;
 const closerResults = await checkRefs(closerYaml, mockProvider);
 const closerEdits = planUpdates(closerResults);
 assert.equal(
 	applyEdits(closerYaml, closerEdits),
-	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@${newSha}" # v4.2.0\n      - uses: 'actions/checkout@${newSha}' # v4.2.0\n      - { uses: actions/checkout@${newSha} } # v4.2.0\n      - [{ uses: actions/checkout@${newSha} }, { uses: actions/checkout@${newSha} }]\n`,
-	"SHA pins write the closer before the comment, and a line with two refs gets none",
+	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@${newSha}" # v4.2.0\n      - uses: 'actions/checkout@${newSha}' # v4.2.0\n      - { uses: actions/checkout@${newSha} } # v4.2.0\n      - [{ uses: actions/checkout@${newSha} }, { uses: actions/checkout@${newSha} }]\n      - [{ uses: ./local }, { uses: actions/checkout@${newSha} }]\n      - { uses: actions/checkout@${newSha}, with: { x: 1 } }\n`,
+	"SHA pins write the closer before the comment, and a line with two values or other keys gets none",
 );
 assert.equal(
 	applyEdits(closerYaml, planUpdates(closerResults, { policy: { pin: "tag" } })),
-	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@v4.2.0"\n      - uses: 'actions/checkout@v4.2.0'\n      - { uses: actions/checkout@v4.2.0 }\n      - [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@v4.2.0 }]\n`,
+	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@v4.2.0"\n      - uses: 'actions/checkout@v4.2.0'\n      - { uses: actions/checkout@v4.2.0 }\n      - [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@v4.2.0 }]\n      - [{ uses: ./local }, { uses: actions/checkout@v4.2.0 }]\n      - { uses: actions/checkout@v4.2.0, with: { x: 1 } }\n`,
 	"unpinned tags keep the closer",
 );
 
@@ -441,7 +443,7 @@ assert.equal(
 
 console.log("PASS: pin-branch results get an edit");
 
-// Test 16: sortVersionTags orders by semver precedence, newest first.
+// Test 18: sortVersionTags orders by semver precedence, newest first.
 const sorted = sortVersionTags([
 	{ version: "v1.9.0", sha: "a".repeat(40) },
 	{ version: "v1.10.0", sha: "b".repeat(40) },
@@ -458,7 +460,7 @@ assert.equal(sorted[0].sha, "d".repeat(40), "each tag keeps its sha");
 
 console.log("PASS: sortVersionTags orders newest first");
 
-// Test 17: core's ref parser, host rule included.
+// Test 19: core's ref parser, host rule included.
 assert.deepEqual(parseUses("a.b/c@v1"), { host: null, owner: "a.b", repo: "c", subpath: null, ref_str: "v1" });
 assert.deepEqual(parseUses("GitHub.COM/actions/checkout/sub@v4"), {
 	host: "github.com",
@@ -478,7 +480,7 @@ assert.equal(isHostSegment("-bad.host"), false);
 
 console.log("PASS: parseUses, parseActionPath and isHostSegment follow core");
 
-// Test 18: the fetch provider reports a short SHA ref that abbreviates a commit.
+// Test 20: the fetch provider reports a short SHA ref that abbreviates a commit.
 const { createGitHubProvider } = await import("../dist/provider.js");
 const fullSha = "abc1234".padEnd(40, "0");
 const originalFetch = globalThis.fetch;
@@ -500,7 +502,7 @@ try {
 
 console.log("PASS: fetch provider reports a short SHA ref");
 
-// Test 19: a prerelease newer than the latest stable tag is no target, and a listed non-semver tag needs no lookup.
+// Test 21: a prerelease newer than the latest stable tag is no target, and a listed non-semver tag needs no lookup.
 let lookups = 0;
 const prereleaseProvider = {
 	...mockProvider,

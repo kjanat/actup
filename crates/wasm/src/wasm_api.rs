@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use actup_core::{
-    ActionRef, UsesLocation,
+    ActionRef, SourceFormat, UsesLocation,
     config::{Config, Policy},
     error::chain,
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
@@ -144,16 +144,21 @@ struct LocatedCheckResult {
     ref_kind: Option<RefKind>,
     /// The suggested target, when it sits on the commit the ref already names
     same_commit: Option<Arc<version::Info>>,
+    /// Whether the line may take a comment after the ref: it can hold a
+    /// comment and holds no other `uses:` value
+    #[serde(default)]
+    takes_comment: bool,
 }
 
 impl LocatedCheckResult {
-    fn new(location: &UsesLocation, result: &CheckResult) -> Self {
+    fn new(location: &UsesLocation, result: &CheckResult, takes_comment: bool) -> Self {
         Self {
             location: location.clone(),
             action_ref: result.action_ref().clone(),
             status: result.status().clone(),
             ref_kind: result.ref_kind(),
             same_commit: result.same_commit().cloned(),
+            takes_comment,
         }
     }
 }
@@ -203,6 +208,7 @@ pub fn check_refs(
         registry.register(Box::new(adapter));
 
         let locations = extract_uses_from_yaml(&yaml);
+        let comment_lines = SourceFormat::Yaml.comment_lines(&yaml);
         let mut results: Vec<LocatedCheckResult> = Vec::with_capacity(locations.len());
 
         for loc in &locations {
@@ -220,7 +226,11 @@ pub fn check_refs(
                     },
                 ),
             };
-            results.push(LocatedCheckResult::new(loc, &result));
+            results.push(LocatedCheckResult::new(
+                loc,
+                &result,
+                comment_lines.contains(&loc.line()),
+            ));
         }
 
         to_js(&results)
@@ -256,7 +266,8 @@ struct UpdateEdit {
 /// [`checkRefs`]) and returns one [`UpdateEdit`] for each outdated or
 /// pin-branch result whose `location` has a ref range. `config.policy.pin`
 /// picks tag or SHA output, as in `actup update`. A pin-branch result pins
-/// the branch or non-semver tag to its commit with a `# <ref>` comment.
+/// the branch or non-semver tag to its commit with a `# <ref>` comment. A
+/// comment is written only for a result whose `takes_comment` is set.
 ///
 /// This is a pure, synchronous function. The caller applies the edits.
 ///
@@ -277,20 +288,13 @@ pub fn plan_updates(
     };
     let results: Vec<LocatedCheckResult> = serde_json::from_str(results_json)
         .map_err(|e| JsValue::from_str(&format!("invalid results JSON: {e}")))?;
-    let mut refs_per_line: std::collections::HashMap<usize, usize> =
-        std::collections::HashMap::new();
-    for result in &results {
-        *refs_per_line.entry(result.location.line()).or_insert(0) += 1;
-    }
-
     let edits: Vec<UpdateEdit> = results
         .iter()
         .filter_map(|result| {
             let location = &result.location;
             let range = location.ref_range()?;
             let raw_line = location.raw_line();
-            let sole = refs_per_line.get(&location.line()) == Some(&1);
-            let (trailing, closing) = if sole {
+            let (trailing, closing) = if result.takes_comment {
                 (
                     Trailing::after(raw_line, range.end),
                     closer(raw_line, range.end),
