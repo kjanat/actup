@@ -983,6 +983,11 @@ fn update_file_refreshes_version_comments(client: &mut Client, ws: &Workspace) -
             "v4.2.0",
             "  - uses: actions/checkout@v4.2.0 # v4.2.0 keep",
         ),
+        (
+            "  - uses: actions/checkout@v4 # dev keep",
+            "v4.2.0",
+            "  - uses: actions/checkout@v4.2.0 # dev keep",
+        ),
     ] {
         ws.write(".github/workflows/noted.yml", &format!("steps:\n{line}\n"))?;
         let named = update_file(
