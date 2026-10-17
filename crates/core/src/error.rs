@@ -102,10 +102,10 @@ pub enum Error {
         path: String,
         /// What's wrong, without the text of `source`
         reason: String,
-        /// The read or parse error
-        source: Option<Source>,
         /// A suggested fix, like ``did you mean `policy.bump`?``, that [`chain`] prints last
         hint: Option<String>,
+        /// The read or parse error
+        source: Option<Source>,
     },
 
     /// YAML parsing failed
