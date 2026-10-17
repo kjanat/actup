@@ -201,10 +201,11 @@ Never let GitHub + GitHub Enterprise collide in cache.
 
 ### Discovery order (highest priority first)
 
-1. Explicit `--config <path>` (CLI) / LSP setting `actup.configPath` / MCP arg
-   `configPath`
+1. Explicit `--config <path>` (CLI and `actup-mcp`) / LSP setting
+   `actup.configPath`
 2. Repo configs, found by walking up from the scanned path to the first
-   directory containing `.git` (the LSP searches only its workspace folder):
+   directory containing `.git` (the LSP searches only its workspace folder, and
+   `actup-mcp` only its `--root`):
 
    - `actup.toml`
    - `.actup.toml`
