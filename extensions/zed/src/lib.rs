@@ -1087,6 +1087,33 @@ mod tests {
     }
 
     #[test]
+    fn config_note_omits_repo_keys_the_environment_sets() -> Result<(), String> {
+        let files = HashMap::from([(
+            "actup.toml",
+            "default_host = \"x.example\"\n[scan]\nextra_paths = [\"a.md\"]\n",
+        )]);
+        let requested = RefCell::new(Vec::new());
+        let env = shell_env(&[("ACTUP_DEFAULT_HOST", "y.example")]);
+        let config = read_config(read_from(&files, &requested), &env, None)?;
+        assert_eq!(config.default_host.as_deref(), Some("y.example"));
+        assert_eq!(
+            config_note(&config),
+            format!(
+                "Config: `actup.toml` (ignored `scan.extra_paths`), environment `ACTUP_DEFAULT_HOST`. {SCOPE}\n\n"
+            )
+        );
+
+        let env = shell_env(&[
+            ("ACTUP_DEFAULT_HOST", "y.example"),
+            ("ACTUP_SCAN__EXTRA_PATHS", "[\"b.md\"]"),
+        ]);
+        let config = read_config(read_from(&files, &requested), &env, None)?;
+        let note = config_note(&config);
+        assert!(!note.contains("(ignored"), "{note}");
+        Ok(())
+    }
+
+    #[test]
     fn config_note_names_the_file_and_environment() -> Result<(), String> {
         let files = HashMap::from([("actup.toml", "[policy]\nbump = \"minor\"\n")]);
         let requested = RefCell::new(Vec::new());
@@ -1239,7 +1266,7 @@ mod tests {
             [
                 ConfigSource::Repo {
                     path: PathBuf::from("actup.toml"),
-                    ignored: vec!["default_host".to_string()],
+                    ignored: Vec::new(),
                 },
                 ConfigSource::Explicit {
                     path: PathBuf::from("ACTUP.toml"),

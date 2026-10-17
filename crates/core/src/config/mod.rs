@@ -238,7 +238,7 @@ pub enum Source {
     Repo {
         /// Path of the file.
         path: PathBuf,
-        /// Keys the file set that a repo config may not set, which were ignored.
+        /// Keys the file set that a repo config may not set and no later layer sets, which were ignored.
         ignored: Vec<String>,
     },
     /// The file named by `--config`, `ACTUP_CONFIG` or the LSP `configPath`.
@@ -825,9 +825,14 @@ fn declared_hosts(provider: &impl figment::Provider) -> BTreeSet<String> {
         .collect()
 }
 
+struct Layer {
+    source: Source,
+    repo_only: BTreeSet<String>,
+}
+
 struct Layers {
     figment: Figment,
-    sources: Vec<Source>,
+    stack: Vec<Layer>,
     repo_hosts: BTreeSet<String>,
     trusted_hosts: BTreeSet<String>,
 }
@@ -836,7 +841,7 @@ impl Default for Layers {
     fn default() -> Self {
         Self {
             figment: Figment::new().merge(Serialized::defaults(Config::default())),
-            sources: Vec::new(),
+            stack: Vec::new(),
             repo_hosts: BTreeSet::new(),
             trusted_hosts: BTreeSet::new(),
         }
@@ -846,24 +851,23 @@ impl Default for Layers {
 impl Layers {
     fn trusted(mut self, provider: impl figment::Provider, source: Source) -> Self {
         self.trusted_hosts.extend(declared_hosts(&provider));
+        self.stack.push(Layer {
+            source,
+            repo_only: repo_only_keys(&provider),
+        });
         self.figment = self.figment.merge(provider);
-        self.sources.push(source);
         self
     }
 
     fn repo(mut self, file: FileContents) -> Self {
         let repo = RepoFile::new(file);
-        for key in &repo.ignored {
-            tracing::warn!(
-                key = %key,
-                path = %repo.file.path.display(),
-                "ignoring a key that an auto-discovered repo config may not set; set it in the user config or pass --config"
-            );
-        }
         self.repo_hosts.extend(repo.hosts.iter().cloned());
-        self.sources.push(Source::Repo {
-            path: repo.file.path.clone(),
-            ignored: repo.ignored.clone(),
+        self.stack.push(Layer {
+            source: Source::Repo {
+                path: repo.file.path.clone(),
+                ignored: repo.ignored.clone(),
+            },
+            repo_only: BTreeSet::new(),
         });
         self.figment = self.figment.merge(repo);
         self
@@ -872,17 +876,38 @@ impl Layers {
     fn extract(mut self, env: EnvOverrides) -> Result<Config, Error> {
         let vars = env.names();
         self.trusted_hosts.extend(declared_hosts(&env));
+        let mut later = repo_only_keys(&env);
+        let mut sources = Vec::with_capacity(self.stack.len() + 1);
+        for layer in self.stack.into_iter().rev() {
+            let source = match layer.source {
+                Source::Repo { path, mut ignored } => {
+                    ignored.retain(|key| !later.contains(key));
+                    for key in &ignored {
+                        tracing::warn!(
+                            key = %key,
+                            path = %path.display(),
+                            "ignoring a key that an auto-discovered repo config may not set; set it in the user config or pass --config"
+                        );
+                    }
+                    Source::Repo { path, ignored }
+                }
+                source => source,
+            };
+            later.extend(layer.repo_only);
+            sources.push(source);
+        }
+        sources.reverse();
         let figment = self.figment.merge(env);
         let mut config: Config = figment.extract().map_err(|e| Error::InvalidConfig {
-            path: error_origin(&e, self.sources.iter().rev().find_map(Source::path)),
+            path: error_origin(&e, sources.iter().rev().find_map(Source::path)),
             reason: String::new(),
             hint: unknown_key_hint(&e),
             source: Some(Arc::new(e)),
         })?;
         if !vars.is_empty() {
-            self.sources.push(Source::Env { vars });
+            sources.push(Source::Env { vars });
         }
-        config.sources = self.sources;
+        config.sources = sources;
         config.repo_only_hosts = self
             .repo_hosts
             .difference(&self.trusted_hosts)
@@ -890,6 +915,47 @@ impl Layers {
             .collect();
         Ok(config)
     }
+}
+
+fn repo_only_keys(provider: &impl figment::Provider) -> BTreeSet<String> {
+    provider
+        .data()
+        .into_iter()
+        .flat_map(ProfileData::into_values)
+        .flat_map(|mut dict| strip_repo_only(&mut dict))
+        .collect()
+}
+
+fn strip_repo_only(dict: &mut figment::value::Dict) -> Vec<String> {
+    use figment::value::Value;
+
+    let mut stripped = Vec::new();
+    if dict.remove("default_host").is_some() {
+        stripped.push("default_host".to_owned());
+    }
+    if let Some(Value::Dict(_, scan)) = dict.get_mut("scan")
+        && scan.remove("extra_paths").is_some()
+    {
+        stripped.push("scan.extra_paths".to_owned());
+    }
+    if let Some(Value::Dict(_, cache)) = dict.get_mut("cache")
+        && cache.remove("path").is_some()
+    {
+        stripped.push("cache.path".to_owned());
+    }
+    if let Some(Value::Dict(_, table)) = dict.get_mut("hosts") {
+        for (host, value) in table.iter_mut() {
+            let Value::Dict(_, host_table) = value else {
+                continue;
+            };
+            for key in ["api_base", "token_env"] {
+                if host_table.remove(key).is_some() {
+                    stripped.push(format!("hosts.\"{host}\".{key}"));
+                }
+            }
+        }
+    }
+    stripped
 }
 
 struct RepoFile {
@@ -907,31 +973,9 @@ impl RepoFile {
         let mut hosts = BTreeSet::new();
         let data = figment::Provider::data(&file).map(|mut map| {
             for dict in map.values_mut() {
-                if dict.remove("default_host").is_some() {
-                    ignored.push("default_host".to_owned());
-                }
-                if let Some(Value::Dict(_, scan)) = dict.get_mut("scan")
-                    && scan.remove("extra_paths").is_some()
-                {
-                    ignored.push("scan.extra_paths".to_owned());
-                }
-                if let Some(Value::Dict(_, cache)) = dict.get_mut("cache")
-                    && cache.remove("path").is_some()
-                {
-                    ignored.push("cache.path".to_owned());
-                }
-                if let Some(Value::Dict(_, table)) = dict.get_mut("hosts") {
-                    for (host, value) in table.iter_mut() {
-                        hosts.insert(host.clone());
-                        let Value::Dict(_, host_table) = value else {
-                            continue;
-                        };
-                        for key in ["api_base", "token_env"] {
-                            if host_table.remove(key).is_some() {
-                                ignored.push(format!("hosts.\"{host}\".{key}"));
-                            }
-                        }
-                    }
+                ignored.extend(strip_repo_only(dict));
+                if let Some(Value::Dict(_, table)) = dict.get("hosts") {
+                    hosts.extend(table.keys().cloned());
                 }
             }
             map
@@ -2508,5 +2552,197 @@ mod tests {
             reason.contains("`ignore` is no longer supported; use `scan.ignore`"),
             "{reason}"
         );
+    }
+
+    const REPO_ONLY_KEYS: [&str; 5] = [
+        "default_host",
+        "scan.extra_paths",
+        "cache.path",
+        "hosts.\"h.example\".api_base",
+        "hosts.\"h.example\".token_env",
+    ];
+
+    const SETS_REPO_ONLY_KEYS: &str = "default_host = \"r.example\"\n\
+        [scan]\nextra_paths = [\"docs/*.yml\"]\n\
+        [cache]\npath = \"/cache\"\n\
+        [hosts.\"h.example\"]\nkind = \"github\"\napi_base = \"https://h.example/api/v3\"\ntoken_env = \"H_TOKEN\"\n";
+
+    struct Layered {
+        config: Config,
+        ignored: Vec<String>,
+        warned: Vec<String>,
+    }
+
+    fn layered(
+        user: Option<&str>,
+        explicit: Option<&str>,
+        env: &[(&str, &str)],
+    ) -> Result<Layered, Box<dyn std::error::Error>> {
+        #[derive(Clone, Default)]
+        struct Buffer(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .map_err(|e| std::io::Error::other(e.to_string()))?
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buffer = Buffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .finish();
+        let repo = FileContents::new(Path::new("repo/actup.toml"), SETS_REPO_ONLY_KEYS)?;
+        let config = tracing::subscriber::with_default(subscriber, || {
+            let mut layers = Layers::default();
+            if let Some(user) = user {
+                layers = layers.trusted(
+                    Toml::string(user),
+                    Source::User {
+                        path: "user.toml".into(),
+                    },
+                );
+            }
+            layers = layers.repo(repo);
+            if let Some(explicit) = explicit {
+                layers = layers.trusted(
+                    Toml::string(explicit),
+                    Source::Explicit {
+                        path: "explicit.toml".into(),
+                    },
+                );
+            }
+            layers.extract(EnvOverrides::from_vars(env.iter().copied()))
+        })?;
+        let log = String::from_utf8(buffer.0.lock().map_err(|e| e.to_string())?.clone())?;
+        let warned = log
+            .lines()
+            .filter(|line| line.contains("ignoring a key"))
+            .map(|line| {
+                assert!(line.contains("path=repo/actup.toml"), "{line}");
+                line.split_once(" key=")
+                    .and_then(|(_, rest)| rest.split_whitespace().next())
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("no key in {line}"))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let ignored = config
+            .sources
+            .iter()
+            .find_map(|source| match source {
+                Source::Repo { ignored, .. } => Some(ignored.clone()),
+                _ => None,
+            })
+            .ok_or("no repo source")?;
+        Ok(Layered {
+            config,
+            ignored,
+            warned,
+        })
+    }
+
+    #[test]
+    fn test_repo_keys_an_explicit_file_sets_are_not_reported_as_ignored()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let explicit = "default_host = \"e.example\"\n\
+            [scan]\nextra_paths = [\"ci/*.yml\"]\n\
+            [cache]\npath = \"/explicit\"\n\
+            [hosts.\"h.example\"]\napi_base = \"https://e.example/api/v3\"\ntoken_env = \"E_TOKEN\"\n";
+        let run = layered(None, Some(explicit), &[])?;
+        assert_eq!(run.ignored, Vec::<String>::new());
+        assert_eq!(run.warned, Vec::<String>::new());
+        assert_eq!(run.config.default_host.as_deref(), Some("e.example"));
+        assert_eq!(
+            run.config
+                .hosts
+                .get("h.example")
+                .and_then(|h| h.token_env.as_deref()),
+            Some("E_TOKEN")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_repo_keys_an_explicit_file_lacks_stay_ignored() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let run = layered(None, Some("default_host = \"e.example\"\n"), &[])?;
+        let rest = REPO_ONLY_KEYS[1..]
+            .iter()
+            .copied()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(run.ignored, rest);
+        assert_eq!(run.warned, rest);
+
+        let run = layered(None, Some("[policy]\nbump = \"patch\"\n"), &[])?;
+        assert_eq!(run.ignored, REPO_ONLY_KEYS.map(str::to_owned));
+        assert_eq!(run.warned, REPO_ONLY_KEYS.map(str::to_owned));
+        assert_eq!(run.config.default_host, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_repo_keys_env_sets_are_not_reported_as_ignored()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let run = layered(
+            None,
+            None,
+            &[
+                ("ACTUP_DEFAULT_HOST", "v.example"),
+                ("ACTUP_CACHE__PATH", "/env"),
+                ("ACTUP_HOSTS__H.EXAMPLE__TOKEN_ENV", "V_TOKEN"),
+            ],
+        )?;
+        let rest = ["scan.extra_paths", "hosts.\"h.example\".api_base"].map(str::to_owned);
+        assert_eq!(run.ignored, rest);
+        assert_eq!(run.warned, rest);
+        assert_eq!(run.config.default_host.as_deref(), Some("v.example"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_repo_host_keys_are_compared_per_key_path() -> Result<(), Box<dyn std::error::Error>> {
+        let explicit = "[hosts.\"h.example\"]\nkind = \"gitea\"\n\
+            [hosts.\"other.example\"]\nkind = \"github\"\ntoken_env = \"O_TOKEN\"\n";
+        let run = layered(
+            None,
+            Some(explicit),
+            &[("ACTUP_HOSTS__H.EXAMPLE__API_MODE", "rest")],
+        )?;
+        assert_eq!(run.ignored, REPO_ONLY_KEYS.map(str::to_owned));
+        assert_eq!(run.warned, REPO_ONLY_KEYS.map(str::to_owned));
+
+        let run = layered(
+            None,
+            Some("[hosts.\"h.example\"]\ntoken_env = \"E_TOKEN\"\n"),
+            &[],
+        )?;
+        let rest = REPO_ONLY_KEYS[..4]
+            .iter()
+            .copied()
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        assert_eq!(run.ignored, rest);
+        assert_eq!(run.warned, rest);
+        Ok(())
+    }
+
+    #[test]
+    fn test_repo_keys_the_user_config_sets_stay_ignored() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let run = layered(Some(SETS_REPO_ONLY_KEYS), None, &[])?;
+        assert_eq!(run.ignored, REPO_ONLY_KEYS.map(str::to_owned));
+        assert_eq!(run.warned, REPO_ONLY_KEYS.map(str::to_owned));
+        assert_eq!(run.config.default_host.as_deref(), Some("r.example"));
+        Ok(())
     }
 }

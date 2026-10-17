@@ -367,9 +367,10 @@ A repo config arrives with the repository, so actup ignores the keys in it that
 choose where a token goes, which files get rewritten or where cached SHAs come
 from: `default_host`, `scan.extra_paths`, `hosts.<host>.api_base`,
 `hosts.<host>.token_env` and `cache.path`. actup warns with the key and the
-file, and `actup config` lists the ignored keys. Set them in the user config or
-in a file passed with `--config` or `configPath`. A non-preset host that only
-the repo config declares gets no token.
+file, and `actup config` lists the ignored keys. A key that the explicit config
+or an `ACTUP_*` variable also sets gets no warning and no listing. Set them in
+the user config or in a file passed with `--config` or `configPath`. A
+non-preset host that only the repo config declares gets no token.
 
 The disk cache lives in `cache.path`, else in the OS cache dir
 (`~/.cache/actup`, `~/Library/Caches/actup`, `%LOCALAPPDATA%\actup\cache`). With
