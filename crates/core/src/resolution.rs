@@ -105,39 +105,30 @@ pub enum CheckStatus {
 /// metadata) counts as identical when `current` exists as a tag in `versions`.
 fn is_version_current(
     current: &version::Version,
-    target: Option<&Arc<version::Info>>,
+    target: &version::Info,
     track: policy::Track,
     versions: &version::Set,
 ) -> bool {
-    let identical = |t: &version::Version| {
-        t == current || (same_release(t, current) && versions.has_exact_tag(current.as_str()))
-    };
+    let t = target.version();
+    let identical =
+        t == current || (same_release(t, current) && versions.has_exact_tag(current.as_str()));
     if track == policy::Track::Exact {
-        return target.is_some_and(|t| identical(t.version()));
+        return identical;
     }
-    match (current, target) {
-        // For major-only refs (v4), compare major versions
-        (
-            version::Version::Semver {
-                major,
-                minor: None,
-                patch: None,
-                ..
-            },
-            Some(t),
-        ) => t.version().major() == Some(*major),
-        // For minor-only refs (v4.2), compare major and minor versions
-        (
-            version::Version::Semver {
-                major,
-                minor: Some(minor),
-                patch: None,
-                ..
-            },
-            Some(t),
-        ) => t.version().major() == Some(*major) && t.version().minor() == Some(*minor),
-        (_, Some(t)) => identical(t.version()),
-        (_, None) => false,
+    match current {
+        version::Version::Semver {
+            major,
+            minor: None,
+            patch: None,
+            ..
+        } => t.major() == Some(*major),
+        version::Version::Semver {
+            major,
+            minor: Some(minor),
+            patch: None,
+            ..
+        } => t.major() == Some(*major) && t.minor() == Some(*minor),
+        _ => identical,
     }
 }
 
@@ -200,10 +191,15 @@ fn should_respect_branch_policy_for_major_ref(
         && matches!(status, CheckStatus::Outdated { target, .. } if target.version().major() == Some(current_major))
 }
 
+struct Lookup {
+    found: CheckStatus,
+    missing: CheckStatus,
+}
+
 /// Check action using pre-fetched versions and provider ref resolution.
 ///
-/// Uses the provider only to disambiguate floating major refs like `v2` when
-/// the fetched tag set contains only concrete tags like `v2.0.4`.
+/// Asks the provider whether the ref exists when `versions` does not list it
+/// and the answer changes the status.
 #[cfg_attr(
     target_arch = "wasm32",
     allow(
@@ -217,36 +213,24 @@ pub async fn check_action_with_provider(
     config: &Config,
     provider: &dyn provider::Provider,
 ) -> CheckResult {
-    let result = check_action(action_ref, versions, config);
+    let (status, lookup) = classify(action_ref, versions, config);
+    let Some(lookup) = lookup else {
+        return CheckResult::new(action_ref.clone(), status);
+    };
 
-    if should_respect_branch_policy_for_major_ref(action_ref, versions, result.status()) {
-        let repo_id = action_ref.to_repo_id().without_subpath();
-        return match provider
-            .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-            .await
-        {
-            Ok(_) => CheckResult::new(
-                action_ref.clone(),
-                status_for_non_semver(
-                    &version::Version::Other {
-                        tag: action_ref.ref_str().to_string(),
-                    },
-                    config.policy_for(action_ref).branch,
-                    versions,
-                ),
-            ),
-            Err(e) if e.is_environment_error() => CheckResult::new(
-                action_ref.clone(),
-                CheckStatus::Unresolvable {
-                    reason: e.to_string(),
-                    is_environment_error: true,
-                },
-            ),
-            Err(_) => result,
-        };
-    }
-
-    result
+    let repo_id = action_ref.to_repo_id().without_subpath();
+    let status = match provider
+        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
+        .await
+    {
+        Ok(_) => lookup.found,
+        Err(e) if e.is_environment_error() => CheckStatus::Unresolvable {
+            reason: e.to_string(),
+            is_environment_error: true,
+        },
+        Err(_) => lookup.missing,
+    };
+    CheckResult::new(action_ref.clone(), status)
 }
 
 /// Check action against already-fetched versions.
@@ -258,63 +242,92 @@ pub fn check_action(
     versions: &version::Set,
     config: &Config,
 ) -> CheckResult {
-    // Ignored?
+    CheckResult::new(action_ref.clone(), classify(action_ref, versions, config).0)
+}
+
+fn classify(
+    action_ref: &ActionRef,
+    versions: &version::Set,
+    config: &Config,
+) -> (CheckStatus, Option<Lookup>) {
     if config.should_ignore(action_ref) {
-        return CheckResult::new(action_ref.clone(), CheckStatus::Ignored);
+        return (CheckStatus::Ignored, None);
     }
 
     let policy = config.policy_for(action_ref);
 
-    // Already pinned to SHA?
     if action_ref.is_sha() {
-        return check_pinned_sha(action_ref, versions, policy);
+        return (check_pinned_sha(action_ref, versions, policy), None);
     }
 
-    let current = version::Version::parse(action_ref.ref_str());
+    let ref_str = action_ref.ref_str();
+    let current = version::Version::parse(ref_str);
 
-    // Non-semver refs (branches like "stable", "main", "nightly") respect the branch policy
     if !current.is_semver() {
-        return CheckResult::new(
-            action_ref.clone(),
-            status_for_non_semver(&current, policy.branch, versions),
-        );
+        return classify_non_semver(ref_str, policy.branch, versions);
     }
 
-    let target = find_best_target(versions, &current, policy);
+    let Some(target) = find_best_target(versions, &current, policy) else {
+        return (status_for_no_target(&current), None);
+    };
 
-    // Check if current is up-to-date (handles v4 == v4.1.7 via major comparison)
-    if is_version_current(&current, target.as_ref(), policy.track, versions) {
-        // For major-only refs (like "v4" or "6"), verify the exact tag exists.
-        // Prevents false "up to date" when user writes "6" but only "v6" exists.
-        if current.is_major_only() && !versions.has_exact_tag(action_ref.ref_str()) {
-            return CheckResult::new(
-                action_ref.clone(),
-                target.map_or_else(
-                    || CheckStatus::Unresolvable {
-                        reason: format!("tag '{}' not found", action_ref.ref_str()),
-                        is_environment_error: false,
-                    },
-                    |t| CheckStatus::Outdated {
-                        current: action_ref.ref_str().to_string(),
-                        target: t,
-                    },
-                ),
+    if is_version_current(&current, &target, policy.track, versions) {
+        if versions.has_exact_tag(ref_str) {
+            return (CheckStatus::UpToDate, None);
+        }
+        if !current.is_major_only() {
+            let missing = CheckStatus::Unresolvable {
+                reason: format!("tag '{ref_str}' not found; use '{}'", target.version()),
+                is_environment_error: false,
+            };
+            return (
+                missing.clone(),
+                Some(Lookup {
+                    found: CheckStatus::UpToDate,
+                    missing,
+                }),
             );
         }
-        return CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
     }
 
-    target.map_or_else(
-        || CheckResult::new(action_ref.clone(), status_for_no_target(&current)),
-        |t| {
-            CheckResult::new(
-                action_ref.clone(),
-                CheckStatus::Outdated {
-                    current: action_ref.ref_str().to_string(),
-                    target: t,
-                },
-            )
+    let status = CheckStatus::Outdated {
+        current: ref_str.to_string(),
+        target,
+    };
+    if should_respect_branch_policy_for_major_ref(action_ref, versions, &status) {
+        let found = status_for_non_semver(ref_str, policy.branch, versions);
+        return (
+            status.clone(),
+            Some(Lookup {
+                found,
+                missing: status,
+            }),
+        );
+    }
+    (status, None)
+}
+
+fn classify_non_semver(
+    ref_name: &str,
+    branch_policy: policy::Branch,
+    versions: &version::Set,
+) -> (CheckStatus, Option<Lookup>) {
+    let status = status_for_non_semver(ref_name, branch_policy, versions);
+    if versions.branch_sha(ref_name).is_some() {
+        return (status, None);
+    }
+    (
+        CheckStatus::Unresolvable {
+            reason: format!("ref '{ref_name}' is not a listed tag or branch"),
+            is_environment_error: true,
         },
+        Some(Lookup {
+            found: status,
+            missing: CheckStatus::Unresolvable {
+                reason: format!("ref '{ref_name}' not found"),
+                is_environment_error: false,
+            },
+        }),
     )
 }
 
@@ -330,7 +343,7 @@ fn check_pinned_sha(
     action_ref: &ActionRef,
     versions: &version::Set,
     policy: Policy,
-) -> CheckResult {
+) -> CheckStatus {
     let sha = action_ref.ref_str().to_string();
 
     let Some(pinned) = versions
@@ -339,7 +352,7 @@ fn check_pinned_sha(
         .find(|v| v.sha() == action_ref.ref_str())
         .cloned()
     else {
-        return CheckResult::new(action_ref.clone(), CheckStatus::Pinned { sha, tag: None });
+        return CheckStatus::Pinned { sha, tag: None };
     };
 
     let target = find_best_target(versions, pinned.version(), policy);
@@ -347,48 +360,43 @@ fn check_pinned_sha(
     match target {
         Some(t)
             if t.sha() != sha
-                && !is_version_current(pinned.version(), Some(&t), policy.track, versions) =>
+                && !is_version_current(pinned.version(), &t, policy.track, versions) =>
         {
-            CheckResult::new(
-                action_ref.clone(),
-                CheckStatus::Outdated {
-                    current: pinned.version().to_string(),
-                    target: t,
-                },
-            )
+            CheckStatus::Outdated {
+                current: pinned.version().to_string(),
+                target: t,
+            }
         }
-        _ => CheckResult::new(
-            action_ref.clone(),
-            CheckStatus::Pinned {
-                sha,
-                tag: Some(pinned.version().to_string()),
-            },
-        ),
+        _ => CheckStatus::Pinned {
+            sha,
+            tag: Some(pinned.version().to_string()),
+        },
     }
 }
 
 /// Handle non-semver refs based on branch policy.
 fn status_for_non_semver(
-    current: &version::Version,
+    ref_name: &str,
     branch_policy: policy::Branch,
     versions: &version::Set,
 ) -> CheckStatus {
-    let ref_name = current.to_string();
     match branch_policy {
         policy::Branch::Ignore => CheckStatus::UpToDate,
-        policy::Branch::Warn => CheckStatus::Floating { ref_name },
+        policy::Branch::Warn => CheckStatus::Floating {
+            ref_name: ref_name.to_string(),
+        },
         policy::Branch::Update => {
             // Pin the branch to its current HEAD commit SHA (locking it where it
             // is), keeping the ref's meaning. Only a `# branch` comment marks
             // what was pinned. Falls back when the branch head is unknown (e.g.
             // versions came from an API that doesn't enumerate branches).
-            versions.branch_sha(&ref_name).map_or_else(
+            versions.branch_sha(ref_name).map_or_else(
                 || CheckStatus::Unresolvable {
                     reason: "branch ref should be pinned to a SHA".into(),
                     is_environment_error: false,
                 },
                 |sha| CheckStatus::PinBranch {
-                    ref_name: ref_name.clone(),
+                    ref_name: ref_name.to_string(),
                     sha: sha.to_string(),
                 },
             )
@@ -501,13 +509,28 @@ mod tests {
         provider::{ActionYml, Kind, Provider, Sha40},
     };
 
+    #[derive(Clone, Copy)]
+    enum Resolve {
+        Found,
+        Missing,
+        Offline,
+    }
+
     struct ResolveMockProvider {
-        resolve_ref: bool,
+        lookup: Resolve,
     }
 
     impl ResolveMockProvider {
         const fn new(resolve_ref: bool) -> Self {
-            Self { resolve_ref }
+            Self::with(if resolve_ref {
+                Resolve::Found
+            } else {
+                Resolve::Missing
+            })
+        }
+
+        const fn with(lookup: Resolve) -> Self {
+            Self { lookup }
         }
     }
 
@@ -532,15 +555,18 @@ mod tests {
             repo: &crate::ActionRepoId,
             ref_name: &str,
         ) -> crate::BoxFuture<'_, crate::Result<Sha40>> {
-            let result = if self.resolve_ref {
-                Ok(Sha40::new("a".repeat(40)).unwrap())
-            } else {
-                Err(Error::RefNotFound {
+            let result = match self.lookup {
+                Resolve::Found => Ok(Sha40::new("a".repeat(40)).unwrap()),
+                Resolve::Missing => Err(Error::RefNotFound {
                     owner: repo.owner().to_string(),
                     repo: repo.repo().to_string(),
                     ref_name: ref_name.to_string(),
                     host: repo.host().map(ToOwned::to_owned),
-                })
+                }),
+                Resolve::Offline => Err(Error::Network {
+                    operation: "resolve".to_string(),
+                    message: "offline".to_string(),
+                }),
             };
             Box::pin(async move { result })
         }
@@ -595,6 +621,11 @@ mod tests {
                 .collect(),
             latest.map(Arc::new),
         )
+    }
+
+    fn with_branch(mut versions: version::Set, name: &str) -> version::Set {
+        versions.set_branches(HashMap::from([(name.to_string(), "b".repeat(40))]));
+        versions
     }
 
     #[test]
@@ -802,7 +833,10 @@ mod tests {
     #[test]
     fn test_check_action_branch_ignored() {
         let action = make_action_ref("actions", "checkout", "main");
-        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+        let versions = with_branch(
+            make_version_set(vec![], None, HashMap::new(), HashMap::new()),
+            "main",
+        );
         let config = Config {
             policy: Policy {
                 branch: policy::Branch::Ignore,
@@ -818,7 +852,10 @@ mod tests {
     #[test]
     fn test_check_action_branch_warn() {
         let action = make_action_ref("actions", "checkout", "main");
-        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+        let versions = with_branch(
+            make_version_set(vec![], None, HashMap::new(), HashMap::new()),
+            "main",
+        );
         let config = Config {
             policy: Policy {
                 branch: policy::Branch::Warn,
@@ -868,8 +905,10 @@ mod tests {
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(1, v1.clone());
-        let versions =
-            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new());
+        let versions = with_branch(
+            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new()),
+            "stable",
+        );
 
         let config = Config {
             policy: Policy {
@@ -896,8 +935,10 @@ mod tests {
         let v1 = make_version_info("v1.0.0", "abc123");
         let mut latest_per_major = HashMap::new();
         latest_per_major.insert(1, v1.clone());
-        let versions =
-            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new());
+        let versions = with_branch(
+            make_version_set(vec![v1.clone()], Some(v1), latest_per_major, HashMap::new()),
+            "stable",
+        );
 
         let config = Config {
             policy: Policy {
@@ -950,8 +991,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_check_action_update_unresolvable_when_branch_head_unknown() {
+    #[tokio::test]
+    async fn test_check_action_update_unresolvable_when_branch_head_unknown() {
         // Update policy but no branch head available (e.g. API without branch
         // enumeration) falls back to unresolvable rather than guessing a tag.
         let action = make_action_ref("dtolnay", "rust-toolchain", "stable");
@@ -966,7 +1007,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = check_action(&action, &versions, &config);
+        let provider = ResolveMockProvider::new(true);
+        let result = check_action_with_provider(&action, &versions, &config, &provider).await;
         assert!(
             matches!(
                 result.status(),
@@ -984,7 +1026,10 @@ mod tests {
     fn test_per_action_branch_policy_override() {
         // Global ignore stays quiet, but a per-action override flags one repo.
         let action = make_action_ref("kjanat", "runner", "master");
-        let versions = make_version_set(vec![], None, HashMap::new(), HashMap::new());
+        let versions = with_branch(
+            make_version_set(vec![], None, HashMap::new(), HashMap::new()),
+            "master",
+        );
 
         let Ok(pattern) = "kjanat/runner".parse() else {
             panic!("pattern");
@@ -1699,7 +1744,13 @@ mod tests {
 
     #[test]
     fn test_bump_on_minor_only_ref() -> Result<(), Box<dyn std::error::Error>> {
-        let versions = bump_versions(false);
+        let mut tags: Vec<version::Info> = bump_versions(false)
+            .semver_tags()
+            .iter()
+            .map(|t| (**t).clone())
+            .collect();
+        tags.push(make_version_info("v4.1", &"2".repeat(40)));
+        let versions = make_version_set(tags, None, HashMap::new(), HashMap::new());
         let action = make_action_ref("actions", "checkout", "v4.1");
         for (bump, want) in
             BUMPS
@@ -1752,6 +1803,163 @@ mod tests {
             Some("v5.0.0")
         );
         Ok(())
+    }
+
+    async fn status_with(
+        action: &ActionRef,
+        versions: &version::Set,
+        config: &Config,
+        resolve: Resolve,
+    ) -> CheckStatus {
+        let provider = ResolveMockProvider::with(resolve);
+        check_action_with_provider(action, versions, config, &provider)
+            .await
+            .status()
+            .clone()
+    }
+
+    fn unresolvable(reason: &str, is_environment_error: bool) -> CheckStatus {
+        CheckStatus::Unresolvable {
+            reason: reason.to_string(),
+            is_environment_error,
+        }
+    }
+
+    fn branch_config(branch: policy::Branch) -> Config {
+        Config {
+            policy: Policy {
+                branch,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_minor_only_ref_without_tag_is_unresolvable() {
+        let versions = prerelease_set(&["v4.1.0", "v4.2.0", "v4.2.1"]);
+        let action = make_action_ref("actions", "checkout", "v4.2");
+        let config = Config::default();
+        let missing = unresolvable("tag 'v4.2' not found; use 'v4.2.1'", false);
+
+        assert_eq!(check_action(&action, &versions, &config).status(), &missing);
+        assert_eq!(
+            status_with(&action, &versions, &config, Resolve::Missing).await,
+            missing
+        );
+        assert_eq!(
+            status_with(&action, &versions, &config, Resolve::Found).await,
+            CheckStatus::UpToDate
+        );
+        assert_eq!(
+            status_with(&action, &versions, &config, Resolve::Offline).await,
+            unresolvable("network error during resolve: offline", true)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_minor_only_ref_with_tag_is_up_to_date() {
+        let versions = prerelease_set(&["v4.2", "v4.2.0"]);
+        let action = make_action_ref("actions", "checkout", "v4.2");
+        let config = Config::default();
+
+        assert_eq!(
+            check_action(&action, &versions, &config).status(),
+            &CheckStatus::UpToDate
+        );
+        assert_eq!(
+            status_with(&action, &versions, &config, Resolve::Missing).await,
+            CheckStatus::UpToDate
+        );
+    }
+
+    #[test]
+    fn test_bare_minor_ref_needs_its_own_tag() {
+        let action = make_action_ref("actions", "checkout", "1.2");
+        let config = Config::default();
+
+        let versions = prerelease_set(&["v1.2.0"]);
+        assert_eq!(
+            check_action(&action, &versions, &config).status(),
+            &unresolvable("tag '1.2' not found; use 'v1.2.0'", false)
+        );
+
+        let versions = prerelease_set(&["v1.2.0", "1.2"]);
+        assert_eq!(
+            check_action(&action, &versions, &config).status(),
+            &CheckStatus::UpToDate
+        );
+    }
+
+    #[tokio::test]
+    async fn test_unlisted_non_semver_ref_under_each_branch_policy() {
+        let versions = with_branch(prerelease_set(&["v1.0.0"]), "main");
+        let nope = make_action_ref("actions", "checkout", "nope");
+        let main = make_action_ref("actions", "checkout", "main");
+        let cases = [
+            (
+                policy::Branch::Ignore,
+                CheckStatus::UpToDate,
+                CheckStatus::UpToDate,
+            ),
+            (
+                policy::Branch::Warn,
+                CheckStatus::Floating {
+                    ref_name: "nope".to_string(),
+                },
+                CheckStatus::Floating {
+                    ref_name: "main".to_string(),
+                },
+            ),
+            (
+                policy::Branch::Update,
+                unresolvable("branch ref should be pinned to a SHA", false),
+                CheckStatus::PinBranch {
+                    ref_name: "main".to_string(),
+                    sha: "b".repeat(40),
+                },
+            ),
+        ];
+
+        for (branch, found, listed) in cases {
+            let config = branch_config(branch);
+            assert_eq!(
+                check_action(&nope, &versions, &config).status(),
+                &unresolvable("ref 'nope' is not a listed tag or branch", true),
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&nope, &versions, &config, Resolve::Missing).await,
+                unresolvable("ref 'nope' not found", false),
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&nope, &versions, &config, Resolve::Found).await,
+                found,
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&nope, &versions, &config, Resolve::Offline).await,
+                unresolvable("network error during resolve: offline", true),
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&main, &versions, &config, Resolve::Missing).await,
+                listed,
+                "{branch}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sha_matching_no_tag_stays_pinned() {
+        let sha = "9".repeat(40);
+        let versions = prerelease_set(&["v1.0.0"]);
+        let action = make_action_ref("actions", "checkout", &sha);
+        assert_eq!(
+            status_with(&action, &versions, &Config::default(), Resolve::Missing).await,
+            CheckStatus::Pinned { sha, tag: None }
+        );
     }
 
     #[test]
