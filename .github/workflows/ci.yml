@@ -208,11 +208,19 @@ jobs:
       - name: Crate node tests
         run: just wasm-node-test
 
+  action:
+    name: Action scripts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: shellcheck action/*.sh
+      - run: action/test.sh
+
   # Final status check for branch protection
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, test-platforms, doc, shear, deny, msrv, coverage, check-extensions, wasm]
+    needs: [fmt, clippy, test, test-platforms, doc, shear, deny, msrv, coverage, check-extensions, wasm, action]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
@@ -228,6 +236,7 @@ jobs:
           COVERAGE: ${{ needs.coverage.result }}
           CHECK_EXTENSIONS: ${{ needs.check-extensions.result }}
           WASM: ${{ needs.wasm.result }}
+          ACTION: ${{ needs.action.result }}
         run: |
           if [[ "${FMT}" != "success" ]] || \
              [[ "${CLIPPY}" != "success" ]] || \
@@ -239,7 +248,8 @@ jobs:
              [[ "${MSRV}" != "success" ]] || \
              [[ "${COVERAGE}" != "success" ]] || \
              [[ "${CHECK_EXTENSIONS}" != "success" ]] || \
-             [[ "${WASM}" != "success" ]]; then
+             [[ "${WASM}" != "success" ]] || \
+             [[ "${ACTION}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

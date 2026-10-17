@@ -1,0 +1,62 @@
+name: actup
+description: Check, update and SHA-pin the `uses:` refs in your workflows and composite actions.
+author: Kaj Kowalski
+
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  command:
+    description: "actup subcommand to run: check, update, pin or config."
+    required: false
+    default: check
+  args:
+    description: "Extra arguments after the subcommand, split on whitespace (e.g. `--strict --format json`)."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory to run actup in."
+    required: false
+    default: "."
+  version:
+    description: "Release tag to run (e.g. `v1.2.3`) when the action ref is not a release tag, such as a commit SHA."
+    required: false
+    default: ""
+  github-token:
+    description: "Token that actup reads as GITHUB_TOKEN for API calls."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  exit-code:
+    description: "Exit code of actup: 0 success, 1 outdated refs or a skipped ref, 2 user error, 3 network, auth or rate-limit error."
+    value: ${{ steps.run.outputs.exit-code }}
+  actup-bin:
+    description: "Absolute path of the verified actup binary under RUNNER_TEMP."
+    value: ${{ steps.install.outputs.actup-bin }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install actup
+      id: install
+      shell: bash
+      env:
+        ACTUP_ACTION_REF: ${{ github.action_ref }}
+        ACTUP_REPOSITORY: ${{ github.action_repository }}
+        ACTUP_VERSION: ${{ inputs.version }}
+      run: |
+        "${GITHUB_ACTION_PATH}/action/install.sh"
+
+    - name: Run actup
+      id: run
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        ACTUP_BIN: ${{ steps.install.outputs.actup-bin }}
+        ACTUP_COMMAND: ${{ inputs.command }}
+        ACTUP_ARGS: ${{ inputs.args }}
+      run: |
+        "${GITHUB_ACTION_PATH}/action/run.sh"

@@ -266,3 +266,5 @@ bun.lock
 .*cache/
 .build/
 __cmake_systeminformation/
+
+/docker/

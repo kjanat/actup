@@ -107,6 +107,12 @@ wasm-node-test:
     node crates/wasm/tests/node_parse.mjs
     node crates/wasm/tests/node_check.mjs
 
+# Test the GitHub Action install and run scripts
+[group('test')]
+action-test:
+    shellcheck action/*.sh
+    action/test.sh
+
 # Run tests with coverage (llvm-cov)
 [group('test')]
 cov:
@@ -221,7 +227,7 @@ schema:
 
 # Run full CI checks locally
 [group('ci')]
-ci: fmt-check clippy-strict clippy-wasm test wasm-node-test
+ci: fmt-check clippy-strict clippy-wasm test wasm-node-test action-test
     @echo "All CI checks passed!"
 
 # Run actup on this repo

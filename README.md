@@ -23,6 +23,44 @@ GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 cargo install --git https://github.com/kjanat/actup-v2 actup
 ```
 
+### GitHub Action
+
+The action downloads the release that its ref names, checks the archive against
+the release's `SHA256SUMS.txt`, and runs it. Linux runners get the static musl
+build.
+
+```yaml
+- uses: kjanat/actup-v2@<commit SHA of v1.2.3> # v1.2.3
+  with:
+    version: v1.2.3 # needed when the ref is a commit SHA
+    command: check # check, update, pin or config
+    args: --strict # split on whitespace
+```
+
+| Input               | Default               | Meaning                                                 |
+| ------------------- | --------------------- | ------------------------------------------------------- |
+| `command`           | `check`               | actup subcommand                                        |
+| `args`              | `""`                  | Extra arguments after the subcommand                    |
+| `working-directory` | `.`                   | Directory to run actup in                               |
+| `version`           | `""`                  | Release tag to run when the action ref is not a release |
+| `github-token`      | `${{ github.token }}` | Passed to actup as `GITHUB_TOKEN`                       |
+
+A ref that is neither a release tag like `v1.2.3` nor paired with `version`
+fails the step. Outputs: `exit-code` (see [Exit Codes](#exit-codes)) and
+`actup-bin`, the path of the verified binary for later steps.
+
+### Container Image
+
+Each release publishes `ghcr.io/kjanat/actup:<tag>` for `linux/amd64` and
+`linux/arm64`, and `:latest` for releases without a prerelease suffix. The image
+runs actup in `/work` as a non-root user.
+
+```sh
+docker run --rm -v "$PWD:/work" -e GITHUB_TOKEN ghcr.io/kjanat/actup:v1.2.3 check
+# Run as your own user so `update` and `pin` can write your files
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -e GITHUB_TOKEN ghcr.io/kjanat/actup:v1.2.3 update
+```
+
 ## Quick Start
 
 ```sh
