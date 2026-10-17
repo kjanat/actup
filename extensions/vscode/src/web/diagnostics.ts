@@ -111,24 +111,25 @@ export function diagnosticKey(d: vscode.Diagnostic): string {
 	return `${d.range.start.line}:${d.range.start.character}:${d.range.end.character}`;
 }
 
-/** Describe the result's target as a pin of the commit the ref already names, when it is one. */
-export function sameCommitDescription(result: LocatedCheckResult): string | undefined {
+/** Name the ref and the target on the commit the ref already names, when the result has one. */
+export function sameCommitDetail(result: LocatedCheckResult): string | undefined {
 	const target = result.same_commit;
 	if (target === null) {
 		return undefined;
 	}
 	const kind = result.ref_kind === null ? "" : `${result.ref_kind} `;
-	return `same commit: ${kind}${result.action_ref.ref_str} = ${target.version} (${target.sha.slice(0, 7)})`;
+	return `${kind}${result.action_ref.ref_str} = ${target.version} (${target.sha.slice(0, 7)})`;
 }
 
 function sameCommitDiagnostic(diag: vscode.Diagnostic, result: LocatedCheckResult): vscode.Diagnostic {
-	const description = sameCommitDescription(result);
-	if (description === undefined) {
+	const detail = sameCommitDetail(result);
+	if (detail === undefined) {
 		return diag;
 	}
+	const lead = result.same_commit_pins ? "pin available, " : "";
 	const sameCommit = new vscode.Diagnostic(
 		diag.range,
-		`${result.location.value}: pin available, ${description}`,
+		`${result.location.value}: ${lead}same commit: ${detail}`,
 		vscode.DiagnosticSeverity.Information,
 	);
 	sameCommit.source = DIAGNOSTIC_SOURCE;

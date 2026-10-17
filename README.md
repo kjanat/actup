@@ -125,7 +125,7 @@ also when `ACTUP_FORMAT` sets them.
 refs, under one rule per status (`actup/outdated`, `actup/floating`,
 `actup/unresolvable` and so on). Levels follow the LSP severities: `error` for
 an unresolvable ref, `warning` for an outdated or floating ref, and `note` for
-pinned and unknown refs, environment errors and same-commit pins. Paths are
+pinned and unknown refs, environment errors and same-commit refs. Paths are
 percent-encoded URIs relative to the scanned directory, or `file:///` URIs for
 absolute paths. A backslash separates segments and a drive letter makes a path
 absolute on Windows alone. Columns count UTF-16 code units. Files that could not

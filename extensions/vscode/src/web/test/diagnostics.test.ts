@@ -280,11 +280,11 @@ describe("a target on the commit the ref already names", () => {
 		],
 	});
 
-	async function withExactTrack<T>(run: () => Promise<T>): Promise<T> {
+	async function withTrack<T>(track: "major" | "exact", run: () => Promise<T>): Promise<T> {
 		const real = { ...wasm };
 		await mock.module("actup-wasm", () => ({
 			...real,
-			checkRefs: (text: string, p: wasm.ActupProvider) => real.checkRefs(text, p, { policy: { track: "exact" } }),
+			checkRefs: (text: string, p: wasm.ActupProvider) => real.checkRefs(text, p, { policy: { track } }),
 		}));
 		try {
 			return await run();
@@ -295,7 +295,7 @@ describe("a target on the commit the ref already names", () => {
 
 	test("gets an information diagnostic like the LSP, with its pin fix", async () => {
 		const document = new FakeDocument("same-commit.yml", "jobs:\n  ci:\n    steps:\n      - uses: o/r@v1\n");
-		await withExactTrack(() => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
+		await withTrack("exact", () => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
 		const [same] = vscode.languages.getDiagnostics(document.uri);
 		if (same === undefined) {
 			throw new Error("no diagnostic for the same-commit ref");
@@ -308,9 +308,19 @@ describe("a target on the commit the ref already names", () => {
 		expect(diagnosticDataByUri.get(document.uri.toString())?.get(diagnosticKey(same))?.newText).toBe("v1.0.5");
 	});
 
+	test("offers no pin for a less specific target, like the LSP", async () => {
+		const document = new FakeDocument("same-commit-alias.yml", "jobs:\n  ci:\n    steps:\n      - uses: o/r@v1.0.5\n");
+		await withTrack("major", () => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
+		const [same] = vscode.languages.getDiagnostics(document.uri);
+
+		expect(same?.severity).toBe(vscode.DiagnosticSeverity.Information);
+		expect(same?.code).toBe("same-commit");
+		expect(same?.message).toBe("o/r@v1.0.5: same commit: tag v1.0.5 = v1 (eeeeeee)");
+	});
+
 	test("keeps a real bump a warning", async () => {
 		const document = new FakeDocument("real-bump.yml", "jobs:\n  ci:\n    steps:\n      - uses: o/r@v1.0.4\n");
-		await withExactTrack(() => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
+		await withTrack("exact", () => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
 		const [bump] = vscode.languages.getDiagnostics(document.uri);
 
 		expect(bump?.severity).toBe(vscode.DiagnosticSeverity.Warning);

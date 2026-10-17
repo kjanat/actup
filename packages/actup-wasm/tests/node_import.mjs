@@ -660,6 +660,11 @@ const [exact] = await checkRefs(twinYaml, twinTags, { policy: { track: "exact" }
 assert.deepEqual(exact.status, { Outdated: { current: "v1", target: { version: "v1.0.5", sha: "e".repeat(40) } } });
 assert.equal(exact.ref_kind, "tag", "v1 names a tag");
 assert.deepEqual(exact.same_commit, { version: "v1.0.5", sha: "e".repeat(40) }, "target sits on the v1 commit");
+assert.equal(exact.same_commit_pins, true, "v1.0.5 is finer than v1");
+assert.equal(kept.same_commit_pins, false, "no pin without a same-commit target");
+const [alias] = await checkRefs("steps:\n  - uses: o/r@v1.0.5\n", twinTags, { policy: { track: "major" } });
+assert.deepEqual(alias.same_commit, { version: "v1", sha: "e".repeat(40) }, "v1 sits on the v1.0.5 commit");
+assert.equal(alias.same_commit_pins, false, "v1 is coarser than v1.0.5");
 const [behind] = await checkRefs("steps:\n  - uses: o/r@v1.0.4\n", twinTags, { policy: { track: "exact" } });
 assert.equal(behind.same_commit, null, "a real bump has no same-commit target");
 assert.equal(planUpdates([exact], { policy: { track: "exact" } })[0].newText, "v1.0.5", "planUpdates reads the new fields");

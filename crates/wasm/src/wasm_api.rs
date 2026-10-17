@@ -165,6 +165,9 @@ struct LocatedCheckResult {
     ref_kind: Option<RefKind>,
     /// The suggested target, when it sits on the commit the ref already names
     same_commit: Option<Arc<version::Info>>,
+    /// Whether the same-commit target names more version components than the ref
+    #[serde(default)]
+    same_commit_pins: bool,
     /// Whether the line may take a comment after the ref: it can hold a
     /// comment and holds no other `uses:` value
     #[serde(default)]
@@ -179,6 +182,7 @@ impl LocatedCheckResult {
             status: result.status().clone(),
             ref_kind: result.ref_kind(),
             same_commit: result.same_commit().cloned(),
+            same_commit_pins: result.same_commit_pins(),
             takes_comment,
         }
     }
