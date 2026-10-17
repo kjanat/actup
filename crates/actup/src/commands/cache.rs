@@ -309,12 +309,14 @@ fn format_duration(d: Duration) -> String {
 }
 
 /// Format size for human display
-#[allow(clippy::cast_precision_loss)] // Acceptable for display purposes
 fn format_size(bytes: u64) -> String {
+    let tenths = |unit: u64| (u128::from(bytes) * 10 + u128::from(unit) / 2) / u128::from(unit);
     if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+        let t = tenths(1024 * 1024);
+        format!("{}.{} MB", t / 10, t % 10)
     } else if bytes >= 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
+        let t = tenths(1024);
+        format!("{}.{} KB", t / 10, t % 10)
     } else if bytes == 1 {
         "1 byte".to_string()
     } else {
@@ -400,5 +402,9 @@ mod tests {
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(format_size(1024 * 1024), "1.0 MB");
         assert_eq!(format_size(1024 * 1024 + 512 * 1024), "1.5 MB");
+        assert_eq!(format_size(1075), "1.0 KB");
+        assert_eq!(format_size(1076), "1.1 KB");
+        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
+        assert_eq!(format_size(u64::MAX), "17592186044416.0 MB");
     }
 }

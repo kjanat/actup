@@ -10,7 +10,7 @@ use itertools::Itertools;
 use tracing::debug;
 
 use crate::{
-    common::{ErrorTally, InvalidUses, Remote, WorkflowScanner},
+    common::{ErrorTally, InvalidUses, Remote, WorkflowScanner, read_file},
     progress::Spinner,
 };
 
@@ -75,7 +75,7 @@ impl Scan {
         let mut invalid = Vec::new();
         let mut unreadable = Vec::new();
         for file in discovered {
-            let content = match scanner.read_file(file, errors) {
+            let content = match read_file(file, errors) {
                 Ok(content) => content,
                 Err(message) => {
                     unreadable.push(message);

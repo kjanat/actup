@@ -542,6 +542,23 @@ pub struct WorkflowScanner<'a> {
     format: OutputFormat,
 }
 
+/// Read a file's content, tracking errors in tally; an unreadable file yields its `path: error` message.
+pub fn read_file(file: &DiscoveredFile, errors: &mut ErrorTally) -> Result<String, String> {
+    match fs::read_to_string(file.path()) {
+        Ok(content) => Ok(content),
+        Err(e) => {
+            eprintln!(
+                "{}: {} - {}",
+                "Warning".yellow(),
+                sanitize_line(&file.path().display().to_string()),
+                sanitize_line(&e.to_string())
+            );
+            errors.record_env();
+            Err(format!("{}: {e}", file.path().display()))
+        }
+    }
+}
+
 impl<'a> WorkflowScanner<'a> {
     /// Create a new scanner.
     #[must_use]
@@ -577,28 +594,6 @@ impl<'a> WorkflowScanner<'a> {
                 format!("No workflow files found under {}", self.path.display())
             };
             println!("{}", sanitize_line(&message).dimmed());
-        }
-    }
-
-    /// Read a file's content, tracking errors in tally; an unreadable file yields its `path: error` message.
-    #[allow(clippy::unused_self)]
-    pub fn read_file(
-        &self,
-        file: &DiscoveredFile,
-        errors: &mut ErrorTally,
-    ) -> Result<String, String> {
-        match fs::read_to_string(file.path()) {
-            Ok(content) => Ok(content),
-            Err(e) => {
-                eprintln!(
-                    "{}: {} - {}",
-                    "Warning".yellow(),
-                    sanitize_line(&file.path().display().to_string()),
-                    sanitize_line(&e.to_string())
-                );
-                errors.record_env();
-                Err(format!("{}: {e}", file.path().display()))
-            }
         }
     }
 
