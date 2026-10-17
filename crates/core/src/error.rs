@@ -32,7 +32,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`Network`]: Error::Network
 /// [`Internal`]: Error::Internal
 /// [`YamlParse`]: Error::YamlParse
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
     /// Invalid `uses:` reference syntax
     InvalidRef {

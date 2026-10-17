@@ -38,7 +38,7 @@ use crate::{
 pub struct CachingProvider<P> {
     inner: P,
     version_cache: RwLock<HashMap<ActionRepoId, version::Set>>,
-    sha_cache: RwLock<HashMap<(ActionRepoId, String), Sha40>>,
+    sha_cache: RwLock<HashMap<(ActionRepoId, String), Result<Sha40>>>,
     branch_cache: RwLock<HashMap<ActionRepoId, String>>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
@@ -120,6 +120,13 @@ fn claim_flight<K: Eq + Hash + Clone>(
             Ok(FlightGuard { key, map, sem })
         }
     }
+}
+
+/// Whether a ref resolution outcome holds for the rest of the run.
+fn settled(result: &Result<Sha40>) -> bool {
+    result
+        .as_ref()
+        .map_or_else(|e| !e.is_environment_error(), |_| true)
 }
 
 fn repo_cache_key(repo: &ActionRepoId) -> ActionRepoId {
@@ -277,21 +284,21 @@ impl<P: Provider> Provider for CachingProvider<P> {
             let cache_key = (repo.clone(), ref_name.clone());
 
             if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                return Ok(cached.clone());
+                return cached.clone();
             }
 
             match claim_flight(&self.sha_flights, cache_key.clone()) {
                 Err(sem) => {
                     let _ = sem.acquire().await;
                     if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                        return Ok(cached.clone());
+                        return cached.clone();
                     }
                     let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
-                    if let Ok(ref sha) = result {
+                    if settled(&result) {
                         self.sha_cache
                             .write()
                             .await
-                            .insert(cache_key.clone(), sha.clone());
+                            .insert(cache_key.clone(), result.clone());
                     }
                     result
                 }
@@ -299,14 +306,14 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     // Double-check: a prior leader may have cached this between
                     // our miss above and claiming the flight (see get_versions).
                     if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                        return Ok(cached.clone());
+                        return cached.clone();
                     }
                     let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
-                    if let Ok(ref sha) = result {
+                    if settled(&result) {
                         self.sha_cache
                             .write()
                             .await
-                            .insert(cache_key.clone(), sha.clone());
+                            .insert(cache_key.clone(), result.clone());
                     }
                     result
                 }
@@ -512,6 +519,96 @@ mod tests {
         cached.resolve_ref_to_sha(&repo, "v4").await.unwrap();
 
         assert_eq!(cached.inner.calls(), 1);
+    }
+
+    struct Resolver {
+        calls: AtomicUsize,
+    }
+
+    impl Provider for Resolver {
+        fn kind(&self) -> provider::Kind {
+            provider::Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            repo: &ActionRepoId,
+            ref_name: &str,
+        ) -> BoxFuture<'_, Result<Sha40>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let result = match ref_name {
+                "found" => Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
+                    context: "test".into(),
+                    message: "sha".into(),
+                }),
+                "missing" => Err(crate::Error::RefNotFound {
+                    owner: repo.owner().to_string(),
+                    repo: repo.repo().to_string(),
+                    ref_name: ref_name.to_string(),
+                    host: None,
+                }),
+                _ => Err(crate::Error::Network {
+                    operation: "resolve".into(),
+                    message: "offline".into(),
+                }),
+            };
+            Box::pin(async move { result })
+        }
+
+        fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ref_caches_missing_refs_but_not_environment_errors() {
+        let cached = CachingProvider::new(Resolver {
+            calls: AtomicUsize::new(0),
+        });
+        let repo = make_repo("actions", "checkout");
+        for (ref_name, calls) in [("found", 1), ("missing", 1), ("offline", 2)] {
+            let before = cached.inner.calls.load(Ordering::SeqCst);
+            let first = cached.resolve_ref_to_sha(&repo, ref_name).await;
+            let second = cached.resolve_ref_to_sha(&repo, ref_name).await;
+            assert_eq!(
+                first.as_ref().map_err(ToString::to_string),
+                second.as_ref().map_err(ToString::to_string),
+                "{ref_name}"
+            );
+            assert_eq!(
+                cached.inner.calls.load(Ordering::SeqCst) - before,
+                calls,
+                "{ref_name}"
+            );
+        }
+        assert!(matches!(
+            cached.resolve_ref_to_sha(&repo, "missing").await,
+            Err(crate::Error::RefNotFound { .. })
+        ));
     }
 
     #[tokio::test]

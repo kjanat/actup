@@ -40,6 +40,7 @@ pub trait TagLike {
 /// - Latest version overall (excluding prereleases)
 /// - Latest version per major (excluding prereleases)
 /// - Major-only tags (v1, v2, etc.)
+/// - Non-semver tag names with their commits
 ///
 /// # Arguments
 ///
@@ -54,9 +55,13 @@ pub fn process_tags<T: TagLike>(tags: impl IntoIterator<Item = T>) -> version::S
     let mut latest_per_major: HashMap<u32, Arc<version::Info>> = HashMap::new();
     let mut major_tags: HashMap<u32, Arc<version::Info>> = HashMap::new();
     let mut latest: Option<Arc<version::Info>> = None;
+    let mut other_tags: HashMap<String, String> = HashMap::new();
 
     for tag in tags {
         let version = version::Version::parse(tag.name());
+        if !version.is_semver() {
+            other_tags.insert(tag.name().to_string(), tag.sha().to_string());
+        }
 
         // Only create Info for semver tags to avoid allocations for non-semver
         if let version::Version::Semver {
@@ -111,7 +116,9 @@ pub fn process_tags<T: TagLike>(tags: impl IntoIterator<Item = T>) -> version::S
     // Sort semver tags descending
     semver_tags.sort_by(|a, b| b.version().cmp(a.version()));
 
-    version::Set::build(semver_tags, latest_per_major, major_tags, latest)
+    let mut set = version::Set::build(semver_tags, latest_per_major, major_tags, latest);
+    set.set_other_tags(other_tags);
+    set
 }
 
 #[cfg(test)]
@@ -285,9 +292,12 @@ mod tests {
         ];
         let result = process_tags(tags);
 
-        // Non-semver should be ignored
         assert_eq!(result.semver_tags().len(), 1);
         assert_eq!(result.latest().unwrap().version().to_string(), "v1.0.0");
+        assert_eq!(result.other_tag_sha("latest"), Some("bbb"));
+        assert_eq!(result.other_tag_sha("main"), Some("ccc"));
+        assert_eq!(result.other_tag_sha("v1.0.0"), None);
+        assert_eq!(result.listing(), version::Listing::Partial);
     }
 
     #[test]

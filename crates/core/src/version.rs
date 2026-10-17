@@ -406,9 +406,28 @@ pub struct Set {
     #[serde(default)]
     branches: std::collections::HashMap<String, String>,
 
+    /// Non-semver tag name -> commit SHA.
+    #[serde(default)]
+    other_tags: std::collections::HashMap<String, String>,
+
+    /// Whether the tag and branch maps hold every ref of the repository.
+    #[serde(default)]
+    listing: Listing,
+
     /// When this data was fetched (skipped in serialization — platform-dependent)
     #[serde(skip)]
     fetched_at: Option<std::time::SystemTime>,
+}
+
+/// How much of a repository's refs a [`Set`] holds.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Listing {
+    /// Some tags or branches are missing, as with a capped API listing.
+    #[default]
+    Partial,
+    /// Every tag and branch is listed, as with a git ref listing.
+    Complete,
 }
 
 /// Information about a specific version
@@ -522,6 +541,8 @@ impl Set {
             latest,
             default_branch: None,
             branches: std::collections::HashMap::new(),
+            other_tags: std::collections::HashMap::new(),
+            listing: Listing::Partial,
             fetched_at: Some(clock.now()),
         }
     }
@@ -663,6 +684,36 @@ impl Set {
                 .filter(|b| b.name() == name)
                 .map(BranchInfo::sha)
         })
+    }
+
+    /// Set the non-semver tag name -> commit SHA map.
+    pub fn set_other_tags(&mut self, tags: std::collections::HashMap<String, String>) {
+        self.other_tags = tags;
+    }
+
+    /// Resolve a non-semver tag name to its commit SHA, if known.
+    #[must_use]
+    pub fn other_tag_sha(&self, name: &str) -> Option<&str> {
+        self.other_tags.get(name).map(String::as_str)
+    }
+
+    /// Check if `name` is a known tag or branch.
+    #[must_use]
+    pub fn names_ref(&self, name: &str) -> bool {
+        self.has_exact_tag(name)
+            || self.other_tags.contains_key(name)
+            || self.branch_sha(name).is_some()
+    }
+
+    /// Set how much of the repository's refs this set holds.
+    pub const fn set_listing(&mut self, listing: Listing) {
+        self.listing = listing;
+    }
+
+    /// Get how much of the repository's refs this set holds.
+    #[must_use]
+    pub const fn listing(&self) -> Listing {
+        self.listing
     }
 
     /// Builder-style setter for default branch
@@ -1206,6 +1257,8 @@ mod tests {
             latest: Some(v4),
             default_branch: None,
             branches: HashMap::new(),
+            other_tags: HashMap::new(),
+            listing: Listing::Partial,
             fetched_at: None,
         };
 
@@ -1231,6 +1284,8 @@ mod tests {
             latest: Some(v4),
             default_branch: None,
             branches: HashMap::new(),
+            other_tags: HashMap::new(),
+            listing: Listing::Partial,
             fetched_at: None,
         };
 
@@ -1251,6 +1306,8 @@ mod tests {
             latest: Some(v4),
             default_branch: None,
             branches: HashMap::new(),
+            other_tags: HashMap::new(),
+            listing: Listing::Partial,
             fetched_at: None,
         };
 
@@ -1280,6 +1337,8 @@ mod tests {
             latest: Some(beta),
             default_branch: None,
             branches: HashMap::new(),
+            other_tags: HashMap::new(),
+            listing: Listing::Partial,
             fetched_at: None,
         };
 

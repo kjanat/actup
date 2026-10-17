@@ -84,6 +84,7 @@ impl RemoteRefs {
             set.set_default_branch(branch);
         }
         set.set_branches(self.branches);
+        set.set_listing(version::Listing::Complete);
         set
     }
 }
@@ -386,6 +387,11 @@ mod tests {
         assert_eq!(set.major_tags().len(), 1);
         assert_eq!(set.latest().unwrap().version().to_string(), "v2.83.2");
         assert_eq!(set.default_branch().unwrap().name(), "main");
+        assert_eq!(
+            set.other_tag_sha("cargo-hack"),
+            Some(oid(0x02).to_string().as_str())
+        );
+        assert_eq!(set.listing(), version::Listing::Complete);
     }
 
     #[test]

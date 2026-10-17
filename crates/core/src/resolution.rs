@@ -267,7 +267,7 @@ fn classify(
 
     let ref_str = action_ref.ref_str();
 
-    if action_ref.is_short_sha() && versions.branch_sha(ref_str).is_none() {
+    if action_ref.is_short_sha() && !versions.names_ref(ref_str) {
         return classify_short_sha(ref_str, policy.branch, versions);
     }
 
@@ -290,13 +290,14 @@ fn classify(
                 reason: format!("tag '{ref_str}' not found; use '{}'", target.version()),
                 is_environment_error: false,
             };
-            return (
+            return defer(
                 missing.clone(),
-                Some(Lookup {
+                Lookup {
                     found: CheckStatus::UpToDate,
                     missing,
                     commit: None,
-                }),
+                },
+                versions,
             );
         }
     }
@@ -307,13 +308,14 @@ fn classify(
     };
     if should_respect_branch_policy_for_major_ref(action_ref, versions, &status) {
         let found = status_for_non_semver(ref_str, policy.branch, versions);
-        return (
+        return defer(
             status.clone(),
-            Some(Lookup {
+            Lookup {
                 found,
                 missing: status,
                 commit: None,
-            }),
+            },
+            versions,
         );
     }
     (status, None)
@@ -325,26 +327,42 @@ fn classify_non_semver(
     versions: &version::Set,
 ) -> (CheckStatus, Option<Lookup>) {
     let status = status_for_non_semver(ref_name, branch_policy, versions);
-    if versions.branch_sha(ref_name).is_some() {
+    if versions.names_ref(ref_name) {
         return (status, None);
     }
-    (
+    defer(
         CheckStatus::Unresolvable {
             reason: format!("ref '{ref_name}' is not a listed tag or branch"),
             is_environment_error: true,
         },
-        Some(Lookup {
+        Lookup {
             found: status,
             missing: CheckStatus::Unresolvable {
                 reason: format!("ref '{ref_name}' not found"),
                 is_environment_error: false,
             },
             commit: None,
-        }),
+        },
+        versions,
     )
 }
 
-/// Classify a short SHA ref that `versions` does not list as a branch.
+/// Pair `status` with a provider `lookup` for a ref that `versions` does not name.
+///
+/// A complete listing answers locally: the ref is a commit when `lookup`
+/// carries a commit status, and missing otherwise.
+fn defer(
+    status: CheckStatus,
+    lookup: Lookup,
+    versions: &version::Set,
+) -> (CheckStatus, Option<Lookup>) {
+    match versions.listing() {
+        version::Listing::Complete => (lookup.commit.unwrap_or(lookup.missing), None),
+        version::Listing::Partial => (status, Some(lookup)),
+    }
+}
+
+/// Classify a short SHA ref that `versions` does not list as a tag or branch.
 ///
 /// A tag or branch with that name on another commit takes precedence and
 /// follows the branch policy.
@@ -357,16 +375,17 @@ fn classify_short_sha(
         reason: SHORT_SHA_REASON.into(),
         is_environment_error: false,
     };
-    (
+    defer(
         short.clone(),
-        Some(Lookup {
+        Lookup {
             found: status_for_non_semver(ref_name, branch_policy, versions),
             missing: CheckStatus::Unresolvable {
                 reason: format!("ref '{ref_name}' not found"),
                 is_environment_error: false,
             },
             commit: Some(short),
-        }),
+        },
+        versions,
     )
 }
 
@@ -585,6 +604,7 @@ mod tests {
 
     struct ResolveMockProvider {
         lookup: Resolve,
+        calls: std::sync::atomic::AtomicUsize,
     }
 
     impl ResolveMockProvider {
@@ -597,7 +617,10 @@ mod tests {
         }
 
         const fn with(lookup: Resolve) -> Self {
-            Self { lookup }
+            Self {
+                lookup,
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
         }
     }
 
@@ -622,6 +645,7 @@ mod tests {
             repo: &crate::ActionRepoId,
             ref_name: &str,
         ) -> crate::BoxFuture<'_, crate::Result<Sha40>> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let result = match self.lookup {
                 Resolve::Found => Ok(Sha40::new("a".repeat(40)).unwrap()),
                 Resolve::To(sha) => Ok(Sha40::new(sha).unwrap()),
@@ -2272,6 +2296,87 @@ mod tests {
                 .await
                 .is_none()
         );
+    }
+
+    fn complete(mut versions: version::Set) -> version::Set {
+        versions.set_listing(version::Listing::Complete);
+        versions.set_other_tags(HashMap::from([("stable".to_string(), "c".repeat(40))]));
+        versions
+    }
+
+    #[tokio::test]
+    async fn test_complete_listing_answers_without_provider_lookup() {
+        let mut versions = complete(prerelease_set(&["v1.0.0", "v2.0.4", "v4.2.1"]));
+        versions.set_branches(HashMap::from([("main".to_string(), "b".repeat(40))]));
+        let warn = branch_config(policy::Branch::Warn);
+        let cases = [
+            (
+                "stable",
+                CheckStatus::Floating {
+                    ref_name: "stable".to_string(),
+                },
+            ),
+            (
+                "main",
+                CheckStatus::Floating {
+                    ref_name: "main".to_string(),
+                },
+            ),
+            ("nope", unresolvable("ref 'nope' not found", false)),
+            ("abc1234", short_sha_status()),
+            (
+                "v4.2",
+                unresolvable("tag 'v4.2' not found; use 'v4.2.1'", false),
+            ),
+        ];
+        for (ref_str, want) in cases {
+            let provider = ResolveMockProvider::with(Resolve::Found);
+            let action = make_action_ref("actions", "checkout", ref_str);
+            let result = check_action_with_provider(&action, &versions, &warn, &provider).await;
+            assert_eq!(result.status(), &want, "{ref_str}");
+            assert_eq!(
+                provider.calls.load(std::sync::atomic::Ordering::SeqCst),
+                0,
+                "{ref_str}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_complete_listing_keeps_unlisted_v_major_outdated() {
+        let versions = complete(prerelease_set(&["v2.0.4"]));
+        let provider = ResolveMockProvider::with(Resolve::Found);
+        let action = make_action_ref("denoland", "setup-deno", "v2");
+        let result =
+            check_action_with_provider(&action, &versions, &Config::default(), &provider).await;
+        assert!(
+            matches!(result.status(), CheckStatus::Outdated { target, .. } if target.version().as_str() == "v2.0.4"),
+            "{:?}",
+            result.status()
+        );
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn test_short_sha_listed_as_tag_follows_branch_policy() {
+        let mut versions = prerelease_set(&["v1.0.0"]);
+        versions.set_other_tags(HashMap::from([("deadbee".to_string(), "c".repeat(40))]));
+        let provider = ResolveMockProvider::with(Resolve::Missing);
+        let action = make_action_ref("actions", "checkout", "deadbee");
+        let result = check_action_with_provider(
+            &action,
+            &versions,
+            &branch_config(policy::Branch::Warn),
+            &provider,
+        )
+        .await;
+        assert_eq!(
+            result.status(),
+            &CheckStatus::Floating {
+                ref_name: "deadbee".to_string()
+            }
+        );
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]
