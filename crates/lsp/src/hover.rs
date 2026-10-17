@@ -123,9 +123,6 @@ struct LocatedActionForHover {
     /// Byte range of the full `uses:` value in the line.
     value_col_start: u32,
     value_col_end: u32,
-    /// The original `uses:` value string.
-    #[allow(dead_code)]
-    uses_value: String,
 }
 
 /// Find the action reference at the given cursor position in the document.
@@ -143,17 +140,20 @@ fn find_action_at_position(
     let locations = extract_uses_from_yaml(text);
 
     for loc in locations {
-        // Convert 1-indexed line to 0-indexed.
-        #[allow(clippy::cast_possible_truncation)]
-        let line_0 = (loc.line() - 1) as u32;
+        let Some(line_0) = loc
+            .line()
+            .checked_sub(1)
+            .and_then(|line| u32::try_from(line).ok())
+        else {
+            continue;
+        };
 
         if line_0 != position.line {
             continue;
         }
 
-        // Convert byte offsets to the negotiated LSP encoding.
         let raw_line = loc.raw_line();
-        let Some(value_range) = loc.value_range() else {
+        let Some(value_range) = loc.value_range().or_else(|| loc.scalar_range()) else {
             continue;
         };
         let col_start = crate::position::byte_to_col(raw_line, value_range.start, encoding);
@@ -170,7 +170,6 @@ fn find_action_at_position(
                 line: line_0,
                 value_col_start: col_start,
                 value_col_end: col_end,
-                uses_value: loc.value().to_string(),
             });
         }
     }
@@ -525,21 +524,53 @@ mod tests {
     }
 
     #[test]
-    fn find_action_skips_value_not_written_verbatim() {
-        let pos = Position {
-            line: 1,
-            character: 20,
+    fn find_action_matches_an_escaped_value_on_its_scalar() {
+        let line = r#"    steps: [{ uses: "actions/checkout@v1.0.\x30" }, { uses: "actions/setup-node@v4.\x30" }]"#;
+        let yaml = format!("jobs:\n  build:\n{line}\n");
+        let at = |needle: &str| {
+            let Some(byte) = line.find(needle) else {
+                panic!("{needle} is not on the line");
+            };
+            let position = Position {
+                line: 2,
+                character: crate::position::byte_to_col(
+                    line,
+                    byte,
+                    crate::position::PositionEncoding::Utf16,
+                ),
+            };
+            find_action_at_position(&yaml, position, crate::position::PositionEncoding::Utf16)
         };
-        for yaml in [
-            "steps:\n  - uses: \"actions/checkout@v\\x34\"\n",
-            "steps:\n  - uses: \"a/b@\\\n      v4\"\n",
-        ] {
-            assert!(
-                find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16)
-                    .is_none(),
-                "{yaml:?}"
-            );
-        }
+        let span = |needle: &str| {
+            let Some(start) = line.find(needle) else {
+                panic!("{needle} is not on the line");
+            };
+            let encoding = crate::position::PositionEncoding::Utf16;
+            (
+                crate::position::byte_to_col(line, start, encoding),
+                crate::position::byte_to_col(line, start + needle.len(), encoding),
+            )
+        };
+
+        let Some(first) = at("checkout") else {
+            panic!("no hover on the first escaped value");
+        };
+        assert_eq!(first.action_ref.repo(), "checkout");
+        assert_eq!(first.action_ref.ref_str(), "v1.0.0");
+        assert_eq!(
+            (first.value_col_start, first.value_col_end),
+            span(r#""actions/checkout@v1.0.\x30""#)
+        );
+        let Some(second) = at("setup-node") else {
+            panic!("no hover on the second escaped value");
+        };
+        assert_eq!(second.action_ref.repo(), "setup-node");
+        assert_eq!(
+            (second.value_col_start, second.value_col_end),
+            span(r#""actions/setup-node@v4.\x30""#)
+        );
+        assert!(at("}, {").is_none());
+        assert!(at("steps").is_none());
     }
 
     #[test]

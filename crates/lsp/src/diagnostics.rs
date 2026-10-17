@@ -192,8 +192,13 @@ fn extract_located_actions(
                             )
                         });
 
-                #[allow(clippy::cast_possible_truncation)]
-                let line = (loc.line() - 1) as u32; // 1-indexed -> 0-indexed
+                let Some(line) = loc
+                    .line()
+                    .checked_sub(1)
+                    .and_then(|line| u32::try_from(line).ok())
+                else {
+                    continue;
+                };
                 actions.push(LocatedAction {
                     action_ref,
                     line,

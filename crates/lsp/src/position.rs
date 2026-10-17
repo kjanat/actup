@@ -73,15 +73,12 @@ impl PositionEncoding {
 /// # Panics
 ///
 /// Panics if `byte_offset > line.len()` or falls on a non-UTF-8-char boundary.
-#[allow(clippy::cast_possible_truncation)]
 pub fn byte_to_col(line: &str, byte_offset: usize, encoding: PositionEncoding) -> u32 {
-    match encoding {
-        PositionEncoding::Utf8 => byte_offset as u32,
-        PositionEncoding::Utf16 => line[..byte_offset]
-            .chars()
-            .map(|c| c.len_utf16() as u32)
-            .sum(),
-    }
+    let units = match encoding {
+        PositionEncoding::Utf8 => byte_offset,
+        PositionEncoding::Utf16 => line[..byte_offset].chars().map(char::len_utf16).sum(),
+    };
+    u32::try_from(units).unwrap_or(u32::MAX)
 }
 
 /// Convert an LSP column in the negotiated encoding to a byte offset within `line`.
@@ -91,17 +88,17 @@ pub fn byte_to_col(line: &str, byte_offset: usize, encoding: PositionEncoding) -
 /// If `col` falls inside a surrogate pair (non-BMP character), advances
 /// to the next character boundary (same approach as rust-analyzer).
 /// Returns `line.len()` if `col` is past the end.
-#[allow(clippy::cast_possible_truncation)]
 pub fn col_to_byte(line: &str, col: u32, encoding: PositionEncoding) -> usize {
+    let col = usize::try_from(col).unwrap_or(usize::MAX);
     match encoding {
-        PositionEncoding::Utf8 => (col as usize).min(line.len()),
+        PositionEncoding::Utf8 => col.min(line.len()),
         PositionEncoding::Utf16 => {
-            let mut utf16_count = 0u32;
+            let mut utf16_count = 0usize;
             for (byte_idx, ch) in line.char_indices() {
                 if utf16_count >= col {
                     return byte_idx;
                 }
-                utf16_count += ch.len_utf16() as u32;
+                utf16_count += ch.len_utf16();
             }
             line.len()
         }
