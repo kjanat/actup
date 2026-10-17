@@ -101,8 +101,6 @@ pub enum CheckStatus {
 /// Handles major-only refs like "v4" matching any v4.x.x,
 /// and minor-only refs like "v4.2" matching any v4.2.x.
 /// Under [`policy::Track::Exact`] only the identical version is current.
-/// A tag that differs from `current` only in spelling (`v` prefix, build
-/// metadata) counts as identical when `current` exists as a tag in `versions`.
 fn is_version_current(
     current: &version::Version,
     target: &version::Info,
