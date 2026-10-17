@@ -50,6 +50,11 @@
 					"enum": ["off", "messages", "verbose"],
 					"default": "off",
 					"description": "Trace communication between VS Code and the actup language server."
+				},
+				"actup.configPath": {
+					"type": ["string", "null"],
+					"default": null,
+					"markdownDescription": "Config file for actup, absolute or relative to the workspace folder. It takes precedence over `actup.toml` and the other repo config files. The language server restarts when it changes."
 				}
 			}
 		}

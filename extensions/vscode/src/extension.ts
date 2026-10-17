@@ -6,6 +6,7 @@ import {
 	type ServerOptions,
 	TransportKind,
 } from "vscode-languageclient/node.js";
+import { configPathSetting, initializationOptions, restartsServer } from "./settings.ts";
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.LogOutputChannel;
@@ -23,7 +24,7 @@ export async function activate(
 	);
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {
-			if (e.affectsConfiguration("actup.server")) {
+			if (restartsServer(e)) {
 				void restartServer();
 			}
 		}),
@@ -74,6 +75,7 @@ async function startClient(): Promise<void> {
 			{ scheme: "file", language: "yaml", pattern: "**/action.yml" },
 			{ scheme: "file", language: "yaml", pattern: "**/action.yaml" },
 		],
+		initializationOptions: initializationOptions(configPathSetting()),
 		outputChannel,
 	};
 
