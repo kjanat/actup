@@ -103,7 +103,6 @@ fn has_uses_keyword(text: &str) -> bool {
 /// 3. `root_path` (legacy, string-based)
 ///
 /// Returns `None` if no workspace root can be determined (e.g. single-file mode).
-#[allow(deprecated)] // root_uri and root_path are deprecated but necessary fallbacks
 fn extract_workspace_root(params: &InitializeParams) -> Option<PathBuf> {
     // 1. workspace_folders (preferred)
     if let Some(folders) = &params.workspace_folders
@@ -113,15 +112,19 @@ fn extract_workspace_root(params: &InitializeParams) -> Option<PathBuf> {
         return Some(path.into_owned());
     }
 
+    // LSP 3.17 deprecates `rootUri` and `rootPath`, and clients without workspace folders still send them.
+    #[allow(deprecated)]
+    let (root_uri, root_path) = (&params.root_uri, &params.root_path);
+
     // 2. root_uri (deprecated but common)
-    if let Some(uri) = &params.root_uri
+    if let Some(uri) = root_uri
         && let Some(path) = uri.to_file_path()
     {
         return Some(path.into_owned());
     }
 
     // 3. root_path (legacy string)
-    if let Some(path) = &params.root_path {
+    if let Some(path) = root_path {
         return Some(PathBuf::from(path));
     }
 
@@ -2068,14 +2071,14 @@ mod tests {
     }
 
     #[test]
-    fn extract_workspace_root_from_root_path() {
-        #[allow(deprecated)]
-        let params = InitializeParams {
-            root_path: Some("/home/user/project".to_owned()),
-            ..Default::default()
-        };
+    fn extract_workspace_root_from_root_path() -> std::result::Result<(), serde_json::Error> {
+        let params: InitializeParams = serde_json::from_value(serde_json::json!({
+            "capabilities": {},
+            "rootPath": "/home/user/project",
+        }))?;
         let root = extract_workspace_root(&params);
         assert_eq!(root, Some(PathBuf::from("/home/user/project")));
+        Ok(())
     }
 
     #[test]
@@ -2121,20 +2124,17 @@ mod tests {
     }
 
     #[test]
-    fn extract_workspace_root_prefers_workspace_folders() {
-        let uri = Uri::from_file_path("/workspace/root").unwrap();
-        #[allow(deprecated)]
-        let params = InitializeParams {
-            workspace_folders: Some(vec![tower_lsp_server::ls_types::WorkspaceFolder {
-                uri,
-                name: "root".to_owned(),
-            }]),
-            root_uri: Uri::from_file_path("/other/root"),
-            root_path: Some("/legacy/root".to_owned()),
-            ..Default::default()
-        };
+    fn extract_workspace_root_prefers_workspace_folders()
+    -> std::result::Result<(), serde_json::Error> {
+        let params: InitializeParams = serde_json::from_value(serde_json::json!({
+            "capabilities": {},
+            "workspaceFolders": [{ "uri": "file:///workspace/root", "name": "root" }],
+            "rootUri": "file:///other/root",
+            "rootPath": "/legacy/root",
+        }))?;
         let root = extract_workspace_root(&params);
         assert_eq!(root, Some(PathBuf::from("/workspace/root")));
+        Ok(())
     }
 
     #[tokio::test]
@@ -3077,17 +3077,16 @@ mod tests {
     }
 
     #[test]
-    fn extract_workspace_root_from_root_uri() {
-        let uri = Uri::from_file_path("/workspace/from-uri").unwrap();
-        #[allow(deprecated)]
-        let params = InitializeParams {
-            root_uri: Some(uri),
-            root_path: Some("/legacy/root".to_owned()),
-            ..Default::default()
-        };
+    fn extract_workspace_root_from_root_uri() -> std::result::Result<(), serde_json::Error> {
+        let params: InitializeParams = serde_json::from_value(serde_json::json!({
+            "capabilities": {},
+            "rootUri": "file:///workspace/from-uri",
+            "rootPath": "/legacy/root",
+        }))?;
         let root = extract_workspace_root(&params);
         // root_uri takes precedence over root_path when workspace_folders absent.
         assert_eq!(root, Some(PathBuf::from("/workspace/from-uri")));
+        Ok(())
     }
 
     #[test]

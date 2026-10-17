@@ -42,7 +42,6 @@ fn initialize_request(
     workspace_root: Option<&str>,
     options: Option<serde_json::Value>,
 ) -> Request {
-    #[allow(deprecated)]
     let params = InitializeParams {
         initialization_options: options,
         workspace_folders: workspace_root.map(|root| {
