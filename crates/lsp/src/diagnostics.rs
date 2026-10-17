@@ -2952,10 +2952,11 @@ jobs:
     }
 
     #[tokio::test]
-    async fn markdown_reports_invalid_refs_at_action_keys_only() {
+    async fn markdown_reports_invalid_refs_at_action_keys_only()
+    -> Result<(), Box<dyn std::error::Error>> {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/README.md").unwrap();
+        let uri = Uri::from_file_path("/test/README.md").ok_or("bad uri")?;
         let md = "# CI\n\n```yaml\njobs:\n  b:\n    steps:\n      - uses: o/r@\n      - uses: ./local\n        with:\n          uses: lint\n```\n";
         let result = compute_diagnostics(
             md,
@@ -2979,6 +2980,7 @@ jobs:
                 "o/r@: empty version reference after '@'"
             )]
         );
+        Ok(())
     }
 
     // --- Quiet mode ---
