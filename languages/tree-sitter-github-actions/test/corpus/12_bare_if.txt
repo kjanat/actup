@@ -1221,3 +1221,228 @@ jobs:
                                   value: (flow_node
                                     (plain_scalar
                                       (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: an or operator in a call argument
+============================================================================
+jobs:
+  build:
+    if: fromJSON(env.X || 'false')
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (context
+                                (identifier)
+                                (property
+                                  (property_deref)
+                                  (identifier)))
+                              (operator
+                                (or))
+                              (string
+                                (string_content)))))))))))))))))
+
+============================================================================
+Bare if: negation in a format argument
+============================================================================
+jobs:
+  build:
+    if: format('{0}', !a)
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (format_string
+                                (format_variable
+                                  (format_index)))
+                              (not)
+                              (context
+                                (identifier)))))))))))))))))
+
+============================================================================
+Bare if: an or operator in a second call argument
+============================================================================
+jobs:
+  build:
+    if: contains(github.ref, a || b)
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (context
+                                (identifier)
+                                (property
+                                  (property_deref)
+                                  (identifier)))
+                              (context
+                                (identifier))
+                              (operator
+                                (or))
+                              (context
+                                (identifier)))))))))))))))))
+
+============================================================================
+Bare if: an index after a group
+============================================================================
+jobs:
+  build:
+    if: (a)[0] == 1
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (logical_group
+                            (context
+                              (identifier)))
+                          (property
+                            (index
+                              (number)))
+                          (operator
+                            (eq))
+                          (number))))))))))))))
+
+============================================================================
+Bare if: a group and operators in a call argument
+============================================================================
+jobs:
+  build:
+    if: fromJSON((github.event_name == 'push') && '["a"]' || '["b"]')
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (function_call
+                            function: (identifier)
+                            arguments: (arguments
+                              (logical_group
+                                (context
+                                  (identifier)
+                                  (property
+                                    (property_deref)
+                                    (identifier)))
+                                (operator
+                                  (eq))
+                                (string
+                                  (string_content)))
+                              (operator
+                                (and))
+                              (string
+                                (string_content))
+                              (operator
+                                (or))
+                              (string
+                                (string_content)))))))))))))))))

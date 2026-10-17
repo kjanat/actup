@@ -195,6 +195,7 @@ const base = grammar({
 		// Trailing _expr_ws after the last argument vs. continuation of arguments list.
 		[$.arguments],
 		[$._format_arguments],
+		[$._expr_seq],
 	],
 
 	inline: $ => [
@@ -780,8 +781,23 @@ const base = grammar({
 		// keeping YAML's structural whitespace handling untouched elsewhere.
 		_expr_ws: _ => token(/[ \t\r\n]+/),
 
-		_evaluation: $ => choice($._literal, $.context, $._call, $.logical_group),
+		_evaluation: $ => choice($._literal, $.context, $._call, $._group),
 		_call: $ => seq($.function_call, repeat($.property)),
+		_group: $ => seq($.logical_group, repeat($.property)),
+		_expr_seq: $ =>
+			seq(
+				repeat(seq($.not, optional($._expr_ws))),
+				$._evaluation,
+				repeat(
+					seq(
+						optional($._expr_ws),
+						$.operator,
+						optional($._expr_ws),
+						repeat(seq($.not, optional($._expr_ws))),
+						$._evaluation,
+					),
+				),
+			),
 
 		expression: $ =>
 			seq(
@@ -871,8 +887,8 @@ const base = grammar({
 			),
 		arguments: $ =>
 			seq(
-				$._evaluation,
-				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._evaluation)),
+				$._expr_seq,
+				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._expr_seq)),
 			),
 		_format_function: $ =>
 			seq(
@@ -886,7 +902,7 @@ const base = grammar({
 		_format_arguments: $ =>
 			seq(
 				$.format_string,
-				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._evaluation)),
+				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._expr_seq)),
 			),
 
 		not: () => "!",
