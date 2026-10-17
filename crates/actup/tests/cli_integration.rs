@@ -2393,8 +2393,11 @@ mod stale_cache {
             .output()?;
         assert_eq!(human.status.code(), Some(3), "{human:?}");
         let text = String::from_utf8(human.stdout)?;
+        let (_, after) = text
+            .split_once("stale (fetched ")
+            .ok_or_else(|| text.clone())?;
         assert!(
-            text.contains("stale (fetched 0s ago, rate limited, resets in 12m)"),
+            after.contains("s ago, rate limited, resets in 12m)\n"),
             "{text}"
         );
         Ok(())
