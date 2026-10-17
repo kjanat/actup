@@ -1,6 +1,6 @@
 //! SARIF 2.1.0 output and GitHub Actions workflow-command annotations for `check`.
 
-use actup_core::{ActionRef, RefKind, sanitize_for_terminal};
+use actup_core::{ActionRef, RefKind, replace_unsafe_characters};
 use serde_json::{Value, json};
 
 use crate::output::{Finding, FindingStatus, status_name};
@@ -318,7 +318,7 @@ fn escape(text: &str, property: bool) -> String {
             c => escaped.push(c),
         }
     }
-    sanitize_for_terminal(&escaped).into_owned()
+    replace_unsafe_characters(&escaped).into_owned()
 }
 
 fn escape_data(text: &str) -> String {
@@ -606,6 +606,15 @@ mod tests {
             },
         ));
         findings.push(finding(
+            "a##[b].yml",
+            8,
+            "o/esc/##[error]x@v1",
+            FindingStatus::Unresolvable {
+                reason: "ref '##[error]x' not found".to_string(),
+                is_environment_error: false,
+            },
+        ));
+        findings.push(finding(
             "/abs/ci.yml",
             9,
             "o/far@main",
@@ -621,6 +630,7 @@ mod tests {
                 "::warning file=ci.yml,line=7::o/pin@main: floating branch 'main', pin to a tag or SHA",
                 "::error file=a%2Cb%3Ac.yml,line=8::o/esc@v1: 100%25 gone\u{fffd}",
                 "::error file=%3A%3Aerror file=x%3A%3Aforged.yml,line=8::o/esc@v1: ref 'v%0D%0A::error::lf' not found",
+                "::error file=a##[b].yml,line=8::o/esc/##[error]x@v1: ref '##[error]x' not found",
                 "::warning file=/abs/ci.yml,line=9::o/far@main: floating ref 'main', pin to a tag or SHA",
             ]
         );

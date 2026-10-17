@@ -579,8 +579,14 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
                 );
             }
         }
+        let annotation = |line: &str| {
+            (line.starts_with("::error file=") || line.starts_with("::warning file="))
+                && line.contains(",line=")
+        };
         assert!(
-            lines.iter().all(|line| !line.contains("##[")),
+            lines
+                .iter()
+                .all(|line| annotation(line) || !line.contains("##[")),
             "{args:?}: {text}"
         );
         let commands: Vec<&str> = lines
@@ -589,10 +595,14 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
             .filter(|line| line.trim_start().starts_with("::"))
             .collect();
         for line in &commands {
+            assert!(annotation(line), "{args:?}: {line}");
+        }
+        if args == ["check", ".", "--github-annotations", "--verbose"] {
             assert!(
-                (line.starts_with("::error file=") || line.starts_with("::warning file="))
-                    && line.contains(",line="),
-                "{args:?}: {line}"
+                commands
+                    .iter()
+                    .any(|line| line.contains("file=.github/workflows/##[error]forged.yml,")),
+                "{text}"
             );
         }
         if args.contains(&"--github-annotations") {

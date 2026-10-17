@@ -13,12 +13,12 @@ fn escape_legacy_commands(json: String) -> String {
     }
 }
 
-/// `value` as compact JSON, with `##[` escaped as `##[`.
+/// `value` as compact JSON, with `##[` escaped as `##\u005b`.
 pub fn json<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<String> {
     serde_json::to_string(value).map(escape_legacy_commands)
 }
 
-/// `value` as pretty JSON, with `##[` escaped as `##[`.
+/// `value` as pretty JSON, with `##[` escaped as `##\u005b`.
 pub fn json_pretty<T: Serialize + ?Sized>(value: &T) -> serde_json::Result<String> {
     serde_json::to_string_pretty(value).map(escape_legacy_commands)
 }

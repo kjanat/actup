@@ -65,6 +65,8 @@ pub use resolution::{
 };
 pub use suggest::closest_tag;
 pub use syntax::SourceFormat;
-pub use text::{neutralize_workflow_commands, sanitize_for_terminal, sanitize_line};
+pub use text::{
+    neutralize_workflow_commands, replace_unsafe_characters, sanitize_for_terminal, sanitize_line,
+};
 pub use url_path::encode_path;
 pub use version::{BranchInfo, Info, Version};

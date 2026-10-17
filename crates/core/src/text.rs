@@ -54,6 +54,12 @@ pub fn neutralize_workflow_commands(text: &str) -> Cow<'_, str> {
     }
 }
 
+/// Replace C0 and C1 controls other than tab and line feed, DEL, zero-width and bidi control characters, and the BOM in `text` with U+FFFD.
+#[must_use]
+pub fn replace_unsafe_characters(text: &str) -> Cow<'_, str> {
+    replace(text, is_unsafe)
+}
+
 fn sanitize(text: &str, reject: impl Fn(char) -> bool) -> Cow<'_, str> {
     match replace(text, reject) {
         Cow::Borrowed(text) => neutralize_workflow_commands(text),
@@ -61,7 +67,7 @@ fn sanitize(text: &str, reject: impl Fn(char) -> bool) -> Cow<'_, str> {
     }
 }
 
-/// Replace C0 and C1 controls other than tab and line feed, DEL, zero-width and bidi control characters, and the BOM in `text` with U+FFFD, and apply [`neutralize_workflow_commands`].
+/// Apply [`replace_unsafe_characters`] and [`neutralize_workflow_commands`] to `text`.
 #[must_use]
 pub fn sanitize_for_terminal(text: &str) -> Cow<'_, str> {
     sanitize(text, is_unsafe)
@@ -147,6 +153,10 @@ mod tests {
         assert_eq!(
             sanitize_line("##[error]forged.yml"),
             "##\u{fffd}error]forged.yml"
+        );
+        assert_eq!(
+            replace_unsafe_characters("##[x]\r::y\u{202e}"),
+            "##[x]\u{fffd}::y\u{fffd}"
         );
         assert!(matches!(
             neutralize_workflow_commands("a:: b #[c] ::"),
