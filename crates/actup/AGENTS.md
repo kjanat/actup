@@ -79,6 +79,12 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 ## Tests
 
 - Integration tests in `tests/cli_integration.rs` (834 lines, 41 tests)
+- Process tests in `tests/cli_process.rs` run the binary with an explicit
+  `--config` whose `[hosts."actup-e2e.invalid"] api_base` points at a wiremock
+  server; the git fetch fails on the `.invalid` host and REST serves the
+  versions
+- `tests/fixtures/help.txt` is the `actup --help` snapshot; regenerate it when a
+  flag changes
 - Fixtures in `tests/fixtures/` (workflow YAML samples)
 - Use `tempfile::TempDir` for filesystem tests
 - Schema regression test validates committed JSON schema matches generated

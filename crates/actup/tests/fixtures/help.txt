@@ -1,0 +1,30 @@
+GitHub Actions version manager
+
+Usage: actup [OPTIONS] [ACTION] [COMMAND]
+
+Commands:
+  check        Scan workflows and report outdated actions (non-destructive)
+  update       Update actions to their latest versions
+  fix          Alias for update
+  pin          Pin all actions to their current SHA
+  config       Show effective configuration
+  schema       Output JSON schema for configuration
+  cache        Manage the version cache
+  completions  Generate shell completions
+  help         Print this message or the help of the given subcommand(s)
+
+Arguments:
+  [ACTION]  Action to look up, e.g. `actions/checkout` or `actions/checkout@v4`
+
+Options:
+  -v, --verbose          Verbose output [env: ACTUP_VERBOSE=]
+  -c, --config <PATH>    Config file to load over the repo and user config [env: ACTUP_CONFIG=]
+      --color <WHEN>     When to colour output [env: ACTUP_COLOR=] [default: auto] [possible values:
+                         auto, always, never]
+      --offline          Use only cached version data; a ref missing from the cache is an
+                         environment error
+      --no-cache         Neither read nor write the version cache
+      --format <FORMAT>  Output format [env: ACTUP_FORMAT=] [default: human] [possible values:
+                         human, json, toml]
+  -h, --help             Print help
+  -V, --version          Print version

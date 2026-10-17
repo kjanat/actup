@@ -40,7 +40,8 @@ async fn main() -> ExitCode {
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
-        .with_ansi(anstream::AutoStream::choice(&std::io::stdout()) != anstream::ColorChoice::Never)
+        .with_writer(std::io::stderr)
+        .with_ansi(anstream::AutoStream::choice(&std::io::stderr()) != anstream::ColorChoice::Never)
         .init();
 
     let exit_code = run(cli).await;
