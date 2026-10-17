@@ -280,11 +280,10 @@ The provider architecture is designed to make this straightforward.
 
 ## Feature Flags
 
-`crates/actup` declares the features `github`, `gitlab` and `gitea`, all on by
-default. `github` is a placeholder: `actup-provider-github` is a non-optional
-dependency. `gitlab` and `gitea` add `actup-provider-gitlab` and
-`actup-provider-gitea` and their registrations. The LSP and the MCP server
-declare no provider features and register all three providers.
+`crates/actup` declares the features `gitlab` and `gitea`, both on by default.
+They add `actup-provider-gitlab` and `actup-provider-gitea` and their
+registrations. `actup-provider-github` is a non-optional dependency. The LSP and
+the MCP server declare no provider features and register all three providers.
 
 ## Provider Quality Checklist
 

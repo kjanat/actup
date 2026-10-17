@@ -38,9 +38,8 @@ tempfile  = { workspace = true }  # Temp files for tests
 wiremock  = { workspace = true }  # HTTP mocking
 
 [features]
-default = ["gitea", "github", "gitlab"]
+default = ["gitea", "gitlab"]
 gitea   = ["dep:actup-provider-gitea"]  # Gitea/Forgejo hosts
-github  = []  # Placeholder for API symmetry; `actup-provider-github` is non-optional.
 gitlab  = ["dep:actup-provider-gitlab"]  # GitLab hosts
 
 [lints]

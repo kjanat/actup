@@ -244,7 +244,6 @@ using Cargo features:
 ```rust
 pub fn available_registrations() -> Vec<&'static Registration> {
     vec![
-        #[cfg(feature = "github")]
         &actup_provider_github::REGISTRATION,
         #[cfg(feature = "gitlab")]
         &actup_provider_gitlab::REGISTRATION,
