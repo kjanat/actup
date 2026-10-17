@@ -38,19 +38,29 @@ This is the complete contract needed to support a new platform.
 
 ### 3. Shared Version Processing Logic
 
-All providers use identical version processing:
+All providers share one version processing function in `actup-providers`. Each
+provider implements `TagLike` for its tag response type and calls
+`actup_providers::process_tags`:
 
 ```rust
-fn process_tags(tags: Vec<PlatformTag>) -> version::Set {
-    // Exactly same logic for GitHub, GitLab, Gitea
-    // Filter semver tags
-    // Track latest per major version
-    // Detect major-only tags (v1, v2)
-    // Build version::Set
+use actup_providers::{TagLike, process_tags};
+
+impl TagLike for PlatformTag {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sha(&self) -> &str {
+        &self.commit.sha
+    }
 }
+
+let version_set: version::Set = process_tags(tags);
 ```
 
-This ensures consistent behavior across all platforms.
+`process_tags` parses semver tags, tracks the latest release per major, detects
+major-only tags (`v1`, `v2`) and builds the `version::Set`. GitHub, GitLab and
+Gitea get identical version semantics from this one function.
 
 ## Supported Providers
 
@@ -248,6 +258,8 @@ When implementing or reviewing a provider:
 
 - [ ] All Error variants use correct field names (owner/repo/host, not
       resource/provider)
+- [ ] Tag type implements `TagLike` and `get_versions` calls
+      `actup_providers::process_tags`
 - [ ] `parse_action_yml` is module-level function (not method)
 - [ ] Async trait methods extract data from params before `async move`
 - [ ] SHAs validated with `Sha40::new()` and errors handled

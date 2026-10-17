@@ -29,14 +29,15 @@ description       = "YourPlatform provider for actup"
 # ... other metadata
 
 [dependencies]
-actup-core    = { workspace = true }
-base64        = { workspace = true }
-reqwest       = { workspace = true }
-serde         = { workspace = true }
-serde_json    = { workspace = true }
-serde_yaml_ng = { workspace = true }
-tokio         = { workspace = true }
-tracing       = { workspace = true }
+actup-core      = { workspace = true }
+actup-providers = { workspace = true }
+base64          = { workspace = true }
+reqwest         = { workspace = true }
+serde           = { workspace = true }
+serde_json      = { workspace = true }
+serde_yaml_ng   = { workspace = true }
+tokio           = { workspace = true }
+tracing         = { workspace = true }
 ```
 
 ### 2. Define API Response Types
@@ -44,6 +45,7 @@ tracing       = { workspace = true }
 Create `src/types.rs` with structs matching your platform's API responses:
 
 ```rust
+use actup_providers::TagLike;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,8 +59,21 @@ pub struct YourCommit {
     pub sha: String, // Must be 40-char hex
 }
 
+impl TagLike for YourTag {
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn sha(&self) -> &str {
+        &self.commit.sha
+    }
+}
+
 // ... other types for repos, branches, files, etc.
 ```
+
+Implement `actup_providers::TagLike` for your tag type. `sha()` must return the
+commit SHA the tag points to. For annotated tags, return the peeled commit SHA.
 
 ### 3. Implement HTTP Client
 
@@ -187,6 +202,7 @@ use actup_core::{
     provider::{ActionYml, Kind, Provider, Sha40},
     version,
 };
+use actup_providers::process_tags;
 
 pub struct YourProvider {
     client: YourClient,
@@ -212,7 +228,7 @@ impl Provider for YourProvider {
 
         Box::pin(async move {
             let tags = self.client.list_tags(&owner, &repo_name).await?;
-            let mut version_set = process_tags(tags); // See helper function below
+            let mut version_set = process_tags(tags);
 
             // Get default branch
             let repo_info = self.client.get_repo(&owner, &repo_name).await?;
@@ -330,52 +346,6 @@ impl Provider for YourProvider {
 **IMPORTANT**: These must be module-level functions, not methods:
 
 ```rust
-/// Process tags into version::Set
-fn process_tags(tags: Vec<YourTag>) -> version::Set {
-    let mut semver_tags = Vec::new();
-    let mut latest_per_major = HashMap::new();
-    let mut major_tags = HashMap::new();
-    let mut latest = None;
-
-    for tag in tags {
-        let version = version::Version::parse(&tag.name);
-        let info = version::Info::new(version.clone(), &tag.commit.sha);
-
-        if let version::Version::Semver {
-            major, prerelease, ..
-        } = &version
-        {
-            semver_tags.push(info.clone());
-
-            if version.is_major_only() {
-                major_tags.insert(*major, info.clone());
-            }
-
-            if prerelease.is_none() {
-                // Update latest trackers (see GitHub provider for full logic)
-                latest_per_major
-                    .entry(*major)
-                    .and_modify(|existing| {
-                        if existing.version() < &version {
-                            *existing = info.clone();
-                        }
-                    })
-                    .or_insert(info.clone());
-
-                latest = match latest {
-                    Some(current_latest) if current_latest.version() >= &version => {
-                        Some(current_latest)
-                    }
-                    _ => Some(info),
-                };
-            }
-        }
-    }
-
-    semver_tags.sort_by(|a, b| b.version().cmp(a.version()));
-    version::Set::build(semver_tags, latest_per_major, major_tags, latest)
-}
-
 /// Decode base64-encoded file content (e.g., from GitLab/GitHub file APIs)
 fn decode_base64_content(content: &str) -> Result<String> {
     use base64::{Engine, engine::general_purpose::STANDARD};
@@ -612,55 +582,22 @@ impl Provider for YourProvider {
 
 ## Version Processing
 
-All providers use the same version processing logic (copy from GitHub provider):
+Every provider builds its `version::Set` with the shared
+`actup_providers::process_tags`. Implement `TagLike` for your tag type and pass
+the fetched tags to it:
 
 ```rust
-fn process_tags(tags: Vec<YourTag>) -> version::Set {
-    let mut semver_tags = Vec::new();
-    let mut latest_per_major: HashMap<u32, version::Info> = HashMap::new();
-    let mut major_tags: HashMap<u32, version::Info> = HashMap::new();
-    let mut latest: Option<version::Info> = None;
+use actup_providers::process_tags;
 
-    for tag in tags {
-        let version = version::Version::parse(&tag.name);
-        let info = version::Info::new(version.clone(), &tag.commit.sha);
-
-        if let version::Version::Semver {
-            major, prerelease, ..
-        } = &version
-        {
-            semver_tags.push(info.clone());
-
-            if version.is_major_only() {
-                major_tags.insert(*major, info.clone());
-            }
-
-            if prerelease.is_none() {
-                // Track latest overall and latest per major
-                // (See GitHub provider for full optimized logic)
-                latest_per_major
-                    .entry(*major)
-                    .and_modify(|existing| {
-                        if existing.version() < &version {
-                            *existing = info.clone();
-                        }
-                    })
-                    .or_insert(info.clone());
-
-                latest = match latest {
-                    Some(current_latest) if current_latest.version() >= &version => {
-                        Some(current_latest)
-                    }
-                    _ => Some(info),
-                };
-            }
-        }
-    }
-
-    semver_tags.sort_by(|a, b| b.version().cmp(a.version()));
-    version::Set::build(semver_tags, latest_per_major, major_tags, latest)
-}
+let tags: Vec<YourTag> = self.client.list_tags(&owner, &repo_name).await?;
+let mut version_set = process_tags(tags);
 ```
+
+`process_tags` accepts any `IntoIterator<Item = T>` where `T: TagLike`. It keeps
+semver tags sorted newest first, records major-only tags such as `v4`, and
+tracks the latest stable release overall and per major. Prereleases stay in the
+tag list and are filtered at query time. Version processing lives only in
+`crates/providers/src/tags.rs`. Change it there.
 
 ## Testing
 
@@ -740,6 +677,9 @@ if encoding == "base64" {
 ## Checklist
 
 - [ ] API types in `src/types.rs` match platform's JSON responses
+- [ ] Tag type implements `actup_providers::TagLike`
+- [ ] `get_versions` builds its `version::Set` with
+      `actup_providers::process_tags`
 - [ ] HTTP client handles auth, rate limiting, pagination
 - [ ] Provider trait impl extracts data before async blocks
 - [ ] `parse_action_yml` is module-level function (not method)

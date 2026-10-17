@@ -23,8 +23,8 @@ Shared utility layer between `actup-core` and individual provider crates
 
 - All provider crates depend on this crate
 - `TagLike` trait: providers implement to normalize their tag API responses
-- `process_tags` converts provider-specific tag lists into `actup-core::Version`
-  sets
+- `process_tags` converts any iterator of `TagLike` items into an
+  `actup_core::version::Set`
 - `parse_action_yml` has `cognitive_complexity` + `too_many_lines` suppressed —
   refactoring candidate
 
