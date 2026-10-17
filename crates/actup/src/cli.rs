@@ -1,15 +1,21 @@
 //! CLI argument parsing with clap
 
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{
+    CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+    error::{Error, ErrorKind},
+    parser::ValueSource,
+};
 use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(name = "actup")]
 #[command(author, version, about = "GitHub Actions version manager")]
 #[command(propagate_version = true)]
-#[command(args_conflicts_with_subcommands = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -17,6 +23,16 @@ pub struct Cli {
     /// Verbose output
     #[arg(short, long, global = true, env = "ACTUP_VERBOSE")]
     pub verbose: bool,
+
+    /// Config file to load over the repo and user config
+    #[arg(
+        short,
+        long,
+        global = true,
+        env = actup_core::config::CONFIG_VAR,
+        value_name = "PATH"
+    )]
+    pub config: Option<PathBuf>,
 
     #[command(flatten)]
     pub latest: LatestArgs,
@@ -37,6 +53,34 @@ pub struct LatestArgs {
 }
 
 impl Cli {
+    /// Parse `args` and reject top-level arguments given on the command line next to a subcommand.
+    pub fn try_parse_args<I, T>(args: I) -> Result<Self, Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<OsString> + Clone,
+    {
+        let mut command = Self::command();
+        let mut matches = command.try_get_matches_from_mut(args)?;
+        if let Some(subcommand) = matches.subcommand_name() {
+            let conflicts: Vec<String> = command
+                .get_arguments()
+                .filter(|arg| !arg.is_global_set())
+                .filter(|arg| {
+                    matches.value_source(arg.get_id().as_str()) == Some(ValueSource::CommandLine)
+                })
+                .map(ToString::to_string)
+                .collect();
+            if !conflicts.is_empty() {
+                let message = format!(
+                    "the subcommand '{subcommand}' cannot be used with: {}",
+                    conflicts.join(", ")
+                );
+                return Err(command.error(ErrorKind::ArgumentConflict, message));
+            }
+        }
+        Self::from_arg_matches_mut(&mut matches)
+    }
+
     /// Generate shell completions and write to stdout
     pub fn print_completions(shell: Shell) {
         clap_complete::generate(shell, &mut Self::command(), "actup", &mut std::io::stdout());
@@ -191,5 +235,74 @@ pub enum CliExitCode {
 impl From<CliExitCode> for i32 {
     fn from(code: CliExitCode) -> Self {
         code as Self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Result<Cli, Error> {
+        Cli::try_parse_args(std::iter::once("actup").chain(args.iter().copied()))
+    }
+
+    #[test]
+    fn global_flags_parse_before_and_after_the_subcommand() -> Result<(), Error> {
+        for args in [
+            &["-v", "--config", "x.toml", "check"][..],
+            &["check", "-v", "-c", "x.toml"][..],
+        ] {
+            let cli = parse(args)?;
+            assert!(
+                matches!(cli.command, Some(Command::Check { .. })),
+                "{args:?}"
+            );
+            assert!(cli.verbose, "{args:?}");
+            assert_eq!(cli.config.as_deref(), Some(Path::new("x.toml")), "{args:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quick_lookup_parses_without_a_subcommand() -> Result<(), Error> {
+        let cli = parse(&["actions/checkout", "--format", "json", "-c", "x.toml"])?;
+        assert!(cli.command.is_none());
+        assert_eq!(cli.latest.action.as_deref(), Some("actions/checkout"));
+        assert!(matches!(cli.latest.format, OutputFormat::Json));
+        assert_eq!(cli.config.as_deref(), Some(Path::new("x.toml")));
+        Ok(())
+    }
+
+    #[test]
+    fn subcommand_format_is_not_a_conflict() -> Result<(), Error> {
+        let cli = parse(&["check", "--format", "json"])?;
+        assert!(matches!(
+            cli.command,
+            Some(Command::Check {
+                format: OutputFormat::Json,
+                ..
+            })
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn quick_lookup_arguments_conflict_with_a_subcommand() {
+        for (args, named) in [
+            (&["actions/checkout", "check"][..], "[ACTION]"),
+            (&["--format", "json", "check"][..], "--format <FORMAT>"),
+        ] {
+            let Err(error) = parse(args) else {
+                panic!("{args:?} must be rejected");
+            };
+            assert_eq!(error.kind(), ErrorKind::ArgumentConflict, "{args:?}");
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!(
+                    "the subcommand 'check' cannot be used with: {named}"
+                )),
+                "{args:?}: {message}"
+            );
+        }
     }
 }

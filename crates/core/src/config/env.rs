@@ -6,6 +6,11 @@ use figment::{
 
 const PREFIX: &str = "ACTUP_";
 
+/// Environment variable that names the explicit config file.
+pub const CONFIG_VAR: &str = "ACTUP_CONFIG";
+
+const CLI_FLAG_VARS: &[&str] = &[CONFIG_VAR];
+
 /// Config keys set by `ACTUP_*` environment variables.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvOverrides {
@@ -31,6 +36,12 @@ impl EnvOverrides {
 
 fn config_key(name: &str) -> Option<String> {
     let name = name.trim();
+    if CLI_FLAG_VARS
+        .iter()
+        .any(|var| var.eq_ignore_ascii_case(name))
+    {
+        return None;
+    }
     let rest = name
         .get(..PREFIX.len())
         .filter(|prefix| prefix.eq_ignore_ascii_case(PREFIX))
@@ -131,6 +142,18 @@ mod tests {
                 ("XACTUP_POLICY_BUMP", "x"),
             ]),
             Vec::<(String, String)>::new()
+        );
+    }
+
+    #[test]
+    fn from_vars_skips_the_config_path_variable() {
+        assert_eq!(
+            keys(&[
+                ("ACTUP_CONFIG", "x.toml"),
+                ("actup_config", "y.toml"),
+                ("ACTUP_POLICY_BUMP", "patch"),
+            ]),
+            [pair("policy.bump", "patch")]
         );
     }
 

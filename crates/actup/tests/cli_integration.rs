@@ -1171,6 +1171,105 @@ mod cli_runs {
     }
 
     #[test]
+    fn check_loads_relative_config_flag() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::write(
+            repo.path().join("x.toml"),
+            "[policy]\nbump = \"sideways\"\n",
+        )?;
+        let output = actup(repo.path())
+            .current_dir(repo.path())
+            .args(["--config", "./x.toml", "check"])
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains("invalid config at './x.toml'"),
+            "stderr: {stderr}"
+        );
+        assert!(stderr.contains("sideways"), "stderr: {stderr}");
+        Ok(())
+    }
+
+    #[test]
+    fn check_with_missing_config_flag_exits_2() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        let missing = repo.path().join("missing.toml");
+        let output = actup(repo.path())
+            .arg("check")
+            .arg(repo.path())
+            .arg("--config")
+            .arg(&missing)
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains(&format!("invalid config at '{}'", missing.display())),
+            "stderr: {stderr}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn config_shows_explicit_config_from_flag_or_env() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::write(
+            repo.path().join("actup.toml"),
+            "[policy]\nbump = \"minor\"\npin = \"sha\"\n",
+        )?;
+        fs::write(repo.path().join("x.toml"), "[policy]\nbump = \"patch\"\n")?;
+
+        let runs: [(&[&str], Option<&str>); 3] = [
+            (&["--config", "x.toml", "config"], None),
+            (&["config", "-c", "x.toml"], None),
+            (&["config"], Some("x.toml")),
+        ];
+        for (args, env) in runs {
+            let mut cmd = actup(repo.path());
+            cmd.current_dir(repo.path()).args(args);
+            if let Some(path) = env {
+                cmd.env("ACTUP_CONFIG", path);
+            }
+            let output = cmd.output()?;
+
+            assert_eq!(output.status.code(), Some(0), "{args:?}");
+            let stdout = String::from_utf8(output.stdout)?;
+            assert!(
+                stdout.contains("  bump:        patch\n"),
+                "{args:?}: {stdout}"
+            );
+            assert!(
+                stdout.contains("  pin:         sha\n"),
+                "{args:?}: {stdout}"
+            );
+            assert!(
+                stdout.contains("  Loaded from: x.toml\n"),
+                "{args:?}: {stdout}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn config_reads_format_from_env_next_to_the_subcommand()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        let output = actup(repo.path())
+            .env("ACTUP_FORMAT", "json")
+            .arg("config")
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0));
+        let config: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert!(config.get("policy").is_some(), "config: {config}");
+        Ok(())
+    }
+
+    #[test]
     fn schema_ignores_invalid_config() -> Result<(), Box<dyn std::error::Error>> {
         let repo = broken_repo()?;
         let output = actup(repo.path())

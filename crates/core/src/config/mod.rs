@@ -29,7 +29,7 @@ pub use discovery::find_repo_config;
 pub use discovery::{
     CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, user_config_path,
 };
-pub use env::EnvOverrides;
+pub use env::{CONFIG_VAR, EnvOverrides};
 use figment::{
     Figment,
     providers::{Format as _, Json, Serialized, Toml, Yaml},

@@ -132,9 +132,9 @@ In `uses:` refs, actup lower-cases the host. Owner and repo must match
 
 ### Config Discovery
 
-1. `--config <path>` or LSP `configPath` (explicit). A relative path resolves
-   against the CLI working directory or the LSP workspace root. A missing file
-   is an error.
+1. `-c, --config <path>` (or `ACTUP_CONFIG`) or LSP `configPath` (explicit). A
+   relative path resolves against the CLI working directory or the LSP workspace
+   root. A missing file is an error (exit code 2).
 2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`
 3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
@@ -148,6 +148,7 @@ In `uses:` refs, actup lower-cases the host. Owner and repo must match
 
 **CLI defaults:**
 
+- `ACTUP_CONFIG` - Config file path, same as `--config`
 - `ACTUP_VERBOSE` - Enable verbose output
 - `ACTUP_FORMAT` - Default output format (`human`, `json`, `toml`)
 - `ACTUP_STRICT` - Enable strict mode for `check`

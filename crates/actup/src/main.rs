@@ -14,14 +14,13 @@ use actup_core::{
     CachingProvider, Config, Registration, effective_host, provider, resolve_default_host,
     user_config_path, validate_no_duplicate_presets,
 };
-use clap::Parser;
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, CliExitCode, Command};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = Cli::try_parse_args(std::env::args_os()).unwrap_or_else(|e| e.exit());
 
     // Initialize tracing
     let filter = if cli.verbose {
@@ -87,7 +86,11 @@ async fn run(cli: Cli) -> i32 {
         Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
     };
 
-    let config = match Config::load(None, user_config_path().as_deref(), &start_dir) {
+    let config = match Config::load(
+        cli.config.as_deref(),
+        user_config_path().as_deref(),
+        &start_dir,
+    ) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {e}");
