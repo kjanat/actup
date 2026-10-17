@@ -6,7 +6,7 @@ import { byteToColumn } from "./position.ts";
 export class ActupHoverProvider implements vscode.HoverProvider {
 	constructor(
 		private readonly provider: ActupProvider,
-		private readonly resultCache: Map<string, LocatedCheckResult[]>,
+		private readonly resultCache: ReadonlyMap<string, readonly LocatedCheckResult[]>,
 	) {}
 
 	async provideHover(

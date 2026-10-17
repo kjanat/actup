@@ -14,6 +14,9 @@ export interface DiagnosticData {
 /** Per-document diagnostic results for code actions to consume. */
 export const diagnosticDataByUri = new Map<string, Map<string, DiagnosticData>>();
 
+/** Per-document check results for the hover to consume. */
+export const checkResultsByUri = new Map<string, LocatedCheckResult[]>();
+
 /** Create a `DiagnosticCollection` for actup. */
 export function createDiagnosticCollection(): vscode.DiagnosticCollection {
 	return vscode.languages.createDiagnosticCollection("actup");
@@ -28,7 +31,7 @@ export async function computeDiagnostics(
 ): Promise<void> {
 	if (!text.includes("uses:")) {
 		collection.set(uri, []);
-		diagnosticDataByUri.delete(uri.toString());
+		clearDiagnosticData(uri);
 		return;
 	}
 
@@ -38,7 +41,7 @@ export async function computeDiagnostics(
 	} catch {
 		// Network/provider error — clear diagnostics rather than show stale data
 		collection.set(uri, []);
-		diagnosticDataByUri.delete(uri.toString());
+		clearDiagnosticData(uri);
 		return;
 	}
 
@@ -59,11 +62,13 @@ export async function computeDiagnostics(
 
 	collection.set(uri, diagnostics);
 	diagnosticDataByUri.set(uri.toString(), dataMap);
+	checkResultsByUri.set(uri.toString(), results);
 }
 
-/** Clear diagnostic data when a document closes. */
+/** Clear diagnostic data and check results when a document closes. */
 export function clearDiagnosticData(uri: vscode.Uri): void {
 	diagnosticDataByUri.delete(uri.toString());
+	checkResultsByUri.delete(uri.toString());
 }
 
 /** Unique key for a diagnostic (for data lookup). */

@@ -1,8 +1,8 @@
-import type { ActupProvider, LocatedCheckResult } from "actup-wasm";
+import type { ActupProvider } from "actup-wasm";
 import * as vscode from "vscode";
 import { ACTION_SELECTOR, ActupCodeActionProvider } from "./codeActions.ts";
 import { ActupCompletionProvider } from "./completion.ts";
-import { clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.ts";
+import { checkResultsByUri, clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.ts";
 import { DocumentTracker } from "./documentTracker.ts";
 import { ActupHoverProvider } from "./hover.ts";
 import { byteToColumn } from "./position.ts";
@@ -39,9 +39,6 @@ export async function activate(
 		ghProvider = (await import("actup-wasm/provider")).createGitHubProvider();
 	}
 
-	// Result cache for hover and code actions
-	const resultCache = new Map<string, LocatedCheckResult[]>();
-
 	// Diagnostics
 	const diagnosticCollection = createDiagnosticCollection();
 
@@ -54,7 +51,7 @@ export async function activate(
 		),
 		vscode.languages.registerHoverProvider(
 			ACTION_SELECTOR,
-			new ActupHoverProvider(ghProvider, resultCache),
+			new ActupHoverProvider(ghProvider, checkResultsByUri),
 		),
 		vscode.languages.registerCompletionItemProvider(
 			ACTION_SELECTOR,
@@ -85,7 +82,6 @@ export async function activate(
 			tracker.close(doc.uri);
 			diagnosticCollection.delete(doc.uri);
 			clearDiagnosticData(doc.uri);
-			resultCache.delete(doc.uri.toString());
 		}),
 	);
 

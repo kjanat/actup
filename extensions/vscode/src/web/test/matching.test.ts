@@ -1,7 +1,6 @@
-import { checkRefs } from "actup-wasm";
 import { describe, expect, test } from "bun:test";
 import * as vscode from "vscode";
-import { computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
+import { checkResultsByUri, computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
 import { fixAllInWorkspace } from "../extension.ts";
 import { ActupHoverProvider } from "../hover.ts";
 import { FakeDocument, FakeLogOutputChannel, fakeProvider, rangeOf } from "./fixtures.ts";
@@ -46,8 +45,8 @@ describe("results matched to located actions", () => {
 
 	test("give the hover the status of the ref under the cursor", async () => {
 		const document = new FakeDocument("matching-hover.yml", text);
-		const results = await checkRefs(text, provider);
-		const hover = new ActupHoverProvider(provider, new Map([[document.uri.toString(), results]]));
+		await computeDiagnostics(document.uri, text, provider, createDiagnosticCollection());
+		const hover = new ActupHoverProvider(provider, checkResultsByUri);
 		const statusByLine = new Map([
 			[4, "$(warning) Outdated: `v1.0.0` → `v1.2.0`"],
 			[5, "$(warning) Outdated: `v1.0.0` → `v1.2.0`"],
