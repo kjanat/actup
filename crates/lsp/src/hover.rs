@@ -1059,6 +1059,51 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn compute_hover_provider_error_shows_the_cause() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = crate::test_utils::MockProvider::new("github.com").with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::Network {
+                operation: "GET request".into(),
+                message: String::new(),
+                source: Some(std::sync::Arc::new(std::io::Error::other(
+                    "connection refused",
+                ))),
+            },
+        );
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
+        let hover = compute_hover("      - uses: actions/checkout@v3\n", position, None, &ctx)
+            .await
+            .ok_or("expected a hover")?;
+        let HoverContents::Markup(markup) = &hover.contents else {
+            return Err(format!("expected Markup, got {:?}", hover.contents).into());
+        };
+        assert!(
+            markup
+                .value
+                .contains("Check failed: network error during GET request: connection refused"),
+            "{}",
+            markup.value
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn compute_hover_reuses_diagnostics_version_data() {
         use crate::test_utils::{self, DUMMY_SHA};
 

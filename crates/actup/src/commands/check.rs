@@ -786,7 +786,6 @@ mod tests {
         }
     }
 
-    /// Test that user errors (`NotFound`) are classified as `is_environment_error: false`.
     #[tokio::test]
     async fn test_fallback_environment_error_keeps_the_cause() {
         let action_ref = ActionRef::simple("actions", "checkout", "v4");
@@ -828,6 +827,7 @@ mod tests {
         );
     }
 
+    /// Test that user errors (`NotFound`) are classified as `is_environment_error: false`.
     #[tokio::test]
     async fn test_check_action_with_versions_user_error() {
         use actup_core::ActionRef;
