@@ -19,8 +19,60 @@ export class Uri {
 		return new Uri(value);
 	}
 
+	static joinPath(base: Uri, ...segments: string[]): Uri {
+		return new Uri([base.value.replace(/\/$/, ""), ...segments].join("/"));
+	}
+
+	get path(): string {
+		return this.value.replace(/^file:\/\//, "");
+	}
+
+	with(change: { path: string }): Uri {
+		return new Uri(`file://${change.path}`);
+	}
+
 	toString(): string {
 		return this.value;
+	}
+}
+
+/** A listener list that tests fire by hand. */
+export class EventEmitter<T> {
+	private readonly listeners: ((value: T) => void)[] = [];
+
+	readonly event = (listener: (value: T) => void): { dispose(): void } => {
+		this.listeners.push(listener);
+		return {
+			dispose: () => {
+				this.listeners.splice(this.listeners.indexOf(listener), 1);
+			},
+		};
+	};
+
+	fire(value: T): void {
+		for (const listener of [...this.listeners]) {
+			listener(value);
+		}
+	}
+
+	get size(): number {
+		return this.listeners.length;
+	}
+}
+
+class FileSystemWatcher {
+	readonly created = new EventEmitter<Uri>();
+	readonly changed = new EventEmitter<Uri>();
+	readonly deleted = new EventEmitter<Uri>();
+	readonly onDidCreate = this.created.event;
+	readonly onDidChange = this.changed.event;
+	readonly onDidDelete = this.deleted.event;
+	disposed = false;
+
+	constructor(readonly glob: string) {}
+
+	dispose(): void {
+		this.disposed = true;
 	}
 }
 
@@ -147,9 +199,46 @@ interface OpenDocument {
 	lineAt(line: number): { readonly text: string };
 }
 
+class FileSystem {
+	readonly files = new Map<string, string>();
+	readonly reads: string[] = [];
+
+	readFile(uri: Uri): Promise<Uint8Array> {
+		this.reads.push(uri.toString());
+		const text = this.files.get(uri.toString());
+		return text === undefined
+			? Promise.reject(new Error(`FileNotFound: ${uri.toString()}`))
+			: Promise.resolve(new TextEncoder().encode(text));
+	}
+}
+
 class Workspace {
 	readonly documents: OpenDocument[] = [];
 	readonly appliedEdits: WorkspaceEdit[] = [];
+	readonly fs = new FileSystem();
+	readonly folders: { readonly uri: Uri; readonly name: string; readonly index: number }[] = [];
+	readonly settings = new Map<string, string | null>();
+	readonly watchers: FileSystemWatcher[] = [];
+	readonly configurationChanges = new EventEmitter<{ affectsConfiguration(section: string): boolean }>();
+	readonly saves = new EventEmitter<{ readonly uri: Uri }>();
+	readonly onDidChangeConfiguration = this.configurationChanges.event;
+	readonly onDidSaveTextDocument = this.saves.event;
+
+	getWorkspaceFolder(uri: UriLike): { readonly uri: Uri; readonly name: string; readonly index: number } | undefined {
+		return this.folders.find(folder => uri.toString().startsWith(`${folder.uri.toString()}/`));
+	}
+
+	getConfiguration(section: string): { get(key: string, fallback: string | null): string | null } {
+		return {
+			get: (key: string, fallback: string | null): string | null => this.settings.get(`${section}.${key}`) ?? fallback,
+		};
+	}
+
+	createFileSystemWatcher(glob: string): FileSystemWatcher {
+		const watcher = new FileSystemWatcher(glob);
+		this.watchers.push(watcher);
+		return watcher;
+	}
 
 	findFiles(include: string): Promise<UriLike[]> {
 		const directory = include.includes("/workflows/") ? "/.github/workflows/" : "/.github/actions/";
@@ -171,6 +260,11 @@ class Workspace {
 	reset(): void {
 		this.documents.splice(0);
 		this.appliedEdits.splice(0);
+		this.fs.files.clear();
+		this.fs.reads.splice(0);
+		this.folders.splice(0);
+		this.settings.clear();
+		this.watchers.splice(0);
 	}
 }
 

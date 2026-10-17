@@ -48,6 +48,13 @@ Development Host.
 
 All settings live under the `actup` namespace.
 
+The web extension reads the repo config of each workspace folder: the first of
+`actup.*`, `.actup.*`, `.config/actup.*` and `.github/actup.*`, trying the
+extensions `toml`, `json`, `jsonc`, `yaml` and `yml` in that order, parsed as
+the CLI parses it. Its `[policy]`, `[[overrides]]` and `scan.ignore` apply to
+diagnostics and to Fix All in Workspace. An invalid config shows an error and
+leaves the folder unchecked.
+
 ### `actup.server.path`
 
 Absolute path to the `actup-lsp` binary. If unset, the extension searches

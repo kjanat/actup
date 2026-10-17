@@ -16,7 +16,16 @@
 
 /// <reference types="node" />
 
-import type { ActionRef, ActionRepoId, ActupConfig, LocatedCheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
+import type {
+	ActionRef,
+	ActionRepoId,
+	ActupConfig,
+	LocatedCheckResult,
+	RepoConfig,
+	UpdateEdit,
+	UsesLocation,
+	VersionTag,
+} from "../wasm/actup_wasm.js";
 import type { ActupProvider } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
@@ -39,6 +48,7 @@ export type {
 	Info as VersionInfo,
 	LocatedCheckResult,
 	Policy as ActupPolicy,
+	RepoConfig,
 	Style as PinStyle,
 	Track as TrackPolicy,
 	Update as UpdatePolicy,
@@ -189,6 +199,34 @@ export function sortVersionTags(tags: readonly VersionTag[]): VersionTag[] {
 }
 
 /**
+ * Parse a repo config file with actup-core's parser, as the CLI parses it.
+ *
+ * Pure, synchronous. The extension of `path` picks the format (`toml`,
+ * `json`, `jsonc`, `yaml` or `yml`). No user config and no `ACTUP_`
+ * variables apply.
+ *
+ * @param path - The file's path, for example `.config/actup.toml`.
+ * @param contents - The file's text.
+ * @returns Every table of the config, to pass to `checkRefs` and `planUpdates`.
+ * @throws For an invalid config, naming `path`.
+ */
+export function parseConfig(path: string, contents: string): RepoConfig {
+	const w = requireInit();
+	return w.parseConfig(path, contents);
+}
+
+/**
+ * The repo config paths to look for in a directory, highest priority first.
+ *
+ * Pure, synchronous. Each path is relative and `/`-separated, for example
+ * `.config/actup.toml`.
+ */
+export function repoConfigCandidates(): string[] {
+	const w = requireInit();
+	return w.repoConfigCandidates();
+}
+
+/**
  * Check `uses:` references in YAML against a provider.
  *
  * Parses the YAML, resolves each non-local `uses:` ref through the provider,
@@ -198,13 +236,14 @@ export function sortVersionTags(tags: readonly VersionTag[]): VersionTag[] {
  *
  * @param yaml - Raw YAML content.
  * @param provider - Object implementing the `ActupProvider` interface.
- * @param config - Optional config overrides (update policy, default host).
+ * @param config - Optional config tables: `default_host` and `policy`, or a
+ *   whole `RepoConfig` with `scan.ignore` and `[[overrides]]`.
  * @returns Array of check results.
  */
 export async function checkRefs(
 	yaml: string,
 	provider: ActupProvider,
-	config?: ActupConfig,
+	config?: ActupConfig | RepoConfig,
 ): Promise<LocatedCheckResult[]> {
 	const w = requireInit();
 	return await w.checkRefs(yaml, provider, config);
@@ -221,11 +260,12 @@ export async function checkRefs(
  * Pure, synchronous. The caller applies the edits.
  *
  * @param results - Array of located check results from `checkRefs`.
- * @param config - Optional config; `policy.pin` picks tag or SHA output.
+ * @param config - Optional config, such as a `RepoConfig`; `policy.pin` of
+ *   the matching override picks tag or SHA output.
  *   `pin: "tag"` unpins outdated SHA pins.
  * @returns Array of text edits to apply.
  */
-export function planUpdates(results: readonly LocatedCheckResult[], config?: ActupConfig): UpdateEdit[] {
+export function planUpdates(results: readonly LocatedCheckResult[], config?: ActupConfig | RepoConfig): UpdateEdit[] {
 	const w = requireInit();
 	return w.planUpdates(JSON.stringify(results), config);
 }

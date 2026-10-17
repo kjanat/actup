@@ -1,10 +1,10 @@
 //! Public WASM-facing API. Compiled only on `wasm32` targets.
 
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, SourceFormat, UsesLocation,
-    config::{Config, Policy},
+    config::{Config, EnvOverrides, repo_candidates},
     error::chain,
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
@@ -17,35 +17,26 @@ use wasm_bindgen::prelude::*;
 
 use crate::bridge::{self, JsProvider, JsProviderAdapter, VersionTag};
 
-/// Subset of [`Config`] passable from JS callers.
-///
-/// JS code passes an object matching this shape, and `checkRefs` and
-/// `planUpdates` reject unknown keys. `policy` is the full `[policy]` table
-/// with its defaults. Wider config knobs ([`Cache`], [`HostConfig`],
-/// `[[overrides]]`) are repo-config concerns and stay out of the WASM surface.
-///
-/// [`Cache`]: actup_core::config::Cache
-/// [`HostConfig`]: actup_core::config::HostConfig
-#[derive(Debug, Default, Deserialize, tsify_next::Tsify)]
-#[serde(deny_unknown_fields)]
-pub struct ActupConfig {
-    /// Default host for bare `owner/repo` refs (e.g. `"github.com"`).
-    #[serde(default)]
-    pub default_host: Option<String>,
-    /// The `[policy]` table.
-    #[serde(default)]
-    pub policy: Policy,
+#[wasm_bindgen(typescript_custom_section)]
+const CONFIG_TYPES: &str = r#"
+/**
+ * The config tables most callers pass to `checkRefs` and `planUpdates`.
+ *
+ * Both functions take any table of a repo config, such as the `RepoConfig`
+ * that `parseConfig` returns with `scan.ignore` and `[[overrides]]`, and parse
+ * it like a repo config file: an unknown `[policy]` key or a renamed key is an
+ * error.
+ */
+export interface ActupConfig {
+    /** Default host for bare `owner/repo` refs (e.g. `"github.com"`). */
+    default_host?: string | null;
+    /** The `[policy]` table. */
+    policy?: Policy;
 }
 
-impl From<ActupConfig> for Config {
-    fn from(value: ActupConfig) -> Self {
-        Self {
-            default_host: value.default_host,
-            policy: value.policy,
-            ..Self::default()
-        }
-    }
-}
+/** Every table of a repo config, as `parseConfig` returns it. */
+export type RepoConfig = ActupConfig & { readonly [table: string]: unknown };
+"#;
 
 fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
     value
@@ -53,19 +44,48 @@ fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
         .map_err(|e| JsValue::from_str(&e.to_string()))
 }
 
-fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
+fn config_from_js(value: &JsValue) -> Result<Config, JsValue> {
     let not_object = || JsValue::from_str("invalid config: expected an object");
     let json = js_sys::JSON::stringify(value)?
         .as_string()
         .ok_or_else(not_object)?;
-    let object = match serde_json::from_str::<serde_json::Value>(&json) {
-        Ok(object @ serde_json::Value::Object(_)) => object,
+    match serde_json::from_str::<serde_json::Value>(&json) {
+        Ok(serde_json::Value::Object(_)) => {}
         Ok(_) => return Err(not_object()),
         Err(e) => return Err(JsValue::from_str(&format!("invalid config: {e}"))),
-    };
-    ActupConfig::deserialize(object)
-        .map(Config::from)
-        .map_err(|e| JsValue::from_str(&format!("invalid config: {e}")))
+    }
+    Config::from_contents(
+        Some((Path::new("config.json"), &json)),
+        EnvOverrides::default(),
+    )
+    .map_err(|e| JsValue::from_str(&chain(&e)))
+}
+
+/// Parse the repo config file at `path` with `contents`, as the CLI parses it.
+///
+/// The extension of `path` picks the format: `toml`, `json`, `jsonc`, `yaml`
+/// or `yml`. No user config and no `ACTUP_` variables apply. Pass the result
+/// to `checkRefs` and `planUpdates`.
+///
+/// # Errors
+///
+/// Returns `JsValue` error for an invalid config, naming `path`.
+#[wasm_bindgen(js_name = "parseConfig", unchecked_return_type = "RepoConfig")]
+pub fn parse_config(path: &str, contents: &str) -> Result<JsValue, JsValue> {
+    let config = Config::from_contents(Some((Path::new(path), contents)), EnvOverrides::default())
+        .map_err(|e| JsValue::from_str(&chain(&e)))?;
+    to_js(&config)
+}
+
+/// The repo config paths to look for in a directory, highest priority first.
+///
+/// Each path is relative and `/`-separated, for example `.config/actup.toml`.
+#[wasm_bindgen(js_name = "repoConfigCandidates")]
+#[must_use]
+pub fn repo_config_candidates() -> Vec<String> {
+    repo_candidates()
+        .map(|candidate| candidate.relative())
+        .collect()
 }
 
 /// Parse `uses:` references from workflow YAML content.
@@ -173,12 +193,13 @@ impl LocatedCheckResult {
 ///
 /// * `yaml` — workflow YAML content
 /// * `provider` — JS object implementing `ActupProvider` interface
-/// * `config` — optional [`ActupConfig`]. If omitted, defaults are used.
+/// * `config` — optional config tables, such as a `RepoConfig`. If omitted,
+///   defaults are used.
 ///
 /// # Errors
 ///
-/// The returned promise rejects when `config` does not match [`ActupConfig`],
-/// on serde failures, or if the provider throws.
+/// The returned promise rejects for an invalid `config`, on serde failures,
+/// or if the provider throws.
 #[wasm_bindgen(
     js_name = "checkRefs",
     unchecked_return_type = "Promise<LocatedCheckResult[]>"
@@ -192,7 +213,7 @@ pub fn check_refs(
 ) -> js_sys::Promise {
     wasm_bindgen_futures::future_to_promise(async move {
         let config = match config {
-            Some(value) => parse_config(&value)?,
+            Some(value) => config_from_js(&value)?,
             None => Config::default(),
         };
 
@@ -273,8 +294,7 @@ struct UpdateEdit {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` error on serde failures or when `config` does not match
-/// [`ActupConfig`].
+/// Returns `JsValue` error on serde failures or for an invalid `config`.
 #[wasm_bindgen(js_name = "planUpdates", unchecked_return_type = "UpdateEdit[]")]
 pub fn plan_updates(
     results_json: &str,
@@ -283,7 +303,7 @@ pub fn plan_updates(
     >,
 ) -> Result<JsValue, JsValue> {
     let config = match config {
-        Some(value) => parse_config(&value)?,
+        Some(value) => config_from_js(&value)?,
         None => Config::default(),
     };
     let results: Vec<LocatedCheckResult> = serde_json::from_str(results_json)

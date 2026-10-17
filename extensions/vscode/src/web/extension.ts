@@ -2,6 +2,7 @@ import type { ActupProvider } from "actup-wasm";
 import * as vscode from "vscode";
 import { ACTION_SELECTOR, ActupCodeActionProvider } from "./codeActions.ts";
 import { ActupCompletionProvider } from "./completion.ts";
+import { type ConfigLookup, ConfigStore, watchConfig } from "./config.ts";
 import { checkResultsByUri, clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.ts";
 import { DocumentTracker } from "./documentTracker.ts";
 import { ActupHoverProvider } from "./hover.ts";
@@ -41,6 +42,10 @@ export async function activate(
 
 	// Diagnostics
 	const diagnosticCollection = createDiagnosticCollection();
+	const configs = new ConfigStore((path, message) => {
+		outputChannel.error(`actup: invalid config ${path}: ${message}`);
+		void vscode.window.showErrorMessage(`actup: invalid config ${path}. See output for details.`);
+	});
 
 	// Register language providers
 	context.subscriptions.push(
@@ -64,8 +69,16 @@ export async function activate(
 
 	// Document tracking
 	const tracker = new DocumentTracker((uri, text) => {
-		void computeDiagnostics(uri, text, ghProvider, diagnosticCollection);
+		void computeDiagnostics(uri, text, ghProvider, diagnosticCollection, configs.configFor);
 	});
+	const reanalyze = (): void => {
+		for (const doc of vscode.workspace.textDocuments) {
+			if (DocumentTracker.isActionDocument(doc)) {
+				tracker.open(doc);
+			}
+		}
+	};
+	context.subscriptions.push(...watchConfig(configs, reanalyze));
 
 	context.subscriptions.push(
 		vscode.workspace.onDidOpenTextDocument((doc) => {
@@ -86,15 +99,14 @@ export async function activate(
 	);
 
 	// Analyze already-open documents
-	for (const doc of vscode.workspace.textDocuments) {
-		if (DocumentTracker.isActionDocument(doc)) {
-			tracker.open(doc);
-		}
-	}
+	reanalyze();
 
 	// Commands
 	context.subscriptions.push(
-		vscode.commands.registerCommand("actup.fixAllInWorkspace", () => fixAllInWorkspace(ghProvider, outputChannel)),
+		vscode.commands.registerCommand(
+			"actup.fixAllInWorkspace",
+			() => fixAllInWorkspace(ghProvider, outputChannel, configs.configFor),
+		),
 	);
 
 	outputChannel.info("actup web extension activated");
@@ -102,9 +114,15 @@ export async function activate(
 
 export function deactivate(): void {}
 
+/**
+ * Apply every planned update to the workspace's workflow and action files.
+ *
+ * A file under an invalid repo config counts as failed and keeps its text.
+ */
 export async function fixAllInWorkspace(
 	provider: ActupProvider,
 	log: vscode.LogOutputChannel,
+	configs: ConfigLookup,
 ): Promise<void> {
 	const [workflowFiles, compositeFiles] = await Promise.all([
 		vscode.workspace.findFiles("**/.github/workflows/*.{yml,yaml}", "**/node_modules/**"),
@@ -124,9 +142,14 @@ export async function fixAllInWorkspace(
 			const text = doc.getText();
 			if (!text.includes("uses:")) continue;
 
+			const folderConfig = await configs(fileUri);
+			if (folderConfig.kind === "invalid") {
+				throw new Error(`invalid config ${folderConfig.path}: ${folderConfig.message}`);
+			}
+			const config = folderConfig.kind === "loaded" ? folderConfig.config : undefined;
 			const { checkRefs, planUpdates } = await import("actup-wasm");
-			const results = await checkRefs(text, provider);
-			const edits = planUpdates(results);
+			const results = await checkRefs(text, provider, config);
+			const edits = planUpdates(results, config);
 			if (edits.length === 0) continue;
 
 			const wsEdit = new vscode.WorkspaceEdit();

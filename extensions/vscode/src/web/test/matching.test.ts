@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as vscode from "vscode";
+import { noConfig } from "../config.ts";
 import { checkResultsByUri, computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
 import { fixAllInWorkspace } from "../extension.ts";
 import { ActupHoverProvider } from "../hover.ts";
@@ -74,7 +75,7 @@ describe("results matched to located actions", () => {
 		].join("\n");
 		const document = new FakeDocument("repo/.github/workflows/repeated.yml", repeated);
 		mockWorkspace.documents.push(document);
-		await fixAllInWorkspace(provider, new FakeLogOutputChannel());
+		await fixAllInWorkspace(provider, new FakeLogOutputChannel(), noConfig);
 
 		expect(mockWorkspace.appliedEdits.flatMap(edit => edit.entries().flatMap(([, edits]) => edits))).toEqual([
 			new vscode.TextEdit(rangeOf(document, 3, "v1.0.0"), "v1.2.0"),
@@ -95,7 +96,7 @@ describe("results matched to located actions", () => {
 		].join("\n");
 		const document = new FakeDocument("repo/.github/workflows/pinned.yml", pinned);
 		mockWorkspace.documents.push(document);
-		await fixAllInWorkspace(provider, new FakeLogOutputChannel());
+		await fixAllInWorkspace(provider, new FakeLogOutputChannel(), noConfig);
 		const sha = rangeOf(document, 3, "a".repeat(40));
 
 		expect(mockWorkspace.appliedEdits.flatMap(edit => edit.entries().flatMap(([, edits]) => edits))).toEqual([

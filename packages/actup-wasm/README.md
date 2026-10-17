@@ -116,7 +116,9 @@ Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `[policy]` table of `actup.toml` with the same defaults: `bump` is `"patch"` |
 `"minor"` | `"major"` | `"latest"`, `pin` is `"preserve"` | `"tag"` | `"sha"`,
 `track` is `"keep"` | `"major"` | `"exact"`, `branch` is `"ignore"` | `"warn"` |
-`"update"`, and `prerelease` is a boolean. Unknown keys reject the call.
+`"update"`, and `prerelease` is a boolean. `config` also takes a whole
+`RepoConfig` from `parseConfig`, with `scan.ignore` and `[[overrides]]`. An
+unknown `[policy]` key or a renamed key rejects the call.
 
 ### `planUpdates(results, config?)`
 
@@ -144,6 +146,19 @@ An edit writes or rewrites a comment only for a result whose `takes_comment` is
 them, as in `{ uses: "o/b@<sha>" } # v4.2.0`. It refreshes a version comment at
 the end of the line, also after other flow keys, and leaves any other comment
 alone.
+
+### `parseConfig(path, contents)`
+
+Parse a repo config file as the CLI parses it. Pure, synchronous. The extension
+of `path` picks the format: `toml`, `json`, `jsonc`, `yaml` or `yml`. No user
+config and no `ACTUP_` variables apply. Returns a `RepoConfig` to pass to
+`checkRefs` and `planUpdates`, and throws for an invalid config with a message
+that names `path`.
+
+### `repoConfigCandidates()`
+
+The repo config paths to look for in a directory, highest priority first, such
+as `actup.toml` and `.config/actup.toml`. Pure, synchronous.
 
 ### `sortVersionTags(tags)`
 

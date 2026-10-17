@@ -1,6 +1,7 @@
 import type { ActupProvider, UpdateEdit, UsesLocation } from "actup-wasm";
 import { checkRefs, type CheckStatus, type LocatedCheckResult, planUpdates } from "actup-wasm";
 import * as vscode from "vscode";
+import { type ConfigLookup, noConfig } from "./config.ts";
 import { byteToColumn } from "./position.ts";
 
 const DIAGNOSTIC_SOURCE = "actup";
@@ -27,12 +28,17 @@ export function createDiagnosticCollection(): vscode.DiagnosticCollection {
 	return vscode.languages.createDiagnosticCollection("actup");
 }
 
-/** Compute diagnostics for a document and publish them. */
+/**
+ * Compute diagnostics for a document under its repo config and publish them.
+ *
+ * An invalid repo config publishes no diagnostics.
+ */
 export async function computeDiagnostics(
 	uri: vscode.Uri,
 	text: string,
 	provider: ActupProvider,
 	collection: vscode.DiagnosticCollection,
+	configs: ConfigLookup = noConfig,
 ): Promise<void> {
 	const key = uri.toString();
 	const compute = ++computeCount;
@@ -46,8 +52,13 @@ export async function computeDiagnostics(
 
 	let checked: { results: LocatedCheckResult[]; edits: UpdateEdit[] } | undefined;
 	try {
-		const results = await checkRefs(text, provider);
-		checked = { results, edits: planUpdates(results) };
+		const folderConfig = await configs(uri);
+		if (folderConfig.kind === "invalid") {
+			throw new Error(folderConfig.message);
+		}
+		const config = folderConfig.kind === "loaded" ? folderConfig.config : undefined;
+		const results = await checkRefs(text, provider, config);
+		checked = { results, edits: planUpdates(results, config) };
 	} catch {
 		checked = undefined;
 	}

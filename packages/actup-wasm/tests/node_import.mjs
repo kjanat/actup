@@ -15,9 +15,18 @@ try {
 	process.exit(1);
 }
 
-const { checkRefs, initWasm, isHostSegment, parseActionPath, parseUses, parseUsesRefs, planUpdates, sortVersionTags } = await import(
-	"../dist/index.js"
-);
+const {
+	checkRefs,
+	initWasm,
+	isHostSegment,
+	parseActionPath,
+	parseConfig,
+	parseUses,
+	parseUsesRefs,
+	planUpdates,
+	repoConfigCandidates,
+	sortVersionTags,
+} = await import("../dist/index.js");
 
 // Test 1: initWasm + parseUsesRefs
 await initWasm();
@@ -644,5 +653,36 @@ assert.equal(behind.same_commit, null, "a real bump has no same-commit target");
 assert.equal(planUpdates([exact], { policy: { track: "exact" } })[0].newText, "v1.0.5", "planUpdates reads the new fields");
 
 console.log("PASS: policy.track reaches core and same-commit targets serialize");
+
+const candidates = repoConfigCandidates();
+assert.equal(candidates[0], "actup.toml", "actup.toml comes first");
+assert.ok(candidates.includes(".actup.jsonc"), "dot-files at the root count");
+assert.ok(candidates.includes(".config/actup.yml"), ".config holds candidates");
+assert.equal(candidates.length, 20, "every name, directory and extension");
+
+const minorFile = parseConfig(".config/actup.toml", "[policy]\nbump = \"minor\"\n");
+const [minorFromFile] = await checkRefs(outdatedYaml, majorProvider, minorFile);
+assert.equal(minorFromFile.status, "UpToDate", "policy.bump from the file reaches checkRefs");
+const minorYaml = parseConfig("actup.yaml", "policy:\n  bump: minor\n");
+assert.equal((await checkRefs(outdatedYaml, majorProvider, minorYaml))[0].status, "UpToDate", "YAML parses");
+
+const overridden = parseConfig(
+	"actup.toml",
+	"[[overrides]]\npattern = \"actions/*\"\npolicy = { pin = \"sha\" }\n",
+);
+const overriddenResults = await checkRefs(outdatedYaml, majorProvider, overridden);
+assert.equal(overriddenResults[0].status.Outdated.target.version, "v5.0.0", "the override keeps the default bump");
+const [overrideEdit] = planUpdates(overriddenResults, overridden);
+assert.equal(overrideEdit.newRef, "e".repeat(40), "the override's pin style reaches planUpdates");
+assert.equal(overrideEdit.newText, `${"e".repeat(40)} # v5.0.0`, "a SHA pin carries its version comment");
+assert.equal(planUpdates(overriddenResults)[0].newRef, "v5.0.0", "without the config the tag stays");
+
+const ignoring = parseConfig("actup.json", "{ \"scan\": { \"ignore\": [\"actions/checkout\"] } }");
+assert.equal((await checkRefs(outdatedYaml, majorProvider, ignoring))[0].status, "Ignored", "scan.ignore reaches checkRefs");
+
+assert.throws(() => parseConfig("actup.toml", "[policy]\ntracking = 1\n"), /actup\.toml.*tracking/s);
+assert.throws(() => parseConfig("actup.toml", "update_policy = \"patch\"\n"), /update_policy/);
+
+console.log("PASS: parseConfig parses repo config files for checkRefs and planUpdates");
 
 console.log("\nAll npm package integration tests PASSED");

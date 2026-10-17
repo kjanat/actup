@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as vscode from "vscode";
 import { ActupCodeActionProvider } from "../codeActions.ts";
+import { noConfig } from "../config.ts";
 import { computeDiagnostics, createDiagnosticCollection } from "../diagnostics.ts";
 import { fixAllInWorkspace } from "../extension.ts";
 import { ActupHoverProvider } from "../hover.ts";
@@ -52,7 +53,7 @@ describe("multi-byte text before `uses:`", () => {
 		mockWindow.reset();
 		const document = new FakeDocument("repo/.github/workflows/utf16.yml", text);
 		mockWorkspace.documents.push(document);
-		await fixAllInWorkspace(provider, new FakeLogOutputChannel());
+		await fixAllInWorkspace(provider, new FakeLogOutputChannel(), noConfig);
 		const [applied] = mockWorkspace.appliedEdits;
 
 		expect(mockWorkspace.appliedEdits).toHaveLength(1);
