@@ -66,6 +66,16 @@ describe("loadFolderConfig", () => {
 		expect(kindOf(absolute)).toBe("loaded /repo/ci/actup.json");
 	});
 
+	test("drops default_host from a discovered candidate and keeps it from the explicit file", async () => {
+		file("actup.toml", "default_host = \"ghe.corp.example\"\n");
+
+		const discovered = await loadFolderConfig(folder, undefined);
+		const explicit = await loadFolderConfig(folder, "actup.toml");
+
+		expect(discovered.kind === "loaded" ? discovered.config.default_host : "unloaded").toBeNull();
+		expect(explicit.kind === "loaded" ? explicit.config.default_host : "unloaded").toBe("ghe.corp.example");
+	});
+
 	test("reports a missing explicit path as invalid", async () => {
 		file("actup.toml", "[policy]\nbump = \"minor\"\n");
 
