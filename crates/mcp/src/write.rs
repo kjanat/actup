@@ -719,6 +719,16 @@ mod tests {
                 "- uses: a/b@v4.0.0 # 1st step\n",
                 format!("- uses: a/b@{sha} # 1st step\n"),
             ),
+            (
+                Style::Sha,
+                "- { uses: a/b@v4.0.0, with: { x: 1 } }\n",
+                format!("- {{ uses: a/b@{sha}, with: {{ x: 1 }} }}\n"),
+            ),
+            (
+                Style::Sha,
+                "- { uses: 'a/b@v4.0.0' }\n",
+                format!("- {{ uses: 'a/b@{sha}' }} # v4.2.0\n"),
+            ),
         ] {
             let (l, action) = loc(content)?;
             let (edit, to) = retarget(&l, &action, &target(), style).ok_or("no edit")?;

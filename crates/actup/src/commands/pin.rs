@@ -678,12 +678,13 @@ mod tests {
     #[tokio::test]
     async fn test_run_pin_names_the_ref_in_a_version_comment()
     -> Result<(), Box<dyn std::error::Error>> {
-        let content = "steps:\n  - uses: o/d@main # v1.0.0 keep\n  - uses: o/b@main # v1.0.0\n  - uses: o/f@main # 1st step\n";
+        let content = "steps:\n  - uses: o/d@main # v1.0.0 keep\n  - uses: o/b@main # v1.0.0\n  - uses: o/f@main # 1st step\n  - { uses: o/h@main, with: { x: 1 } }\n";
         let expected = format!(
-            "steps:\n  - uses: o/d@{} # main keep\n  - uses: o/b@{} # main\n  - uses: o/f@{} # 1st step\n",
+            "steps:\n  - uses: o/d@{} # main keep\n  - uses: o/b@{} # main\n  - uses: o/f@{} # 1st step\n  - {{ uses: o/h@{}, with: {{ x: 1 }} }}\n",
             sha('d'),
             sha('c'),
-            sha('e')
+            sha('e'),
+            sha('f')
         );
         assert_pin_writes(content, &expected).await
     }

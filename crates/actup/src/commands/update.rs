@@ -870,6 +870,23 @@ mod tests {
                 "{tail}"
             );
         }
+        for (line, written) in [
+            (
+                "      - { uses: a/b@main, with: { x: 1 } }",
+                format!("      - {{ uses: a/b@{sha}, with: {{ x: 1 }} }}"),
+            ),
+            (
+                "      - { uses: 'a/b@main' }",
+                format!("      - {{ uses: 'a/b@{sha}' }} # main"),
+            ),
+        ] {
+            let found = actup_core::extract_uses_from_yaml(line);
+            let [loc] = found.as_slice() else {
+                return Err(format!("expected one `uses:` in {line:?}").into());
+            };
+            let edit = pin_edit(loc, &sha, "main").ok_or("no edit")?;
+            assert_eq!(apply_at(line, edit)?, written, "{line}");
+        }
         Ok(())
     }
 

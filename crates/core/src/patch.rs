@@ -156,9 +156,10 @@ pub fn rewrite_edit(loc: &UsesLocation, rewrite: &Rewrite) -> Option<PendingEdit
 /// Build an edit that pins the ref at `loc` to `sha` with a ` # <label>` comment.
 ///
 /// A trailing version comment gets `label` in place of its version and keeps
-/// its note. A line with nothing after the value gets the comment after the
-/// value [`closer`]. A foreign comment or other text after the value is left
-/// untouched with no comment.
+/// its note. A line that ends at the ref, or at the closing quotes and
+/// brackets of [`closer`], gets the comment after the value. After any other
+/// text, such as more flow-mapping keys or a foreign comment, the edit writes
+/// the SHA alone.
 #[must_use]
 pub fn pin_edit(loc: &UsesLocation, sha: &str, label: &str) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
@@ -860,6 +861,47 @@ mod tests {
             assert_eq!(
                 apply_line(&line, edit).ok_or("edit did not apply")?,
                 format!("      - uses: actions/checkout@{new} # 1st step"),
+                "{line}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_pin_edit_comments_only_a_line_that_ends_at_the_ref()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let sha = sha40('c');
+        for (line, written) in [
+            ("- uses: o/b@main", format!("- uses: o/b@{sha} # main")),
+            (
+                "- uses: o/b@main # v1.0.0 keep",
+                format!("- uses: o/b@{sha} # main keep"),
+            ),
+            (
+                "- { uses: 'o/b@main' }",
+                format!("- {{ uses: 'o/b@{sha}' }} # main"),
+            ),
+            (
+                "- { uses: \"o/b@main\" }",
+                format!("- {{ uses: \"o/b@{sha}\" }} # main"),
+            ),
+            (
+                "- { uses: o/b@main, with: { x: 1 } }",
+                format!("- {{ uses: o/b@{sha}, with: {{ x: 1 }} }}"),
+            ),
+            (
+                "- uses: o/b@main # mine",
+                format!("- uses: o/b@{sha} # mine"),
+            ),
+        ] {
+            let found = crate::extract_uses_from_yaml(line);
+            let [loc] = found.as_slice() else {
+                return Err(format!("expected one `uses:` in {line:?}").into());
+            };
+            let edit = pin_edit(loc, &sha, "main").ok_or("no edit")?;
+            assert_eq!(
+                apply_line(line, edit).ok_or("edit did not apply")?,
+                written,
                 "{line}"
             );
         }
