@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use actup_core::config;
 use clap::{
     CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
     error::{Error, ErrorKind},
@@ -21,7 +22,7 @@ pub struct Cli {
     pub command: Option<Command>,
 
     /// Verbose output
-    #[arg(short, long, global = true, env = "ACTUP_VERBOSE")]
+    #[arg(short, long, global = true, env = config::VERBOSE_VAR)]
     pub verbose: bool,
 
     /// Config file to load over the repo and user config
@@ -29,7 +30,7 @@ pub struct Cli {
         short,
         long,
         global = true,
-        env = actup_core::config::CONFIG_VAR,
+        env = config::CONFIG_VAR,
         value_name = "PATH"
     )]
     pub config: Option<PathBuf>,
@@ -48,7 +49,7 @@ pub struct LatestArgs {
     pub action: Option<String>,
 
     /// Output format
-    #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+    #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
     pub format: OutputFormat,
 }
 
@@ -112,11 +113,11 @@ pub enum Command {
         path: PathBuf,
 
         /// Fail if any actions are outdated
-        #[arg(long, env = "ACTUP_STRICT")]
+        #[arg(long, env = config::STRICT_VAR)]
         strict: bool,
 
         /// Output format
-        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+        #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: OutputFormat,
     },
 
@@ -131,7 +132,7 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format
-        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+        #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: OutputFormat,
     },
 
@@ -146,7 +147,7 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format
-        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+        #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: OutputFormat,
     },
 
@@ -161,7 +162,7 @@ pub enum Command {
         dry_run: bool,
 
         /// Output format
-        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+        #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: OutputFormat,
     },
 
@@ -172,7 +173,7 @@ pub enum Command {
         path: PathBuf,
 
         /// Output format
-        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+        #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: OutputFormat,
     },
 
@@ -185,7 +186,7 @@ pub enum Command {
         action: CacheAction,
 
         /// Output format
-        #[arg(long, default_value = "human", env = "ACTUP_FORMAT")]
+        #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: OutputFormat,
     },
 
@@ -244,6 +245,29 @@ mod tests {
 
     fn parse(args: &[&str]) -> Result<Cli, Error> {
         Cli::try_parse_args(std::iter::once("actup").chain(args.iter().copied()))
+    }
+
+    fn env_vars(command: &clap::Command, out: &mut Vec<String>) {
+        out.extend(
+            command
+                .get_arguments()
+                .filter_map(clap::Arg::get_env)
+                .map(|name| name.to_string_lossy().into_owned()),
+        );
+        for subcommand in command.get_subcommands() {
+            env_vars(subcommand, out);
+        }
+    }
+
+    #[test]
+    fn every_env_var_is_a_cli_flag_var() {
+        let mut vars = Vec::new();
+        env_vars(&Cli::command(), &mut vars);
+        vars.sort_unstable();
+        vars.dedup();
+        let mut expected = config::CLI_FLAG_VARS.map(str::to_owned).to_vec();
+        expected.sort_unstable();
+        assert_eq!(vars, expected);
     }
 
     #[test]

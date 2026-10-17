@@ -1270,6 +1270,35 @@ mod cli_runs {
     }
 
     #[test]
+    fn config_shows_double_underscore_env_overrides() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::write(
+            repo.path().join("actup.toml"),
+            "[policy]\nbump = \"minor\"\n",
+        )?;
+        let output = actup(repo.path())
+            .env("ACTUP_POLICY__BUMP", "patch")
+            .env("ACTUP_CACHE__TTL", "60")
+            .env("ACTUP_FETCH__MAX_TAGS_PER_REPO", "7")
+            .env("ACTUP_POLICY_PIN", "sha")
+            .arg("config")
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0));
+        let stdout = String::from_utf8(output.stdout)?;
+        for line in [
+            "  bump:        patch\n",
+            "  pin:         preserve\n",
+            "  ttl:      60 seconds",
+            "  max_tags_per_repo: 7\n",
+        ] {
+            assert!(stdout.contains(line), "{line:?}: {stdout}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn schema_ignores_invalid_config() -> Result<(), Box<dyn std::error::Error>> {
         let repo = broken_repo()?;
         let output = actup(repo.path())

@@ -1,24 +1,41 @@
 use figment::{
     Metadata, Profile, Provider,
-    util::nest,
     value::{Dict, Map, Value},
 };
 
 const PREFIX: &str = "ACTUP_";
 
+const SEPARATOR: &str = "__";
+
 /// Environment variable that names the explicit config file.
 pub const CONFIG_VAR: &str = "ACTUP_CONFIG";
 
-const CLI_FLAG_VARS: &[&str] = &[CONFIG_VAR];
+/// Environment variable that sets the CLI `--verbose` flag.
+pub const VERBOSE_VAR: &str = "ACTUP_VERBOSE";
+
+/// Environment variable that sets the CLI `--format` option.
+pub const FORMAT_VAR: &str = "ACTUP_FORMAT";
+
+/// Environment variable that sets the CLI `--strict` flag.
+pub const STRICT_VAR: &str = "ACTUP_STRICT";
+
+/// Environment variables that set CLI flags and never set a config key.
+pub const CLI_FLAG_VARS: [&str; 4] = [CONFIG_VAR, VERBOSE_VAR, FORMAT_VAR, STRICT_VAR];
 
 /// Config keys set by `ACTUP_*` environment variables.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvOverrides {
-    keys: Vec<(String, String)>,
+    keys: Vec<(Key, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Key {
+    head: String,
+    tail: Vec<String>,
 }
 
 impl EnvOverrides {
-    /// Map each `ACTUP_<A>_<B>` variable in `vars` to the config key `a.b`, matching the prefix in any case.
+    /// Map each `ACTUP_<A>__<B_C>` variable in `vars` to the lowercase config key `a.b_c`, skipping [`CLI_FLAG_VARS`] and names with an empty level.
     pub fn from_vars<K, V>(vars: impl IntoIterator<Item = (K, V)>) -> Self
     where
         K: AsRef<str>,
@@ -34,7 +51,7 @@ impl EnvOverrides {
     }
 }
 
-fn config_key(name: &str) -> Option<String> {
+fn config_key(name: &str) -> Option<Key> {
     let name = name.trim();
     if CLI_FLAG_VARS
         .iter()
@@ -46,12 +63,13 @@ fn config_key(name: &str) -> Option<String> {
         .get(..PREFIX.len())
         .filter(|prefix| prefix.eq_ignore_ascii_case(PREFIX))
         .and_then(|_| name.get(PREFIX.len()..))?;
-    let key = rest.replace('_', ".");
-    let key = key.trim();
-    if key.split('.').any(str::is_empty) {
+    let mut levels = rest.split(SEPARATOR).map(str::to_ascii_lowercase);
+    let head = levels.next().filter(|level| !level.is_empty())?;
+    let tail: Vec<String> = levels.collect();
+    if tail.iter().any(String::is_empty) {
         return None;
     }
-    Some(key.to_ascii_lowercase())
+    Some(Key { head, tail })
 }
 
 fn merge(into: &mut Dict, from: Dict) {
@@ -69,10 +87,12 @@ impl Provider for EnvOverrides {
     fn metadata(&self) -> Metadata {
         Metadata::named(format!("`{PREFIX}` environment variable(s)")).interpolater(
             |_: &Profile, keys: &[&str]| {
-                keys.iter()
+                let name = keys
+                    .iter()
                     .map(|key| key.to_ascii_uppercase())
                     .collect::<Vec<_>>()
-                    .join(".")
+                    .join(SEPARATOR);
+                format!("{PREFIX}{name}")
             },
         )
     }
@@ -81,9 +101,10 @@ impl Provider for EnvOverrides {
         let mut dict = Dict::new();
         for (key, raw) in &self.keys {
             let Ok(value) = raw.parse::<Value>();
-            if let Some(nested) = nest(key, value).into_dict() {
-                merge(&mut dict, nested);
-            }
+            let value = key.tail.iter().rev().fold(value, |value, level| {
+                Value::from(Dict::from([(level.clone(), value)]))
+            });
+            merge(&mut dict, Dict::from([(key.head.clone(), value)]));
         }
         Ok(Profile::Default.collect(dict))
     }
@@ -91,12 +112,19 @@ impl Provider for EnvOverrides {
 
 #[cfg(test)]
 mod tests {
-    use figment::{Figment, providers::Env};
+    use figment::Figment;
 
     use super::*;
 
     fn keys(vars: &[(&str, &str)]) -> Vec<(String, String)> {
-        EnvOverrides::from_vars(vars.iter().copied()).keys
+        EnvOverrides::from_vars(vars.iter().copied())
+            .keys
+            .into_iter()
+            .map(|(key, value)| {
+                let path: Vec<String> = std::iter::once(key.head).chain(key.tail).collect();
+                (path.join("."), value)
+            })
+            .collect()
     }
 
     fn pair(key: &str, value: &str) -> (String, String) {
@@ -104,54 +132,61 @@ mod tests {
     }
 
     #[test]
-    fn from_vars_maps_prefixed_names_to_dotted_lowercase_keys() {
+    fn from_vars_splits_levels_on_double_underscore() {
         assert_eq!(
             keys(&[
-                ("ACTUP_POLICY_BUMP", "patch"),
-                ("actup_scan_ignore", "[\"a/b\"]"),
-                ("Actup_Cache_Enabled", "false"),
+                ("ACTUP_POLICY__BUMP", "patch"),
+                ("actup_scan__extra_paths", "[]"),
+                ("Actup_Cache__Ttl", "60"),
                 (" ACTUP_DEFAULT_HOST ", "ghe.corp.com"),
-                ("ACTUP_VERBOSE", "1"),
-                ("ACTUP_FORMAT", "json"),
-                ("ACTUP_STRICT", "true"),
+                ("ACTUP_FETCH__MAX_TAGS_PER_REPO", "7"),
+                ("ACTUP_HOSTS__GHE.CORP.COM__TOKEN_ENV", "GHE_TOKEN"),
+                ("ACTUP_POLICY_BUMP", "minor"),
+                ("ACTUP__POLICY", "x"),
+                ("ACTUP_POLICY___BUMP", "x"),
             ]),
             [
                 pair("policy.bump", "patch"),
-                pair("scan.ignore", "[\"a/b\"]"),
-                pair("cache.enabled", "false"),
-                pair("default.host", "ghe.corp.com"),
-                pair("verbose", "1"),
-                pair("format", "json"),
-                pair("strict", "true"),
+                pair("scan.extra_paths", "[]"),
+                pair("cache.ttl", "60"),
+                pair("default_host", "ghe.corp.com"),
+                pair("fetch.max_tags_per_repo", "7"),
+                pair("hosts.ghe.corp.com.token_env", "GHE_TOKEN"),
+                pair("policy_bump", "minor"),
+                pair("_policy", "x"),
+                pair("policy._bump", "x"),
             ]
         );
     }
 
     #[test]
-    fn from_vars_skips_unprefixed_and_empty_segment_names() {
+    fn from_vars_skips_unprefixed_and_empty_level_names() {
         assert_eq!(
             keys(&[
                 ("GITHUB_TOKEN", "t"),
                 ("ACTUP", "x"),
                 ("ACTUP_", "x"),
-                ("ACTUP__POLICY", "x"),
-                ("ACTUP_POLICY_", "x"),
-                ("ACTUP_POLICY__BUMP", "x"),
+                ("ACTUP___POLICY", "x"),
+                ("ACTUP_POLICY__", "x"),
+                ("ACTUP_POLICY____BUMP", "x"),
                 ("ACTUPé", "x"),
                 ("", "x"),
-                ("XACTUP_POLICY_BUMP", "x"),
+                ("XACTUP_POLICY__BUMP", "x"),
             ]),
             Vec::<(String, String)>::new()
         );
     }
 
     #[test]
-    fn from_vars_skips_the_config_path_variable() {
+    fn from_vars_skips_cli_flag_variables() {
         assert_eq!(
             keys(&[
                 ("ACTUP_CONFIG", "x.toml"),
                 ("actup_config", "y.toml"),
-                ("ACTUP_POLICY_BUMP", "patch"),
+                ("ACTUP_VERBOSE", "1"),
+                ("ACTUP_FORMAT", "json"),
+                ("Actup_Strict", "true"),
+                ("ACTUP_POLICY__BUMP", "patch"),
             ]),
             [pair("policy.bump", "patch")]
         );
@@ -160,25 +195,32 @@ mod tests {
     #[test]
     fn data_nests_keys_and_later_values_win() -> Result<(), Box<dyn std::error::Error>> {
         let env = EnvOverrides::from_vars([
-            ("ACTUP_POLICY_BUMP", "minor"),
-            ("ACTUP_POLICY_PRERELEASE", "true"),
-            ("actup_policy_bump", "patch"),
-            ("ACTUP_FETCH_MAX_TAGS_PER_REPO", "7"),
+            ("ACTUP_POLICY__BUMP", "minor"),
+            ("ACTUP_POLICY__PRERELEASE", "true"),
+            ("actup_policy__bump", "patch"),
+            ("ACTUP_FETCH__MAX_TAGS_PER_REPO", "7"),
+            ("ACTUP_HOSTS__GHE.CORP.COM__KIND", "github"),
         ]);
         let value: Value = Figment::from(env).extract()?;
+        let find = |path: &[&str]| {
+            path.iter()
+                .try_fold(&value, |value, key| value.as_dict()?.get(*key))
+        };
         assert_eq!(
-            value.find_ref("policy.bump").and_then(Value::as_str),
+            find(&["policy", "bump"]).and_then(Value::as_str),
             Some("patch")
         );
         assert_eq!(
-            value.find_ref("policy.prerelease").and_then(Value::to_bool),
+            find(&["policy", "prerelease"]).and_then(Value::to_bool),
             Some(true)
         );
         assert_eq!(
-            value
-                .find_ref("fetch.max.tags.per.repo")
-                .and_then(Value::to_u128),
+            find(&["fetch", "max_tags_per_repo"]).and_then(Value::to_u128),
             Some(7)
+        );
+        assert_eq!(
+            find(&["hosts", "ghe.corp.com", "kind"]).and_then(Value::as_str),
+            Some("github")
         );
         Ok(())
     }
@@ -186,10 +228,10 @@ mod tests {
     #[test]
     fn data_lets_a_later_leaf_replace_a_table_and_back() -> Result<(), Box<dyn std::error::Error>> {
         let env = EnvOverrides::from_vars([
-            ("ACTUP_POLICY_BUMP", "minor"),
+            ("ACTUP_POLICY__BUMP", "minor"),
             ("ACTUP_POLICY", "flat"),
             ("ACTUP_CACHE", "flat"),
-            ("ACTUP_CACHE_TTL", "60"),
+            ("ACTUP_CACHE__TTL", "60"),
         ]);
         let value: Value = Figment::from(env).extract()?;
         assert_eq!(
@@ -203,70 +245,13 @@ mod tests {
         Ok(())
     }
 
-    const PARITY_CHILD: &str = "ENV_PARITY_CHILD";
-
-    const PROFILE_FILE: &str = "LLVM_PROFILE_FILE";
-
-    const PARITY_VARS: &[(&str, &str)] = &[
-        ("ACTUP_POLICY_BUMP", "minor"),
-        ("actup_policy", "flat"),
-        ("actup_policy_prerelease", "true"),
-        ("ACTUP_CACHE", "flat"),
-        ("ACTUP_CACHE_TTL", "60"),
-        ("Actup_Cache_Ttl", "90"),
-        (" ACTUP_DEFAULT_HOST ", "ghe.corp.com"),
-        ("ACTUP_SCAN_IGNORE", "[\"a/b\", \"c/d\"]"),
-        ("ACTUP_META", "{a = 1, b = \"two\"}"),
-        ("ACTUP_FETCH_MAX_TAGS_PER_REPO", "7"),
-        ("ACTUP_", "x"),
-        ("ACTUP__POLICY", "x"),
-        ("ACTUP_POLICY_", "x"),
-        ("ACTUP_POLICY__BUMP", "x"),
-        ("XACTUP_POLICY_BUMP", "x"),
-        ("GITHUB_TOKEN", "t"),
-    ];
-
     #[test]
-    fn matches_figment_env_on_a_controlled_environment() -> Result<(), Box<dyn std::error::Error>> {
-        if std::env::var_os(PARITY_CHILD).is_some() {
-            let vars = std::env::vars_os().map(|(k, v)| {
-                (
-                    k.to_string_lossy().into_owned(),
-                    v.to_string_lossy().into_owned(),
-                )
-            });
-            let ours: Value = Figment::from(EnvOverrides::from_vars(vars)).extract()?;
-            let figment: Value = Figment::from(Env::prefixed(PREFIX).split("_")).extract()?;
-            assert_eq!(ours, figment);
-            assert!(ours.as_dict().is_some_and(|dict| !dict.is_empty()));
-            return Ok(());
-        }
-
-        let path = module_path!()
-            .split_once("::")
-            .map_or(module_path!(), |(_, path)| path);
-        let name = format!("{path}::matches_figment_env_on_a_controlled_environment");
-        let output = std::process::Command::new(std::env::current_exe()?)
-            .args(["--exact", &name])
-            .env_clear()
-            .envs(std::env::var_os(PROFILE_FILE).map(|file| (PROFILE_FILE, file)))
-            .env(PARITY_CHILD, "1")
-            .envs(PARITY_VARS.iter().copied())
-            .output()?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(output.status.success(), "{stdout}{stderr}");
-        assert!(stdout.contains("1 passed"), "{stdout}{stderr}");
-        Ok(())
-    }
-
-    #[test]
-    fn metadata_names_the_prefix_and_upper_cases_keys() {
+    fn metadata_names_the_prefix_and_renders_the_variable_name() {
         let metadata = EnvOverrides::default().metadata();
         assert_eq!(metadata.name, "`ACTUP_` environment variable(s)");
         assert_eq!(
-            metadata.interpolate(&Profile::Default, &["policy", "bump"]),
-            "POLICY.BUMP"
+            metadata.interpolate(&Profile::Default, &["fetch", "max_tags_per_repo"]),
+            "ACTUP_FETCH__MAX_TAGS_PER_REPO"
         );
     }
 }

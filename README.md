@@ -153,6 +153,21 @@ In `uses:` refs, actup lower-cases the host. Owner and repo must match
 - `ACTUP_FORMAT` - Default output format (`human`, `json`, `toml`)
 - `ACTUP_STRICT` - Enable strict mode for `check`
 
+**Config overrides:**
+
+Every other `ACTUP_*` variable sets a config key over every config file. The
+name after `ACTUP_` names the key path. `__` separates nesting levels, and a
+single `_` stays part of a key name. Names match in any case. A value parses as
+a boolean, number, array (`[..]`) or inline table (`{k = v}`), else as a string.
+
+```sh
+ACTUP_DEFAULT_HOST=github.com
+ACTUP_POLICY__BUMP=patch
+ACTUP_CACHE__TTL=3600
+ACTUP_FETCH__MAX_TAGS_PER_REPO=20
+ACTUP_SCAN__IGNORE='["my-org/*"]'
+```
+
 ## Shell Completions
 
 Shell is auto-detected from `$SHELL` if omitted:

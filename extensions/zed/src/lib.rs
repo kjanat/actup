@@ -759,7 +759,7 @@ mod tests {
     fn read_config_applies_shell_env_over_the_file() -> Result<(), String> {
         let files = HashMap::from([("actup.toml", "[policy]\nbump = \"minor\"\npin = \"sha\"\n")]);
         let requested = RefCell::new(Vec::new());
-        let env = shell_env(&[("ACTUP_POLICY_BUMP", "patch"), ("GITHUB_TOKEN", "t")]);
+        let env = shell_env(&[("ACTUP_POLICY__BUMP", "patch"), ("GITHUB_TOKEN", "t")]);
         let config = read_config(read_from(&files, &requested), &env)?;
         assert_eq!(config.policy.bump, policy::Update::Patch);
         assert_eq!(config.policy.pin, policy::Style::Sha);
@@ -771,7 +771,7 @@ mod tests {
     fn read_config_applies_shell_env_without_a_file() -> Result<(), String> {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
-        let env = shell_env(&[("actup_policy_branch", "warn")]);
+        let env = shell_env(&[("actup_policy__branch", "warn")]);
         let config = read_config(read_from(&files, &requested), &env)?;
         assert_eq!(config.policy.branch, policy::Branch::Warn);
         assert!(config.loaded_from.is_none());
@@ -782,7 +782,7 @@ mod tests {
     fn read_config_rejects_invalid_shell_env() {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
-        let env = shell_env(&[("ACTUP_POLICY_BUMP", "sideways")]);
+        let env = shell_env(&[("ACTUP_POLICY__BUMP", "sideways")]);
         let Err(error) = read_config(read_from(&files, &requested), &env) else {
             panic!("invalid env value must not parse");
         };

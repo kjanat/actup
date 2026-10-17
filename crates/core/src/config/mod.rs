@@ -29,7 +29,7 @@ pub use discovery::find_repo_config;
 pub use discovery::{
     CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, user_config_path,
 };
-pub use env::{CONFIG_VAR, EnvOverrides};
+pub use env::{CLI_FLAG_VARS, CONFIG_VAR, EnvOverrides, FORMAT_VAR, STRICT_VAR, VERBOSE_VAR};
 use figment::{
     Figment,
     providers::{Format as _, Json, Serialized, Toml, Yaml},
@@ -1579,7 +1579,7 @@ mod tests {
     #[test]
     fn test_from_contents_applies_env_over_the_file() -> Result<(), Error> {
         let env = EnvOverrides::from_vars([
-            ("ACTUP_POLICY_BUMP", "patch"),
+            ("ACTUP_POLICY__BUMP", "patch"),
             ("ACTUP_VERBOSE", "true"),
             ("GITHUB_TOKEN", "t"),
         ]);
@@ -1600,11 +1600,121 @@ mod tests {
     fn test_from_contents_without_file_applies_env_over_defaults() -> Result<(), Error> {
         let config = Config::from_contents(
             None,
-            EnvOverrides::from_vars([("ACTUP_POLICY_BRANCH", "warn")]),
+            EnvOverrides::from_vars([("ACTUP_POLICY__BRANCH", "warn")]),
         )?;
         assert_eq!(config.policy.branch, policy::Branch::Warn);
         assert_eq!(config.policy.bump, Policy::default().bump);
         assert!(config.loaded_from.is_none());
+        Ok(())
+    }
+
+    const ENV_EVERY_KEY: &[(&str, &str)] = &[
+        ("ACTUP_POLICY__BUMP", "patch"),
+        ("ACTUP_POLICY__PIN", "sha"),
+        ("ACTUP_POLICY__TRACK", "exact"),
+        ("ACTUP_POLICY__BRANCH", "update"),
+        ("ACTUP_POLICY__PRERELEASE", "true"),
+        ("ACTUP_SCAN__IGNORE", "[\"a/b\"]"),
+        ("ACTUP_SCAN__EXTRA_PATHS", "[\".gitea/workflows\"]"),
+        (
+            "ACTUP_OVERRIDES",
+            "[{pattern = \"my-org/*\", policy = {pin = \"tag\"}}]",
+        ),
+        ("ACTUP_CACHE__TTL", "60"),
+        ("ACTUP_CACHE__PATH", "cache-dir"),
+        ("ACTUP_CACHE__ENABLED", "false"),
+        ("ACTUP_DEFAULT_HOST", "ghe.corp.com"),
+        ("ACTUP_FETCH__API_MODE", "rest"),
+        ("ACTUP_FETCH__MAX_TAGS_PER_REPO", "7"),
+        ("ACTUP_HOSTS__GHE.CORP.COM__KIND", "github"),
+        (
+            "ACTUP_HOSTS__GHE.CORP.COM__API_BASE",
+            "https://ghe.corp.com/api/v3",
+        ),
+        ("ACTUP_HOSTS__GHE.CORP.COM__TOKEN_ENV", "GHE_TOKEN"),
+        ("ACTUP_HOSTS__GHE.CORP.COM__API_MODE", "graphql"),
+        ("ACTUP_HOSTS__GHE.CORP.COM__MAX_TAGS_PER_REPO", "3"),
+    ];
+
+    #[test]
+    fn test_from_contents_env_sets_every_key() -> Result<(), Box<dyn std::error::Error>> {
+        let config =
+            Config::from_contents(None, EnvOverrides::from_vars(ENV_EVERY_KEY.iter().copied()))?;
+        assert_eq!(
+            config.policy,
+            Policy {
+                bump: policy::Update::Patch,
+                pin: policy::Style::Sha,
+                track: policy::Track::Exact,
+                branch: policy::Branch::Update,
+                prerelease: true,
+            }
+        );
+        let ignore: Vec<String> = config.scan.ignore.iter().map(ToString::to_string).collect();
+        assert_eq!(ignore, ["a/b"]);
+        assert_eq!(config.scan.extra_paths, [".gitea/workflows"]);
+        let [entry] = config.overrides.as_slice() else {
+            panic!("expected one override: {:?}", config.overrides);
+        };
+        assert_eq!(entry.pattern.to_string(), "my-org/*");
+        assert_eq!(entry.policy.pin, Some(policy::Style::Tag));
+        assert_eq!(config.cache.ttl, Duration::from_secs(60));
+        assert_eq!(config.cache.path.as_deref(), Some(Path::new("cache-dir")));
+        assert!(!config.cache.enabled);
+        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
+        assert_eq!(config.fetch.api_mode, ApiMode::Rest);
+        assert_eq!(config.fetch.max_tags_per_repo.get(), 7);
+        let Some(host) = config.hosts.get("ghe.corp.com") else {
+            panic!("missing host: {:?}", config.hosts);
+        };
+        assert_eq!(host.kind, Some(HostKind::GitHub));
+        assert_eq!(
+            host.api_base.as_deref(),
+            Some("https://ghe.corp.com/api/v3")
+        );
+        assert_eq!(host.token_env.as_deref(), Some("GHE_TOKEN"));
+        assert_eq!(host.api_mode, Some(ApiMode::Graphql));
+        assert_eq!(host.max_tags_per_repo.map(NonZeroU8::get), Some(3));
+        Ok(())
+    }
+
+    fn leaf_paths(value: &serde_json::Value, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+        match value {
+            serde_json::Value::Object(map) if !map.is_empty() => {
+                for (key, child) in map {
+                    path.push(key.clone());
+                    leaf_paths(child, path, out);
+                    path.pop();
+                }
+            }
+            _ => out.push(path.clone()),
+        }
+    }
+
+    fn lookup<'a>(value: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+        path.iter()
+            .try_fold(value, |value, key| value.get(key))
+            .filter(|value| !value.is_null())
+    }
+
+    #[test]
+    fn test_env_every_key_sample_changes_every_leaf() -> Result<(), Box<dyn std::error::Error>> {
+        let defaults = serde_json::to_value(Config::default())?;
+        let from_env = serde_json::to_value(Config::from_contents(
+            None,
+            EnvOverrides::from_vars(ENV_EVERY_KEY.iter().copied()),
+        )?)?;
+        let mut leaves = Vec::new();
+        leaf_paths(&from_env, &mut Vec::new(), &mut leaves);
+        assert_eq!(leaves.len(), ENV_EVERY_KEY.len(), "{leaves:?}");
+        leaf_paths(&defaults, &mut Vec::new(), &mut leaves);
+        for leaf in &leaves {
+            assert_ne!(
+                lookup(&from_env, leaf),
+                lookup(&defaults, leaf),
+                "no sample sets {leaf:?}"
+            );
+        }
         Ok(())
     }
 
