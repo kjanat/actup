@@ -36,7 +36,7 @@ jobs:
 
       - run: rustup toolchain install
 
-      - name: Check every crate the release publishes
+      - name: Check the licence files of every crate the release publishes
         run: |
           crates="$(yq '.jobs.crates-verify.steps[] | select(.id == "package") | .env.CRATES' .github/workflows/release.yml)"
           if [[ -z "${crates}" || "${crates}" == null ]]; then
@@ -52,6 +52,7 @@ jobs:
               missing=1
               continue
             fi
+            dir="$(dirname "$(jq -r --arg name "${crate}" '.packages[] | select(.name == $name) | .manifest_path' <<<"${metadata}")")"
             listing="$(cargo package --list --locked -p "${crate}")"
             for id in ${license//[()]/ }; do
               case "${id}" in
@@ -66,6 +67,9 @@ jobs:
               esac
               if ! grep -qxF "${file}" <<<"${listing}"; then
                 echo "::error::${crate} declares ${id}, and its package lacks ${file}"
+                missing=1
+              elif ! cmp "${dir}/${file}" "${file}"; then
+                echo "::error::${crate} packs a ${file} that differs from the repository's ${file}"
                 missing=1
               fi
             done
