@@ -241,9 +241,12 @@ fn locate_uses(
 ) -> LocatedUses {
     let locations = format.extract_uses(text);
     let commentable = format.comment_lines(text);
-    let mut values_on_line: HashMap<usize, usize> = HashMap::new();
+    let mut share_by_line: HashMap<usize, LineShare> = HashMap::new();
     for loc in &locations {
-        *values_on_line.entry(loc.line()).or_insert(0) += 1;
+        share_by_line
+            .entry(loc.line())
+            .and_modify(|share| *share = LineShare::Shared)
+            .or_insert(LineShare::Sole);
     }
     let mut located = LocatedUses {
         actions: Vec::with_capacity(locations.len()),
@@ -302,11 +305,10 @@ fn locate_uses(
                 let read = if takes_comment {
                     raw_line
                 } else {
-                    let share = if values_on_line.get(&loc.line()) == Some(&1) {
-                        LineShare::Sole
-                    } else {
-                        LineShare::Shared
-                    };
+                    let share = share_by_line
+                        .get(&loc.line())
+                        .copied()
+                        .unwrap_or(LineShare::Shared);
                     labeled_head(Gap::after(format, share), raw_line, r.end)
                 };
                 (
