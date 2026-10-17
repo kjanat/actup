@@ -57,7 +57,8 @@ refKind names what currentRef is (tag, branch or sha); sameCommit names a target
 Mutators (write files; pass dryRun: true to plan without writing):
 - updateFile: replace the ref of named `uses:` values in one file. Every edit applies or none does, \
 and every edit names an action on the same host. \
-Only the text after `@` changes; a trailing comment stays as written.
+Only the text after `@` changes; a trailing comment stays as written. \
+It also replaces an invalid ref when the rewritten value parses, and refuses a value without `@`.
 - updateAllUsesToVersion: move every reference to one action under workspaceRoot to targetRef. \
 SHA-pinned references stay pinned: the provider resolves targetRef to its current commit on every call \
 and the line keeps a `# <ref>` comment. \

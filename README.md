@@ -477,12 +477,12 @@ refuses edits that name actions on more than one host. `updateAllUsesToVersion`
 writes each ref in its `policy.pin` style, as `update` does. It lists each
 matching `uses:` value that is not a valid reference under `unresolvable` with
 its `error`, leaves it unchanged and reports status `unresolvable`. `updateFile`
-refuses an edit of such a value. `getLatest` adds `refKind` (`tag`, `branch` or
-`sha`) when the version list names `currentRef`, and `sameCommit` (the target
-version) when the target sits on the commit that `currentRef` already points at.
-`getVersions` and `getLatest` add `stale`, shaped like the CLI field, when their
-versions come from an expired cache entry, and the server answers the next call
-afresh.
+replaces the ref of such a value when the rewritten value parses, and refuses a
+value without `@`. `getLatest` adds `refKind` (`tag`, `branch` or `sha`) when
+the version list names `currentRef`, and `sameCommit` (the target version) when
+the target sits on the commit that `currentRef` already points at. `getVersions`
+and `getLatest` add `stale`, shaped like the CLI field, when their versions come
+from an expired cache entry, and the server answers the next call afresh.
 
 ## Exit Codes
 

@@ -1152,25 +1152,62 @@ fn mutators_report_invalid_refs(client: &mut Client, ws: &Workspace) -> TestResu
         "invalid refs were rewritten".into()
     })?;
 
-    let file = update_file(
+    let no_at = update_file(
         client,
         json!({
             "path": ".github/workflows/bad.yml",
-            "edits": [{ "line": 2, "action": "actions/checkout", "ref": "v4.2.0" }],
+            "edits": [
+                { "line": 2, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 4, "action": "actions/checkout", "ref": "v4.2.0" },
+            ],
         }),
     )?;
-    expect(is_error(&file), || {
-        format!("an edit of an invalid ref must fail: {file}")
+    expect(is_error(&no_at), || {
+        format!("an edit of a value without `@` must fail: {no_at}")
     })?;
     expect(
-        error_text(&file).contains(
-            "line 2: `actions/checkout@a~1`: invalid action reference 'actions/checkout@a~1': ref `a~1` holds the character '~'",
-        ),
-        || error_text(&file),
+        error_text(&no_at).contains("line 4: `actions/checkout` has no `@`"),
+        || error_text(&no_at),
     )?;
     expect(ws.read(".github/workflows/bad.yml")? == bad, || {
         "a refused call wrote the file".into()
-    })
+    })?;
+
+    let fixed = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/bad.yml",
+            "edits": [
+                { "line": 2, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 3, "action": "actions/checkout", "ref": "v4.2.0" },
+            ],
+        }),
+    )?;
+    expect(!is_error(&fixed), || {
+        format!("an edit of an invalid ref must apply: {fixed}")
+    })?;
+    let f = body(&fixed);
+    let changed: Vec<(&Value, &Value, &Value)> = f["changes"]
+        .as_array()
+        .ok_or("changes")?
+        .iter()
+        .map(|c| (&c["line"], &c["from"], &c["to"]))
+        .collect();
+    expect(
+        changed
+            == [
+                (&json!(2), &json!("a~1"), &json!("v4.2.0")),
+                (&json!(3), &json!("v1.lock"), &json!("v4.2.0")),
+            ],
+        || format!("changes: {}", f["changes"]),
+    )?;
+    expect(
+        ws.read(".github/workflows/bad.yml")?
+            == bad
+                .replace("checkout@a~1", "checkout@v4.2.0")
+                .replace("checkout@v1.lock", "checkout@v4.2.0"),
+        || "invalid refs were not replaced".into(),
+    )
 }
 
 fn binary(ws: &Workspace) -> Command {

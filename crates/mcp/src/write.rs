@@ -388,41 +388,33 @@ fn refuse_skips(skipped: &[Skipped]) -> Result<(), CallToolError> {
     )))
 }
 
-#[derive(Default)]
-struct Scanned {
-    valid: Vec<(UsesLocation, ActionRef)>,
-    invalid: Vec<(UsesLocation, ActionRef, actup_core::Error)>,
+fn remote_values(format: SourceFormat, content: &str) -> Vec<(UsesLocation, ActionRef)> {
+    format
+        .extract_uses(content)
+        .into_iter()
+        .filter_map(|loc| match classify_uses(loc.value()) {
+            Uses::Local => None,
+            Uses::Action(action) | Uses::Invalid { action, .. } => Some((loc, action)),
+        })
+        .collect()
 }
 
-impl Scanned {
-    fn of(format: SourceFormat, content: &str) -> Self {
-        let mut scanned = Self::default();
-        for loc in format.extract_uses(content) {
-            match classify_uses(loc.value()) {
-                Uses::Local => {}
-                Uses::Action(action) => scanned.valid.push((loc, action)),
-                Uses::Invalid { action, error } => scanned.invalid.push((loc, action, error)),
-            }
-        }
-        scanned
-    }
-
-    fn unmatched(
-        &self,
-        line: usize,
-        (written, named): (&str, &ActionRepoId),
-        matched: usize,
-        default_host: &str,
-    ) -> String {
-        let invalid = self.invalid.iter().find(|(loc, action, _)| {
-            loc.line() == line && same_repo(&action.to_repo_id(), named, default_host)
-        });
-        match invalid {
-            Some((loc, _, error)) if matched == 0 => {
-                format!("line {line}: `{}`: {error}", loc.value())
-            }
-            _ => format!("line {line}: {matched} `uses:` value(s) name `{written}`"),
-        }
+/// The byte range of the ref that `reference` replaces, if the rewritten value parses.
+fn replaced_ref(loc: &UsesLocation, reference: &str) -> Result<Range<usize>, String> {
+    let value = loc.value();
+    let Some((base, _)) = value.split_once('@') else {
+        return Err(format!("`{value}` has no `@`"));
+    };
+    let Some(range) = loc.ref_range() else {
+        return Err(format!(
+            "`{value}` is escaped or spans lines; edit it by hand"
+        ));
+    };
+    let rewritten = format!("{base}@{reference}");
+    match classify_uses(&rewritten) {
+        Uses::Action(_) => Ok(range),
+        Uses::Invalid { error, .. } => Err(format!("`{rewritten}`: {error}")),
+        Uses::Local => Err(format!("`{rewritten}` names no remote action")),
     }
 }
 
@@ -448,7 +440,7 @@ pub fn update_file(
     let original = fs::read_to_string(&path).map_err(|e| refused(format!("{shown}: {e}")))?;
     let format = SourceFormat::from_path(&path);
     let default_host = registry.default_host().unwrap_or_default();
-    let scanned = Scanned::of(format, &original);
+    let locations = remote_values(format, &original);
 
     let mut edits = FileEdits::new(path.clone(), original.clone(), format);
     let mut unchanged = Vec::new();
@@ -459,8 +451,7 @@ pub fn update_file(
             .map_err(|e| invalid(format!("action `{}`: {e}", edit.action)))?;
         check_written_ref("ref", &edit.reference).map_err(invalid)?;
         let line = edit.line.get();
-        let matches: Vec<&(UsesLocation, ActionRef)> = scanned
-            .valid
+        let matches: Vec<&(UsesLocation, ActionRef)> = locations
             .iter()
             .filter(|(loc, action)| {
                 let id = action.to_repo_id();
@@ -470,11 +461,10 @@ pub fn update_file(
             })
             .collect();
         let [(loc, action)] = matches.as_slice() else {
-            problems.push(scanned.unmatched(
-                line,
-                (&edit.action, &named),
+            problems.push(format!(
+                "line {line}: {} `uses:` value(s) name `{}`",
                 matches.len(),
-                default_host,
+                edit.action
             ));
             continue;
         };
@@ -490,12 +480,12 @@ pub fn update_file(
             });
             continue;
         }
-        let Some(range) = loc.ref_range() else {
-            problems.push(format!(
-                "line {line}: `{}` is escaped or spans lines; edit it by hand",
-                loc.value()
-            ));
-            continue;
+        let range = match replaced_ref(loc, &edit.reference) {
+            Ok(range) => range,
+            Err(problem) => {
+                problems.push(format!("line {line}: {problem}"));
+                continue;
+            }
         };
         let pending = PendingEdit::replace_range(line, range, edit.reference.clone());
         let label = label(site, &pending, loc, action.ref_str(), &edit.reference);
@@ -723,6 +713,32 @@ mod tests {
 
     fn target() -> Info {
         Info::new(version::Version::parse("v4.2.0"), "b".repeat(40))
+    }
+
+    #[test]
+    fn replaced_ref_requires_an_at_and_a_value_that_parses()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let only = |line_body: &str| -> Result<UsesLocation, Box<dyn std::error::Error>> {
+            let found = actup_core::extract_uses_from_yaml(line_body);
+            let [loc] = found.as_slice() else {
+                return Err(format!("expected one `uses:` in {line_body:?}").into());
+            };
+            Ok(loc.clone())
+        };
+        assert_eq!(replaced_ref(&only("- uses: o/r@a~1")?, "v1"), Ok(12..15));
+        assert_eq!(
+            replaced_ref(&only("- uses: o/r")?, "v1"),
+            Err("`o/r` has no `@`".to_string())
+        );
+        assert_eq!(
+            replaced_ref(&only("- uses: \"o/r@a\\x7e1\"")?, "v1"),
+            Err("`o/r@a~1` is escaped or spans lines; edit it by hand".to_string())
+        );
+        assert_eq!(
+            replaced_ref(&only("- uses: o/r/../x@a~1")?, "v1"),
+            Err("`o/r/../x@v1`: invalid action reference 'o/r/../x@v1': path segment `..` is empty, `.` or `..`".to_string())
+        );
+        Ok(())
     }
 
     #[test]
