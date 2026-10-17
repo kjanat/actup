@@ -110,7 +110,6 @@ impl Cli {
         Ok(cli)
     }
 
-    /// The `--color` choice in `args` or the environment, read before the full parse so clap's own help and errors follow it.
     fn color_in(args: &[OsString]) -> ColorChoice {
         let mut given = None;
         let mut rest = args.iter().skip(1).map(|arg| arg.to_str());
@@ -192,6 +191,10 @@ pub enum Command {
         /// Output format
         #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
         format: CheckFormat,
+
+        /// Also write a GitHub Actions `::error`/`::warning` command per finding to stderr
+        #[arg(long)]
+        github_annotations: bool,
     },
 
     /// Update actions to their latest versions
@@ -308,6 +311,8 @@ pub enum CheckFormat {
     Toml,
     /// One aligned row per finding: location, action, current, target, status.
     Table,
+    /// A SARIF 2.1.0 log for code scanning.
+    Sarif,
 }
 
 impl CheckFormat {
@@ -316,7 +321,7 @@ impl CheckFormat {
     pub const fn messages(self) -> OutputFormat {
         match self {
             Self::Human | Self::Table => OutputFormat::Human,
-            Self::Json => OutputFormat::Json,
+            Self::Json | Self::Sarif => OutputFormat::Json,
             Self::Toml => OutputFormat::Toml,
         }
     }
@@ -471,6 +476,8 @@ mod tests {
             &["update", "--format", "table"][..],
             &["config", "--format", "table"][..],
             &["--format", "table", "actions/checkout"][..],
+            &["pin", "--format", "sarif"][..],
+            &["cache", "--format", "sarif", "info"][..],
         ] {
             let Err(error) = parse(args) else {
                 panic!("{args:?} must be rejected");

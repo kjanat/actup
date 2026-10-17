@@ -373,3 +373,83 @@ async fn check_prints_a_table_and_other_commands_reject_it() -> TestResult {
     assert_eq!(output.status.code(), Some(2));
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn check_writes_sarif_and_annotations() -> TestResult {
+    let server = remote().await;
+    let repo = Repo::new(&server, &["o/old@v1.0.0", "o/new@v1.1.0", "o/old@v9.9.9"])?;
+
+    let output = repo
+        .run(&["check", ".", "--format", "sarif", "--github-annotations"])
+        .await?;
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let log: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let run = &log["runs"][0];
+    assert_eq!(log["version"], "2.1.0");
+    let results: Vec<(&str, &str, u64, u64, u64)> = run["results"]
+        .as_array()
+        .ok_or("no results")?
+        .iter()
+        .map(|r| {
+            let region = &r["locations"][0]["physicalLocation"]["region"];
+            (
+                r["ruleId"].as_str().unwrap_or_default(),
+                r["level"].as_str().unwrap_or_default(),
+                region["startLine"].as_u64().unwrap_or_default(),
+                region["startColumn"].as_u64().unwrap_or_default(),
+                region["endColumn"].as_u64().unwrap_or_default(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        results,
+        [
+            ("actup/outdated", "warning", 2, 11, 23),
+            ("actup/unresolvable", "error", 4, 11, 23),
+        ]
+    );
+    assert_eq!(
+        run["results"][0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"],
+        ".github/workflows/ci.yml"
+    );
+    assert_eq!(run["invocations"][0]["executionSuccessful"], true);
+
+    let annotations: Vec<String> = String::from_utf8(output.stderr)?
+        .lines()
+        .filter(|line| line.starts_with("::"))
+        .map(String::from)
+        .collect();
+    assert_eq!(
+        annotations,
+        [
+            "::warning file=.github/workflows/ci.yml,line=2,col=11,endColumn=23::o/old@v1.0.0: v1.0.0 -> v1.1.0",
+            "::error file=.github/workflows/ci.yml,line=4,col=11,endColumn=23::o/old@v9.9.9: no versions found",
+        ]
+    );
+
+    let plain = repo.run(&["check", ".", "--format", "json"]).await?;
+    assert!(!String::from_utf8(plain.stderr)?.contains("::"));
+    let rejected = repo.run(&["update", ".", "--github-annotations"]).await?;
+    assert_eq!(rejected.status.code(), Some(2));
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn sarif_reports_unreadable_files_as_notifications() -> TestResult {
+    let server = remote().await;
+    let repo = Repo::new(&server, &["o/new@v1.1.0"])?;
+    fs::write(
+        repo.path().join(".github/workflows/bad.yml"),
+        [b's', b':', b' ', 0xff],
+    )?;
+    let output = repo.run(&["check", ".", "--format", "sarif"]).await?;
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let log: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let invocation = &log["runs"][0]["invocations"][0];
+    assert_eq!(invocation["executionSuccessful"], false);
+    let text = invocation["toolExecutionNotifications"][0]["message"]["text"]
+        .as_str()
+        .ok_or("no notification")?;
+    assert!(text.contains("bad.yml"), "{text}");
+    Ok(())
+}

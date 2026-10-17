@@ -7,10 +7,13 @@ use actup_core::{
     check_action_with_provider, provider, version,
 };
 
+use anstream::eprintln;
+
 use crate::{
     cli::{CheckFormat, FailOn, OutputFormat},
     common::{ErrorTally, WorkflowScanner},
-    output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary},
+    output::{Finding, FindingStatus, Span, determine_exit_code, print_findings, print_summary},
+    sarif,
     scan::{Scan, Versions},
 };
 
@@ -100,6 +103,7 @@ async fn check_action_with_versions(
         action.provider.clone(),
         action.host.clone(),
     )
+    .with_span(action.span)
     .with_ref(
         result.as_ref().and_then(CheckResult::ref_kind),
         result.as_ref().and_then(|r| r.same_commit().cloned()),
@@ -115,6 +119,7 @@ struct CollectedAction {
     repo_id: ActionRepoId,
     provider: String,
     host: String,
+    span: Span,
 }
 
 /// Scan workflows and report outdated actions across multiple providers.
@@ -122,6 +127,7 @@ pub async fn run(
     path: &Path,
     fail_on: &[FailOn],
     format: CheckFormat,
+    github_annotations: bool,
     config: &Config,
     registry: &provider::Registry,
 ) -> i32 {
@@ -131,7 +137,7 @@ pub async fn run(
     if discovered.is_empty() {
         scanner.print_empty_message();
         if !matches!(format.messages(), OutputFormat::Human) {
-            print_findings(&[], format);
+            print_findings(&[], format, &[]);
         }
         return 0;
     }
@@ -150,9 +156,14 @@ pub async fn run(
     // completes (not per-phase) keeps the order deterministic.
     findings.sort_by(|a, b| a.file().cmp(b.file()).then_with(|| a.line().cmp(&b.line())));
 
-    print_findings(&findings, format);
+    print_findings(&findings, format, &scan.unreadable);
     if format == CheckFormat::Human {
         print_summary(&findings);
+    }
+    if github_annotations {
+        for annotation in sarif::annotations(&findings) {
+            eprintln!("{annotation}");
+        }
     }
 
     // I/O errors take priority over outdated status (env error = exit 3).
@@ -181,29 +192,35 @@ fn collect_actions(
         // error: emit immediately so it doesn't block batch fetching.
         let Some(provider) = scanner.provider_for(action_ref) else {
             let host = scanner.host_for(action_ref);
-            findings.push(Finding::new(
-                relative.clone(),
-                scanned.loc.line(),
-                action_ref.clone(),
-                FindingStatus::Unresolvable {
-                    reason: format!("no provider for host: {host}"),
-                    is_environment_error: true,
-                },
-                "unknown".to_string(),
-                host,
-            ));
+            findings.push(
+                Finding::new(
+                    relative.clone(),
+                    scanned.loc.line(),
+                    action_ref.clone(),
+                    FindingStatus::Unresolvable {
+                        reason: format!("no provider for host: {host}"),
+                        is_environment_error: true,
+                    },
+                    "unknown".to_string(),
+                    host,
+                )
+                .with_span(Span::of(&scanned.loc)),
+            );
             continue;
         };
 
         if config.should_ignore(action_ref) {
-            findings.push(Finding::new(
-                relative.clone(),
-                scanned.loc.line(),
-                action_ref.clone(),
-                FindingStatus::Ignored,
-                provider.kind().to_string(),
-                provider.host().to_string(),
-            ));
+            findings.push(
+                Finding::new(
+                    relative.clone(),
+                    scanned.loc.line(),
+                    action_ref.clone(),
+                    FindingStatus::Ignored,
+                    provider.kind().to_string(),
+                    provider.host().to_string(),
+                )
+                .with_span(Span::of(&scanned.loc)),
+            );
             continue;
         }
 
@@ -214,6 +231,7 @@ fn collect_actions(
             repo_id: scanned.repo_id.clone(),
             provider: provider.kind().to_string(),
             host: provider.host().to_string(),
+            span: Span::of(&scanned.loc),
         });
     }
     collected
@@ -283,7 +301,8 @@ async fn resolve_fallback_refs(
                     },
                     action.provider,
                     action.host,
-                );
+                )
+                .with_span(action.span);
             }
             Err(e) if e.is_environment_error() => {
                 tracing::debug!(
@@ -304,7 +323,8 @@ async fn resolve_fallback_refs(
                     },
                     action.provider,
                     action.host,
-                );
+                )
+                .with_span(action.span);
             }
             Err(_) => {}
         }
@@ -648,6 +668,7 @@ mod tests {
             action_ref,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
         };
 
         let finding =
@@ -680,6 +701,7 @@ mod tests {
             action_ref,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
         };
 
         let finding = check_action_with_versions(&collected, None, &config, &registry).await;
@@ -723,6 +745,7 @@ mod tests {
             action_ref,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
         };
 
         let finding =
@@ -766,6 +789,7 @@ mod tests {
             action_ref,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
         };
 
         let finding =
@@ -859,6 +883,7 @@ mod tests {
             action_ref,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
         }
     }
 
@@ -1072,6 +1097,7 @@ mod tests {
             repo_id,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
         };
 
         assert_eq!(collected.file, "workflow.yml");
@@ -1174,8 +1200,12 @@ mod tests {
             CheckFormat::Json,
             CheckFormat::Toml,
             CheckFormat::Table,
+            CheckFormat::Sarif,
         ] {
-            assert_eq!(run(dir.path(), &[], format, &config, &registry).await, 0);
+            assert_eq!(
+                run(dir.path(), &[], format, false, &config, &registry).await,
+                0
+            );
         }
         Ok(())
     }

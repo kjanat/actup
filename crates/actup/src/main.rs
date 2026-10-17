@@ -9,6 +9,7 @@ mod file_cache;
 mod offline;
 mod output;
 mod progress;
+mod sarif;
 mod scan;
 
 use anstream::{eprintln, println};
@@ -125,11 +126,20 @@ async fn run(cli: Cli) -> i32 {
             strict,
             mut fail_on,
             format,
+            github_annotations,
         }) => {
             if strict {
                 fail_on.push(cli::FailOn::Outdated);
             }
-            commands::check::run(&path, &fail_on, format, &config, &registry).await
+            commands::check::run(
+                &path,
+                &fail_on,
+                format,
+                github_annotations,
+                &config,
+                &registry,
+            )
+            .await
         }
         Some(
             Command::Update {

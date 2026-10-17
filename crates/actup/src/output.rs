@@ -3,11 +3,14 @@
 use anstream::{eprintln, println};
 use std::sync::Arc;
 
-use actup_core::{ActionRef, RefKind, sanitize_line, version};
+use actup_core::{ActionRef, RefKind, UsesLocation, sanitize_line, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CheckFormat, FailOn};
+use crate::{
+    cli::{CheckFormat, FailOn},
+    sarif,
+};
 
 /// JSON-serializable finding for structured output
 #[derive(Serialize)]
@@ -102,6 +105,35 @@ impl From<&Finding> for JsonFinding {
     }
 }
 
+/// The UTF-16 columns of a `uses:` value on its line, 1-based, end exclusive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    /// Column of the value's first character.
+    pub start: usize,
+    /// Column after the value's last character.
+    pub end: usize,
+}
+
+impl Span {
+    /// The span of the value at `loc`.
+    #[must_use]
+    pub fn of(loc: &UsesLocation) -> Self {
+        let raw = loc.raw_line();
+        let range = loc.value_range();
+        let start_byte = range
+            .as_ref()
+            .map_or_else(|| loc.column().saturating_sub(1), |r| r.start);
+        let value = range
+            .and_then(|r| raw.get(r))
+            .unwrap_or_else(|| loc.value());
+        let start = raw.get(..start_byte).unwrap_or("").encode_utf16().count() + 1;
+        Self {
+            start,
+            end: start + value.encode_utf16().count(),
+        }
+    }
+}
+
 /// A finding from scanning a workflow file
 #[derive(Debug, Clone)]
 pub struct Finding {
@@ -116,6 +148,7 @@ pub struct Finding {
     ref_kind: Option<RefKind>,
     same_commit: Option<Arc<version::Info>>,
     suggestion: Option<Arc<version::Info>>,
+    span: Option<Span>,
 }
 
 impl Finding {
@@ -139,7 +172,21 @@ impl Finding {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         }
+    }
+
+    /// Record where the `uses:` value sits on its line.
+    #[must_use]
+    pub const fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    /// Get where the `uses:` value sits on its line, when known
+    #[must_use]
+    pub const fn span(&self) -> Option<Span> {
+        self.span
     }
 
     /// Record the kind of ref and the suggested target on its current commit.
@@ -255,8 +302,8 @@ pub enum FindingStatus {
     },
 }
 
-/// The status name of `status` in JSON, TOML and table output.
-const fn status_name(status: &FindingStatus) -> &'static str {
+/// The status name of `status` in JSON, TOML, table and SARIF output.
+pub const fn status_name(status: &FindingStatus) -> &'static str {
     match status {
         FindingStatus::UpToDate => "up_to_date",
         FindingStatus::Ignored => "ignored",
@@ -274,12 +321,20 @@ const fn status_name(status: &FindingStatus) -> &'static str {
 }
 
 /// Prints the given findings in the requested output format.
-pub fn print_findings(findings: &[Finding], format: CheckFormat) {
+///
+/// SARIF output lists `unreadable` files as execution notifications.
+pub fn print_findings(findings: &[Finding], format: CheckFormat, unreadable: &[String]) {
     match format {
         CheckFormat::Human => print_human(findings),
         CheckFormat::Json => print_json(findings),
         CheckFormat::Toml => print_toml(findings),
         CheckFormat::Table => println!("{}", table(findings)),
+        CheckFormat::Sarif => {
+            match serde_json::to_string_pretty(&sarif::sarif(findings, unreadable)) {
+                Ok(json) => println!("{json}"),
+                Err(e) => eprintln!("Error serializing SARIF: {e}"),
+            }
+        }
     }
 }
 
@@ -307,7 +362,6 @@ fn table_row(finding: &Finding) -> [String; 5] {
     .map(|cell| sanitize_line(&cell).into_owned())
 }
 
-/// Render `findings` as a table with one aligned row per finding under a header.
 fn table(findings: &[Finding]) -> String {
     let header = ["LOCATION", "ACTION", "CURRENT", "TARGET", "STATUS"].map(String::from);
     let rows: Vec<[String; 5]> = std::iter::once(header)
@@ -608,7 +662,6 @@ fn summary_line(findings: &[Finding]) -> String {
     )
 }
 
-/// Whether `status` is a finding of kind `kind`.
 fn trips(kind: FailOn, status: &FindingStatus) -> bool {
     match (kind, status) {
         (FailOn::Outdated, FindingStatus::Outdated { .. })
@@ -991,7 +1044,7 @@ mod tests {
         .join("\n");
         assert_eq!(table(&findings), expected);
         assert_eq!(table(&[]), "LOCATION  ACTION  CURRENT  TARGET  STATUS");
-        print_findings(&findings, CheckFormat::Table);
+        print_findings(&findings, CheckFormat::Table, &[]);
     }
 
     #[test]
@@ -1916,6 +1969,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1949,6 +2003,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1977,6 +2032,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2007,6 +2063,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2032,6 +2089,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2058,6 +2116,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2086,6 +2145,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2111,6 +2171,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -2135,6 +2196,7 @@ mod tests {
             ref_kind: None,
             same_commit: None,
             suggestion: None,
+            span: None,
         };
 
         let json_finding = JsonFinding::from(&finding);

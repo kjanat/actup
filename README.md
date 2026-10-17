@@ -69,12 +69,32 @@ actup check --format json   # Machine-readable JSON
 actup check --format toml   # TOML format
 actup check --format human  # Default, colored output
 actup check --format table  # One aligned row per finding
+actup check --format sarif  # SARIF 2.1.0 for code scanning
 ```
 
 `--format table` prints the columns `LOCATION` (`file:line`), `ACTION`,
 `CURRENT`, `TARGET` (`-` when there is none) and `STATUS` (the JSON status
-name). Only `check` accepts `table`; other commands reject it, also when
-`ACTUP_FORMAT` sets it.
+name). Only `check` accepts `table` and `sarif`; other commands reject them,
+also when `ACTUP_FORMAT` sets them.
+
+`--format sarif` writes one result per finding other than up-to-date and ignored
+refs, under one rule per status (`actup/outdated`, `actup/floating`,
+`actup/unresolvable` and so on). Levels follow the LSP severities: `error` for
+an unresolvable ref, `warning` for an outdated or floating ref, and `note` for
+pinned and unknown refs, environment errors and same-commit pins. Paths are
+relative to the scanned directory, and columns count UTF-16 code units. Files
+that could not be read appear as execution notifications.
+
+`check --github-annotations` also writes one `::error` or `::warning` workflow
+command per error or warning finding to stderr, whatever `--format` is.
+
+```yaml
+- run: actup check --format sarif --github-annotations > actup.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  if: always()
+  with:
+    sarif_file: actup.sarif
+```
 
 `check --fail-on <kind>` exits 1 when a finding of that kind exists. Repeat it
 for several kinds. `outdated` covers outdated refs and branch refs to pin,

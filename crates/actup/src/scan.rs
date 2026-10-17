@@ -48,6 +48,8 @@ pub struct Scan {
     pub files: Vec<ScannedFile>,
     /// References in file and line order.
     pub refs: Vec<ScannedRef>,
+    /// A `path: error` message for each discovered file that could not be read.
+    pub unreadable: Vec<String>,
 }
 
 impl Scan {
@@ -59,9 +61,14 @@ impl Scan {
     ) -> Self {
         let mut files = Vec::new();
         let mut refs = Vec::new();
+        let mut unreadable = Vec::new();
         for file in discovered {
-            let Some(content) = scanner.read_file(file, errors) else {
-                continue;
+            let content = match scanner.read_file(file, errors) {
+                Ok(content) => content,
+                Err(message) => {
+                    unreadable.push(message);
+                    continue;
+                }
             };
             let index = files.len();
             let format = file.format();
@@ -80,7 +87,11 @@ impl Scan {
                 format,
             });
         }
-        Self { files, refs }
+        Self {
+            files,
+            refs,
+            unreadable,
+        }
     }
 
     /// The references in file `index`.
@@ -290,6 +301,7 @@ mod tests {
             Err(CoreError::Internal { .. })
         ));
         assert_eq!(errors.total(), 0);
+        assert_eq!(scan.unreadable, Vec::<String>::new());
         Ok(())
     }
 
@@ -302,6 +314,7 @@ mod tests {
         let scan = Scan {
             files: Vec::new(),
             refs: Vec::new(),
+            unreadable: Vec::new(),
         };
         assert!(
             scan.fetch(&scanner, &config, &registry, |_| true)

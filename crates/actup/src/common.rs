@@ -484,11 +484,15 @@ impl<'a> WorkflowScanner<'a> {
         }
     }
 
-    /// Read a file's content, tracking errors in tally.
+    /// Read a file's content, tracking errors in tally; an unreadable file yields its `path: error` message.
     #[allow(clippy::unused_self)]
-    pub fn read_file(&self, file: &DiscoveredFile, errors: &mut ErrorTally) -> Option<String> {
+    pub fn read_file(
+        &self,
+        file: &DiscoveredFile,
+        errors: &mut ErrorTally,
+    ) -> Result<String, String> {
         match fs::read_to_string(file.path()) {
-            Ok(content) => Some(content),
+            Ok(content) => Ok(content),
             Err(e) => {
                 eprintln!(
                     "{}: {} - {}",
@@ -497,7 +501,7 @@ impl<'a> WorkflowScanner<'a> {
                     sanitize_for_terminal(&e.to_string())
                 );
                 errors.record_env();
-                None
+                Err(format!("{}: {e}", file.path().display()))
             }
         }
     }

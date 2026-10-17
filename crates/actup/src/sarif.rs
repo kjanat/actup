@@ -1,0 +1,573 @@
+//! SARIF 2.1.0 output and GitHub Actions workflow-command annotations for `check`.
+
+use actup_core::{ActionRef, sanitize_for_terminal};
+use serde_json::{Value, json};
+
+use crate::output::{Finding, FindingStatus, status_name};
+
+const INFORMATION_URI: &str = env!("CARGO_PKG_REPOSITORY");
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Level {
+    Error,
+    Warning,
+    Note,
+}
+
+impl Level {
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Note => "note",
+        }
+    }
+}
+
+const fn base_level(status: &FindingStatus) -> Option<Level> {
+    match status {
+        FindingStatus::UpToDate | FindingStatus::Ignored => None,
+        FindingStatus::Outdated { .. }
+        | FindingStatus::Floating { .. }
+        | FindingStatus::PinBranch { .. } => Some(Level::Warning),
+        FindingStatus::Unresolvable {
+            is_environment_error: false,
+            ..
+        } => Some(Level::Error),
+        FindingStatus::Pinned { .. }
+        | FindingStatus::Unknown { .. }
+        | FindingStatus::Unresolvable { .. } => Some(Level::Note),
+    }
+}
+
+fn level(finding: &Finding) -> Option<Level> {
+    let base = base_level(finding.status())?;
+    Some(if finding.same_commit().is_some() {
+        Level::Note
+    } else {
+        base
+    })
+}
+
+const fn rule_text(status: &FindingStatus) -> (&'static str, &'static str) {
+    match status {
+        FindingStatus::UpToDate => (
+            "Up-to-date action",
+            "The action is at the newest allowed version.",
+        ),
+        FindingStatus::Ignored => ("Ignored action", "`scan.ignore` matches the action."),
+        FindingStatus::Outdated { .. } => (
+            "Outdated action",
+            "A newer version of the action is available under the update policy.",
+        ),
+        FindingStatus::Pinned { .. } => (
+            "Pinned action",
+            "The action is pinned to a full commit SHA.",
+        ),
+        FindingStatus::Floating { .. } => {
+            ("Floating ref", "The action follows a branch that moves.")
+        }
+        FindingStatus::PinBranch { .. } => (
+            "Branch ref to pin",
+            "The action follows a branch that the policy pins to its current commit.",
+        ),
+        FindingStatus::Unknown { .. } => (
+            "Unknown version",
+            "The ref exists, but its version cannot be compared.",
+        ),
+        FindingStatus::Unresolvable {
+            is_environment_error: false,
+            ..
+        } => (
+            "Unresolvable ref",
+            "The ref or its repository does not exist.",
+        ),
+        FindingStatus::Unresolvable { .. } => (
+            "Check failed",
+            "A network, authentication or rate limit error stopped the check.",
+        ),
+    }
+}
+
+fn short(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
+}
+
+fn describe(finding: &Finding) -> String {
+    let action = finding.action_ref().to_string();
+    if let Some(target) = finding.same_commit() {
+        let kind = finding
+            .ref_kind()
+            .map(|k| format!("{k} "))
+            .unwrap_or_default();
+        return format!(
+            "{action}: pin available, same commit: {kind}{} = {} ({})",
+            finding.action_ref().ref_str(),
+            target.version(),
+            short(target.sha()),
+        );
+    }
+    match finding.status() {
+        FindingStatus::UpToDate => format!("{action}: up to date"),
+        FindingStatus::Ignored => format!("{action}: ignored"),
+        FindingStatus::Outdated {
+            current,
+            latest,
+            exact_version,
+        } => {
+            let version = latest.version().to_string();
+            let exact = exact_version
+                .as_ref()
+                .filter(|exact| **exact != version)
+                .map(|exact| format!(" ({exact})"))
+                .unwrap_or_default();
+            format!("{action}: {current} -> {version}{exact}")
+        }
+        FindingStatus::Pinned { sha, tag } => {
+            let tag = tag.as_ref().map(|t| format!(" ({t})")).unwrap_or_default();
+            format!("{action}: pinned to {}{tag}", short(sha))
+        }
+        FindingStatus::Floating { ref_name } => {
+            format!("{action}: floating branch '{ref_name}', pin to a tag or SHA")
+        }
+        FindingStatus::PinBranch { ref_name, sha } => {
+            format!(
+                "{action}: pin branch '{ref_name}' to {} # {ref_name}",
+                short(sha)
+            )
+        }
+        FindingStatus::Unknown { reason } => format!("{action}: unknown: {reason}"),
+        FindingStatus::Unresolvable { reason, .. } => format!("{action}: {reason}"),
+    }
+}
+
+fn slug(action: &ActionRef) -> String {
+    action.subpath().map_or_else(
+        || format!("{}/{}", action.owner(), action.repo()),
+        |subpath| format!("{}/{}/{subpath}", action.owner(), action.repo()),
+    )
+}
+
+fn uri(finding: &Finding) -> String {
+    finding
+        .file()
+        .replace('\\', "/")
+        .trim_start_matches('/')
+        .to_string()
+}
+
+/// A SARIF 2.1.0 log of every finding other than up-to-date and ignored ones, with `unreadable` files as execution notifications.
+pub fn sarif(findings: &[Finding], unreadable: &[String]) -> Value {
+    let mut rules: Vec<Value> = Vec::new();
+    let mut rule_ids: Vec<&str> = Vec::new();
+    let results: Vec<Value> = findings
+        .iter()
+        .filter_map(|finding| {
+            let level = level(finding)?;
+            let status = finding.status();
+            let name = status_name(status);
+            let index = rule_ids
+                .iter()
+                .position(|id| *id == name)
+                .unwrap_or_else(|| {
+                    let (title, description) = rule_text(status);
+                    rule_ids.push(name);
+                    rules.push(json!({
+                        "id": format!("actup/{name}"),
+                        "name": title,
+                        "shortDescription": { "text": description },
+                        "defaultConfiguration": {
+                            "level": base_level(status).map_or("none", Level::name),
+                        },
+                        "helpUri": INFORMATION_URI,
+                    }));
+                    rule_ids.len() - 1
+                });
+            let uri = uri(finding);
+            let mut region = json!({ "startLine": finding.line() });
+            if let Some(span) = finding.span() {
+                region["startColumn"] = json!(span.start);
+                region["endColumn"] = json!(span.end);
+            }
+            let action = finding.action_ref();
+            Some(json!({
+                "ruleId": format!("actup/{name}"),
+                "ruleIndex": index,
+                "level": level.name(),
+                "message": { "text": describe(finding) },
+                "locations": [{
+                    "physicalLocation": {
+                        "artifactLocation": { "uri": uri },
+                        "region": region,
+                    },
+                }],
+                "partialFingerprints": {
+                    "actup/v1": format!(
+                        "{uri}|{name}|{}|{}",
+                        slug(action),
+                        action.ref_str()
+                    ),
+                },
+            }))
+        })
+        .collect();
+    let mut invocation = json!({ "executionSuccessful": unreadable.is_empty() });
+    if !unreadable.is_empty() {
+        invocation["toolExecutionNotifications"] = unreadable
+            .iter()
+            .map(|message| json!({ "level": "error", "message": { "text": message } }))
+            .collect();
+    }
+    json!({
+        "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+        "version": "2.1.0",
+        "runs": [{
+            "tool": {
+                "driver": {
+                    "name": "actup",
+                    "semanticVersion": env!("CARGO_PKG_VERSION"),
+                    "informationUri": INFORMATION_URI,
+                    "rules": rules,
+                },
+            },
+            "columnKind": "utf16CodeUnits",
+            "results": results,
+            "invocations": [invocation],
+        }],
+    })
+}
+
+fn escape_data(text: &str) -> String {
+    sanitize_for_terminal(text)
+        .replace('%', "%25")
+        .replace('\n', "%0A")
+}
+
+fn escape_property(text: &str) -> String {
+    escape_data(text).replace(':', "%3A").replace(',', "%2C")
+}
+
+/// One `::error` or `::warning` workflow command per finding at error or warning level.
+pub fn annotations(findings: &[Finding]) -> Vec<String> {
+    findings
+        .iter()
+        .filter_map(|finding| {
+            let level = match level(finding)? {
+                Level::Error => "error",
+                Level::Warning => "warning",
+                Level::Note => return None,
+            };
+            let columns = finding
+                .span()
+                .map(|span| format!(",col={},endColumn={}", span.start, span.end))
+                .unwrap_or_default();
+            Some(format!(
+                "::{level} file={},line={}{columns}::{}",
+                escape_property(&uri(finding)),
+                finding.line(),
+                escape_data(&describe(finding))
+            ))
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use actup_core::{RefKind, UsesLocation, version};
+
+    use super::*;
+    use crate::output::Span;
+
+    fn info(tag: &str, sha: &str) -> Arc<version::Info> {
+        Arc::new(version::Info::new(version::Version::parse(tag), sha))
+    }
+
+    fn finding(file: &str, line: usize, uses: &str, status: FindingStatus) -> Finding {
+        let Ok(Some(action_ref)) = actup_core::parse_uses(uses) else {
+            panic!("bad fixture {uses}");
+        };
+        Finding::new(
+            file.to_string(),
+            line,
+            action_ref,
+            status,
+            "github".to_string(),
+            "github.com".to_string(),
+        )
+    }
+
+    fn fixtures() -> Vec<Finding> {
+        let new = "b".repeat(40);
+        vec![
+            finding("ci.yml", 1, "o/up@v1", FindingStatus::UpToDate),
+            finding(
+                ".github\\workflows\\ci.yml",
+                2,
+                "o/old/sub@v1.0.0",
+                FindingStatus::Outdated {
+                    current: "v1.0.0".to_string(),
+                    latest: info("v1.1.0", &new),
+                    exact_version: None,
+                },
+            )
+            .with_span(Span { start: 15, end: 31 }),
+            finding(
+                "/abs/ci.yml",
+                3,
+                "o/same@v1",
+                FindingStatus::Outdated {
+                    current: "v1".to_string(),
+                    latest: info("v1.0.5", &new),
+                    exact_version: None,
+                },
+            )
+            .with_ref(Some(RefKind::Tag), Some(info("v1.0.5", &new))),
+            finding("ci.yml", 4, "o/skip@v1", FindingStatus::Ignored),
+            finding(
+                "ci.yml",
+                5,
+                "o/gone@v9",
+                FindingStatus::Unresolvable {
+                    reason: "tag 'v9' not found".to_string(),
+                    is_environment_error: false,
+                },
+            ),
+            finding(
+                "ci.yml",
+                6,
+                "o/net@v1",
+                FindingStatus::Unresolvable {
+                    reason: "network, 50% lost".to_string(),
+                    is_environment_error: true,
+                },
+            ),
+            finding(
+                "ci.yml",
+                7,
+                "o/pin@main",
+                FindingStatus::Floating {
+                    ref_name: "main".to_string(),
+                },
+            ),
+        ]
+    }
+
+    #[test]
+    fn sarif_lists_rules_results_and_notifications() -> Result<(), Box<dyn std::error::Error>> {
+        let log = sarif(
+            &fixtures(),
+            &["ci.yml: stream did not contain valid UTF-8".to_string()],
+        );
+        let run = &log["runs"][0];
+        assert_eq!(log["version"], "2.1.0");
+        assert_eq!(run["columnKind"], "utf16CodeUnits");
+        assert_eq!(run["tool"]["driver"]["name"], "actup");
+        let rules: Vec<(&str, &str)> = run["tool"]["driver"]["rules"]
+            .as_array()
+            .ok_or("no rules")?
+            .iter()
+            .map(|r| {
+                (
+                    r["id"].as_str().unwrap_or_default(),
+                    r["defaultConfiguration"]["level"]
+                        .as_str()
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            rules,
+            [
+                ("actup/outdated", "warning"),
+                ("actup/unresolvable", "error"),
+                ("actup/error", "note"),
+                ("actup/floating", "warning"),
+            ]
+        );
+        let results: Vec<(&str, u64, &str, u64, &str)> = run["results"]
+            .as_array()
+            .ok_or("no results")?
+            .iter()
+            .map(|r| {
+                (
+                    r["ruleId"].as_str().unwrap_or_default(),
+                    r["ruleIndex"].as_u64().unwrap_or(99),
+                    r["level"].as_str().unwrap_or_default(),
+                    r["locations"][0]["physicalLocation"]["region"]["startLine"]
+                        .as_u64()
+                        .unwrap_or_default(),
+                    r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
+                        .as_str()
+                        .unwrap_or_default(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            results,
+            [
+                (
+                    "actup/outdated",
+                    0,
+                    "warning",
+                    2,
+                    ".github/workflows/ci.yml"
+                ),
+                ("actup/outdated", 0, "note", 3, "abs/ci.yml"),
+                ("actup/unresolvable", 1, "error", 5, "ci.yml"),
+                ("actup/error", 2, "note", 6, "ci.yml"),
+                ("actup/floating", 3, "warning", 7, "ci.yml"),
+            ]
+        );
+        let first = &run["results"][0];
+        assert_eq!(
+            first["message"]["text"],
+            "o/old/sub@v1.0.0: v1.0.0 -> v1.1.0"
+        );
+        assert_eq!(
+            first["locations"][0]["physicalLocation"]["region"],
+            json!({ "startLine": 2, "startColumn": 15, "endColumn": 31 })
+        );
+        assert_eq!(
+            first["partialFingerprints"]["actup/v1"],
+            ".github/workflows/ci.yml|outdated|o/old/sub|v1.0.0"
+        );
+        assert_eq!(
+            run["results"][1]["message"]["text"],
+            "o/same@v1: pin available, same commit: tag v1 = v1.0.5 (bbbbbbb)"
+        );
+        assert!(
+            run["results"][1]["locations"][0]["physicalLocation"]["region"]
+                .get("startColumn")
+                .is_none()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sarif_marks_unreadable_files_as_failed_execution() {
+        let log = sarif(
+            &[],
+            &["ci.yml: stream did not contain valid UTF-8".to_string()],
+        );
+        let run = &log["runs"][0];
+        assert_eq!(
+            run["invocations"],
+            json!([{
+                "executionSuccessful": false,
+                "toolExecutionNotifications": [{
+                    "level": "error",
+                    "message": { "text": "ci.yml: stream did not contain valid UTF-8" },
+                }],
+            }])
+        );
+        assert_eq!(
+            sarif(&[], &[])["runs"][0]["invocations"],
+            json!([{ "executionSuccessful": true }])
+        );
+    }
+
+    #[test]
+    fn annotations_cover_errors_and_warnings_with_escapes() {
+        let mut findings = fixtures();
+        findings.push(finding(
+            "a,b:c.yml",
+            8,
+            "o/esc@v1",
+            FindingStatus::Unresolvable {
+                reason: "100% gone\u{202e}".to_string(),
+                is_environment_error: false,
+            },
+        ));
+        assert_eq!(
+            annotations(&findings),
+            [
+                "::warning file=.github/workflows/ci.yml,line=2,col=15,endColumn=31::o/old/sub@v1.0.0: v1.0.0 -> v1.1.0",
+                "::error file=ci.yml,line=5::o/gone@v9: tag 'v9' not found",
+                "::warning file=ci.yml,line=7::o/pin@main: floating branch 'main', pin to a tag or SHA",
+                "::error file=a%2Cb%3Ac.yml,line=8::o/esc@v1: 100%25 gone\u{fffd}",
+            ]
+        );
+    }
+
+    #[test]
+    fn describe_names_every_status() {
+        let pinned = finding(
+            "ci.yml",
+            1,
+            &format!("o/p@{}", "a".repeat(40)),
+            FindingStatus::Pinned {
+                sha: "a".repeat(40),
+                tag: Some("v4.0.0".to_string()),
+            },
+        );
+        let to_pin = finding(
+            "ci.yml",
+            2,
+            "o/b@main",
+            FindingStatus::PinBranch {
+                ref_name: "main".to_string(),
+                sha: "c".repeat(40),
+            },
+        );
+        let unknown = finding(
+            "ci.yml",
+            3,
+            "o/u@v2",
+            FindingStatus::Unknown {
+                reason: "beyond max_tags".to_string(),
+            },
+        );
+        let exact = finding(
+            "ci.yml",
+            4,
+            "o/x@v3",
+            FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: info("v4", &"d".repeat(40)),
+                exact_version: Some("v4.2.1".to_string()),
+            },
+        );
+        let described: Vec<String> = [&pinned, &to_pin, &unknown, &exact]
+            .into_iter()
+            .chain(&fixtures()[..1])
+            .chain(&fixtures()[3..4])
+            .map(describe)
+            .collect();
+        assert_eq!(
+            described,
+            [
+                format!("o/p@{}: pinned to aaaaaaa (v4.0.0)", "a".repeat(40)),
+                "o/b@main: pin branch 'main' to ccccccc # main".to_string(),
+                "o/u@v2: unknown: beyond max_tags".to_string(),
+                "o/x@v3: v3 -> v4 (v4.2.1)".to_string(),
+                "o/up@v1: up to date".to_string(),
+                "o/skip@v1: ignored".to_string(),
+            ]
+        );
+        let levels: Vec<Option<Level>> = [&pinned, &to_pin, &unknown]
+            .into_iter()
+            .map(level)
+            .collect();
+        assert_eq!(
+            levels,
+            [Some(Level::Note), Some(Level::Warning), Some(Level::Note)]
+        );
+        assert_eq!(rule_text(&FindingStatus::UpToDate).0, "Up-to-date action");
+        assert_eq!(rule_text(&FindingStatus::Ignored).0, "Ignored action");
+    }
+
+    #[test]
+    fn span_counts_utf16_columns_of_the_value() {
+        let line = "  - { name: \"déploiement ✓ 🚀\", uses: \"o/r@v1\" }";
+        let loc = UsesLocation::new(1, 45, "o/r@v1".to_string(), line.to_string());
+        assert_eq!(loc.value_range(), Some(44..50));
+        assert_eq!(Span::of(&loc), Span { start: 40, end: 46 });
+
+        let escaped = "  - uses: \"o/r@v\\x31\"";
+        let loc = UsesLocation::new(1, 12, "o/r@v1".to_string(), escaped.to_string());
+        assert_eq!(loc.value_range(), None);
+        assert_eq!(Span::of(&loc), Span { start: 12, end: 18 });
+    }
+}

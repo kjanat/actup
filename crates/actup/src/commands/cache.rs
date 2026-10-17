@@ -250,7 +250,6 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
     0
 }
 
-/// Print `what` and `error` to stderr and return the environment error exit code.
 fn report_failure(what: &str, error: &dyn std::fmt::Display) -> i32 {
     eprintln!(
         "{}: {}",

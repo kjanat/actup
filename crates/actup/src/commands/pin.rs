@@ -163,7 +163,6 @@ async fn pin_action_edit(
     }
 }
 
-/// The ref range, the value before `@` and the line after the ref of a SHA pin followed by a pin marker.
 fn marked_pin<'a>(
     action_ref: &ActionRef,
     loc: &'a UsesLocation,
