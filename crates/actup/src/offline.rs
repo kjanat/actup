@@ -82,7 +82,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        cli::{CliExitCode, OutputFormat},
+        cli::{CheckFormat, CliExitCode, OutputFormat},
         commands::check,
         file_cache::FileCache,
     };
@@ -200,14 +200,14 @@ mod tests {
         registry.register(Box::new(Unreachable));
         let registry = registry.map_providers(Offline::wrap);
 
-        let code = check::run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+        let code = check::run(dir.path(), &[], CheckFormat::Json, &config, &registry).await;
         assert_eq!(code, i32::from(CliExitCode::Success));
 
         std::fs::write(
             &file,
             "steps:\n  - uses: o/cached@v1.0.0\n  - uses: o/missing@v1\n",
         )?;
-        let code = check::run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+        let code = check::run(dir.path(), &[], CheckFormat::Json, &config, &registry).await;
         assert_eq!(code, i32::from(CliExitCode::EnvironmentError));
 
         for (action, expected) in [

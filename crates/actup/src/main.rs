@@ -123,8 +123,14 @@ async fn run(cli: Cli) -> i32 {
         Some(Command::Check {
             path,
             strict,
+            mut fail_on,
             format,
-        }) => commands::check::run(&path, strict, format, &config, &registry).await,
+        }) => {
+            if strict {
+                fail_on.push(cli::FailOn::Outdated);
+            }
+            commands::check::run(&path, &fail_on, format, &config, &registry).await
+        }
         Some(
             Command::Update {
                 path,

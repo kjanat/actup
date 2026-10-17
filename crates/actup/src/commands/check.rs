@@ -8,7 +8,7 @@ use actup_core::{
 };
 
 use crate::{
-    cli::OutputFormat,
+    cli::{CheckFormat, FailOn, OutputFormat},
     common::{ErrorTally, WorkflowScanner},
     output::{Finding, FindingStatus, determine_exit_code, print_findings, print_summary},
     scan::{Scan, Versions},
@@ -120,17 +120,17 @@ struct CollectedAction {
 /// Scan workflows and report outdated actions across multiple providers.
 pub async fn run(
     path: &Path,
-    strict: bool,
-    format: OutputFormat,
+    fail_on: &[FailOn],
+    format: CheckFormat,
     config: &Config,
     registry: &provider::Registry,
 ) -> i32 {
-    let scanner = WorkflowScanner::new(path, config, registry, format);
+    let scanner = WorkflowScanner::new(path, config, registry, format.messages());
     let discovered = scanner.discover();
 
     if discovered.is_empty() {
         scanner.print_empty_message();
-        if !matches!(format, OutputFormat::Human) {
+        if !matches!(format.messages(), OutputFormat::Human) {
             print_findings(&[], format);
         }
         return 0;
@@ -151,7 +151,7 @@ pub async fn run(
     findings.sort_by(|a, b| a.file().cmp(b.file()).then_with(|| a.line().cmp(&b.line())));
 
     print_findings(&findings, format);
-    if matches!(format, OutputFormat::Human) {
+    if format == CheckFormat::Human {
         print_summary(&findings);
     }
 
@@ -161,7 +161,7 @@ pub async fn run(
         return io_exit.into();
     }
 
-    determine_exit_code(&findings, strict)
+    determine_exit_code(&findings, fail_on)
 }
 
 /// Phases 1 and 2 run in [`Scan::collect`] and [`Scan::fetch`]. Emit
@@ -890,7 +890,7 @@ mod tests {
             "{:?}",
             short.status()
         );
-        assert_eq!(determine_exit_code(std::slice::from_ref(&short), false), 2);
+        assert_eq!(determine_exit_code(std::slice::from_ref(&short), &[]), 2);
 
         let named = check_action_with_versions(
             &collected("deadbee"),
@@ -1169,8 +1169,13 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let config = Config::default();
         let registry = test_registry();
-        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
-            assert_eq!(run(dir.path(), false, format, &config, &registry).await, 0);
+        for format in [
+            CheckFormat::Human,
+            CheckFormat::Json,
+            CheckFormat::Toml,
+            CheckFormat::Table,
+        ] {
+            assert_eq!(run(dir.path(), &[], format, &config, &registry).await, 0);
         }
         Ok(())
     }

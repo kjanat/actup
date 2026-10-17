@@ -21,9 +21,9 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 async fn remote() -> MockServer {
     let server = MockServer::start().await;
-    for repo in ["old", "new"] {
+    for (repo, latest) in [("old", "v1.1.0"), ("new", "v1.1.0"), ("major", "v2.0.0")] {
         let tags = serde_json::json!([
-            { "name": "v1.1.0", "commit": { "sha": NEW } },
+            { "name": latest, "commit": { "sha": NEW } },
             { "name": "v1.0.0", "commit": { "sha": OLD } },
         ]);
         Mock::given(method("GET"))
@@ -67,6 +67,14 @@ struct Repo {
 
 impl Repo {
     fn new(server: &MockServer, steps: &[&str]) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_config(server, steps, "")
+    }
+
+    fn with_config(
+        server: &MockServer,
+        steps: &[&str],
+        extra: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let dir = TempDir::new()?;
         let workflows = dir.path().join(".github").join("workflows");
         fs::create_dir_all(&workflows)?;
@@ -79,7 +87,7 @@ impl Repo {
         fs::write(
             &config,
             format!(
-                "default_host = \"{HOST}\"\n\n[cache]\nenabled = false\n\n[hosts.\"{HOST}\"]\nkind = \"github\"\napi_base = \"{}\"\ntoken_env = \"ACTUP_E2E_NO_TOKEN\"\napi_mode = \"rest\"\n",
+                "default_host = \"{HOST}\"\n\n[cache]\nenabled = false\n\n[hosts.\"{HOST}\"]\nkind = \"github\"\napi_base = \"{}\"\ntoken_env = \"ACTUP_E2E_NO_TOKEN\"\napi_mode = \"rest\"\n{extra}",
                 server.uri()
             ),
         )?;
@@ -276,5 +284,92 @@ fn help_matches_the_snapshot() -> TestResult {
     let help = String::from_utf8(output.stdout)?;
     let expected = include_str!("fixtures/help.txt").replace("\r\n", "\n");
     assert_eq!(help, expected);
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn check_fail_on_picks_the_kinds_that_exit_1() -> TestResult {
+    let server = remote().await;
+    let repo = Repo::with_config(
+        &server,
+        &["o/old@v1.0.0", "o/major@v1.0.0", "o/new@main"],
+        "\n[policy]\nbranch = \"warn\"\n",
+    )?;
+    for (args, expected) in [
+        (&["check", "."][..], 0),
+        (&["check", ".", "--fail-on", "major"][..], 1),
+        (&["check", ".", "--fail-on", "floating"][..], 1),
+        (&["check", ".", "--fail-on", "outdated"][..], 1),
+        (&["check", ".", "--strict"][..], 1),
+    ] {
+        let output = repo.run(args).await?;
+        assert_eq!(output.status.code(), Some(expected), "{args:?}: {output:?}");
+    }
+    let minor = Repo::new(&server, &["o/old@v1.0.0", "o/new@main"])?;
+    for (args, expected) in [
+        (&["check", ".", "--fail-on", "major"][..], 0),
+        (&["check", ".", "--fail-on", "floating"][..], 0),
+        (
+            &["check", ".", "--fail-on", "major", "--fail-on", "outdated"][..],
+            1,
+        ),
+    ] {
+        let output = minor.run(args).await?;
+        assert_eq!(output.status.code(), Some(expected), "{args:?}: {output:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn check_prints_a_table_and_other_commands_reject_it() -> TestResult {
+    let server = remote().await;
+    let repo = Repo::new(&server, &["o/old@v1.0.0", "o/new@v1.1.0"])?;
+    let output = repo.run(&["check", ".", "--format", "table"]).await?;
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let rows: Vec<Vec<String>> = stdout(&output)?
+        .lines()
+        .map(|line| line.split_whitespace().map(String::from).collect())
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ["LOCATION", "ACTION", "CURRENT", "TARGET", "STATUS"],
+            [
+                &format!(
+                    ".github{}workflows{}ci.yml:2",
+                    std::path::MAIN_SEPARATOR,
+                    std::path::MAIN_SEPARATOR
+                ),
+                "o/old@v1.0.0",
+                "v1.0.0",
+                "v1.1.0",
+                "outdated"
+            ],
+            [
+                &format!(
+                    ".github{}workflows{}ci.yml:3",
+                    std::path::MAIN_SEPARATOR,
+                    std::path::MAIN_SEPARATOR
+                ),
+                "o/new@v1.1.0",
+                "v1.1.0",
+                "-",
+                "up_to_date"
+            ],
+        ]
+        .map(|row| row.map(String::from).to_vec())
+    );
+
+    let rejected = repo.run(&["update", ".", "--format", "table"]).await?;
+    assert_eq!(rejected.status.code(), Some(2));
+    let mut via_env = actup(repo.path());
+    via_env
+        .env("ACTUP_FORMAT", "table")
+        .arg("--config")
+        .arg(&repo.config)
+        .args(["config"])
+        .arg(repo.path());
+    let output = tokio::task::spawn_blocking(move || via_env.output()).await??;
+    assert_eq!(output.status.code(), Some(2));
     Ok(())
 }

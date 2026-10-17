@@ -32,6 +32,9 @@ actup check
 # Check with strict mode (exit 1 if outdated)
 actup check --strict
 
+# Exit 1 only for major bumps or floating branch refs
+actup check --fail-on major --fail-on floating
+
 # Update all actions to latest versions
 actup update
 
@@ -65,7 +68,20 @@ actup update --dry-run
 actup check --format json   # Machine-readable JSON
 actup check --format toml   # TOML format
 actup check --format human  # Default, colored output
+actup check --format table  # One aligned row per finding
 ```
+
+`--format table` prints the columns `LOCATION` (`file:line`), `ACTION`,
+`CURRENT`, `TARGET` (`-` when there is none) and `STATUS` (the JSON status
+name). Only `check` accepts `table`; other commands reject it, also when
+`ACTUP_FORMAT` sets it.
+
+`check --fail-on <kind>` exits 1 when a finding of that kind exists. Repeat it
+for several kinds. `outdated` covers outdated refs and branch refs to pin,
+`major` covers outdated refs whose target is a newer major version, and
+`floating` covers floating branch refs and branch refs to pin. `--strict` is
+`--fail-on outdated`. Unresolvable refs exit 2 and environment errors exit 3
+with or without `--fail-on`.
 
 Human output is coloured only on a terminal. `--color always` and
 `--color never` force the choice. Under the default `--color auto`, a non-empty
@@ -337,12 +353,12 @@ writes each ref in its `policy.pin` style, as `update` does.
 
 ## Exit Codes
 
-| Code | Meaning                                                             |
-| ---- | ------------------------------------------------------------------- |
-| 0    | Success / all up-to-date                                            |
-| 1    | Outdated refs found, or `update`/`pin` skipped a ref it cannot edit |
-| 2    | User error: unresolvable refs, invalid config, invalid CLI input    |
-| 3    | Network/auth/rate-limit error, or no provider for a ref's host      |
+| Code | Meaning                                                                        |
+| ---- | ------------------------------------------------------------------------------ |
+| 0    | Success / all up-to-date                                                       |
+| 1    | A `check --fail-on` kind found, or `update`/`pin` skipped a ref it cannot edit |
+| 2    | User error: unresolvable refs, invalid config, invalid CLI input               |
+| 3    | Network/auth/rate-limit error, or no provider for a ref's host                 |
 
 ## Files Scanned
 

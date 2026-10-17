@@ -7,7 +7,7 @@ use actup_core::{ActionRef, RefKind, sanitize_line, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::OutputFormat;
+use crate::cli::{CheckFormat, FailOn};
 
 /// JSON-serializable finding for structured output
 #[derive(Serialize)]
@@ -43,83 +43,41 @@ struct JsonFinding {
 
 impl From<&Finding> for JsonFinding {
     fn from(f: &Finding) -> Self {
-        let (
-            status,
-            current_version,
-            latest_version,
-            latest_sha,
-            exact_version,
-            pinned_tag,
-            reason,
-        ) = match f.status() {
-            FindingStatus::UpToDate => ("up_to_date", None, None, None, None, None, None),
-            FindingStatus::Ignored => ("ignored", None, None, None, None, None, None),
-            FindingStatus::Outdated {
-                current,
-                latest,
-                exact_version,
-            } => (
-                "outdated",
-                Some(current.clone()),
-                Some(latest.version().to_string()),
-                Some(latest.sha().to_string()),
-                exact_version.clone(),
-                None,
-                None,
-            ),
-            FindingStatus::Pinned { sha, tag } => (
-                "pinned",
-                None,
-                None,
-                Some(sha.clone()),
-                None,
-                tag.clone(),
-                None,
-            ),
-            FindingStatus::Floating { ref_name } => (
-                "floating",
-                Some(ref_name.clone()),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            FindingStatus::PinBranch { ref_name, sha } => (
-                "pin_branch",
-                Some(ref_name.clone()),
-                None,
-                Some(sha.clone()),
-                None,
-                None,
-                None,
-            ),
-            FindingStatus::Unknown { reason } => (
-                "unknown",
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(reason.clone()),
-            ),
-            FindingStatus::Unresolvable {
-                reason,
-                is_environment_error,
-            } => (
-                if *is_environment_error {
-                    "error"
-                } else {
-                    "unresolvable"
-                },
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(reason.clone()),
-            ),
-        };
+        let (current_version, latest_version, latest_sha, exact_version, pinned_tag, reason) =
+            match f.status() {
+                FindingStatus::UpToDate | FindingStatus::Ignored => {
+                    (None, None, None, None, None, None)
+                }
+                FindingStatus::Outdated {
+                    current,
+                    latest,
+                    exact_version,
+                } => (
+                    Some(current.clone()),
+                    Some(latest.version().to_string()),
+                    Some(latest.sha().to_string()),
+                    exact_version.clone(),
+                    None,
+                    None,
+                ),
+                FindingStatus::Pinned { sha, tag } => {
+                    (None, None, Some(sha.clone()), None, tag.clone(), None)
+                }
+                FindingStatus::Floating { ref_name } => {
+                    (Some(ref_name.clone()), None, None, None, None, None)
+                }
+                FindingStatus::PinBranch { ref_name, sha } => (
+                    Some(ref_name.clone()),
+                    None,
+                    Some(sha.clone()),
+                    None,
+                    None,
+                    None,
+                ),
+                FindingStatus::Unknown { reason } | FindingStatus::Unresolvable { reason, .. } => {
+                    (None, None, None, None, None, Some(reason.clone()))
+                }
+            };
 
         Self {
             file: f.file().to_string(),
@@ -130,7 +88,7 @@ impl From<&Finding> for JsonFinding {
             host: f.host().to_string(),
             provider: f.provider().to_string(),
             reference: f.action_ref().ref_str().to_string(),
-            status: status.into(),
+            status: status_name(f.status()).into(),
             current_version,
             latest_version,
             latest_sha,
@@ -297,13 +255,81 @@ pub enum FindingStatus {
     },
 }
 
-/// Prints the given findings in the requested output format.
-pub fn print_findings(findings: &[Finding], format: OutputFormat) {
-    match format {
-        OutputFormat::Human => print_human(findings),
-        OutputFormat::Json => print_json(findings),
-        OutputFormat::Toml => print_toml(findings),
+/// The status name of `status` in JSON, TOML and table output.
+const fn status_name(status: &FindingStatus) -> &'static str {
+    match status {
+        FindingStatus::UpToDate => "up_to_date",
+        FindingStatus::Ignored => "ignored",
+        FindingStatus::Outdated { .. } => "outdated",
+        FindingStatus::Pinned { .. } => "pinned",
+        FindingStatus::Floating { .. } => "floating",
+        FindingStatus::PinBranch { .. } => "pin_branch",
+        FindingStatus::Unknown { .. } => "unknown",
+        FindingStatus::Unresolvable {
+            is_environment_error: true,
+            ..
+        } => "error",
+        FindingStatus::Unresolvable { .. } => "unresolvable",
     }
+}
+
+/// Prints the given findings in the requested output format.
+pub fn print_findings(findings: &[Finding], format: CheckFormat) {
+    match format {
+        CheckFormat::Human => print_human(findings),
+        CheckFormat::Json => print_json(findings),
+        CheckFormat::Toml => print_toml(findings),
+        CheckFormat::Table => println!("{}", table(findings)),
+    }
+}
+
+fn table_row(finding: &Finding) -> [String; 5] {
+    let reference = finding.action_ref().ref_str();
+    let written = if finding.action_ref().is_sha() {
+        reference.get(..7).unwrap_or(reference)
+    } else {
+        reference
+    };
+    let (current, target) = match finding.status() {
+        FindingStatus::Outdated {
+            current, latest, ..
+        } => (current.as_str(), latest.version().to_string()),
+        FindingStatus::PinBranch { sha, .. } => (written, sha.get(..7).unwrap_or(sha).to_string()),
+        _ => (written, "-".to_string()),
+    };
+    [
+        format!("{}:{}", finding.file(), finding.line()),
+        finding.action_ref().to_string(),
+        current.to_string(),
+        target,
+        status_name(finding.status()).to_string(),
+    ]
+    .map(|cell| sanitize_line(&cell).into_owned())
+}
+
+/// Render `findings` as a table with one aligned row per finding under a header.
+fn table(findings: &[Finding]) -> String {
+    let header = ["LOCATION", "ACTION", "CURRENT", "TARGET", "STATUS"].map(String::from);
+    let rows: Vec<[String; 5]> = std::iter::once(header)
+        .chain(findings.iter().map(table_row))
+        .collect();
+    let mut widths = [0; 5];
+    for row in &rows {
+        for (width, cell) in widths.iter_mut().zip(row) {
+            *width = (*width).max(cell.chars().count());
+        }
+    }
+    rows.iter()
+        .map(|row| {
+            let line: Vec<String> = row
+                .iter()
+                .zip(widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect();
+            line.join("  ").trim_end().to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn print_human(findings: &[Finding]) {
@@ -582,20 +608,41 @@ fn summary_line(findings: &[Finding]) -> String {
     )
 }
 
+/// Whether `status` is a finding of kind `kind`.
+fn trips(kind: FailOn, status: &FindingStatus) -> bool {
+    match (kind, status) {
+        (FailOn::Outdated, FindingStatus::Outdated { .. })
+        | (FailOn::Outdated | FailOn::Floating, FindingStatus::PinBranch { .. })
+        | (FailOn::Floating, FindingStatus::Floating { .. }) => true,
+        (
+            FailOn::Major,
+            FindingStatus::Outdated {
+                current, latest, ..
+            },
+        ) => {
+            match (
+                version::Version::parse(current).major(),
+                latest.version().major(),
+            ) {
+                (Some(current), Some(target)) => target > current,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Determines CLI exit code based on findings.
 ///
 /// Exit codes:
-/// - 0: Success ([`FindingStatus::UpToDate`], Ignored, Pinned, Floating are all considered healthy)
-/// - 1: Outdated or pinnable branch found (only with `strict` mode)
+/// - 0: Success, or no finding of a `fail_on` kind
+/// - 1: A finding of a `fail_on` kind
 /// - 2: User error (bad ref, repo not found)
 /// - 3: Environment error (network, rate limit, auth)
-pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
-    let has_outdated = findings.iter().any(|f| {
-        matches!(
-            f.status(),
-            FindingStatus::Outdated { .. } | FindingStatus::PinBranch { .. }
-        )
-    });
+pub fn determine_exit_code(findings: &[Finding], fail_on: &[FailOn]) -> i32 {
+    let has_outdated = findings
+        .iter()
+        .any(|f| fail_on.iter().any(|&kind| trips(kind, f.status())));
     let has_env_error = findings.iter().any(|f| {
         matches!(
             f.status(),
@@ -615,13 +662,13 @@ pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
         )
     });
 
-    // Priority: env errors (3) > user errors (2) > outdated with strict (1) > success (0)
+    // Priority: env errors (3) > user errors (2) > a fail_on kind (1) > success (0)
     if has_env_error {
         3
     } else if has_user_error {
         2
     } else {
-        i32::from(has_outdated && strict)
+        i32::from(has_outdated)
     }
 }
 
@@ -805,6 +852,148 @@ mod tests {
         print_human(&findings);
     }
 
+    fn outdated(line: usize, repo: &str, current: &str, latest: &str) -> Finding {
+        make_finding(
+            "ci.yml",
+            line,
+            make_action_ref("o", repo, current),
+            FindingStatus::Outdated {
+                current: current.to_string(),
+                latest: make_version_info(latest, &"b".repeat(40)),
+                exact_version: None,
+            },
+        )
+    }
+
+    #[test]
+    fn fail_on_selects_the_kinds_that_exit_1() {
+        let minor = outdated(1, "minor", "v1.0.0", "v1.1.0");
+        let major = outdated(2, "major", "v1.0.0", "v2.0.0");
+        let pinned_major = make_finding(
+            "ci.yml",
+            3,
+            make_action_ref("o", "pinned", &"a".repeat(40)),
+            FindingStatus::Outdated {
+                current: "v3.2.0".to_string(),
+                latest: make_version_info("v4", &"b".repeat(40)),
+                exact_version: None,
+            },
+        );
+        let floating = make_finding(
+            "ci.yml",
+            4,
+            make_action_ref("o", "floating", "main"),
+            FindingStatus::Floating {
+                ref_name: "main".to_string(),
+            },
+        );
+        let to_pin = make_finding(
+            "ci.yml",
+            5,
+            make_action_ref("o", "to-pin", "main"),
+            FindingStatus::PinBranch {
+                ref_name: "main".to_string(),
+                sha: "c".repeat(40),
+            },
+        );
+        let code =
+            |findings: &[Finding], fail_on: &[FailOn]| determine_exit_code(findings, fail_on);
+        let all = [FailOn::Outdated, FailOn::Major, FailOn::Floating];
+
+        assert_eq!(code(std::slice::from_ref(&minor), &[FailOn::Outdated]), 1);
+        assert_eq!(code(std::slice::from_ref(&minor), &[FailOn::Major]), 0);
+        assert_eq!(code(std::slice::from_ref(&minor), &[FailOn::Floating]), 0);
+        assert_eq!(code(std::slice::from_ref(&major), &[FailOn::Major]), 1);
+        assert_eq!(
+            code(std::slice::from_ref(&pinned_major), &[FailOn::Major]),
+            1
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&floating), &[FailOn::Floating]),
+            1
+        );
+        assert_eq!(
+            code(std::slice::from_ref(&floating), &[FailOn::Outdated]),
+            0
+        );
+        assert_eq!(code(std::slice::from_ref(&to_pin), &[FailOn::Floating]), 1);
+        assert_eq!(code(std::slice::from_ref(&to_pin), &[FailOn::Outdated]), 1);
+        assert_eq!(code(std::slice::from_ref(&to_pin), &[FailOn::Major]), 0);
+        assert_eq!(code(&[minor, major, floating, to_pin], &[]), 0);
+
+        let broken = make_finding(
+            "ci.yml",
+            6,
+            make_action_ref("o", "broken", "v1"),
+            FindingStatus::Unresolvable {
+                reason: "not found".to_string(),
+                is_environment_error: false,
+            },
+        );
+        assert_eq!(code(std::slice::from_ref(&broken), &[]), 2);
+        assert_eq!(code(std::slice::from_ref(&broken), &all), 2);
+    }
+
+    #[test]
+    fn table_aligns_one_row_per_finding() {
+        let findings = [
+            outdated(12, "setup", "v1.0.0", "v1.1.0").with_ref(Some(RefKind::Tag), None),
+            make_finding(
+                ".github/workflows/release.yml",
+                3,
+                make_action_ref("o", "pinned", &"a".repeat(40)),
+                FindingStatus::Pinned {
+                    sha: "a".repeat(40),
+                    tag: Some("v4.0.0".to_string()),
+                },
+            ),
+            make_finding(
+                "ci.yml",
+                7,
+                make_action_ref("o", "to-pin", "main\u{202e}"),
+                FindingStatus::PinBranch {
+                    ref_name: "main".to_string(),
+                    sha: "c".repeat(40),
+                },
+            ),
+        ];
+        let sha = "a".repeat(40);
+        let row = |cells: [&str; 5]| {
+            format!(
+                "{:<31}  {:<49}  {:<7}  {:<7}  {}",
+                cells[0], cells[1], cells[2], cells[3], cells[4]
+            )
+        };
+        let expected = [
+            row(["LOCATION", "ACTION", "CURRENT", "TARGET", "STATUS"]),
+            row([
+                "ci.yml:12",
+                "o/setup@v1.0.0",
+                "v1.0.0",
+                "v1.1.0",
+                "outdated",
+            ]),
+            row([
+                ".github/workflows/release.yml:3",
+                &format!("o/pinned@{sha}"),
+                "aaaaaaa",
+                "-",
+                "pinned",
+            ]),
+            row([
+                "ci.yml:7",
+                "o/to-pin@main\u{fffd}",
+                "main\u{fffd}",
+                "ccccccc",
+                "pin_branch",
+            ]),
+        ]
+        .join("\n");
+        assert_eq!(table(&findings), expected);
+        assert_eq!(table(&[]), "LOCATION  ACTION  CURRENT  TARGET  STATUS");
+        print_findings(&findings, CheckFormat::Table);
+    }
+
     #[test]
     fn test_determine_exit_code_success() {
         let findings = vec![make_finding(
@@ -814,8 +1003,8 @@ mod tests {
             FindingStatus::UpToDate,
         )];
 
-        assert_eq!(determine_exit_code(&findings, false), 0);
-        assert_eq!(determine_exit_code(&findings, true), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
     }
 
     #[test]
@@ -831,7 +1020,7 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
     }
 
     #[test]
@@ -847,7 +1036,7 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, true), 1);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 1);
     }
 
     #[test]
@@ -862,8 +1051,8 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, false), 2);
-        assert_eq!(determine_exit_code(&findings, true), 2);
+        assert_eq!(determine_exit_code(&findings, &[]), 2);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 2);
     }
 
     #[test]
@@ -878,8 +1067,8 @@ mod tests {
             },
         )];
 
-        assert_eq!(determine_exit_code(&findings, false), 3);
-        assert_eq!(determine_exit_code(&findings, true), 3);
+        assert_eq!(determine_exit_code(&findings, &[]), 3);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 3);
     }
 
     #[test]
@@ -917,7 +1106,7 @@ mod tests {
         ];
 
         // Env error (3) takes priority
-        assert_eq!(determine_exit_code(&findings, true), 3);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 3);
     }
 
     #[test]
@@ -945,14 +1134,14 @@ mod tests {
         ];
 
         // User error (2) takes priority over outdated (1)
-        assert_eq!(determine_exit_code(&findings, true), 2);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 2);
     }
 
     #[test]
     fn test_determine_exit_code_empty() {
         let findings: Vec<Finding> = vec![];
-        assert_eq!(determine_exit_code(&findings, false), 0);
-        assert_eq!(determine_exit_code(&findings, true), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
     }
 
     #[test]
@@ -968,8 +1157,8 @@ mod tests {
         )];
 
         // Pinned is not an error
-        assert_eq!(determine_exit_code(&findings, false), 0);
-        assert_eq!(determine_exit_code(&findings, true), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
     }
 
     // Finding construction tests
@@ -1012,8 +1201,8 @@ mod tests {
             FindingStatus::Ignored,
         )];
 
-        assert_eq!(determine_exit_code(&findings, false), 0);
-        assert_eq!(determine_exit_code(&findings, true), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 0);
     }
 
     #[test]
@@ -1492,8 +1681,8 @@ mod tests {
         ];
 
         // Multiple outdated should still return 1 in strict mode
-        assert_eq!(determine_exit_code(&findings, true), 1);
-        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 1);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
     }
 
     #[test]
@@ -1520,8 +1709,8 @@ mod tests {
         ];
 
         // Env error (3) takes priority over user error (2)
-        assert_eq!(determine_exit_code(&findings, false), 3);
-        assert_eq!(determine_exit_code(&findings, true), 3);
+        assert_eq!(determine_exit_code(&findings, &[]), 3);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 3);
     }
 
     #[test]
@@ -1561,8 +1750,8 @@ mod tests {
         ];
 
         // Only outdated matters in strict mode (no errors)
-        assert_eq!(determine_exit_code(&findings, true), 1);
-        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, &[FailOn::Outdated]), 1);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
     }
 
     // Human output boundary tests
@@ -1711,7 +1900,7 @@ mod tests {
         ];
 
         // Non-strict should return 0 despite multiple outdated
-        assert_eq!(determine_exit_code(&findings, false), 0);
+        assert_eq!(determine_exit_code(&findings, &[]), 0);
     }
 
     /// Test `From<&Finding>` trait implementation for `JsonFinding`.

@@ -181,13 +181,17 @@ pub enum Command {
         #[arg(default_value = ".")]
         path: PathBuf,
 
-        /// Fail if any actions are outdated
+        /// Fail if any actions are outdated, the same as `--fail-on outdated`
         #[arg(long, env = config::STRICT_VAR)]
         strict: bool,
 
+        /// Exit 1 when a finding of this kind exists (repeatable)
+        #[arg(long, value_name = "KIND")]
+        fail_on: Vec<FailOn>,
+
         /// Output format
         #[arg(long, default_value = "human", env = config::FORMAT_VAR)]
-        format: OutputFormat,
+        format: CheckFormat,
     },
 
     /// Update actions to their latest versions
@@ -292,13 +296,50 @@ pub enum OutputFormat {
     Toml,
 }
 
+/// Output format of `check`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub enum CheckFormat {
+    /// Findings grouped by file, with a summary.
+    #[default]
+    Human,
+    /// One JSON entry per finding.
+    Json,
+    /// One TOML entry per finding.
+    Toml,
+    /// One aligned row per finding: location, action, current, target, status.
+    Table,
+}
+
+impl CheckFormat {
+    /// The format the shared scanner messages follow.
+    #[must_use]
+    pub const fn messages(self) -> OutputFormat {
+        match self {
+            Self::Human | Self::Table => OutputFormat::Human,
+            Self::Json => OutputFormat::Json,
+            Self::Toml => OutputFormat::Toml,
+        }
+    }
+}
+
+/// A finding kind that makes `check` exit 1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub enum FailOn {
+    /// An outdated ref or a branch ref to pin.
+    Outdated,
+    /// An outdated ref whose target is a newer major version.
+    Major,
+    /// A floating branch ref, warned about or to pin.
+    Floating,
+}
+
 /// Exit codes per AGENTS.md specification
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 pub enum CliExitCode {
     /// Success
     Success = 0,
-    /// Outdated found (in check with --strict, or dry-run with changes), or `update`/`pin` skipped a ref it cannot edit
+    /// A `check --fail-on` kind found, `update --dry-run` with changes, or `update`/`pin` skipped a ref it cannot edit
     Outdated = 1,
     /// User error: a confirmed unresolvable ref, an invalid config file, or invalid CLI input.
     UserError = 2,
@@ -394,11 +435,48 @@ mod tests {
         assert!(matches!(
             cli.command,
             Some(Command::Check {
-                format: OutputFormat::Json,
+                format: CheckFormat::Json,
                 ..
             })
         ));
         Ok(())
+    }
+
+    #[test]
+    fn check_takes_repeated_fail_on_and_the_table_format() -> Result<(), Error> {
+        let cli = parse(&[
+            "check",
+            "--fail-on",
+            "major",
+            "--fail-on",
+            "floating",
+            "--format",
+            "table",
+        ])?;
+        let Some(Command::Check {
+            fail_on, format, ..
+        }) = cli.command
+        else {
+            panic!("expected the check command");
+        };
+        assert_eq!(fail_on, [FailOn::Major, FailOn::Floating]);
+        assert_eq!(format, CheckFormat::Table);
+        assert!(matches!(CheckFormat::Table.messages(), OutputFormat::Human));
+        Ok(())
+    }
+
+    #[test]
+    fn only_check_accepts_the_table_format() {
+        for args in [
+            &["update", "--format", "table"][..],
+            &["config", "--format", "table"][..],
+            &["--format", "table", "actions/checkout"][..],
+        ] {
+            let Err(error) = parse(args) else {
+                panic!("{args:?} must be rejected");
+            };
+            assert_eq!(error.kind(), ErrorKind::InvalidValue, "{args:?}");
+        }
     }
 
     #[test]
