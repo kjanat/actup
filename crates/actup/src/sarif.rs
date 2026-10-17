@@ -150,8 +150,34 @@ fn slug(action: &ActionRef) -> String {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathStyle {
+    Unix,
+    Windows,
+}
+
+impl PathStyle {
+    const HOST: Self = if cfg!(windows) {
+        Self::Windows
+    } else {
+        Self::Unix
+    };
+
+    fn slashes(self, path: &str) -> String {
+        match self {
+            Self::Unix => path.to_string(),
+            Self::Windows => path.replace('\\', "/"),
+        }
+    }
+
+    const fn is_drive(self, segment: &str) -> bool {
+        matches!(self, Self::Windows)
+            && matches!(segment.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic())
+    }
+}
+
 fn path(finding: &Finding) -> String {
-    finding.file().replace('\\', "/")
+    PathStyle::HOST.slashes(finding.file())
 }
 
 fn encode(segment: &str) -> String {
@@ -167,12 +193,12 @@ fn encode(segment: &str) -> String {
         .collect()
 }
 
-const fn is_drive(segment: &str) -> bool {
-    matches!(segment.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic())
+fn uri(finding: &Finding) -> String {
+    uri_in(PathStyle::HOST, finding.file())
 }
 
-fn uri(finding: &Finding) -> String {
-    let path = path(finding);
+fn uri_in(style: PathStyle, file: &str) -> String {
+    let path = style.slashes(file);
     let (absolute, rest) = path
         .strip_prefix('/')
         .map_or((false, path.as_str()), |rest| (true, rest));
@@ -180,14 +206,17 @@ fn uri(finding: &Finding) -> String {
         .split('/')
         .enumerate()
         .map(|(index, segment)| {
-            if index == 0 && is_drive(segment) {
+            if index == 0 && style.is_drive(segment) {
                 segment.to_string()
             } else {
                 encode(segment)
             }
         })
         .collect();
-    let drive = rest.split('/').next().is_some_and(is_drive);
+    let drive = rest
+        .split('/')
+        .next()
+        .is_some_and(|segment| style.is_drive(segment));
     let joined = segments.join("/");
     if absolute || drive {
         format!("file:///{joined}")
@@ -356,7 +385,7 @@ mod tests {
         vec![
             finding("ci.yml", 1, "o/up@v1", FindingStatus::UpToDate),
             finding(
-                ".github\\workflows\\ci.yml",
+                ".github/workflows/ci.yml",
                 2,
                 "o/old/sub@v1.0.0",
                 FindingStatus::Outdated {
@@ -531,8 +560,20 @@ mod tests {
         );
         assert_eq!(at("dé/a:b%.yml"), "d%C3%A9/a%3Ab%25.yml");
         assert_eq!(at("/abs/ci.yml"), "file:///abs/ci.yml");
-        assert_eq!(at("C:\\work\\ci.yml"), "file:///C:/work/ci.yml");
-        assert_eq!(at("c:"), "file:///c:");
+        for (file, unix, windows) in [
+            (
+                "C:\\work\\ci.yml",
+                "C%3A%5Cwork%5Cci.yml",
+                "file:///C:/work/ci.yml",
+            ),
+            ("c:/ci.yml", "c%3A/ci.yml", "file:///c:/ci.yml"),
+            ("c:", "c%3A", "file:///c:"),
+            ("a\\b.yml", "a%5Cb.yml", "a/b.yml"),
+            ("ab:/ci.yml", "ab%3A/ci.yml", "ab%3A/ci.yml"),
+        ] {
+            assert_eq!(uri_in(PathStyle::Unix, file), unix, "{file}");
+            assert_eq!(uri_in(PathStyle::Windows, file), windows, "{file}");
+        }
         for file in ["my ci#1.yml", "/x y/[z].yml", "a?b.yml"] {
             let uri = at(file);
             assert!(

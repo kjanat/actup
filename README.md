@@ -127,8 +127,9 @@ refs, under one rule per status (`actup/outdated`, `actup/floating`,
 an unresolvable ref, `warning` for an outdated or floating ref, and `note` for
 pinned and unknown refs, environment errors and same-commit pins. Paths are
 percent-encoded URIs relative to the scanned directory, or `file:///` URIs for
-absolute paths, and columns count UTF-16 code units. Files that could not be
-read appear as execution notifications.
+absolute paths. A backslash separates segments and a drive letter makes a path
+absolute on Windows alone. Columns count UTF-16 code units. Files that could not
+be read appear as execution notifications.
 
 `check --github-annotations` also writes one `::error` or `::warning` workflow
 command per error or warning finding to stderr, whatever `--format` is.
