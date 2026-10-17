@@ -14,6 +14,7 @@ LABEL org.opencontainers.image.title="actup" \
       org.opencontainers.image.revision="${ACTUP_REVISION}"
 
 COPY --chmod=0755 docker/${TARGETARCH}/actup /usr/local/bin/actup
+COPY LICENSE-MIT LICENSE-APACHE /usr/share/doc/actup/
 
 WORKDIR /work
 ENTRYPOINT ["/usr/local/bin/actup"]

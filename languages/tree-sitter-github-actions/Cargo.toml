@@ -12,7 +12,7 @@ keywords               = ["github-actions", "incremental", "parsing", "tree-sitt
 categories             = ["parser-implementations", "parsing", "text-editors"]
 build                  = "bindings/rust/build.rs"
 include                = [
-  "../../LICENSE-MIT",
+  "LICENSE-MIT",
   "bindings/rust/*",
   "grammar.js",
   "queries/*",

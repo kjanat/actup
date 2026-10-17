@@ -26,3 +26,74 @@ jobs:
             fi
           done
           exit "${missing}"
+
+  crate-licences:
+    name: Published crates carry their licence files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - run: rustup toolchain install
+
+      - name: Check every crate the release publishes
+        run: |
+          crates="$(yq '.jobs.crates-verify.steps[] | select(.id == "package") | .env.CRATES' .github/workflows/release.yml)"
+          if [[ -z "${crates}" || "${crates}" == null ]]; then
+            echo "::error file=.github/workflows/release.yml::the crates-verify package step sets no CRATES"
+            exit 1
+          fi
+          metadata="$(cargo metadata --no-deps --locked --format-version 1)"
+          missing=0
+          for crate in ${crates}; do
+            license="$(jq -r --arg name "${crate}" '.packages[] | select(.name == $name) | .license // ""' <<<"${metadata}")"
+            if [[ -z "${license}" ]]; then
+              echo "::error::${crate} declares no license"
+              missing=1
+              continue
+            fi
+            listing="$(cargo package --list --locked -p "${crate}")"
+            for id in ${license//[()]/ }; do
+              case "${id}" in
+                OR | AND) continue ;;
+                MIT) file=LICENSE-MIT ;;
+                Apache-2.0) file=LICENSE-APACHE ;;
+                *)
+                  echo "::error::${crate} declares ${id}, which this check cannot map to a file"
+                  missing=1
+                  continue
+                  ;;
+              esac
+              if ! grep -qxF "${file}" <<<"${listing}"; then
+                echo "::error::${crate} declares ${id}, and its package lacks ${file}"
+                missing=1
+              fi
+            done
+          done
+          exit "${missing}"
+
+  image-licences:
+    name: Container image carries the licence files
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - name: Build the image around a stub binary and compare its licence files
+        run: |
+          mkdir -p docker/amd64
+          printf 'stub\n' >docker/amd64/actup
+          docker build --platform linux/amd64 --tag actup-licences .
+          container="$(docker create actup-licences)"
+          missing=0
+          for file in LICENSE-MIT LICENSE-APACHE; do
+            if ! docker cp "${container}:/usr/share/doc/actup/${file}" "${RUNNER_TEMP}/${file}"; then
+              echo "::error file=Dockerfile::the image lacks /usr/share/doc/actup/${file}"
+              missing=1
+            elif ! cmp "${file}" "${RUNNER_TEMP}/${file}"; then
+              echo "::error file=Dockerfile::/usr/share/doc/actup/${file} differs from ${file}"
+              missing=1
+            fi
+          done
+          docker rm "${container}"
+          exit "${missing}"

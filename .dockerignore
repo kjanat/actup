@@ -1,3 +1,5 @@
 *
 !docker/amd64/actup
 !docker/arm64/actup
+!LICENSE-MIT
+!LICENSE-APACHE
