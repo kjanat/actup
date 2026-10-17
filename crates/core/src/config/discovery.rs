@@ -1,7 +1,7 @@
 //! Config file discovery
 //!
 //! Searches for config files in standard locations with defined priority.
-//! Discovery order (per directory level, walking up from start):
+//! Discovery order (per directory level, walking up from start to the repository root):
 //! 1. Root: `actup.*`, `.actup.*`
 //! 2. `.config/actup.*`
 //! 3. `.github/actup.*`
@@ -97,29 +97,30 @@ pub fn iter_config_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_
     repo_candidates().map(move |candidate| candidate.path_in(base))
 }
 
-/// Find repo config path, searching upward from `start_dir`.
+/// Return the directories repo config discovery searches, from `start_dir` upward.
 ///
-/// Returns the first existing config file found.
+/// The walk ends at the first directory that contains `.git` or equals `ceiling`.
 #[must_use]
-#[allow(clippy::module_name_repetitions, reason = "clear naming")]
-pub fn find_repo_config(start_dir: &Path) -> Option<PathBuf> {
-    let mut dir = start_dir.to_path_buf();
-
-    loop {
-        // Check all candidates at this level
-        for candidate in iter_config_candidates(&dir) {
-            if candidate.exists() {
-                return Some(candidate);
-            }
-        }
-
-        // Move up one directory
-        if !dir.pop() {
+pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf> {
+    let start = std::path::absolute(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
+    let ceiling = ceiling.map(|c| std::path::absolute(c).unwrap_or_else(|_| c.to_path_buf()));
+    let mut dirs = Vec::new();
+    for dir in start.ancestors() {
+        dirs.push(dir.to_path_buf());
+        if ceiling.as_deref() == Some(dir) || dir.join(".git").exists() {
             break;
         }
     }
+    dirs
+}
 
-    None
+/// Find the first existing repo config in [`repo_search_dirs`].
+#[must_use]
+#[allow(clippy::module_name_repetitions, reason = "clear naming")]
+pub fn find_repo_config(start_dir: &Path, ceiling: Option<&Path>) -> Option<PathBuf> {
+    repo_search_dirs(start_dir, ceiling)
+        .iter()
+        .find_map(|dir| iter_config_candidates(dir).find(|candidate| candidate.exists()))
 }
 
 /// Get user/global config path.

@@ -29,6 +29,7 @@ async fn main() -> ExitCode {
     };
 
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
@@ -87,8 +88,14 @@ async fn run(cli: Cli) -> i32 {
         cli.config.as_deref(),
         user_config_path().as_deref(),
         &start_dir,
+        None,
     ) {
-        Ok(c) => c,
+        Ok(c) => {
+            if let Some(from) = &c.loaded_from {
+                tracing::info!(path = %from.display(), "loaded config");
+            }
+            c
+        }
         Err(e) => {
             eprintln!("Error: {e}");
             return CliExitCode::UserError.into();

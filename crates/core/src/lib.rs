@@ -41,6 +41,7 @@ pub use config::{
     registration::{
         Capabilities, Preset, ProviderConfig, Registration, validate_no_duplicate_presets,
     },
+    repo_search_dirs,
     resolution::{effective_host, resolve_default_host},
     user_config_path,
     validation::{validate_api_base, validate_hostname, validate_provider_config},

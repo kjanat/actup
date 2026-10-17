@@ -3,7 +3,7 @@
 //! Configuration is loaded from multiple sources with precedence:
 //! 1. Environment variables (ACTUP_*) - highest
 //! 2. Explicit --config path
-//! 3. Repo configs (actup.toml, .actup.toml, .config/actup.toml, etc.)
+//! 3. Repo configs (actup.toml, .actup.toml, .config/actup.toml, etc.), up to the repository root
 //! 4. User/global config ([`user_config_path`])
 //! 5. Defaults (lowest)
 
@@ -27,7 +27,8 @@ use discovery::Format;
 #[allow(clippy::module_name_repetitions)]
 pub use discovery::find_repo_config;
 pub use discovery::{
-    CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, user_config_path,
+    CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, repo_search_dirs,
+    user_config_path,
 };
 pub use env::{CLI_FLAG_VARS, CONFIG_VAR, EnvOverrides, FORMAT_VAR, STRICT_VAR, VERBOSE_VAR};
 use figment::{
@@ -544,7 +545,7 @@ impl Config {
     /// Precedence (highest to lowest):
     /// 1. Environment variables (ACTUP_*)
     /// 2. Explicit `config_path` (if provided), relative to the process working directory
-    /// 3. Repo config (searched upward from `start_dir`)
+    /// 3. Repo config, searched upward from `start_dir` by [`repo_search_dirs`] with `ceiling`
     /// 4. User config at `user_config`, usually [`user_config_path`]
     /// 5. Defaults
     ///
@@ -555,6 +556,7 @@ impl Config {
         config_path: Option<&Path>,
         user_config: Option<&Path>,
         start_dir: &Path,
+        ceiling: Option<&Path>,
     ) -> Result<Self, Error> {
         let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
 
@@ -564,8 +566,7 @@ impl Config {
             figment = figment.merge(Toml::file(user_config));
         }
 
-        // Repo config (searched upward from `start_dir`)
-        let loaded_from = if let Some(repo_config) = find_repo_config(start_dir) {
+        let loaded_from = if let Some(repo_config) = find_repo_config(start_dir, ceiling) {
             figment = Self::merge_config_file(figment, &repo_config)?;
             Some(repo_config)
         } else {

@@ -427,6 +427,7 @@ impl LanguageServer for LspBackend {
             resolve_config_path(config_path.as_deref(), start_dir).as_deref(),
             self.user_config.as_deref(),
             start_dir,
+            workspace_root.as_deref(),
         ) {
             Ok(c) => {
                 if let Some(from) = &c.loaded_from {
@@ -1215,15 +1216,11 @@ impl LspBackend {
     }
 
     async fn watched_configs(&self) -> WatchedConfigs {
-        let start_dir = self
-            .workspace_root
-            .read()
-            .await
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("."));
+        let workspace_root = self.workspace_root.read().await.clone();
+        let start_dir = workspace_root.clone().unwrap_or_else(|| PathBuf::from("."));
         let explicit = resolve_config_path(self.config_path.read().await.as_deref(), &start_dir);
         WatchedConfigs {
-            start_dir: std::path::absolute(start_dir).ok(),
+            search_dirs: actup_core::repo_search_dirs(&start_dir, workspace_root.as_deref()),
             user: self.user_config.clone(),
             explicit: explicit.and_then(|p| std::path::absolute(p).ok()),
         }
@@ -1259,6 +1256,7 @@ impl LspBackend {
             resolve_config_path(config_path.as_deref(), start_dir).as_deref(),
             self.user_config.as_deref(),
             start_dir,
+            workspace_root.as_deref(),
         ) {
             Ok(c) => {
                 if let Some(from) = &c.loaded_from {
@@ -1363,7 +1361,7 @@ impl LspBackend {
 
 #[derive(Debug, Clone, Default)]
 struct WatchedConfigs {
-    start_dir: Option<PathBuf>,
+    search_dirs: Vec<PathBuf>,
     user: Option<PathBuf>,
     explicit: Option<PathBuf>,
 }
@@ -1372,10 +1370,8 @@ impl WatchedConfigs {
     fn contains(&self, path: &Path) -> bool {
         self.user.as_deref() == Some(path)
             || self.explicit.as_deref() == Some(path)
-            || self.start_dir.as_deref().is_some_and(|start| {
-                start.ancestors().any(|dir| {
-                    actup_core::iter_config_candidates(dir).any(|candidate| candidate == path)
-                })
+            || self.search_dirs.iter().any(|dir| {
+                actup_core::iter_config_candidates(dir).any(|candidate| candidate == path)
             })
     }
 }
@@ -1477,7 +1473,7 @@ fn config_file_watchers(
     watched: &WatchedConfigs,
     relative_patterns: bool,
 ) -> Vec<FileSystemWatcher> {
-    let ancestors = watched.start_dir.iter().flat_map(|start| start.ancestors());
+    let search_dirs = watched.search_dirs.iter().map(PathBuf::as_path);
     let files = [&watched.user, &watched.explicit].into_iter().flatten();
 
     if !relative_patterns {
@@ -1492,7 +1488,7 @@ fn config_file_watchers(
                 segments.push(format!("{{{}}}", names.join(",")));
                 string_watcher(segments.join("/"))
             });
-        let above_root = ancestors
+        let above_root = search_dirs
             .skip(1)
             .flat_map(|dir| candidate_groups(dir).into_iter())
             .map(|(dir, names)| {
@@ -1502,7 +1498,7 @@ fn config_file_watchers(
         return workspace.chain(above_root).chain(files).collect();
     }
 
-    let candidates = ancestors
+    let candidates = search_dirs
         .flat_map(|dir| candidate_groups(dir).into_iter())
         .filter_map(|(dir, names)| relative_watcher(&dir, format!("{{{}}}", names.join(","))));
     let files = files.filter_map(|file| file_watcher(file));
@@ -1904,7 +1900,7 @@ mod tests {
         let temp = tempfile::tempdir()?;
         let start = temp.path().join("repo");
         let watched = WatchedConfigs {
-            start_dir: Some(start.clone()),
+            search_dirs: vec![start.clone(), temp.path().to_path_buf()],
             ..WatchedConfigs::default()
         };
 
@@ -1925,6 +1921,7 @@ mod tests {
             start.join("Cargo.toml"),
             start.join("actup.toml.bak"),
             start.join("not-actup.toml"),
+            temp.path().with_file_name("actup.toml"),
         ] {
             assert!(!watched.contains(&other), "{}", other.display());
         }
@@ -1936,7 +1933,7 @@ mod tests {
         let user = PathBuf::from("/home/user/.config/actup/config.toml");
         let explicit = PathBuf::from("/elsewhere/custom.toml");
         let watched = WatchedConfigs {
-            start_dir: None,
+            search_dirs: Vec::new(),
             user: Some(user.clone()),
             explicit: Some(explicit.clone()),
         };
@@ -1953,7 +1950,7 @@ mod tests {
         let user = temp.path().join("home/actup/config.toml");
         let explicit = temp.path().join("custom.yaml");
         let watched = WatchedConfigs {
-            start_dir: Some(start.clone()),
+            search_dirs: vec![start.clone(), temp.path().to_path_buf()],
             user: Some(user),
             explicit: Some(explicit),
         };
@@ -1976,7 +1973,7 @@ mod tests {
                 "missing {expected:?} in {relative:?}"
             );
         }
-        assert_eq!(watchers.len(), start.ancestors().count() * 3 + 2);
+        assert_eq!(watchers.len(), 2 * 3 + 2);
         Ok(())
     }
 
@@ -2007,7 +2004,7 @@ mod tests {
         let user = temp.path().join("home/actup/config.toml");
         let explicit = temp.path().join("custom.yaml");
         let watched = WatchedConfigs {
-            start_dir: Some(start.clone()),
+            search_dirs: vec![start.clone(), temp.path().to_path_buf()],
             user: Some(user.clone()),
             explicit: Some(explicit.clone()),
         };
@@ -2046,7 +2043,7 @@ mod tests {
             !patterns.iter().any(|p| p.starts_with(&start_glob)),
             "{patterns:?}"
         );
-        assert_eq!(watchers.len(), start.ancestors().count() * 3 + 2);
+        assert_eq!(watchers.len(), 2 * 3 + 2);
         assert!(watchers.iter().all(|w| w.kind.is_none()));
         Ok(())
     }
@@ -2565,6 +2562,31 @@ mod tests {
         assert!(!config.cache.enabled);
         assert!(backend.registry.read().await.is_some());
         assert!(backend.file_cache.read().await.is_some());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn workspace_root_bounds_config_discovery()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("workspace");
+        std::fs::create_dir(&root)?;
+        std::fs::write(
+            temp.path().join("actup.toml"),
+            "[policy]\nbump = \"patch\"\n",
+        )?;
+        let (service, _socket) = initialized_service(&root).await?;
+        let backend = service.inner();
+
+        let stored = backend.config.read().await.clone();
+        let ConfigState::Loaded(config) = stored else {
+            panic!("initialize stored {stored:?}");
+        };
+        assert_eq!(config.loaded_from, None);
+        assert_eq!(config.policy.bump, actup_core::policy::Update::Latest);
+        let watched = backend.watched_configs().await;
+        assert_eq!(watched.search_dirs, [std::path::absolute(&root)?]);
+        assert!(!watched.contains(&temp.path().join("actup.toml")));
         Ok(())
     }
 

@@ -180,7 +180,11 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 1. `-c, --config <path>` (or `ACTUP_CONFIG`) or LSP `configPath` (explicit). A
    relative path resolves against the CLI working directory or the LSP workspace
    root. A missing file is an error (exit code 2).
-2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`
+2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`, searched from the
+   scanned path upward. The search stops at the first directory that contains
+   `.git` (a directory, or a file in a worktree). The LSP searches only its
+   workspace folder. The CLI logs the loaded file at `info`, and `actup config`
+   shows it.
 3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
    (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)

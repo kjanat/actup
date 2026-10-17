@@ -203,7 +203,8 @@ Never let GitHub + GitHub Enterprise collide in cache.
 
 1. Explicit `--config <path>` (CLI) / LSP setting `actup.configPath` / MCP arg
    `configPath`
-2. Repo configs, found by walking up from file/workspace root:
+2. Repo configs, found by walking up from the scanned path to the first
+   directory containing `.git` (the LSP searches only its workspace folder):
 
    - `actup.toml`
    - `.actup.toml`
