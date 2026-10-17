@@ -902,6 +902,52 @@ fn update_file_refuses_escaped_values_overlaps_and_mixed_hosts(
     })
 }
 
+fn update_file_refreshes_version_comments(client: &mut Client, ws: &Workspace) -> TestResult {
+    let noted = "steps:\n  - uses: actions/checkout@v4.0.0 # v4.0.0 keep\n  - uses: actions/setup-node@v4 # 1st step\n";
+    ws.write(".github/workflows/noted.yml", noted)?;
+    let tagged = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/noted.yml",
+            "edits": [
+                { "line": 2, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 3, "action": "actions/setup-node", "ref": "v5" },
+            ],
+        }),
+    )?;
+    expect(!is_error(&tagged), || format!("tag edits failed: {tagged}"))?;
+    let retagged = "steps:\n  - uses: actions/checkout@v4.2.0 # v4.2.0 keep\n  - uses: actions/setup-node@v5 # 1st step\n";
+    expect(ws.read(".github/workflows/noted.yml")? == retagged, || {
+        "tag edits did not refresh the version comment".into()
+    })?;
+    expect_eq(
+        &body(&tagged)["changes"][0]["after"],
+        &json!("  - uses: actions/checkout@v4.2.0 # v4.2.0 keep"),
+        "reported line",
+    )?;
+
+    let pinned = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/noted.yml",
+            "edits": [
+                { "line": 2, "action": "actions/checkout", "ref": sha('b') },
+                { "line": 3, "action": "actions/setup-node", "ref": sha('c') },
+            ],
+        }),
+    )?;
+    expect(!is_error(&pinned), || format!("SHA edits failed: {pinned}"))?;
+    let expected = format!(
+        "steps:\n  - uses: actions/checkout@{} # keep\n  - uses: actions/setup-node@{} # 1st step\n",
+        sha('b'),
+        sha('c')
+    );
+    let written = ws.read(".github/workflows/noted.yml")?;
+    expect(written == expected, || {
+        format!("SHA edits wrote {written:?}")
+    })
+}
+
 fn mutators_refuse_paths_outside_the_root(client: &mut Client, ws: &Workspace) -> TestResult {
     let outside = ws.dir.path().join("outside.yml");
     let edit = json!([{ "line": 7, "action": "actions/checkout", "ref": "v4.2.0" }]);
@@ -1366,7 +1412,7 @@ const BINARY_CASES: [(&str, BinaryCase); 4] = [
     ),
 ];
 
-const CASES: [(&str, Case); 11] = [
+const CASES: [(&str, Case); 12] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -1408,6 +1454,10 @@ const CASES: [(&str, Case); 11] = [
         mutators_read_markdown_and_text_files,
     ),
     ("mutators_report_invalid_refs", mutators_report_invalid_refs),
+    (
+        "update_file_refreshes_version_comments",
+        update_file_refreshes_version_comments,
+    ),
 ];
 
 fn run(case: Case) -> TestResult {

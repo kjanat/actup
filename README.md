@@ -478,11 +478,14 @@ writes each ref in its `policy.pin` style, as `update` does. It lists each
 matching `uses:` value that is not a valid reference under `unresolvable` with
 its `error`, leaves it unchanged and reports status `unresolvable`. `updateFile`
 replaces the ref of such a value when the rewritten value parses, and refuses a
-value without `@`. `getLatest` adds `refKind` (`tag`, `branch` or `sha`) when
-the version list names `currentRef`, and `sameCommit` (the target version) when
-the target sits on the commit that `currentRef` already points at. `getVersions`
-and `getLatest` add `stale`, shaped like the CLI field, when their versions come
-from an expired cache entry, and the server answers the next call afresh.
+value without `@`. A trailing version comment (`# v4.0.0 note`) names the new
+ref when `updateFile` writes a tag, and loses its version when it writes a SHA.
+Both keep the note, and any other comment stays. `getLatest` adds `refKind`
+(`tag`, `branch` or `sha`) when the version list names `currentRef`, and
+`sameCommit` (the target version) when the target sits on the commit that
+`currentRef` already points at. `getVersions` and `getLatest` add `stale`,
+shaped like the CLI field, when their versions come from an expired cache entry,
+and the server answers the next call afresh.
 
 ## Exit Codes
 

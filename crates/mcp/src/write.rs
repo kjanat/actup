@@ -5,7 +5,10 @@ use std::{fs, io, ops::Range, path::Path};
 use actup_core::{
     ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, SourceFormat, Uses,
     UsesLocation, classify_uses, discover_files, line_spans, parse_action_path,
-    patch::{EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retarget_edit},
+    patch::{
+        EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retag_edit,
+        retarget_edit, sha_edit,
+    },
     policy::Style,
     provider::Registry,
     rewrite_atomic, version,
@@ -399,23 +402,31 @@ fn remote_values(format: SourceFormat, content: &str) -> Vec<(UsesLocation, Acti
         .collect()
 }
 
-/// The byte range of the ref that `reference` replaces, if the rewritten value parses.
-fn replaced_ref(loc: &UsesLocation, reference: &str) -> Result<Range<usize>, String> {
+/// The edit that writes `reference` over the ref at `loc`, if the rewritten value parses.
+///
+/// A SHA drops the version of a trailing version comment and keeps its note.
+/// Any other ref takes the place of that version.
+fn ref_edit(loc: &UsesLocation, reference: &str) -> Result<PendingEdit, String> {
     let value = loc.value();
     let Some((base, _)) = value.split_once('@') else {
         return Err(format!("`{value}` has no `@`"));
     };
-    let Some(range) = loc.ref_range() else {
-        return Err(format!(
-            "`{value}` is escaped or spans lines; edit it by hand"
-        ));
-    };
-    let rewritten = format!("{base}@{reference}");
-    match classify_uses(&rewritten) {
-        Uses::Action(_) => Ok(range),
-        Uses::Invalid { error, .. } => Err(format!("`{rewritten}`: {error}")),
-        Uses::Local => Err(format!("`{rewritten}` names no remote action")),
+    let unplaceable = || format!("`{value}` is escaped or spans lines; edit it by hand");
+    if loc.ref_range().is_none() {
+        return Err(unplaceable());
     }
+    let rewritten = format!("{base}@{reference}");
+    let action = match classify_uses(&rewritten) {
+        Uses::Action(action) => action,
+        Uses::Invalid { error, .. } => return Err(format!("`{rewritten}`: {error}")),
+        Uses::Local => return Err(format!("`{rewritten}` names no remote action")),
+    };
+    let edit = if action.is_sha() {
+        sha_edit(loc, reference)
+    } else {
+        retag_edit(loc, reference)
+    };
+    edit.ok_or_else(unplaceable)
 }
 
 /// `updateFile`: replace the refs of named `uses:` values in one file, all or none.
@@ -480,14 +491,13 @@ pub fn update_file(
             });
             continue;
         }
-        let range = match replaced_ref(loc, &edit.reference) {
-            Ok(range) => range,
+        let pending = match ref_edit(loc, &edit.reference) {
+            Ok(pending) => pending,
             Err(problem) => {
                 problems.push(format!("line {line}: {problem}"));
                 continue;
             }
         };
-        let pending = PendingEdit::replace_range(line, range, edit.reference.clone());
         let label = label(site, &pending, loc, action.ref_str(), &edit.reference);
         edits.add(pending, label);
     }
@@ -715,30 +725,69 @@ mod tests {
         Info::new(version::Version::parse("v4.2.0"), "b".repeat(40))
     }
 
-    #[test]
-    fn replaced_ref_requires_an_at_and_a_value_that_parses()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let only = |line_body: &str| -> Result<UsesLocation, Box<dyn std::error::Error>> {
-            let found = actup_core::extract_uses_from_yaml(line_body);
-            let [loc] = found.as_slice() else {
-                return Err(format!("expected one `uses:` in {line_body:?}").into());
-            };
-            Ok(loc.clone())
+    fn edited(line_body: &str, reference: &str) -> Result<String, String> {
+        let found = actup_core::extract_uses_from_yaml(line_body);
+        let [loc] = found.as_slice() else {
+            return Err(format!("expected one `uses:` in {line_body:?}"));
         };
-        assert_eq!(replaced_ref(&only("- uses: o/r@a~1")?, "v1"), Ok(12..15));
+        let edit = ref_edit(loc, reference)?;
+        let EditKind::ReplaceRange { range, new } = &edit.kind;
+        assert_eq!(edit.comment, None, "{line_body:?}");
+        let mut line = line_body.to_string();
+        line.replace_range(range.clone(), new);
+        Ok(line)
+    }
+
+    #[test]
+    fn ref_edit_refreshes_version_comments_and_keeps_notes() {
+        let sha = "b".repeat(40);
+        let cases = [
+            ("- uses: o/r@a~1", "v1", "- uses: o/r@v1".to_string()),
+            (
+                "- uses: o/r@v4.0.0 # v4.0.0 keep",
+                "v4.2.0",
+                "- uses: o/r@v4.2.0 # v4.2.0 keep".to_string(),
+            ),
+            (
+                "- uses: o/r@v4.0.0 # 1st step",
+                "v4.2.0",
+                "- uses: o/r@v4.2.0 # 1st step".to_string(),
+            ),
+            (
+                "- uses: o/r@v4.0.0 # v4.0.0 keep",
+                &sha,
+                format!("- uses: o/r@{sha} # keep"),
+            ),
+            (
+                "- uses: o/r@v4.0.0 # v4.0.0",
+                &sha,
+                format!("- uses: o/r@{sha}"),
+            ),
+            (
+                "- uses: o/r@v4.0.0 # 1st step",
+                &sha,
+                format!("- uses: o/r@{sha} # 1st step"),
+            ),
+        ];
+        for (line_body, reference, expected) in cases {
+            assert_eq!(edited(line_body, reference), Ok(expected), "{line_body:?}");
+        }
+    }
+
+    #[test]
+    fn ref_edit_requires_an_at_and_a_value_that_parses() {
         assert_eq!(
-            replaced_ref(&only("- uses: o/r")?, "v1"),
+            edited("- uses: o/r", "v1"),
             Err("`o/r` has no `@`".to_string())
         );
         assert_eq!(
-            replaced_ref(&only("- uses: \"o/r@a\\x7e1\"")?, "v1"),
+            edited("- uses: \"o/r@a\\x7e1\"", "v1"),
             Err("`o/r@a~1` is escaped or spans lines; edit it by hand".to_string())
         );
         assert_eq!(
-            replaced_ref(&only("- uses: o/r/../x@a~1")?, "v1"),
+            edited("- uses: o/r/../x@a~1", "v1"),
             Err("`o/r/../x@v1`: invalid action reference 'o/r/../x@v1': path segment `..` is empty, `.` or `..`".to_string())
         );
-        Ok(())
     }
 
     #[test]

@@ -67,7 +67,12 @@ impl PendingEdit {
     }
 }
 
-fn retag_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
+/// Build an edit that writes the tag `tag` over the ref at `loc`.
+///
+/// A trailing version comment names `tag` and keeps its note. Returns `None`
+/// when the line does not hold the value verbatim.
+#[must_use]
+pub fn retag_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
     match Trailing::after(loc.raw_line(), range.end) {
         Trailing::Version { note } => {
@@ -151,6 +156,14 @@ pub fn rewrite_edit(loc: &UsesLocation, rewrite: &Rewrite) -> Option<PendingEdit
         range.start..end,
         text,
     ))
+}
+
+/// Build an edit that writes `sha` over the ref at `loc` without naming its version.
+///
+/// A trailing version comment loses its version and keeps its note.
+#[must_use]
+pub fn sha_edit(loc: &UsesLocation, sha: &str) -> Option<PendingEdit> {
+    unpin_edit(loc, sha)
 }
 
 /// Build an edit that pins the ref at `loc` to `sha` with a ` # <label>` comment.
