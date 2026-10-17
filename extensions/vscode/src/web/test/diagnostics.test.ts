@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as vscode from "vscode";
 import { ActupCodeActionProvider } from "../codeActions.ts";
-import { computeDiagnostics, createDiagnosticCollection, diagnosticDataByUri } from "../diagnostics.ts";
+import { computeDiagnostics, createDiagnosticCollection, diagnosticDataByUri, diagnosticKey } from "../diagnostics.ts";
 import { codeActionContext, editsOf, FakeDocument, fakeProvider, rangeOf } from "./fixtures.ts";
 
 const provider = fakeProvider({
@@ -86,5 +86,50 @@ describe("ActupCodeActionProvider", () => {
 			{ range: rangeOf(document, 4, "v1.0.0"), newText: "v1.2.0" },
 		]);
 		expect(fixAll?.diagnostics?.map(diagnostic => diagnostic.code)).toEqual(["outdated", "outdated"]);
+	});
+});
+
+describe("an outdated value the line holds escaped", () => {
+	const escapedWorkflow = [
+		"jobs:",
+		"  ci:",
+		"    uses: github.com/acme/workflows/.github/workflows/ci.yml@v1.0.0",
+		"  lint:",
+		"    uses: github.com/acme/workflows/.github/workflows/lint.yml@v1.0.0",
+		"  escaped:",
+		"    uses: \"github.com/acme/workflows/.github/workflows/ci.yml@v1.0.\\x30\"",
+		"",
+	].join("\n");
+
+	test("gets a whole-line diagnostic without edit data", async () => {
+		const { document, diagnostics } = await diagnose("escaped-outdated.yml", escapedWorkflow);
+		const escaped = diagnostics[2];
+		if (escaped === undefined) {
+			throw new Error("no diagnostic for the escaped value");
+		}
+		const dataMap = diagnosticDataByUri.get(document.uri.toString());
+
+		expect(diagnostics).toHaveLength(3);
+		expect(escaped.range).toEqual(document.lineAt(6).range);
+		expect(escaped.code).toBe("outdated");
+		expect(dataMap?.get(diagnosticKey(escaped))).toBeUndefined();
+		expect(dataMap?.size).toBe(2);
+	});
+
+	test("is skipped by the quick fix and by fix-all", async () => {
+		const { document, diagnostics } = await diagnose("escaped-actions.yml", escapedWorkflow);
+		const escaped = diagnostics.filter(diagnostic => diagnostic.range.start.line === 6);
+		const actions = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(6).range,
+			codeActionContext(escaped),
+		);
+
+		expect(escaped).toHaveLength(1);
+		expect(actions.map(action => action.title)).toEqual(["Fix all outdated actions (2 refs)"]);
+		expect(editsOf(actions[0])).toEqual([
+			{ range: rangeOf(document, 2, "v1.0.0"), newText: "v1.2.0" },
+			{ range: rangeOf(document, 4, "v1.0.0"), newText: "v1.2.0" },
+		]);
 	});
 });
