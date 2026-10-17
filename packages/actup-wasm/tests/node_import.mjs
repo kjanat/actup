@@ -399,4 +399,26 @@ assert.equal(isHostSegment("-bad.host"), false);
 
 console.log("PASS: parseUses, parseActionPath and isHostSegment follow core");
 
+// Test 17: the fetch provider reports a short SHA ref that abbreviates a commit.
+const { createGitHubProvider } = await import("../dist/provider.js");
+const fullSha = "abc1234".padEnd(40, "0");
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (url) => {
+	const path = new URL(url).pathname;
+	if (path === "/repos/actions/checkout/tags") return Response.json([{ name: "v4.0.0", commit: { sha: fullSha } }]);
+	if (path === "/repos/actions/checkout/commits/abc1234") return Response.json({ sha: fullSha });
+	return Response.json({ message: "Not Found" }, { status: 404 });
+};
+try {
+	const shortYaml = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@abc1234\n";
+	const [shortResult] = await checkRefs(shortYaml, createGitHubProvider());
+	assert.deepEqual(shortResult.status, {
+		Unresolvable: { reason: "short SHA; pin to the full 40-character commit", is_environment_error: false },
+	});
+} finally {
+	globalThis.fetch = originalFetch;
+}
+
+console.log("PASS: fetch provider reports a short SHA ref");
+
 console.log("\nAll npm package integration tests PASSED");

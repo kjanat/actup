@@ -213,6 +213,52 @@ await test("resolveRefToSha falls back to branch on 404", async () => {
 	assertEqual(sha, "b".repeat(40), "branch sha");
 });
 
+await test("resolveRefToSha falls back to the commit for a short SHA", async () => {
+	mockFetch([
+		{
+			match: (url) => url.endsWith("/repos/o/r/commits/abc1234"),
+			respond: () => jsonResponse({ sha: "abc1234".padEnd(40, "0") }),
+		},
+	]);
+
+	const provider = createGitHubProvider();
+	const sha = await provider.resolveRefToSha("github.com", "o", "r", "abc1234");
+	assertEqual(sha, "abc1234".padEnd(40, "0"), "commit sha");
+	assertEqual(
+		fetchLog.map((f) => new URL(f.url).pathname).join(" "),
+		"/repos/o/r/git/ref/tags/abc1234 /repos/o/r/branches/abc1234 /repos/o/r/commits/abc1234",
+		"tag, branch, then commit",
+	);
+});
+
+await test("resolveRefToSha prefers a hex-named branch over the commit", async () => {
+	mockFetch([
+		{
+			match: (url) => url.endsWith("/branches/deadbee"),
+			respond: () => jsonResponse({ name: "deadbee", commit: { sha: "b".repeat(40) } }),
+		},
+	]);
+
+	const provider = createGitHubProvider();
+	const sha = await provider.resolveRefToSha("github.com", "o", "r", "deadbee");
+	assertEqual(sha, "b".repeat(40), "branch sha");
+	assert(fetchLog.every((f) => !f.url.includes("/commits/")), "no commit lookup");
+});
+
+await test("resolveRefToSha skips the commit lookup for a non-hex name", async () => {
+	mockFetch([]);
+
+	const provider = createGitHubProvider();
+	try {
+		await provider.resolveRefToSha("github.com", "o", "r", "nope");
+		throw new Error("Should have thrown");
+	} catch (err) {
+		assert(err instanceof GitHubProviderError, "GitHubProviderError");
+		assertEqual(err.status, 404, "status 404");
+	}
+	assert(fetchLog.every((f) => !f.url.includes("/commits/")), "no commit lookup");
+});
+
 // Test: getDefaultBranch
 await test("getDefaultBranch returns repo default", async () => {
 	mockFetch([

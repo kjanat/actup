@@ -415,15 +415,37 @@ async function resolveRefToSha(
 		return refData.object.sha;
 	} catch (err) {
 		// 404 = not a tag, try as branch
-		if (err instanceof GitHubProviderError && err.status === 404) {
-			const branchInfo = await readJson(
-				await ghFetch(`${apiBase}/repos/${owner}/${repo}/branches/${encodeURIComponent(refName)}`, headers),
-			);
-			if (!isGhBranch(branchInfo)) throw invalidShape("/branches/{branch}");
-			return branchInfo.commit.sha;
-		}
+		if (isNotFound(err)) return await resolveBranchOrCommit(apiBase, headers, owner, repo, refName);
 		throw err;
 	}
+}
+
+function isNotFound(err: unknown): boolean {
+	return err instanceof GitHubProviderError && err.status === 404;
+}
+
+/** Matches `actup_core::version::is_short_sha`. */
+const SHORT_SHA = /^[0-9a-fA-F]{7,39}$/;
+
+async function resolveBranchOrCommit(
+	apiBase: string,
+	headers: Record<string, string>,
+	owner: string,
+	repo: string,
+	refName: string,
+): Promise<string> {
+	try {
+		const branchInfo = await readJson(
+			await ghFetch(`${apiBase}/repos/${owner}/${repo}/branches/${encodeURIComponent(refName)}`, headers),
+		);
+		if (!isGhBranch(branchInfo)) throw invalidShape("/branches/{branch}");
+		return branchInfo.commit.sha;
+	} catch (err) {
+		if (!isNotFound(err) || !SHORT_SHA.test(refName)) throw err;
+	}
+	const commit = await readJson(await ghFetch(`${apiBase}/repos/${owner}/${repo}/commits/${refName}`, headers));
+	if (!isCommitSha(commit)) throw invalidShape("/commits/{sha}");
+	return commit.sha;
 }
 
 async function getDefaultBranch(
