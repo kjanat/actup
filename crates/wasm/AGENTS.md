@@ -6,11 +6,11 @@ native builds see an empty crate.
 
 ## Module Map
 
-| Module      | Lines | Purpose                                     | Key Types                                   |
-| ----------- | ----- | ------------------------------------------- | ------------------------------------------- |
-| `lib.rs`    | 177   | Conditional compilation gate + WASM API     | `parseUsesRefs`, `checkRefs`, `planUpdates` |
-| `bridge.rs` | 326   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`           |
-| `clock.rs`  | 22    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                   |
+| Module      | Lines | Purpose                                     | Key Types                                                      |
+| ----------- | ----- | ------------------------------------------- | -------------------------------------------------------------- |
+| `lib.rs`    | 177   | Conditional compilation gate + WASM API     | `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags` |
+| `bridge.rs` | 326   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                              |
+| `clock.rs`  | 22    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                      |
 
 ## WASM API (4 exports)
 
