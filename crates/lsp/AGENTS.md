@@ -50,8 +50,9 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | Workspace update all     | Command palette                  | `workspace_commands::fix_all_workspace`                      |
 
 `code_actions::DocumentText` checks every action edit against the open document
-text with `validate_edit` and leaves out an edit that breaks the YAML or changes
-the `uses:` count. Fix-all keeps the edits that pass on their own.
+text with `SourceFormat::validate_edit` in the document's format and leaves out
+an edit that breaks the YAML or changes the `uses:` count. Fix-all keeps the
+edits that pass on their own.
 
 ## Architecture Notes
 

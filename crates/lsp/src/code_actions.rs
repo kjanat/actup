@@ -18,8 +18,8 @@ use tower_lsp_server::ls_types::{
 };
 
 use actup_core::{
+    SourceFormat,
     rewrite::{Rewrite, Trailing},
-    validate_edit,
 };
 
 use crate::{
@@ -31,19 +31,24 @@ use crate::{
 /// The open document text that a code action's edits must apply to.
 pub struct DocumentText<'a> {
     text: &'a str,
+    format: SourceFormat,
     encoding: PositionEncoding,
 }
 
 impl<'a> DocumentText<'a> {
-    /// Wrap the text of an open document and the client's position encoding.
-    pub const fn new(text: &'a str, encoding: PositionEncoding) -> Self {
-        Self { text, encoding }
+    /// Wrap the text of an open document read as `format` and the client's position encoding.
+    pub const fn new(text: &'a str, format: SourceFormat, encoding: PositionEncoding) -> Self {
+        Self {
+            text,
+            format,
+            encoding,
+        }
     }
 
-    /// Whether `edits` apply to the text and the result passes [`validate_edit`].
+    /// Whether `edits` apply to the text and the result passes [`SourceFormat::validate_edit`].
     pub fn accepts(&self, edits: &[TextEdit]) -> bool {
         apply_text_edits(self.text, edits, self.encoding)
-            .is_some_and(|edited| validate_edit(self.text, &edited).is_ok())
+            .is_some_and(|edited| self.format.validate_edit(self.text, &edited).is_ok())
     }
 
     /// Keep the actions whose edits the text accepts.
@@ -1257,7 +1262,11 @@ mod tests {
 
     #[test]
     fn document_text_accepts_only_edits_that_keep_the_yaml_valid() {
-        let document = DocumentText::new(VALIDATED, crate::position::PositionEncoding::Utf16);
+        let document = DocumentText::new(
+            VALIDATED,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         let edit = |line, new_text: &str| TextEdit {
             range: make_range(line, 14, 16),
             new_text: new_text.to_string(),
@@ -1268,13 +1277,25 @@ mod tests {
         assert!(!document.accepts(&[edit(1, "v2\n  - uses: d/e@v1")]));
         assert!(!document.accepts(&[edit(7, "v2")]));
         assert!(!document.accepts(&[edit(1, "v2"), edit(1, "v3")]));
+
+        let text = DocumentText::new(
+            VALIDATED,
+            SourceFormat::Text,
+            crate::position::PositionEncoding::Utf16,
+        );
+        assert!(text.accepts(&[edit(1, "v2\n  - [")]));
+        assert!(!text.accepts(&[edit(1, "v2\n  - uses: d/e@v1")]));
     }
 
     #[test]
     fn document_text_retains_only_actions_with_valid_edits()
     -> Result<(), Box<dyn std::error::Error>> {
         let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
-        let document = DocumentText::new(VALIDATED, crate::position::PositionEncoding::Utf16);
+        let document = DocumentText::new(
+            VALIDATED,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         let good = make_outdated_diagnostic(make_range(1, 14, 16), "a/b@v1", "v2.0.0");
         let corrupting = make_outdated_diagnostic(make_range(2, 14, 16), "a/c@v1", "v2\n  - [");
         let suggestion = make_unresolvable_diagnostic(make_range(9, 14, 16), Some("v3.0.0"));
@@ -1327,7 +1348,11 @@ mod tests {
     fn fix_all_leaves_out_edits_the_document_refuses() -> Result<(), Box<dyn std::error::Error>> {
         let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
         let text = "steps:\n  - uses: a/b@v1\n  - uses: a/c@v1\n  - uses: a/d@v1\n";
-        let document = DocumentText::new(text, crate::position::PositionEncoding::Utf16);
+        let document = DocumentText::new(
+            text,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         let diagnostics = [
             make_outdated_diagnostic(make_range(1, 14, 16), "a/b@v1", "v2.0.0"),
             make_outdated_diagnostic(make_range(2, 14, 16), "a/c@v1", "v2\n  - ["),

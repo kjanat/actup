@@ -700,7 +700,11 @@ impl LanguageServer for LspBackend {
         };
         let supports_doc_changes = self.supports_document_changes().await;
         let encoding = self.position_encoding.get().copied().unwrap_or_default();
-        let document = crate::code_actions::DocumentText::new(&text, encoding);
+        let document = crate::code_actions::DocumentText::new(
+            &text,
+            crate::diagnostics::uri_format(&uri),
+            encoding,
+        );
 
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
         if crate::code_actions::kind_allowed(
