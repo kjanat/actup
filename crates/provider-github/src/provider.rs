@@ -1,10 +1,11 @@
 //! GitHub provider implementation
 
-use std::sync::Arc;
+use std::{num::NonZeroU8, sync::Arc};
 
 use actup_core::{
     action_ref::ActionRepoId,
     compat::BoxFuture,
+    config::DEFAULT_MAX_TAGS_PER_REPO,
     error::Result,
     provider::{self, ActionYml, Provider, RepoSummary, Search, Sha40},
     version,
@@ -62,7 +63,7 @@ pub enum RestVersions {
 pub struct GitHubProvider {
     client: GitHubClient,
     host: String,
-    max_tags: u8,
+    max_tags: NonZeroU8,
     token: Option<String>,
 }
 
@@ -73,12 +74,7 @@ impl GitHubProvider {
     ///
     /// Returns error if HTTP client cannot be created.
     pub fn new(token: Option<&str>) -> Result<Self> {
-        Self::with_host_and_max_tags(
-            crate::GITHUB_API_HOST,
-            crate::GITHUB_HOST,
-            token,
-            crate::graphql::DEFAULT_MAX_TAGS_PER_REPO,
-        )
+        Self::with_host(crate::GITHUB_API_HOST, crate::GITHUB_HOST, token)
     }
 
     /// Create a GitHub provider for a custom host (e.g., GitHub Enterprise)
@@ -87,32 +83,20 @@ impl GitHubProvider {
     ///
     /// Returns error if HTTP client cannot be created or token is invalid.
     pub fn with_host(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
-        Self::with_host_and_max_tags(
-            api_base,
-            host,
-            token,
-            crate::graphql::DEFAULT_MAX_TAGS_PER_REPO,
-        )
-    }
-
-    /// Create a GitHub provider with an explicit tag fetch cap.
-    ///
-    /// # Errors
-    ///
-    /// Returns error if HTTP client cannot be created or token is invalid.
-    pub fn with_host_and_max_tags(
-        api_base: &str,
-        host: &str,
-        token: Option<&str>,
-        max_tags: u8,
-    ) -> Result<Self> {
         let client = GitHubClient::with_api_base(api_base, host, token)?;
         Ok(Self {
             host: host.to_string(),
             client,
-            max_tags: max_tags.max(1),
+            max_tags: DEFAULT_MAX_TAGS_PER_REPO,
             token: token.map(String::from),
         })
+    }
+
+    /// Fetch at most `max_tags` tags per repository over the API.
+    #[must_use]
+    pub const fn max_tags(mut self, max_tags: NonZeroU8) -> Self {
+        self.max_tags = max_tags;
+        self
     }
 
     fn clone_url(&self, repo: &ActionRepoId) -> String {

@@ -2,7 +2,7 @@
 //!
 //! Fetches version information for multiple repositories in a single request.
 
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{
     action_ref::ActionRepoId,
@@ -20,9 +20,6 @@ use tracing::{debug, warn};
 
 /// GraphQL API endpoint
 pub const GITHUB_GRAPHQL_URL: &str = "https://api.github.com/graphql";
-
-/// Default maximum tags to fetch per repository
-pub const DEFAULT_MAX_TAGS_PER_REPO: u8 = 10;
 
 /// GraphQL client for batched repository queries
 #[derive(Debug, Clone)]
@@ -105,14 +102,14 @@ impl GraphQLClient {
     pub async fn batch_get_versions(
         &self,
         repos: &[ActionRepoId],
-        max_tags: u8,
+        max_tags: NonZeroU8,
     ) -> Result<HashMap<ActionRepoId, version::Set>> {
         if repos.is_empty() {
             return Ok(HashMap::new());
         }
 
         // Clamp max_tags to API limit (GitHub GraphQL first: argument)
-        let max_tags = max_tags.min(100);
+        let max_tags = max_tags.get().min(100);
 
         debug!(count = repos.len(), "fetching versions via GraphQL batch");
 

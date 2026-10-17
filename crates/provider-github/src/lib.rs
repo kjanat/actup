@@ -26,7 +26,7 @@ use actup_core::{
 };
 pub use batch::{BatchFetcher, fetch_versions_with_registry};
 pub use client::{Conditional, DEFAULT_PER_PAGE, GitHubClient};
-pub use graphql::{DEFAULT_MAX_TAGS_PER_REPO, GITHUB_GRAPHQL_URL, GraphQLClient};
+pub use graphql::{GITHUB_GRAPHQL_URL, GraphQLClient};
 pub use provider::{GitHubProvider, RestValidators, RestVersions};
 pub use types::*;
 
@@ -82,12 +82,8 @@ fn create_github_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn 
         .token_env
         .as_deref()
         .and_then(|var| std::env::var(var).ok());
-    let provider = GitHubProvider::with_host_and_max_tags(
-        &config.api_base,
-        &config.host,
-        token.as_deref(),
-        config.max_tags_per_repo.get(),
-    )?;
+    let provider = GitHubProvider::with_host(&config.api_base, &config.host, token.as_deref())?
+        .max_tags(config.max_tags_per_repo);
     Ok(Box::new(provider))
 }
 
@@ -121,18 +117,14 @@ fn create_batch_fetcher_with_token<C: Cache>(
         });
     }
 
-    let provider = GitHubProvider::with_host_and_max_tags(
-        &config.api_base,
-        &config.host,
-        token,
-        config.max_tags_per_repo.get(),
-    )?;
+    let provider = GitHubProvider::with_host(&config.api_base, &config.host, token)?
+        .max_tags(config.max_tags_per_repo);
 
     Ok(match config.api_mode {
         ApiMode::Graphql => {
-            BatchFetcher::with_graphql(provider, cache, token, config.max_tags_per_repo.get())
+            BatchFetcher::with_graphql(provider, cache, token, config.max_tags_per_repo)
         }
-        ApiMode::Rest => BatchFetcher::rest_only(provider, cache, config.max_tags_per_repo.get()),
+        ApiMode::Rest => BatchFetcher::rest_only(provider, cache, config.max_tags_per_repo),
     })
 }
 

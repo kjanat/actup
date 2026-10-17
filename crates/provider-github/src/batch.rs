@@ -6,6 +6,7 @@
 
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
+    num::NonZeroU8,
     sync::Arc,
 };
 
@@ -259,7 +260,7 @@ pub struct BatchFetcher<C: Cache> {
     /// Persistent cache
     cache: Arc<C>,
     /// Maximum tags to fetch per repo
-    max_tags: u8,
+    max_tags: NonZeroU8,
 }
 
 fn finish(progress: &dyn Progress, ok: bool, outcome: Outcome) {
@@ -268,7 +269,7 @@ fn finish(progress: &dyn Progress, ok: bool, outcome: Outcome) {
 
 impl<C: Cache> BatchFetcher<C> {
     /// Create a new batch fetcher with REST-only mode
-    pub const fn rest_only(provider: GitHubProvider, cache: Arc<C>, max_tags: u8) -> Self {
+    pub const fn rest_only(provider: GitHubProvider, cache: Arc<C>, max_tags: NonZeroU8) -> Self {
         Self {
             provider,
             graphql: None,
@@ -284,7 +285,7 @@ impl<C: Cache> BatchFetcher<C> {
         provider: GitHubProvider,
         cache: Arc<C>,
         token: Option<&str>,
-        max_tags: u8,
+        max_tags: NonZeroU8,
     ) -> Self {
         let graphql_endpoint = provider.graphql_endpoint();
         let graphql = token.and_then(|t| {
@@ -526,6 +527,8 @@ impl<C: Cache> BatchFetcher<C> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "tests")]
 mod tests {
+    use actup_core::config::DEFAULT_MAX_TAGS_PER_REPO;
+
     use super::*;
 
     #[allow(dead_code, reason = "helper function for future tests")]
@@ -537,7 +540,7 @@ mod tests {
     fn test_rest_only_has_no_graphql() {
         let provider = GitHubProvider::new(None).unwrap();
         let cache = Arc::new(cache::Noop);
-        let fetcher = BatchFetcher::rest_only(provider, cache, 10);
+        let fetcher = BatchFetcher::rest_only(provider, cache, DEFAULT_MAX_TAGS_PER_REPO);
 
         assert!(!fetcher.has_graphql());
     }
@@ -546,7 +549,7 @@ mod tests {
     fn test_with_graphql_no_token() {
         let provider = GitHubProvider::new(None).unwrap();
         let cache = Arc::new(cache::Noop);
-        let fetcher = BatchFetcher::with_graphql(provider, cache, None, 10);
+        let fetcher = BatchFetcher::with_graphql(provider, cache, None, DEFAULT_MAX_TAGS_PER_REPO);
 
         // No token = no GraphQL
         assert!(!fetcher.has_graphql());

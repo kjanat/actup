@@ -2,6 +2,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
+use std::num::NonZeroU8;
+
 use actup_core::{ActionRepoId, Provider};
 use actup_provider_github::{GitHubClient, GitHubProvider};
 use wiremock::{
@@ -62,7 +64,7 @@ async fn test_list_tags_limited_stops_after_requested_count() {
         .expect("failed to create client");
 
     let tags = client
-        .list_tags_limited("actions", "checkout", 2)
+        .list_tags_limited("actions", "checkout", NonZeroU8::MIN.saturating_add(1))
         .await
         .expect("failed to list limited tags");
 
@@ -161,6 +163,63 @@ async fn test_rate_limit_error() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(matches!(err, actup_core::Error::RateLimited { .. }));
+}
+
+async fn serve_rest_versions(server: &MockServer, per_page: &str) {
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout/tags"))
+        .and(query_param("per_page", per_page))
+        .respond_with(ResponseTemplate::new(200).set_body_string(TAGS_RESPONSE))
+        .expect(1)
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(REPO_RESPONSE))
+        .mount(server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/actions/checkout/branches/main"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(BRANCH_RESPONSE))
+        .mount(server)
+        .await;
+}
+
+#[tokio::test]
+async fn rest_versions_fetch_the_core_default_tag_count() -> Result<(), Box<dyn std::error::Error>>
+{
+    let server = MockServer::start().await;
+    serve_rest_versions(
+        &server,
+        &actup_core::config::DEFAULT_MAX_TAGS_PER_REPO.to_string(),
+    )
+    .await;
+
+    let set = provider(&server)?
+        .versions_via_rest(&ActionRepoId::simple("actions", "checkout"))
+        .await?;
+
+    assert_eq!(set.semver_tags().len(), 5);
+    Ok(())
+}
+
+#[tokio::test]
+async fn rest_versions_fetch_at_most_max_tags() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    serve_rest_versions(&server, "1").await;
+
+    let set = provider(&server)?
+        .max_tags(NonZeroU8::MIN)
+        .versions_via_rest(&ActionRepoId::simple("actions", "checkout"))
+        .await?;
+
+    let names: Vec<&str> = set
+        .semver_tags()
+        .iter()
+        .map(|t| t.version().as_str())
+        .collect();
+    assert_eq!(names, ["v6.0.2"]);
+    Ok(())
 }
 
 const FULL_SHA: &str = "abc1234def5678abc1234def5678abc1234def56";
@@ -376,7 +435,12 @@ async fn batch_fetch_asks_rest_about_repos_graphql_leaves_out()
         .await;
     mount_not_found(&server, "/repos/o/gone/tags").await;
     let provider = GitHubProvider::with_host(&server.uri(), "ghe.invalid", Some("token"))?;
-    let fetcher = BatchFetcher::with_graphql(provider, Arc::new(cache::Noop), Some("token"), 10);
+    let fetcher = BatchFetcher::with_graphql(
+        provider,
+        Arc::new(cache::Noop),
+        Some("token"),
+        NonZeroU8::MIN.saturating_add(9),
+    );
     let gone = ActionRepoId::new(Some("ghe.invalid".to_string()), "o", "gone", None);
 
     let results = fetcher
@@ -599,7 +663,12 @@ async fn batch_fetch_asks_rest_once_when_graphql_fails() -> Result<(), Box<dyn s
             .await;
     }
     let provider = GitHubProvider::with_host(&server.uri(), "ghe.invalid", Some("token"))?;
-    let fetcher = BatchFetcher::with_graphql(provider, Arc::new(cache::Noop), Some("token"), 10);
+    let fetcher = BatchFetcher::with_graphql(
+        provider,
+        Arc::new(cache::Noop),
+        Some("token"),
+        NonZeroU8::MIN.saturating_add(9),
+    );
     let repos: Vec<ActionRepoId> = ["one", "two"]
         .into_iter()
         .map(|repo| ActionRepoId::new(Some("ghe.invalid".to_string()), "o", repo, None))
@@ -857,7 +926,11 @@ mod stale {
         cache: Arc<MemoryCache>,
     ) -> Result<BatchFetcher<MemoryCache>, Box<dyn std::error::Error>> {
         let provider = GitHubProvider::with_host(&server.uri(), HOST, None)?;
-        Ok(BatchFetcher::rest_only(provider, cache, 10))
+        Ok(BatchFetcher::rest_only(
+            provider,
+            cache,
+            std::num::NonZeroU8::MIN.saturating_add(9),
+        ))
     }
 
     async fn answer(

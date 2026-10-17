@@ -5,7 +5,7 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result, error::Source};
 use actup_providers::{
@@ -232,7 +232,7 @@ impl GitHubClient {
         &self,
         owner: &str,
         repo: &str,
-        max_tags: u8,
+        max_tags: NonZeroU8,
     ) -> Result<Vec<GitHubTag>> {
         self.list_tags_limited_if_none_match(owner, repo, max_tags, None)
             .await?
@@ -248,10 +248,10 @@ impl GitHubClient {
         &self,
         owner: &str,
         repo: &str,
-        max_tags: u8,
+        max_tags: NonZeroU8,
         etag: Option<&str>,
     ) -> Result<Conditional<Vec<GitHubTag>>> {
-        let max_tags = max_tags.max(MIN_PER_PAGE);
+        let max_tags = max_tags.get();
         let per_page = max_tags.min(MAX_PER_PAGE);
 
         let first_url = format!(
