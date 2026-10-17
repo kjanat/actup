@@ -457,6 +457,9 @@ working directory). Its config search stops at that root. `-c, --config <path>`
 An empty `ACTUP_CONFIG` counts as unset. A relative path resolves against the
 working directory. A config that fails to load exits with code 2. The server
 refuses every path outside the root, including symlinks that point out of it.
+`getVersions` and `getLatest` read version sets through the disk cache that the
+CLI and the LSP use. `updateAllUsesToVersion` resolves `targetRef` from the
+provider on every call.
 
 | Tool                     | Kind    | Purpose                                                 |
 | ------------------------ | ------- | ------------------------------------------------------- |

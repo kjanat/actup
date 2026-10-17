@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use actup_core::{
-    ActionRef, ActionRepoId, CheckStatus, Config, Info, Provider, RefKind,
+    ActionRef, ActionRepoId, CheckStatus, Config, FileCache, Info, Provider, RefKind,
     cache::Staleness,
     config::{Override, PolicyOverride},
     provider::Registry,
@@ -192,6 +192,7 @@ struct VersionsBody<'a> {
 pub async fn versions(
     tool: &str,
     registry: &Registry,
+    file_cache: &FileCache,
     args: &args::Versions,
 ) -> Result<Reply, CallToolError> {
     let repo = repo_id(args.host.as_deref(), &args.owner, &args.repo, None)
@@ -200,7 +201,7 @@ pub async fn versions(
         Ok(found) => found,
         Err(reply) => return Ok(reply),
     };
-    let set = match found.provider.get_versions(&found.repo).await {
+    let set = match file_cache.versions(&found.repo, found.provider).await {
         Ok(set) => set,
         Err(e) => return Ok(Reply::failure(&found.served, &e)),
     };
@@ -269,6 +270,7 @@ struct LatestBody<'a> {
 pub async fn latest(
     tool: &str,
     registry: &Registry,
+    file_cache: &FileCache,
     config: &Config,
     args: &args::Latest,
 ) -> Result<Reply, CallToolError> {
@@ -308,7 +310,7 @@ pub async fn latest(
         Ok(found) => found,
         Err(reply) => return Ok(reply),
     };
-    let set = match found.provider.get_versions(&found.repo).await {
+    let set = match file_cache.versions(&found.repo, found.provider).await {
         Ok(set) => set,
         Err(e) => return Ok(Reply::failure(&found.served, &e)),
     };
@@ -400,9 +402,15 @@ mod tests {
         )?;
         let registry = Registry::new();
 
-        let reply = latest("getLatest", &registry, &config, &latest_args("v1"))
-            .await
-            .map_err(|e| format!("{e:?}"))?;
+        let reply = latest(
+            "getLatest",
+            &registry,
+            &FileCache::disabled(),
+            &config,
+            &latest_args("v1"),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
         assert!(reply.succeeded());
         let body = reply
             .into_result()
@@ -417,9 +425,15 @@ mod tests {
             assert_eq!(body.get(key), Some(&serde_json::json!(value)), "{key}");
         }
 
-        let reply = latest("getLatest", &registry, &config, &latest_args("v2"))
-            .await
-            .map_err(|e| format!("{e:?}"))?;
+        let reply = latest(
+            "getLatest",
+            &registry,
+            &FileCache::disabled(),
+            &config,
+            &latest_args("v2"),
+        )
+        .await
+        .map_err(|e| format!("{e:?}"))?;
         assert!(!reply.succeeded());
         Ok(())
     }

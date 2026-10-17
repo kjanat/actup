@@ -10,9 +10,10 @@ use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 use tracing::debug;
 
 use crate::{
-    Config,
+    ActionRepoId, Config, Provider,
     atomic_write::write_atomic,
     cache::{self, Cache},
+    version,
 };
 
 /// What a [`FileCache`] does with its entries.
@@ -86,6 +87,38 @@ impl FileCache {
 
     fn key_to_path(&self, key: &str) -> PathBuf {
         self.cache_dir.join(cache::entry_file_name(key))
+    }
+
+    /// Return the version set of `repo` from the cache, else from `provider`, writing a fetched set back.
+    ///
+    /// A rate limit or network failure with an expired entry returns that
+    /// entry's versions marked stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns the error of [`Provider::get_versions`] on a cache miss that no
+    /// expired entry can stand in for.
+    pub async fn versions(
+        &self,
+        repo: &ActionRepoId,
+        provider: &dyn Provider,
+    ) -> crate::Result<version::Set> {
+        let repo = repo.without_subpath();
+        let key = repo.cache_key(provider.cache_namespace(), provider.host());
+        let expired = match self.lookup(&key).await {
+            Ok(cache::Lookup::Fresh(entry)) => return Ok(entry.versions().clone()),
+            Ok(cache::Lookup::Expired(entry)) => Some(entry),
+            Err(_) => None,
+        };
+        match provider.get_versions(&repo).await {
+            Ok(versions) => {
+                if let Err(e) = self.set(&key, cache::Entry::new(versions.clone())).await {
+                    debug!(key = %key, error = %e, "failed to write version cache");
+                }
+                Ok(versions)
+            }
+            Err(e) => expired.and_then(|entry| entry.stale_versions(&e)).ok_or(e),
+        }
     }
 
     /// Ensure cache directory exists

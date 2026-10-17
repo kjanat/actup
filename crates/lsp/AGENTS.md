@@ -16,7 +16,7 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | `hover.rs`              | 873   | Hover info: version status, README, action.yml  |
 | `workspace_commands.rs` | 839   | Workspace-level scan + update all               |
 | `code_actions.rs`       | 778   | Quick-fix code actions (update, pin)            |
-| `file_cache.rs`         | 190   | Version lookup through the shared `FileCache`   |
+| `file_cache.rs`         | 163   | Version lookup through the shared `FileCache`   |
 | `error_ux.rs`           | 420   | User-friendly error messages                    |
 | `provider_setup.rs`     | 218   | Provider registry construction for LSP          |
 | `position.rs`           | 316   | Position/range conversion utilities             |

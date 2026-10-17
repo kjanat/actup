@@ -194,7 +194,8 @@ fn serve_child(root: &Path) -> ExitCode {
     if std::env::var_os(TRACK_ENV).is_some() {
         config.policy.track = actup_core::policy::Track::Exact;
     }
-    match runtime.block_on(serve_stdio(Server::new(config, registry, root))) {
+    let file_cache = actup_core::FileCache::disabled();
+    match runtime.block_on(serve_stdio(Server::new(config, registry, root, file_cache))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("serve: {e}");
@@ -1283,7 +1284,8 @@ fn binary(ws: &Workspace) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_actup-mcp"));
     command
         .env("XDG_CONFIG_HOME", ws.dir.path())
-        .env("HOME", ws.dir.path());
+        .env("HOME", ws.dir.path())
+        .env("XDG_CACHE_HOME", ws.dir.path().join(".cache"));
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("ACTUP_") {
             command.env_remove(key);

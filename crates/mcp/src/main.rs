@@ -5,7 +5,7 @@
 use std::{path::PathBuf, process::ExitCode};
 
 use actup_core::{
-    Config, Retention,
+    Access, Config, FileCache, Retention,
     config::{CONFIG_VAR, ignore_empty_env},
     provider::Registry,
     user_config_path,
@@ -76,7 +76,8 @@ async fn main() -> ExitCode {
     };
 
     tracing::info!(root = %root.path().display(), "actup-mcp serving on stdio");
-    match serve_stdio(Server::new(config, registry, root)).await {
+    let file_cache = FileCache::from_config(&config, Access::ReadWrite);
+    match serve_stdio(Server::new(config, registry, root, file_cache)).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => fail(3, &e.to_string()),
     }

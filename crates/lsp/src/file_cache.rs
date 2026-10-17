@@ -1,16 +1,9 @@
 //! Version lookups through the shared disk cache.
 
 pub use actup_core::FileCache;
-use actup_core::{
-    ActionRepoId,
-    cache::{self, Cache},
-    provider, version,
-};
+use actup_core::{ActionRepoId, provider, version};
 
-/// Fetch versions for a single repo, checking file cache first.
-///
-/// Shared helper used by hover and completion to avoid duplicating the
-/// cache-check → provider-fetch → cache-write pattern.
+/// Fetch versions for a single repo through `file_cache`.
 ///
 /// Returns `None` if no provider is available for the repo. Returns
 /// `Some(Err(_))` if the provider fetch fails (caller decides how to handle).
@@ -22,34 +15,14 @@ pub async fn fetch_versions_cached(
     file_cache: &FileCache,
 ) -> Option<Result<version::Set, actup_core::Error>> {
     let provider = registry.find_for_repo(repo_id)?;
-    let version_repo = repo_id.without_subpath();
-    let cache_key = version_repo.cache_key(provider.cache_namespace(), provider.host());
-
-    let expired = match file_cache.lookup(&cache_key).await {
-        Ok(cache::Lookup::Fresh(entry)) => return Some(Ok(entry.versions().clone())),
-        Ok(cache::Lookup::Expired(entry)) => Some(entry),
-        Err(_) => None,
-    };
-
-    // Fetch from provider.
-    match provider.get_versions(&version_repo).await {
-        Ok(versions) => {
-            // Write back to cache (best effort).
-            let entry = cache::Entry::new(versions.clone());
-            if let Err(e) = file_cache.set(&cache_key, entry).await {
-                tracing::debug!(error = %e, "failed to write version cache");
-            }
-            Some(Ok(versions))
-        }
-        Err(e) => Some(expired.and_then(|entry| entry.stale_versions(&e)).ok_or(e)),
-    }
+    Some(file_cache.versions(repo_id, provider).await)
 }
 
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
 
-    use actup_core::Provider;
+    use actup_core::{Provider, cache, cache::Cache};
     use tempfile::TempDir;
 
     use super::*;

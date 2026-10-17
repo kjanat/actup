@@ -19,7 +19,7 @@ use std::{
     time::SystemTime,
 };
 
-use actup_core::{Clock, Config, Registration, SystemClock, provider::Registry};
+use actup_core::{Clock, Config, FileCache, Registration, SystemClock, provider::Registry};
 pub use confine::{Refusal, Root};
 use rust_mcp_sdk::{
     McpServer, StdioTransport, ToMcpServerHandler, TransportOptions,
@@ -89,22 +89,30 @@ pub struct Server {
     config: Config,
     registry: Registry,
     root: Root,
+    file_cache: FileCache,
     clock: Arc<dyn Clock>,
     memo: Mutex<HashMap<String, (Reply, SystemTime)>>,
 }
 
 impl Server {
-    /// Serve `registry` under `config`, confining every path to `root`.
+    /// Serve `registry` under `config` with version sets read through `file_cache`, confining every path to `root`.
     #[must_use]
-    pub fn new(config: Config, registry: Registry, root: Root) -> Self {
-        Self::with_clock(config, registry, root, Arc::new(SystemClock))
+    pub fn new(config: Config, registry: Registry, root: Root, file_cache: FileCache) -> Self {
+        Self::with_clock(config, registry, root, file_cache, Arc::new(SystemClock))
     }
 
-    fn with_clock(config: Config, registry: Registry, root: Root, clock: Arc<dyn Clock>) -> Self {
+    fn with_clock(
+        config: Config,
+        registry: Registry,
+        root: Root,
+        file_cache: FileCache,
+        clock: Arc<dyn Clock>,
+    ) -> Self {
         Self {
             config,
             registry,
             root,
+            file_cache,
             clock,
             memo: Mutex::new(HashMap::new()),
         }
@@ -187,15 +195,19 @@ impl Server {
             }
             VERSIONS => {
                 let args: args::Versions = parse(name, arguments)?;
-                self.cached(name, &args, read::versions(name, &self.registry, &args))
-                    .await?
+                self.cached(
+                    name,
+                    &args,
+                    read::versions(name, &self.registry, &self.file_cache, &args),
+                )
+                .await?
             }
             LATEST => {
                 let args: args::Latest = parse(name, arguments)?;
                 self.cached(
                     name,
                     &args,
-                    read::latest(name, &self.registry, &self.config, &args),
+                    read::latest(name, &self.registry, &self.file_cache, &self.config, &args),
                 )
                 .await?
             }
@@ -389,6 +401,7 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
         ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            self.0.fetch_add(1, Ordering::SeqCst);
             Box::pin(async { Ok(version::Set::new()) })
         }
 
@@ -440,7 +453,10 @@ mod tests {
         let root = Root::new(dir.path())?;
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
-        Ok((dir, Server::new(Config::default(), registry, root)))
+        Ok((
+            dir,
+            Server::new(Config::default(), registry, root, FileCache::disabled()),
+        ))
     }
 
     #[tokio::test]
@@ -455,7 +471,13 @@ mod tests {
         let dyn_clock: Arc<dyn Clock> = clock.clone();
         let config = Config::default();
         let ttl = config.cache.ttl;
-        let server = Server::with_clock(config, registry, Root::new(dir.path())?, dyn_clock);
+        let server = Server::with_clock(
+            config,
+            registry,
+            Root::new(dir.path())?,
+            FileCache::disabled(),
+            dyn_clock,
+        );
         let args = |reference: &str| {
             let Value::Object(args) =
                 serde_json::json!({ "owner": "a", "repo": "b", "ref": reference })
@@ -487,6 +509,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_tools_share_version_sets_through_the_file_cache()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let cache_dir = tempfile::tempdir()?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let call = |tool: &str, args: Value| {
+            let Value::Object(args) = args else {
+                unreachable!("object literal");
+            };
+            (tool.to_owned(), Some(args))
+        };
+        for _ in 0..2 {
+            let mut registry = Registry::new();
+            registry.set_default_host("github.com");
+            registry.register(Box::new(CountingProvider(Arc::clone(&calls))));
+            let config = Config::default();
+            let file_cache = FileCache::with_path(cache_dir.path().to_path_buf(), config.cache.ttl);
+            let server = Server::new(config, registry, Root::new(dir.path())?, file_cache);
+            for (tool, args) in [
+                call(VERSIONS, serde_json::json!({ "owner": "a", "repo": "b" })),
+                call(
+                    LATEST,
+                    serde_json::json!({ "owner": "a", "repo": "b", "currentRef": "v1" }),
+                ),
+            ] {
+                let result = server.call(&tool, args).await?;
+                let provider = result
+                    .structured_content
+                    .and_then(|body| body.get("provider").cloned());
+                assert_eq!(provider, Some(Value::from("github")), "{tool}");
+            }
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(std::fs::read_dir(cache_dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_all_resolves_a_fresh_sha_on_every_call()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
@@ -502,7 +562,12 @@ mod tests {
             CountingProvider(Arc::new(AtomicUsize::new(0))),
             Retention::expiring(Config::default().cache.ttl),
         )));
-        let server = Server::new(Config::default(), registry, Root::new(dir.path())?);
+        let server = Server::new(
+            Config::default(),
+            registry,
+            Root::new(dir.path())?,
+            FileCache::disabled(),
+        );
         let Value::Object(args) = serde_json::json!({
             "workspaceRoot": ".",
             "match": { "owner": "a", "repo": "b" },
@@ -606,7 +671,12 @@ mod tests {
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(StaleProvider(Arc::clone(&calls))));
-        let server = Server::new(Config::default(), registry, Root::new(dir.path())?);
+        let server = Server::new(
+            Config::default(),
+            registry,
+            Root::new(dir.path())?,
+            FileCache::disabled(),
+        );
         let args = |json: Value| match json {
             Value::Object(args) => Some(args),
             _ => None,

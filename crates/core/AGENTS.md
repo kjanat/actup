@@ -16,7 +16,8 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 | `resolution`       | Orchestrate version checks, compute status | `CheckResult`, `CheckStatus`     |
 | `config/`          | Config loading, precedence, validation     | `Config`, `ApiMode`              |
 | `error`            | Structured errors (user vs environment)    | `Error`, `Result`                |
-| `cache`            | Cache key/entry types (no storage impl)    | `CacheKey`, `CacheEntry`         |
+| `cache`            | Cache trait, entries, entry file names     | `Cache`, `Entry`, `Record`       |
+| `file_cache`       | Disk cache shared by CLI, LSP and MCP      | `FileCache`                      |
 
 ### Config Submodule (`config/`)
 
@@ -52,7 +53,8 @@ resolving token_env, validating host configs.
 - **No hardcoded hosts**: `github.com` only appears in default config, never in
   logic
 - **No HTTP client usage**: Providers fetch; core orchestrates
-- **No file I/O for cache**: Define interfaces only; CLI implements storage
+- **Disk cache only in `file_cache`**: `FileCache` (native targets) is the one
+  storage impl; binaries build it with `FileCache::from_config`
 
 ## Conventions
 
