@@ -73,6 +73,7 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     println!("  track:       {}", config.policy.track);
     println!("  branch:      {}", config.policy.branch);
     println!("  prerelease:  {}", config.policy.prerelease);
+    println!("  archived:    {}", config.policy.archived);
     println!();
 
     println!("{}:", "Cache".bold());

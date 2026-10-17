@@ -416,13 +416,16 @@ pub async fn compute_hover(
         ctx.config.cache.ttl,
     )
     .await;
-    let content = build_hover_content(
+    let mut content = build_hover_content(
         &located.action_ref,
         meta.as_deref(),
         &result,
         latest_version.as_deref(),
         ctx.registry.default_host(),
     );
+    if let Some(note) = archived_note(&located.action_ref, &repo_id, ctx).await {
+        content.insert_str(0, &format!("**Warning:** {note}\n\n"));
+    }
 
     let range = Range {
         start: Position {
@@ -442,6 +445,20 @@ pub async fn compute_hover(
         }),
         range: Some(range),
     })
+}
+
+/// The archived or disabled note for the repository of `action_ref`, when policy reports it.
+async fn archived_note(
+    action_ref: &ActionRef,
+    repo_id: &actup_core::ActionRepoId,
+    ctx: &HoverContext<'_>,
+) -> Option<&'static str> {
+    if ctx.config.policy_for(action_ref).archived != actup_core::policy::Archived::Hint {
+        return None;
+    }
+    let provider = ctx.registry.find_for_repo(repo_id)?;
+    let state = provider.get_repo_state(repo_id).await.ok().flatten()?;
+    crate::diagnostics::repo_state_note(state)
 }
 
 /// Resolve version data for a hover request.
@@ -991,6 +1008,57 @@ mod tests {
         // Range should cover the uses value.
         let range = hover.range.unwrap();
         assert_eq!(range.start.line, 0);
+    }
+
+    #[tokio::test]
+    async fn compute_hover_warns_about_an_archived_repository()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = crate::test_utils::MockProvider::new("github.com")
+            .with_repo_state(Ok(Some(provider::RepoState::Archived)));
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let text = "      - uses: actions/create-release@v1\n";
+        let position = Position {
+            line: 0,
+            character: 20,
+        };
+        let hover_with = |config: Config| {
+            let registry = &registry;
+            let file_cache = &file_cache;
+            let meta_cache = &meta_cache;
+            async move {
+                let ctx = HoverContext {
+                    config: &config,
+                    registry,
+                    file_cache,
+                    meta_cache,
+                    encoding: crate::position::PositionEncoding::Utf16,
+                };
+                match compute_hover(text, position, None, &ctx).await {
+                    Some(Hover {
+                        contents: HoverContents::Markup(mc),
+                        ..
+                    }) => Ok(mc.value),
+                    other => Err(format!("expected markup hover, got {other:?}")),
+                }
+            }
+        };
+        let warned = hover_with(Config::default()).await?;
+        assert!(
+            warned.starts_with("**Warning:** repository is archived\n\n"),
+            "{warned}"
+        );
+        let ignore = Config {
+            policy: actup_core::config::Policy {
+                archived: actup_core::policy::Archived::Ignore,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let quiet = hover_with(ignore).await?;
+        assert!(!quiet.contains("Warning"), "{quiet}");
+        Ok(())
     }
 
     #[tokio::test]

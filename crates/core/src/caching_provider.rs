@@ -97,6 +97,7 @@ pub struct CachingProvider<P> {
     sha_cache: Memo<(ActionRepoId, String), Result<Sha40>>,
     branch_cache: Memo<ActionRepoId, String>,
     search_cache: Memo<String, provider::Search>,
+    state_cache: Memo<ActionRepoId, Option<provider::RepoState>>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
     // zero permits; followers `acquire().await` on it. The leader holds a
@@ -207,6 +208,7 @@ impl<P: Provider> CachingProvider<P> {
             sha_cache: RwLock::new(HashMap::new()),
             branch_cache: RwLock::new(HashMap::new()),
             search_cache: RwLock::new(HashMap::new()),
+            state_cache: RwLock::new(HashMap::new()),
             version_flights: Mutex::new(HashMap::new()),
             sha_flights: Mutex::new(HashMap::new()),
             branch_flights: Mutex::new(HashMap::new()),
@@ -217,17 +219,19 @@ impl<P: Provider> CachingProvider<P> {
 impl<P> CachingProvider<P> {
     /// Clear all cached data.
     pub fn clear_cache(&self) -> impl Future<Output = ()> + '_ {
-        let (versions, shas, branches, searches) = (
+        let (versions, shas, branches, searches, states) = (
             &self.version_cache,
             &self.sha_cache,
             &self.branch_cache,
             &self.search_cache,
+            &self.state_cache,
         );
         async move {
             versions.write().await.clear();
             shas.write().await.clear();
             branches.write().await.clear();
             searches.write().await.clear();
+            states.write().await.clear();
         }
     }
 
@@ -519,6 +523,30 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     .write()
                     .await
                     .insert(query, self.retention.stamp(found.clone()));
+            }
+            result
+        })
+    }
+
+    fn get_repo_state(
+        &self,
+        repo: &ActionRepoId,
+    ) -> BoxFuture<'_, Result<Option<provider::RepoState>>> {
+        let repo = repo_cache_key(repo);
+
+        Box::pin(async move {
+            let hit = self
+                .retention
+                .fresh(self.state_cache.read().await.get(&repo));
+            if let Some(state) = hit {
+                return Ok(state);
+            }
+            let result = self.inner.get_repo_state(&repo).await;
+            if let Ok(state) = result {
+                self.state_cache
+                    .write()
+                    .await
+                    .insert(repo, self.retention.stamp(state));
             }
             result
         })
@@ -1484,6 +1512,23 @@ mod tests {
             Box::pin(async { Ok(ActionYml::default()) })
         }
 
+        fn get_repo_state(
+            &self,
+            repo: &ActionRepoId,
+        ) -> BoxFuture<'_, Result<Option<provider::RepoState>>> {
+            let calls = self.calls.fetch_add(1, Ordering::SeqCst);
+            let result = match (repo.repo(), calls) {
+                ("gone", _) => Err(crate::Error::Network {
+                    operation: "repo".into(),
+                    message: "offline".into(),
+                    source: None,
+                }),
+                (_, 0) => Ok(Some(provider::RepoState::Active)),
+                _ => Ok(Some(provider::RepoState::Archived)),
+            };
+            Box::pin(async move { result })
+        }
+
         fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<provider::Search>> {
             let calls = self.calls.fetch_add(1, Ordering::SeqCst);
             let found = provider::Search::Found(vec![provider::RepoSummary {
@@ -1537,6 +1582,51 @@ mod tests {
             boxed.search_actions("che").await?,
             provider::Search::Unsupported
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn repo_states_are_cached_per_repo_until_the_ttl() -> TestResult {
+        let clock = crate::clock::ManualClock::new();
+        let cached = CachingProvider::with_retention(
+            Searching {
+                calls: AtomicUsize::new(0),
+            },
+            expiring(&clock, 60),
+        );
+        let repo = make_repo("actions", "create-release");
+        let subpath = ActionRepoId::new(None, "actions", "create-release", Some("sub".into()));
+        assert_eq!(
+            cached.get_repo_state(&repo).await?,
+            Some(provider::RepoState::Active)
+        );
+        assert_eq!(
+            cached.get_repo_state(&subpath).await?,
+            Some(provider::RepoState::Active)
+        );
+        clock.advance(std::time::Duration::from_secs(61));
+        assert_eq!(
+            cached.get_repo_state(&repo).await?,
+            Some(provider::RepoState::Archived)
+        );
+        assert!(
+            cached
+                .get_repo_state(&make_repo("a", "gone"))
+                .await
+                .is_err()
+        );
+        assert!(
+            cached
+                .get_repo_state(&make_repo("a", "gone"))
+                .await
+                .is_err()
+        );
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 4);
+
+        let boxed: Box<dyn Provider> = Box::new(Moving {
+            calls: AtomicUsize::new(0),
+        });
+        assert_eq!(boxed.get_repo_state(&repo).await?, None);
         Ok(())
     }
 }

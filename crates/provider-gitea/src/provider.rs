@@ -131,6 +131,23 @@ impl Provider for GiteaProvider {
         })
     }
 
+    fn get_repo_state(
+        &self,
+        repo: &ActionRepoId,
+    ) -> BoxFuture<'_, Result<Option<provider::RepoState>>> {
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
+
+        Box::pin(async move {
+            let info = self.client.get_repo_archive(&owner, &repo_name).await?;
+            Ok(Some(if info.archived {
+                provider::RepoState::Archived
+            } else {
+                provider::RepoState::Active
+            }))
+        })
+    }
+
     fn get_readme(
         &self,
         repo: &ActionRepoId,
@@ -295,6 +312,27 @@ mod tests {
         );
         let requests = server.received_requests().await.unwrap_or_default();
         assert!(requests.iter().all(|r| !r.url.path().contains("/commits/")));
+    }
+
+    #[tokio::test]
+    async fn repo_state_reads_archived() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        for (repo, archived) in [("live", false), ("old", true)] {
+            respond(
+                &server,
+                format!("/api/v1/repos/o/{repo}"),
+                200,
+                format!(
+                    r#"{{"id": 1, "name": "{repo}", "full_name": "o/{repo}", "description": null, "empty": false, "private": false, "fork": false, "default_branch": "main", "clone_url": "c", "ssh_url": "s", "html_url": "h", "owner": {{"id": 1, "login": "o", "full_name": null, "email": null, "avatar_url": "a"}}, "archived": {archived}}}"#
+                ),
+            )
+            .await;
+        }
+        let provider = GiteaProvider::new(&format!("{}/api/v1", server.uri()), "gitea.com", None)?;
+        let state = |repo: &str| provider.get_repo_state(&ActionRepoId::simple("o", repo));
+        assert_eq!(state("live").await?, Some(provider::RepoState::Active));
+        assert_eq!(state("old").await?, Some(provider::RepoState::Archived));
+        Ok(())
     }
 
     const BASE: &str = "/api/v1/repos/o/r";

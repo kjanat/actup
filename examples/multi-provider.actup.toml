@@ -11,6 +11,7 @@ pin        = "preserve"
 track      = "keep"
 branch     = "warn"
 prerelease = false
+archived   = "hint"
 
 # Pin every action from the enterprise host to a SHA
 [[overrides]]

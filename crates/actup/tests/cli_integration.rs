@@ -2013,6 +2013,7 @@ mod cli_runs {
                 "track": "exact",
                 "branch": "update",
                 "prerelease": false,
+                "archived": "hint",
             })),
             "config: {config}"
         );

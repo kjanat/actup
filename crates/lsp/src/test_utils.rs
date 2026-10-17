@@ -126,6 +126,7 @@ pub struct MockProvider {
     rewrite: Option<(std::path::PathBuf, String)>,
     search: Result<provider::Search, CoreError>,
     searches: Arc<AtomicUsize>,
+    repo_state: Result<Option<provider::RepoState>, CoreError>,
 }
 
 impl MockProvider {
@@ -141,6 +142,7 @@ impl MockProvider {
             rewrite: None,
             search: Ok(provider::Search::Unsupported),
             searches: Arc::new(AtomicUsize::new(0)),
+            repo_state: Ok(None),
         }
     }
 
@@ -151,6 +153,15 @@ impl MockProvider {
 
     pub fn resolve_count(&self) -> Arc<AtomicUsize> {
         Arc::clone(&self.resolve_calls)
+    }
+
+    /// Answer every repository state lookup with `state`.
+    pub fn with_repo_state(
+        mut self,
+        state: Result<Option<provider::RepoState>, CoreError>,
+    ) -> Self {
+        self.repo_state = state;
+        self
     }
 
     /// Answer every action search with `search`.
@@ -257,6 +268,14 @@ impl Provider for MockProvider {
         _ref_name: &str,
     ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
         Box::pin(async { Ok(ActionYml::default()) })
+    }
+
+    fn get_repo_state(
+        &self,
+        _repo: &ActionRepoId,
+    ) -> BoxFuture<'_, actup_core::Result<Option<provider::RepoState>>> {
+        let result = self.repo_state.clone();
+        Box::pin(async move { result })
     }
 
     fn search_actions(&self, _query: &str) -> BoxFuture<'_, actup_core::Result<provider::Search>> {

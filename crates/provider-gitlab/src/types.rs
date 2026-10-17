@@ -70,6 +70,9 @@ pub struct GitLabProject {
     pub description: Option<String>,
     /// Web URL
     pub web_url: String,
+    /// Whether the project is archived
+    #[serde(default)]
+    pub archived: bool,
 }
 
 /// Branch information

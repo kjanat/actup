@@ -70,6 +70,10 @@ pub struct GitHubRepo {
     /// Whether the repo is archived
     #[serde(default)]
     pub archived: bool,
+
+    /// Whether GitHub disabled the repo
+    #[serde(default)]
+    pub disabled: bool,
 }
 
 /// A branch from GitHub API

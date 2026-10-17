@@ -93,6 +93,18 @@ pub struct RepoSummary {
     pub description: Option<String>,
 }
 
+/// Whether a repository still serves its actions as maintained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RepoState {
+    /// The repository is neither archived nor disabled.
+    Active,
+    /// The owner archived the repository; it is read-only.
+    Archived,
+    /// The host disabled the repository.
+    Disabled,
+}
+
 /// A provider's answer to an action search.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Search {
@@ -625,6 +637,11 @@ pub trait Provider: MaybeSend + MaybeSync {
     fn search_actions(&self, _query: &str) -> BoxFuture<'_, Result<Search>> {
         Box::pin(async { Ok(Search::Unsupported) })
     }
+
+    /// Get whether a repository is active, archived or disabled, or `None` when the provider does not report it
+    fn get_repo_state(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<Option<RepoState>>> {
+        Box::pin(async { Ok(None) })
+    }
 }
 
 impl<P> Provider for Box<P>
@@ -689,6 +706,10 @@ where
 
     fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<Search>> {
         (**self).search_actions(query)
+    }
+
+    fn get_repo_state(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<Option<RepoState>>> {
+        (**self).get_repo_state(repo)
     }
 }
 

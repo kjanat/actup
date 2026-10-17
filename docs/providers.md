@@ -60,13 +60,18 @@ pub trait Provider: MaybeSend + MaybeSync {
     fn search_actions(&self, _query: &str) -> BoxFuture<'_, Result<Search>> {
         Box::pin(async { Ok(Search::Unsupported) })
     }
+    fn get_repo_state(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<Option<RepoState>>> {
+        Box::pin(async { Ok(None) })
+    }
 }
 ```
 
 `refresh_ref_to_sha` resolves a ref without reusing a cached answer;
 `CachingProvider` overrides it. `search_actions` answers LSP action-name
 completion. GitHub searches `/search/repositories` with the `github-actions`
-topic; GitLab and Gitea keep the `Search::Unsupported` default.
+topic; GitLab and Gitea keep the `Search::Unsupported` default. `get_repo_state`
+feeds the LSP `archived` hint. GitHub reports `archived` and `disabled`, GitLab
+and Gitea report `archived`.
 
 `BoxFuture` and the `MaybeSend`/`MaybeSync` bounds come from
 `actup_core::compat`. They add `Send` and `Sync` on native targets and drop them

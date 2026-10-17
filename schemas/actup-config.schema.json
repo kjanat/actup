@@ -57,6 +57,7 @@
       "description": "Update policy applied to every action unless an override matches.\n\n```toml\n[policy]\nbump  = \"minor\"\npin   = \"sha\"\ntrack = \"keep\"\n```",
       "$ref": "#/$defs/Policy",
       "default": {
+        "archived": "hint",
         "branch": "ignore",
         "bump": "latest",
         "pin": "preserve",
@@ -87,6 +88,21 @@
           "description": "Parallel REST requests, one per repo. Works without a token.\n\n```toml\n[fetch]\napi_mode = \"rest\"\n```",
           "type": "string",
           "const": "rest"
+        }
+      ]
+    },
+    "Archived": {
+      "description": "How the LSP reports an action whose repository is archived or disabled.",
+      "oneOf": [
+        {
+          "description": "A hint diagnostic with code `archived` and a hover warning.",
+          "type": "string",
+          "const": "hint"
+        },
+        {
+          "description": "No report.",
+          "type": "string",
+          "const": "ignore"
         }
       ]
     },
@@ -242,6 +258,7 @@
           "description": "Policy keys to replace for matching actions.",
           "$ref": "#/$defs/PolicyOverride",
           "default": {
+            "archived": null,
             "branch": null,
             "bump": null,
             "pin": null,
@@ -259,6 +276,11 @@
       "description": "The `[policy]` table.",
       "type": "object",
       "properties": {
+        "archived": {
+          "description": "How the LSP reports an action whose repository is archived or disabled.\n\n`hint` (default) shows a hint diagnostic with code `archived` and a\nhover warning, `ignore` shows nothing.\n\n```toml\narchived = \"ignore\"   # no report for archived or disabled repositories\n```",
+          "$ref": "#/$defs/Archived",
+          "default": "hint"
+        },
         "branch": {
           "description": "How to handle floating branch refs like `@main` or `@v2`.\n\n`ignore` leaves them untouched (default), `warn` flags them as\nfloating, `update` pins the branch or non-semver tag to its current\ncommit SHA.\n\n```toml\nbranch = \"warn\"   # @main -> flagged, pin to a tag or SHA\n```",
           "$ref": "#/$defs/Branch",
@@ -291,6 +313,18 @@
       "description": "A partial `[policy]` table used by `[[overrides]]`.",
       "type": "object",
       "properties": {
+        "archived": {
+          "description": "Replaces `policy.archived`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Archived"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "branch": {
           "description": "Replaces `policy.branch`.",
           "anyOf": [

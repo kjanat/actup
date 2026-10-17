@@ -429,6 +429,26 @@ impl<'de> Deserialize<'de> for Branch {
     }
 }
 
+/// How the LSP reports an action whose repository is archived or disabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum Archived {
+    /// A hint diagnostic with code `archived` and a hover warning.
+    #[default]
+    Hint,
+    /// No report.
+    Ignore,
+}
+
+impl fmt::Display for Archived {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Hint => "hint",
+            Self::Ignore => "ignore",
+        })
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {

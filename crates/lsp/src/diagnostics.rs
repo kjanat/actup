@@ -416,12 +416,79 @@ async fn compute_diagnostics_for_actions(
         }
     }
 
+    diagnostics.extend(archived_diagnostics(&actions, config, registry).await);
+
     DiagnosticResult {
         diagnostics,
         refs_checked: actions.len(),
         errors,
         version_sets: successful_version_sets(versions_map),
     }
+}
+
+/// The diagnostic text for a repository state worth reporting.
+pub const fn repo_state_note(state: provider::RepoState) -> Option<&'static str> {
+    match state {
+        provider::RepoState::Active => None,
+        provider::RepoState::Archived => Some("repository is archived"),
+        provider::RepoState::Disabled => Some("repository is disabled"),
+    }
+}
+
+/// Hint diagnostics for actions whose repository is archived or disabled.
+///
+/// Asks each provider once per repository and reports nothing for a failed lookup.
+async fn archived_diagnostics(
+    actions: &[LocatedAction],
+    config: &Config,
+    registry: &provider::Registry,
+) -> Vec<Diagnostic> {
+    let reported: Vec<&LocatedAction> = actions
+        .iter()
+        .filter(|a| config.policy_for(&a.action_ref).archived == actup_core::policy::Archived::Hint)
+        .collect();
+    let mut repos: Vec<ActionRepoId> = reported
+        .iter()
+        .map(|a| a.action_ref.to_repo_id().without_subpath())
+        .collect();
+    repos.sort_by_key(ToString::to_string);
+    repos.dedup();
+    let lookups = repos.iter().map(|repo| async move {
+        let state = match registry.find_for_repo(repo) {
+            Some(provider) => provider.get_repo_state(repo).await.ok().flatten(),
+            None => None,
+        };
+        (repo, state)
+    });
+    let states: HashMap<&ActionRepoId, provider::RepoState> = futures::future::join_all(lookups)
+        .await
+        .into_iter()
+        .filter_map(|(repo, state)| state.map(|s| (repo, s)))
+        .collect();
+    reported
+        .into_iter()
+        .filter_map(|action| {
+            let repo = action.action_ref.to_repo_id().without_subpath();
+            let note = repo_state_note(*states.get(&repo)?)?;
+            Some(Diagnostic {
+                range: Range {
+                    start: Position {
+                        line: action.line,
+                        character: action.col_start,
+                    },
+                    end: Position {
+                        line: action.line,
+                        character: action.col_end,
+                    },
+                },
+                severity: Some(DiagnosticSeverity::HINT),
+                code: Some(NumberOrString::String("archived".into())),
+                source: Some(DIAGNOSTIC_SOURCE.into()),
+                message: format!("{}: {note}", action.uses_value),
+                ..Default::default()
+            })
+        })
+        .collect()
 }
 
 /// Build the edit that expands a short SHA ref to the full SHA it abbreviates,
@@ -1473,6 +1540,108 @@ jobs:
         assert_eq!(action.title, format!("Change to {}", &DUMMY_SHA[..7]));
         let edit = serde_json::to_string(&action.edit)?;
         assert!(edit.contains(&format!("{DUMMY_SHA} # v4.2.0")), "{edit}");
+        Ok(())
+    }
+
+    async fn archived_codes(
+        state: Result<Option<provider::RepoState>, CoreError>,
+        config: &Config,
+    ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions(
+                "actions",
+                "create-release",
+                test_utils::simple_version_set("v1.1.4", DUMMY_SHA),
+            )
+            .with_repo_state(state);
+        let registry = test_utils::mock_registry(provider);
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let yaml = "    - uses: actions/create-release@v1.0.0\n    - uses: actions/create-release/sub@v1.1.4\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            config,
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        Ok(result
+            .diagnostics
+            .into_iter()
+            .filter(|d| d.code == Some(NumberOrString::String("archived".into())))
+            .map(|d| {
+                assert_eq!(d.severity, Some(DiagnosticSeverity::HINT));
+                (d.range.start.line.to_string(), d.message)
+            })
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn archived_and_disabled_repositories_get_a_hint()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::default();
+        assert_eq!(
+            archived_codes(Ok(Some(provider::RepoState::Archived)), &config).await?,
+            [
+                (
+                    "0".to_string(),
+                    "actions/create-release@v1.0.0: repository is archived".to_string()
+                ),
+                (
+                    "1".to_string(),
+                    "actions/create-release/sub@v1.1.4: repository is archived".to_string()
+                ),
+            ]
+        );
+        let disabled = archived_codes(Ok(Some(provider::RepoState::Disabled)), &config).await?;
+        assert!(
+            disabled
+                .iter()
+                .all(|(_, m)| m.ends_with("repository is disabled")),
+            "{disabled:?}"
+        );
+        assert_eq!(disabled.len(), 2);
+        for quiet in [
+            Ok(Some(provider::RepoState::Active)),
+            Ok(None),
+            Err(CoreError::RateLimited {
+                provider: "github".into(),
+                retry_after: None,
+            }),
+        ] {
+            assert_eq!(archived_codes(quiet, &config).await?, []);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn archived_policy_ignore_silences_the_hint() -> Result<(), Box<dyn std::error::Error>> {
+        let ignore = Config {
+            policy: actup_core::config::Policy {
+                archived: actup_core::policy::Archived::Ignore,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            archived_codes(Ok(Some(provider::RepoState::Archived)), &ignore).await?,
+            []
+        );
+        let mut first_ref_ignored = Config::default();
+        first_ref_ignored
+            .overrides
+            .push(actup_core::config::Override {
+                pattern: "actions/create-release@v1.0.0".parse()?,
+                policy: actup_core::config::PolicyOverride {
+                    archived: Some(actup_core::policy::Archived::Ignore),
+                    ..Default::default()
+                },
+            });
+        let codes =
+            archived_codes(Ok(Some(provider::RepoState::Archived)), &first_ref_ignored).await?;
+        let lines: Vec<&str> = codes.iter().map(|(line, _)| line.as_str()).collect();
+        assert_eq!(lines, ["1"]);
         Ok(())
     }
 

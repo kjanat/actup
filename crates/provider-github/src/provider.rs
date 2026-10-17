@@ -384,6 +384,25 @@ impl Provider for GitHubProvider {
         })
     }
 
+    fn get_repo_state(
+        &self,
+        repo: &ActionRepoId,
+    ) -> BoxFuture<'_, Result<Option<provider::RepoState>>> {
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
+
+        Box::pin(async move {
+            let info = self.client.get_repo(&owner, &repo_name).await?;
+            Ok(Some(if info.disabled {
+                provider::RepoState::Disabled
+            } else if info.archived {
+                provider::RepoState::Archived
+            } else {
+                provider::RepoState::Active
+            }))
+        })
+    }
+
     fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<Search>> {
         let query = query.to_string();
 

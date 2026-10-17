@@ -221,6 +221,7 @@ pin        = "preserve"  # preserve | tag | sha
 track      = "keep"  # keep | major | exact
 branch     = "warn"  # ignore | warn | update
 prerelease = false
+archived   = "hint"  # hint | ignore
 
 [scan]
 ignore      = ["my-org/*", "dtolnay/rust-toolchain@1.91.0"]
@@ -303,6 +304,15 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 > which the action's owner can move, and drops the version from its version
 > comment. A note after the version stays as the comment. Set `tag` only to
 > leave SHA pins on purpose.
+
+### Archived Repositories
+
+The LSP asks the provider whether each action's repository is archived (GitHub,
+GitLab, Gitea) or disabled (GitHub). It asks once per repository per
+`cache.ttl`, and hover reuses the answer. An archived or disabled repository
+gets a hint diagnostic with code `archived` on each `uses:` line and a warning
+line in hover. A failed or rate-limited lookup reports nothing.
+`policy.archived = "ignore"` turns both off, also per `[[overrides]]` entry.
 
 ### Config Discovery
 

@@ -19,6 +19,7 @@ actup-provider-gitea  = { workspace = true }  # Gitea/Forgejo provider
 actup-provider-github = { workspace = true }  # GitHub/GHE provider
 actup-provider-gitlab = { workspace = true }  # GitLab provider
 dashmap               = { workspace = true }  # Concurrent document state
+futures               = { workspace = true }  # Concurrent repo state lookups
 serde                 = { workspace = true }  # initializationOptions deserialization
 serde_json            = { workspace = true }  # initializationOptions parsing
 tokio                 = { workspace = true }  # Async runtime
@@ -27,7 +28,6 @@ tracing               = { workspace = true }  # Logging
 tracing-subscriber    = { workspace = true }  # Log formatting
 
 [dev-dependencies]
-futures  = { workspace = true }  # Stream/Sink for integration tests
 glob     = { workspace = true }  # Watcher glob matching in tests
 tempfile = { workspace = true }  # Temp dirs for cache tests
 tower    = { workspace = true }  # Service trait for integration tests

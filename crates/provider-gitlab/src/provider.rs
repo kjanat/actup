@@ -128,6 +128,23 @@ impl Provider for GitLabProvider {
         })
     }
 
+    fn get_repo_state(
+        &self,
+        repo: &ActionRepoId,
+    ) -> BoxFuture<'_, Result<Option<provider::RepoState>>> {
+        let owner = repo.owner().to_string();
+        let repo_name = repo.repo().to_string();
+
+        Box::pin(async move {
+            let info = self.client.get_project(&owner, &repo_name).await?;
+            Ok(Some(if info.archived {
+                provider::RepoState::Archived
+            } else {
+                provider::RepoState::Active
+            }))
+        })
+    }
+
     fn get_readme(
         &self,
         repo: &ActionRepoId,
@@ -293,6 +310,28 @@ mod tests {
         );
         let requests = server.received_requests().await.unwrap_or_default();
         assert!(requests.iter().all(|r| !r.url.path().contains("/commits/")));
+    }
+
+    #[tokio::test]
+    async fn repo_state_reads_archived() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        for (repo, archived) in [("live", false), ("old", true)] {
+            respond(
+                &server,
+                format!("/api/v4/projects/o%2F{repo}"),
+                200,
+                format!(
+                    r#"{{"id": 1, "name": "{repo}", "path": "{repo}", "path_with_namespace": "o/{repo}", "default_branch": "main", "description": null, "web_url": "w", "archived": {archived}}}"#
+                ),
+            )
+            .await;
+        }
+        let api_base = format!("{}/api/v4", server.uri());
+        let provider = GitLabProvider::with_host(&api_base, "gitlab.com", None)?;
+        let state = |repo: &str| provider.get_repo_state(&ActionRepoId::simple("o", repo));
+        assert_eq!(state("live").await?, Some(provider::RepoState::Active));
+        assert_eq!(state("old").await?, Some(provider::RepoState::Archived));
+        Ok(())
     }
 
     const BASE: &str = "/api/v4/projects/o%2Fr/repository";

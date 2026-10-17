@@ -71,6 +71,14 @@ pub struct GiteaRepository {
     pub owner: GiteaUser,
 }
 
+/// The archive flag of a repository
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct GiteaArchive {
+    /// Whether the repository is archived
+    #[serde(default)]
+    pub archived: bool,
+}
+
 /// User/organization information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GiteaUser {

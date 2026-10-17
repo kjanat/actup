@@ -689,3 +689,35 @@ async fn search_actions_reports_a_rate_limit() -> Result<(), Box<dyn std::error:
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn repo_state_reads_archived_and_disabled() -> Result<(), Box<dyn std::error::Error>> {
+    use actup_core::provider::RepoState;
+
+    let server = MockServer::start().await;
+    for (repo, archived, disabled) in [
+        ("active", false, false),
+        ("archived", true, false),
+        ("disabled", true, true),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/actions/{repo}")))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                r#"{{"full_name": "actions/{repo}", "default_branch": "main", "archived": {archived}, "disabled": {disabled}}}"#
+            )))
+            .mount(&server)
+            .await;
+    }
+    mount_not_found(&server, "/repos/actions/gone").await;
+
+    let provider = provider(&server)?;
+    let state = |repo: &str| provider.get_repo_state(&ActionRepoId::simple("actions", repo));
+    assert_eq!(state("active").await?, Some(RepoState::Active));
+    assert_eq!(state("archived").await?, Some(RepoState::Archived));
+    assert_eq!(state("disabled").await?, Some(RepoState::Disabled));
+    assert!(matches!(
+        state("gone").await,
+        Err(actup_core::Error::NotFound { .. })
+    ));
+    Ok(())
+}

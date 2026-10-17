@@ -340,6 +340,16 @@ pub struct Policy {
     /// prerelease = false   # skip -rc/-beta tags unless already on one of that version
     /// ```
     pub prerelease: bool,
+
+    /// How the LSP reports an action whose repository is archived or disabled.
+    ///
+    /// `hint` (default) shows a hint diagnostic with code `archived` and a
+    /// hover warning, `ignore` shows nothing.
+    ///
+    /// ```toml
+    /// archived = "ignore"   # no report for archived or disabled repositories
+    /// ```
+    pub archived: policy::Archived,
 }
 
 impl Policy {
@@ -352,6 +362,7 @@ impl Policy {
             track: partial.track.unwrap_or(self.track),
             branch: partial.branch.unwrap_or(self.branch),
             prerelease: partial.prerelease.unwrap_or(self.prerelease),
+            archived: partial.archived.unwrap_or(self.archived),
         }
     }
 }
@@ -370,6 +381,8 @@ pub struct PolicyOverride {
     pub branch: Option<policy::Branch>,
     /// Replaces `policy.prerelease`.
     pub prerelease: Option<bool>,
+    /// Replaces `policy.archived`.
+    pub archived: Option<policy::Archived>,
 }
 
 /// The `[scan]` table.
@@ -1659,6 +1672,7 @@ mod tests {
             track      = "major"
             branch     = "warn"
             prerelease = true
+            archived   = "ignore"
 
             [scan]
             ignore      = ["my-org/*", "owner/repo@v1.91.0"]
@@ -1670,7 +1684,7 @@ mod tests {
 
             [[overrides]]
             pattern = "ghe.corp.com/platform/ci"
-            policy  = { pin = "tag", branch = "update", prerelease = false }
+            policy  = { pin = "tag", branch = "update", prerelease = false, archived = "hint" }
         "#;
         let config: Config = toml::from_str(toml_str)?;
         assert_eq!(
@@ -1681,6 +1695,7 @@ mod tests {
                 track: policy::Track::Major,
                 branch: policy::Branch::Warn,
                 prerelease: true,
+                archived: policy::Archived::Ignore,
             }
         );
         let ignore: Vec<&str> = config
@@ -1713,9 +1728,17 @@ mod tests {
                 pin: Some(policy::Style::Tag),
                 branch: Some(policy::Branch::Update),
                 prerelease: Some(false),
+                archived: Some(policy::Archived::Hint),
                 ..Default::default()
             }
         );
+        let overridden = ActionRef::new(Some("ghe.corp.com".into()), "platform", "ci", None, "v1");
+        assert_eq!(
+            config.policy_for(&overridden).archived,
+            policy::Archived::Hint
+        );
+        let plain = ActionRef::simple("other", "repo", "v1");
+        assert_eq!(config.policy_for(&plain).archived, policy::Archived::Ignore);
         Ok(())
     }
 
@@ -1725,6 +1748,8 @@ mod tests {
             "[[overrides]]\npattern = \"checkout\"",
             "[[overrides]]\npattern = \"a/b\"\npolicy = { update_policy = \"patch\" }",
             "[[overrides]]\npattern = \"a/b\"\nignore = true",
+            "[[overrides]]\npattern = \"a/b\"\npolicy = { archived = \"warn\" }",
+            "[[overrides]]\npattern = \"a/b\"\npolicy = { archive = \"ignore\" }",
             "[[overrides]]\npolicy = { bump = \"patch\" }",
             "[scan]\nignore = [\"checkout\"]",
         ] {
@@ -2169,6 +2194,7 @@ mod tests {
         ("ACTUP_POLICY__TRACK", "exact"),
         ("ACTUP_POLICY__BRANCH", "update"),
         ("ACTUP_POLICY__PRERELEASE", "true"),
+        ("ACTUP_POLICY__ARCHIVED", "ignore"),
         ("ACTUP_SCAN__IGNORE", "[\"a/b\"]"),
         ("ACTUP_SCAN__EXTRA_PATHS", "[\".gitea/workflows\"]"),
         (
@@ -2203,6 +2229,7 @@ mod tests {
                 track: policy::Track::Exact,
                 branch: policy::Branch::Update,
                 prerelease: true,
+                archived: policy::Archived::Ignore,
             }
         );
         let ignore: Vec<String> = config.scan.ignore.iter().map(ToString::to_string).collect();

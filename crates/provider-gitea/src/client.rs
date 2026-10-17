@@ -17,7 +17,9 @@ use reqwest::{
 };
 use tracing::{debug, warn};
 
-use crate::types::{GiteaBranch, GiteaCommit, GiteaContent, GiteaError, GiteaRepository, GiteaTag};
+use crate::types::{
+    GiteaArchive, GiteaBranch, GiteaCommit, GiteaContent, GiteaError, GiteaRepository, GiteaTag,
+};
 
 /// Default items per page
 pub const DEFAULT_PER_PAGE: u8 = 50; // Gitea recommends 50
@@ -171,6 +173,19 @@ impl GiteaClient {
     pub async fn get_repo(&self, owner: &str, repo: &str) -> Result<GiteaRepository> {
         let url = format!("{}/repos/{owner}/{repo}", self.api_base);
         debug!(url = %url, "fetching repo info");
+
+        let response = self.get(&url).await?;
+        self.handle_response(response, owner, repo).await
+    }
+
+    /// Get the archive flag of a repository
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or repo not found.
+    pub async fn get_repo_archive(&self, owner: &str, repo: &str) -> Result<GiteaArchive> {
+        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        debug!(url = %url, "fetching repo archive flag");
 
         let response = self.get(&url).await?;
         self.handle_response(response, owner, repo).await
