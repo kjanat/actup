@@ -328,13 +328,13 @@ impl LspBackend {
             let config = config.read().await.clone();
             let (diagnostics, version_sets) = match config {
                 ConfigState::Invalid(_) => (Vec::new(), Arc::new(HashMap::new())),
-                ConfigState::Loaded(config) => {
+                ConfigState::Loaded(config) => 'loaded: {
                     let registry = registry.read().await.clone();
                     let file_cache = file_cache.read().await.clone();
 
                     let Some(registry) = registry else {
-                        tracing::debug!("no provider registry; skipping diagnostics");
-                        return;
+                        tracing::debug!("no provider registry; publishing empty diagnostics");
+                        break 'loaded (Vec::new(), Arc::new(HashMap::new()));
                     };
 
                     let file_cache = file_cache
@@ -446,9 +446,11 @@ impl LanguageServer for LspBackend {
                 Err(e) => {
                     tracing::error!("failed to build provider registry: {e}");
                     self.client
-                        .log_message(
+                        .show_message(
                             MessageType::ERROR,
-                            format!("actup-lsp: failed to initialize providers: {e}"),
+                            format!(
+                                "actup: failed to initialize providers: {e}. Diagnostics are paused until the config is fixed."
+                            ),
                         )
                         .await;
                     None
@@ -1276,9 +1278,11 @@ impl LspBackend {
             Err(e) => {
                 tracing::error!("failed to rebuild provider registry: {e}");
                 self.client
-                    .log_message(
+                    .show_message(
                         MessageType::ERROR,
-                        format!("actup: failed to rebuild providers: {e}"),
+                        format!(
+                            "actup: failed to rebuild providers: {e}. Diagnostics are paused until the config is fixed."
+                        ),
                     )
                     .await;
                 None
@@ -2274,7 +2278,7 @@ mod tests {
         let backend = service.inner();
         assert!(backend.registry.read().await.is_some());
 
-        std::fs::write(&config_file, "default_host = \"git.example.com\"\n")?;
+        std::fs::write(&config_file, REJECTED_HOST_CONFIG)?;
         let drain = async {
             while let Ok(Some(_)) =
                 tokio::time::timeout(Duration::from_millis(200), socket.next()).await
@@ -2289,9 +2293,116 @@ mod tests {
         let ConfigState::Loaded(config) = stored else {
             panic!("reload stored {stored:?}");
         };
-        assert_eq!(config.default_host.as_deref(), Some("git.example.com"));
+        assert!(config.hosts.contains_key("git.example.com"));
         assert!(provider_setup::build_registry(&config).is_err());
         assert!(backend.registry.read().await.is_none());
+        Ok(())
+    }
+
+    const REJECTED_HOST_CONFIG: &str = "[hosts.\"git.example.com\"]\napi_mode = \"rest\"\n";
+
+    async fn shown_and_published(
+        socket: &mut tower_lsp_server::ClientSocket,
+        uri: &Uri,
+    ) -> std::result::Result<
+        (
+            Vec<tower_lsp_server::ls_types::ShowMessageParams>,
+            tower_lsp_server::ls_types::PublishDiagnosticsParams,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        use futures::StreamExt as _;
+        let mut shown = Vec::new();
+        while let Some(message) = socket.next().await {
+            let params = message.params().cloned().unwrap_or_default();
+            match message.method() {
+                "window/showMessage" => shown.push(serde_json::from_value(params)?),
+                "textDocument/publishDiagnostics" => {
+                    let published: tower_lsp_server::ls_types::PublishDiagnosticsParams =
+                        serde_json::from_value(params)?;
+                    if published.uri == *uri {
+                        return Ok((shown, published));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Err("socket closed before publishDiagnostics".into())
+    }
+
+    #[tokio::test]
+    async fn reload_with_rejected_providers_publishes_empty_diagnostics()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use futures::StreamExt as _;
+
+        let temp = tempfile::tempdir()?;
+        let config_file = temp.path().join("actup.toml");
+        std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+        while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(50), socket.next()).await
+        {
+        }
+
+        let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+        let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.1.0\n";
+        let mut document = DocumentState::new(text.to_owned(), 3);
+        document.diagnostics.push(Diagnostic::default());
+        backend.documents.insert(uri.clone(), document);
+
+        std::fs::write(&config_file, REJECTED_HOST_CONFIG)?;
+        let ((), outcome) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                backend.reload_config(),
+                shown_and_published(&mut socket, &uri)
+            )
+        })
+        .await?;
+        let (shown, published) = outcome?;
+
+        assert_eq!(published.diagnostics, Vec::<Diagnostic>::new());
+        assert_eq!(published.version, Some(3));
+        assert!(
+            shown.iter().any(|m| m.typ == MessageType::ERROR
+                && m.message.contains("failed to rebuild providers")),
+            "shown {shown:?}"
+        );
+        assert!(
+            backend
+                .documents
+                .get(&uri)
+                .is_some_and(|doc| doc.diagnostics.is_empty())
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn initialize_with_rejected_providers_shows_the_error()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        std::fs::write(temp.path().join("actup.toml"), REJECTED_HOST_CONFIG)?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+        assert!(backend.registry.read().await.is_none());
+
+        let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+        let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.1.0\n";
+        backend
+            .documents
+            .insert(uri.clone(), DocumentState::new(text.to_owned(), 1));
+        backend.schedule_diagnostics(uri.clone(), text.to_owned(), 1, Duration::ZERO);
+        let (shown, published) = tokio::time::timeout(
+            Duration::from_secs(10),
+            shown_and_published(&mut socket, &uri),
+        )
+        .await??;
+
+        assert_eq!(published.diagnostics, Vec::<Diagnostic>::new());
+        assert!(
+            shown.iter().any(|m| m.typ == MessageType::ERROR
+                && m.message.contains("failed to initialize providers")),
+            "shown {shown:?}"
+        );
         Ok(())
     }
 
