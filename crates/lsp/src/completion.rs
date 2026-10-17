@@ -313,6 +313,7 @@ async fn add_search_results(
     prefix: &str,
     registry: &provider::Registry,
     debounce: &SearchDebounce,
+    ticket: u64,
     items: &mut Vec<CompletionItem>,
 ) -> bool {
     if prefix.starts_with("./") || prefix.starts_with("docker://") {
@@ -324,7 +325,7 @@ async fn add_search_results(
     if prefix.chars().count() < MIN_SEARCH_CHARS {
         return true;
     }
-    if !debounce.settled(debounce.ticket()).await {
+    if !debounce.settled(ticket).await {
         return true;
     }
     let found = match provider.search_actions(prefix).await {
@@ -477,12 +478,14 @@ pub async fn compute_completions(
     encoding: crate::position::PositionEncoding,
     debounce: &SearchDebounce,
 ) -> Option<CompletionResponse> {
+    let ticket = debounce.ticket();
     let context = detect_completion_context(text, position, encoding)?;
 
     match context {
         CompletionContext::ActionName { prefix } => {
             let mut items = action_completions(&prefix);
-            let incomplete = add_search_results(&prefix, registry, debounce, &mut items).await;
+            let incomplete =
+                add_search_results(&prefix, registry, debounce, ticket, &mut items).await;
             if items.is_empty() {
                 None
             } else {
@@ -1081,6 +1084,47 @@ mod tests {
         assert!(first.is_incomplete);
         assert!(first.items.iter().all(|i| i.label != "acme/cache"));
         assert!(second.items.iter().any(|i| i.label == "acme/cache"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn any_later_request_cancels_a_pending_search() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = crate::test_utils::MockProvider::new("github.com")
+            .with_search(Ok(Search::Found(vec![summary("acme", "cache", None)])));
+        let searches = provider.search_count();
+        let registry = crate::test_utils::mock_registry(provider);
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let debounce = SearchDebounce::new(Duration::from_millis(50));
+        let (search_text, search_at) = uses_line("cac")?;
+        for later in ["./.github/actions/x", "c", "actions/checkout@"] {
+            let (later_text, later_at) = uses_line(later)?;
+            let (pending, _) = tokio::join!(
+                compute_completions(
+                    &search_text,
+                    search_at,
+                    &registry,
+                    &file_cache,
+                    None,
+                    ENC,
+                    &debounce
+                ),
+                compute_completions(
+                    &later_text,
+                    later_at,
+                    &registry,
+                    &file_cache,
+                    None,
+                    ENC,
+                    &debounce
+                ),
+            );
+            let Some(CompletionResponse::List(pending)) = pending else {
+                return Err(format!("{later}: expected a completion list").into());
+            };
+            assert!(pending.is_incomplete, "{later}");
+        }
+        assert_eq!(searches.load(Ordering::SeqCst), 0);
         Ok(())
     }
 
