@@ -3,7 +3,7 @@
 //! Produces [`CodeAction`]s from diagnostics, enabling:
 //! - Single-ref quick fixes (e.g. "Update to vX.Y.Z") for outdated refs
 //! - "Expand to full SHA" quick fixes for short SHA refs
-//! - "Pin to <sha> # <ref>" quick fixes for branch and non-semver tag refs
+//! - `Pin to <sha> # <ref>` quick fixes for branch and non-semver tag refs
 //! - Fix-all-in-file source action that applies every edit CLI `update` makes
 //!
 //! Entry points:
@@ -175,8 +175,8 @@ fn display_ref(target_ref: &str) -> String {
 /// For each `Outdated` diagnostic, produces a quickfix "Update to vX.Y.Z"
 /// action with a [`WorkspaceEdit`] that replaces only the ref portion.
 ///
-/// For each `PinBranch` diagnostic, produces a quickfix "Pin to <sha> # <ref>"
-/// action, titled "Pin to <sha>" when other text follows the ref.
+/// For each `PinBranch` diagnostic, produces a quickfix `Pin to <sha> # <ref>`
+/// action, titled `Pin to <sha>` when other text follows the ref.
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
