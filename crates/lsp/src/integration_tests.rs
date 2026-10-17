@@ -613,6 +613,26 @@ async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
 }
 
 #[tokio::test]
+async fn code_action_offers_nothing_for_an_unopened_document()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/never-opened.yml").ok_or("no uri")?;
+    let range = test_utils::make_range(3, 31, 33);
+    let diag = test_utils::make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
+    let resp = harness
+        .request(code_action_request(13, &uri, range, vec![diag]))
+        .await
+        .ok_or("codeAction should return a response")?;
+    let (_, body) = resp.into_parts();
+    assert_eq!(body?, serde_json::Value::Null);
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn code_action_expands_short_sha() -> Result<(), Box<dyn std::error::Error>> {
     let mut harness = TestHarness::new();
     harness.initialize(None).await;
