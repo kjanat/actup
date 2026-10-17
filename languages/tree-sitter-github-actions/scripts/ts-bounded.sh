@@ -137,6 +137,15 @@ resolve() {
 	cap_mb=$((avail_mb - headroom_mb))
 	if [ "$cap_mb" -gt "$ceiling_mb" ]; then cap_mb="$ceiling_mb"; fi
 
+	# An unprivileged process cannot raise a hard limit it inherited from an outer prlimit.
+	local resource hard
+	for resource in as rss; do
+		hard="$(prlimit --pid "$$" --"$resource" --output HARD --noheadings --raw)"
+		if [ "$hard" != unlimited ] && [ "$((hard / 1024 / 1024))" -lt "$cap_mb" ]; then
+			cap_mb=$((hard / 1024 / 1024))
+		fi
+	done
+
 	refuse_reason=""
 	if [ "$cap_mb" -lt "$MIN_CAP_MB" ]; then
 		refuse_reason="cap=$(fmt_mb "$cap_mb") < MIN_CAP_MB=$(fmt_mb "$MIN_CAP_MB")"
@@ -225,15 +234,6 @@ if [ -n "$refuse_reason" ]; then
 fi
 
 cap_bytes=$((cap_mb * 1024 * 1024))
-
-# An unprivileged process cannot raise a hard limit it inherited from an outer prlimit.
-for resource in as rss; do
-	hard="$(prlimit --pid "$$" --"$resource" --output HARD --noheadings --raw)"
-	if [ "$hard" != unlimited ] && [ "$hard" -lt "$cap_bytes" ]; then
-		cap_bytes="$hard"
-	fi
-done
-cap_mb=$((cap_bytes / 1024 / 1024))
 
 printf 'ts-bounded: MemTotal=%s MemAvailable=%s headroom=%s ceiling=%s cap=%s cmd=%s\n' \
 	"$(fmt_mb "$total_mb")" "$(fmt_mb "$avail_mb")" "$(fmt_mb "$headroom_mb")" "$(fmt_mb "$ceiling_mb")" "$(fmt_mb "$cap_mb")" "$*" >&2
