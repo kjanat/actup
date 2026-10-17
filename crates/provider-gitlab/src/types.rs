@@ -35,8 +35,8 @@ pub struct GitLabCommit {
 /// Project (repository) information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabProject {
-    /// Default branch name
-    pub default_branch: String,
+    /// Default branch name, absent for an empty repository
+    pub default_branch: Option<String>,
     /// Whether the project is archived
     #[serde(default)]
     pub archived: bool,

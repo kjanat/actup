@@ -93,15 +93,14 @@ impl Provider for GitLabProvider {
 
             // Get default branch info
             let project = self.client.get_project(&owner, &repo_name).await?;
-            let branch = self
-                .client
-                .get_branch(&owner, &repo_name, &project.default_branch)
-                .await?;
-
-            version_set.set_default_branch(version::BranchInfo::new(
-                project.default_branch,
-                branch.commit.id,
-            ));
+            if let Some(default_branch) = project.default_branch {
+                let branch = self
+                    .client
+                    .get_branch(&owner, &repo_name, &default_branch)
+                    .await?;
+                version_set
+                    .set_default_branch(version::BranchInfo::new(default_branch, branch.commit.id));
+            }
 
             Ok(version_set)
         })
@@ -140,7 +139,14 @@ impl Provider for GitLabProvider {
             debug!(owner = %owner, repo = %repo_name, "fetching default branch");
 
             let project = self.client.get_project(&owner, &repo_name).await?;
-            Ok(project.default_branch)
+            project
+                .default_branch
+                .ok_or_else(|| actup_core::Error::RefNotFound {
+                    owner,
+                    repo: repo_name,
+                    ref_name: "HEAD".into(),
+                    host: Some(self.host.clone()),
+                })
         })
     }
 

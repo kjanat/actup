@@ -420,6 +420,25 @@ async fn get_default_branch_reads_the_project() -> TestResult {
 }
 
 #[tokio::test]
+async fn an_empty_project_has_no_default_branch() -> TestResult {
+    let server = MockServer::start().await;
+    get(&server, PROJECT, 200, r#"{"default_branch": null}"#).await;
+    serve_tags(&server, 200, &format!("[{}]", tag("v1.0.0", COMMIT_A))).await;
+    let provider = provider(&server)?;
+
+    let set = provider.get_versions(&repo()).await?;
+    assert_eq!(set.tag_sha("v1.0.0"), Some(COMMIT_A));
+    assert!(set.default_branch().is_none());
+
+    let error = provider.get_default_branch(&repo()).await;
+    assert!(
+        matches!(&error, Err(Error::RefNotFound { ref_name, .. }) if ref_name == "HEAD"),
+        "{error:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn get_readme_decodes_the_first_readme_found() -> TestResult {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
