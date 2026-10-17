@@ -119,9 +119,9 @@ pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf
 ///
 /// A Windows `\\?\` verbatim prefix is removed when the plain path is shorter
 /// than 260 bytes and no component ends in `.` or a space, is a reserved
-/// device name such as `NUL` or `com1.txt`, holds a character that Win32
-/// paths reject, or is empty or longer than 255 bytes. When `path` cannot be
-/// resolved, the result is the absolute path, else `path` itself.
+/// device name such as `NUL` or `com1.txt`, holds `<>:"|?*`, `/` or a
+/// character below U+0020, or is empty or longer than 255 bytes. When `path`
+/// cannot be resolved, the result is the absolute path, else `path` itself.
 #[must_use]
 pub fn canonical_path(path: &Path) -> PathBuf {
     path.canonicalize()
@@ -174,7 +174,7 @@ fn survives_win32(component: &str) -> bool {
         && !component.ends_with(['.', ' '])
         && !component
             .chars()
-            .any(|c| c.is_control() || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/'))
+            .any(|c| c < '\u{20}' || matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*' | '/'))
         && !RESERVED_NAMES
             .iter()
             .any(|name| name.eq_ignore_ascii_case(stem))
@@ -324,6 +324,10 @@ mod tests {
         assert_eq!(
             without_verbatim_prefix(r"\\?\C:\a.b\console\nul2\com10.txt\.x").as_deref(),
             Some(r"C:\a.b\console\nul2\com10.txt\.x")
+        );
+        assert_eq!(
+            without_verbatim_prefix("\\\\?\\C:\\a\u{7f}b\\c\u{9f}d").as_deref(),
+            Some("C:\\a\u{7f}b\\c\u{9f}d")
         );
         let long = format!(r"\\?\C:\{}", "a".repeat(MAX_PATH));
         let segment = format!(r"\\?\C:\{}", "a".repeat(256));
