@@ -15,7 +15,7 @@ pub mod resolution;
 pub mod validation;
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     convert::Infallible,
     io::Read,
     num::NonZeroU8,
@@ -139,7 +139,8 @@ pub struct Config {
 
     /// Host used for bare `owner/repo` refs that carry no host prefix.
     ///
-    /// Absent resolves to `github.com` via the built-in preset.
+    /// Absent resolves to `github.com` via the built-in preset. An
+    /// auto-discovered repo config cannot set it.
     ///
     /// ```toml
     /// default_host = "github.com"
@@ -170,6 +171,10 @@ pub struct Config {
     /// Every layer that contributed to this config, lowest precedence first.
     #[serde(skip)]
     pub sources: Vec<Source>,
+
+    /// Hosts that only an auto-discovered repo config declares; a non-preset one gets no default token.
+    #[serde(skip)]
+    pub repo_only_hosts: BTreeSet<String>,
 
     /// Rejects the renamed `update_policy` key.
     #[serde(skip_serializing, deserialize_with = "renamed::<_, 0>")]
@@ -220,6 +225,8 @@ pub enum Source {
     Repo {
         /// Path of the file.
         path: PathBuf,
+        /// Keys the file set that a repo config may not set, which were ignored.
+        ignored: Vec<String>,
     },
     /// The file named by `--config`, `ACTUP_CONFIG` or the LSP `configPath`.
     Explicit {
@@ -238,7 +245,7 @@ impl Source {
     #[must_use]
     pub fn path(&self) -> Option<&Path> {
         match self {
-            Self::User { path } | Self::Repo { path } | Self::Explicit { path } => Some(path),
+            Self::User { path } | Self::Repo { path, .. } | Self::Explicit { path } => Some(path),
             Self::Env { .. } => None,
         }
     }
@@ -248,7 +255,15 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::User { path } => write!(f, "user config {}", path.display()),
-            Self::Repo { path } => write!(f, "repo config {}", path.display()),
+            Self::Repo { path, ignored } if ignored.is_empty() => {
+                write!(f, "repo config {}", path.display())
+            }
+            Self::Repo { path, ignored } => write!(
+                f,
+                "repo config {} (ignored {})",
+                path.display(),
+                ignored.join(", ")
+            ),
             Self::Explicit { path } => write!(f, "explicit config {}", path.display()),
             Self::Env { vars } => write!(f, "environment {}", vars.join(", ")),
         }
@@ -379,6 +394,8 @@ pub struct Scan {
     /// their fenced `yaml` or `yml` blocks. Every other file is read line by
     /// line for `uses:` values that contain `@`, and actup never appends a
     /// version comment to such a line.
+    ///
+    /// An auto-discovered repo config cannot set it.
     ///
     /// Each entry is relative to the scan root. Absolute paths and `..`
     /// segments are rejected, and matches that resolve outside the scan root
@@ -574,9 +591,11 @@ pub struct HostConfig {
 
     /// API base URL. Required after merge (may be inferred by provider registration).
     /// Must include scheme (`http://` or `https://`), no query or fragment.
+    /// An auto-discovered repo config cannot set it.
     pub api_base: Option<String>,
 
     /// Env var name for auth token. Required after merge (may be defaulted by preset).
+    /// An auto-discovered repo config cannot set it.
     pub token_env: Option<String>,
 
     /// Override global `[fetch].api_mode` for this host.
@@ -616,28 +635,30 @@ impl Config {
         start_dir: &Path,
         ceiling: Option<&Path>,
     ) -> Result<Self, Error> {
-        let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
-        let mut sources = Vec::new();
+        let mut layers = Layers::default();
 
         if let Some(user_config) = user_config
             && user_config.exists()
         {
-            figment = figment.merge(Toml::file(user_config));
-            sources.push(Source::User {
-                path: user_config.to_path_buf(),
-            });
+            layers = layers.trusted(
+                Toml::file(user_config),
+                Source::User {
+                    path: user_config.to_path_buf(),
+                },
+            );
         }
 
         if let Some(repo_config) = find_repo_config(start_dir, ceiling) {
-            figment = Self::merge_config_file(figment, &repo_config)?;
-            sources.push(Source::Repo { path: repo_config });
+            layers = layers.repo(read_config_file(&repo_config)?);
         }
 
         if let Some(path) = config_path {
-            figment = Self::merge_config_file(figment, path)?;
-            sources.push(Source::Explicit {
-                path: path.to_path_buf(),
-            });
+            layers = layers.trusted(
+                read_config_file(path)?,
+                Source::Explicit {
+                    path: path.to_path_buf(),
+                },
+            );
         }
 
         let env = EnvOverrides::from_vars(std::env::vars_os().map(|(name, value)| {
@@ -646,56 +667,25 @@ impl Config {
                 value.to_string_lossy().into_owned(),
             )
         }));
-        Self::extract(figment, sources, env)
+        layers.extract(env)
     }
 
-    /// Parse one repo config `file`, given as path and contents, over the defaults and apply `env`.
+    /// Parse one auto-discovered repo config `file`, given as path and contents, over the defaults and apply `env`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidConfig`] for an invalid value.
     pub fn from_contents(file: Option<(&Path, &str)>, env: EnvOverrides) -> Result<Self, Error> {
-        let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
-        let mut sources = Vec::new();
+        let mut layers = Layers::default();
         if let Some((path, contents)) = file {
-            figment = figment.merge(FileContents::new(path, contents)?);
-            sources.push(Source::Repo {
-                path: path.to_path_buf(),
-            });
+            layers = layers.repo(FileContents::new(path, contents)?);
         }
-        Self::extract(figment, sources, env)
-    }
-
-    fn extract(
-        figment: Figment,
-        mut sources: Vec<Source>,
-        env: EnvOverrides,
-    ) -> Result<Self, Error> {
-        let vars = env.names();
-        let figment = figment.merge(env);
-        let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
-            path: error_origin(&e, sources.iter().rev().find_map(Source::path)),
-            reason: format!("{e}{}", unknown_key_hint(&e).unwrap_or_default()),
-        })?;
-        if !vars.is_empty() {
-            sources.push(Source::Env { vars });
-        }
-        config.sources = sources;
-        Ok(config)
+        layers.extract(env)
     }
 
     /// Return the highest-precedence config file in [`Config::sources`].
     #[must_use]
     pub fn loaded_from(&self) -> Option<&Path> {
         self.sources.iter().rev().find_map(Source::path)
-    }
-
-    /// Merge a config file into figment based on extension
-    fn merge_config_file(figment: Figment, path: &Path) -> Result<Figment, Error> {
-        let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
-            path: path.display().to_string(),
-            reason: e.to_string(),
-        })?;
-        Ok(figment.merge(FileContents::new(path, &contents)?))
     }
 
     /// Return the policy for `action`: `[policy]` with every matching override applied in order.
@@ -722,6 +712,153 @@ impl Config {
         self.default_host
             .as_deref()
             .unwrap_or(resolution::FALLBACK_DEFAULT_HOST)
+    }
+}
+
+fn read_config_file(path: &Path) -> Result<FileContents, Error> {
+    let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
+        path: path.display().to_string(),
+        reason: e.to_string(),
+    })?;
+    FileContents::new(path, &contents)
+}
+
+type ProfileData = figment::value::Map<figment::Profile, figment::value::Dict>;
+
+fn declared_hosts(provider: &impl figment::Provider) -> BTreeSet<String> {
+    provider
+        .data()
+        .into_iter()
+        .flat_map(ProfileData::into_values)
+        .filter_map(|mut dict| match dict.remove("hosts") {
+            Some(figment::value::Value::Dict(_, hosts)) => Some(hosts.into_keys()),
+            _ => None,
+        })
+        .flatten()
+        .collect()
+}
+
+struct Layers {
+    figment: Figment,
+    sources: Vec<Source>,
+    repo_hosts: BTreeSet<String>,
+    trusted_hosts: BTreeSet<String>,
+}
+
+impl Default for Layers {
+    fn default() -> Self {
+        Self {
+            figment: Figment::new().merge(Serialized::defaults(Config::default())),
+            sources: Vec::new(),
+            repo_hosts: BTreeSet::new(),
+            trusted_hosts: BTreeSet::new(),
+        }
+    }
+}
+
+impl Layers {
+    fn trusted(mut self, provider: impl figment::Provider, source: Source) -> Self {
+        self.trusted_hosts.extend(declared_hosts(&provider));
+        self.figment = self.figment.merge(provider);
+        self.sources.push(source);
+        self
+    }
+
+    fn repo(mut self, file: FileContents) -> Self {
+        let repo = RepoFile::new(file);
+        for key in &repo.ignored {
+            tracing::warn!(
+                key = %key,
+                path = %repo.file.path.display(),
+                "ignoring a key that an auto-discovered repo config may not set; set it in the user config or pass --config"
+            );
+        }
+        self.repo_hosts.extend(repo.hosts.iter().cloned());
+        self.sources.push(Source::Repo {
+            path: repo.file.path.clone(),
+            ignored: repo.ignored.clone(),
+        });
+        self.figment = self.figment.merge(repo);
+        self
+    }
+
+    fn extract(mut self, env: EnvOverrides) -> Result<Config, Error> {
+        let vars = env.names();
+        self.trusted_hosts.extend(declared_hosts(&env));
+        let figment = self.figment.merge(env);
+        let mut config: Config = figment.extract().map_err(|e| Error::InvalidConfig {
+            path: error_origin(&e, self.sources.iter().rev().find_map(Source::path)),
+            reason: format!("{e}{}", unknown_key_hint(&e).unwrap_or_default()),
+        })?;
+        if !vars.is_empty() {
+            self.sources.push(Source::Env { vars });
+        }
+        config.sources = self.sources;
+        config.repo_only_hosts = self
+            .repo_hosts
+            .difference(&self.trusted_hosts)
+            .cloned()
+            .collect();
+        Ok(config)
+    }
+}
+
+/// An auto-discovered repo config with the keys a repo config may not set removed.
+struct RepoFile {
+    file: FileContents,
+    data: Result<ProfileData, figment::Error>,
+    ignored: Vec<String>,
+    hosts: BTreeSet<String>,
+}
+
+impl RepoFile {
+    fn new(file: FileContents) -> Self {
+        use figment::value::Value;
+
+        let mut ignored = Vec::new();
+        let mut hosts = BTreeSet::new();
+        let data = figment::Provider::data(&file).map(|mut map| {
+            for dict in map.values_mut() {
+                if dict.remove("default_host").is_some() {
+                    ignored.push("default_host".to_owned());
+                }
+                if let Some(Value::Dict(_, scan)) = dict.get_mut("scan")
+                    && scan.remove("extra_paths").is_some()
+                {
+                    ignored.push("scan.extra_paths".to_owned());
+                }
+                if let Some(Value::Dict(_, table)) = dict.get_mut("hosts") {
+                    for (host, value) in table.iter_mut() {
+                        hosts.insert(host.clone());
+                        let Value::Dict(_, host_table) = value else {
+                            continue;
+                        };
+                        for key in ["api_base", "token_env"] {
+                            if host_table.remove(key).is_some() {
+                                ignored.push(format!("hosts.\"{host}\".{key}"));
+                            }
+                        }
+                    }
+                }
+            }
+            map
+        });
+        Self {
+            file,
+            data,
+            ignored,
+            hosts,
+        }
+    }
+}
+
+impl figment::Provider for RepoFile {
+    fn metadata(&self) -> figment::Metadata {
+        self.file.metadata()
+    }
+
+    fn data(&self) -> Result<ProfileData, figment::Error> {
+        self.data.clone()
     }
 }
 
@@ -1691,21 +1828,18 @@ mod tests {
     }
 
     #[test]
-    fn test_from_contents_rejects_escaping_extra_paths() {
+    fn test_env_rejects_escaping_extra_paths() {
         for (entry, reason) in [
             ("../../../etc/*.yml", "contains `..`"),
             ("/etc/*.yml", "is absolute"),
         ] {
             let Err(Error::InvalidConfig { path, reason: got }) = Config::from_contents(
-                Some((
-                    Path::new("actup.toml"),
-                    &format!("[scan]\nextra_paths = [\"{entry}\"]\n"),
-                )),
-                EnvOverrides::default(),
+                None,
+                EnvOverrides::from_vars([("ACTUP_SCAN__EXTRA_PATHS", format!("[\"{entry}\"]"))]),
             ) else {
                 panic!("`{entry}` must be rejected");
             };
-            assert_eq!(path, "actup.toml");
+            assert_eq!(path, "`ACTUP_` environment variable(s)");
             assert!(
                 got.contains(&format!("`scan.extra_paths` entry `{entry}` {reason}")),
                 "{got}"
@@ -1768,7 +1902,8 @@ mod tests {
             config.sources,
             [
                 Source::Repo {
-                    path: "actup.toml".into()
+                    path: "actup.toml".into(),
+                    ignored: Vec::new(),
                 },
                 Source::Env { vars },
             ]
@@ -1875,8 +2010,18 @@ mod tests {
                 "user config /x/actup.toml",
             ),
             (
-                Source::Repo { path: path.clone() },
+                Source::Repo {
+                    path: path.clone(),
+                    ignored: Vec::new(),
+                },
                 "repo config /x/actup.toml",
+            ),
+            (
+                Source::Repo {
+                    path: path.clone(),
+                    ignored: vec!["default_host".into(), "scan.extra_paths".into()],
+                },
+                "repo config /x/actup.toml (ignored default_host, scan.extra_paths)",
             ),
             (
                 Source::Explicit { path: path.clone() },

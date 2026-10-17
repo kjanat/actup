@@ -81,7 +81,7 @@ impl DocumentState {
 
 #[derive(Debug, Clone)]
 enum ConfigState {
-    Loaded(Config),
+    Loaded(Box<Config>),
     Invalid(String),
 }
 
@@ -277,7 +277,7 @@ impl LspBackend {
             documents: Arc::new(DashMap::new()),
             workspace_root: RwLock::new(None),
             client_capabilities: RwLock::new(ClientCapabilities::default()),
-            config: Arc::new(RwLock::new(ConfigState::Loaded(Config::default()))),
+            config: Arc::new(RwLock::new(ConfigState::Loaded(Box::default()))),
             registry: Arc::new(RwLock::new(None)),
             file_cache: Arc::new(RwLock::new(None)),
             in_flight: DashMap::new(),
@@ -431,7 +431,7 @@ impl LanguageServer for LspBackend {
         ) {
             Ok(c) => {
                 log_config_sources(&c, "loaded config");
-                ConfigState::Loaded(c)
+                ConfigState::Loaded(Box::new(c))
             }
             Err(e) => self.invalid_config(&e).await,
         };
@@ -1280,7 +1280,7 @@ impl LspBackend {
         };
 
         // Update stored config.
-        *self.config.write().await = ConfigState::Loaded(new_config.clone());
+        *self.config.write().await = ConfigState::Loaded(Box::new(new_config.clone()));
 
         // Rebuild provider registry (config may change hosts/tokens).
         let registry = match provider_setup::build_registry(&new_config) {

@@ -93,10 +93,11 @@ refused file.
 
 ## Configuration
 
-Create `actup.toml` or `.actup.toml` in your repo root:
+Create `actup.toml` or `.actup.toml` in your repo root, or write the user config
+(see [Config Discovery](#config-discovery)):
 
 ```toml
-# Default host for bare owner/repo refs
+# Default host for bare owner/repo refs (user or explicit config only)
 default_host = "github.com"
 
 [policy]
@@ -108,7 +109,7 @@ prerelease = false
 
 [scan]
 ignore      = ["my-org/*", "dtolnay/rust-toolchain@1.91.0"]
-extra_paths = [".gitea/workflows"]
+extra_paths = [".gitea/workflows"]  # user or explicit config only
 
 # Ordered; for each policy key the last matching entry wins.
 # Patterns are `[host/]owner/repo[/subpath][@ref]` globs.
@@ -125,7 +126,7 @@ policy  = { bump = "patch", track = "exact" }
 api_mode          = "graphql"  # "graphql" or "rest"
 max_tags_per_repo = 10  # Tags to fetch per repo (1-255)
 
-# Enterprise GitHub
+# Enterprise GitHub (api_base and token_env: user or explicit config only)
 [hosts."ghe.example.com"]
 kind      = "github"
 api_base  = "https://ghe.example.com/api/v3"
@@ -187,6 +188,13 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
    (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)
+
+A repo config arrives with the repository, so actup ignores the keys in it that
+choose where a token goes or which files get rewritten: `default_host`,
+`scan.extra_paths`, `hosts.<host>.api_base` and `hosts.<host>.token_env`. actup
+warns with the key and the file, and `actup config` lists the ignored keys. Set
+them in the user config or in a file passed with `--config` or `configPath`. A
+non-preset host that only the repo config declares gets no token.
 
 An unknown key in a config file or in an `ACTUP_*` variable is an error (exit
 code 2). The message names the file or the variable and suggests the closest

@@ -58,7 +58,8 @@ fn find_registration_by_kind<'a>(
 /// 3. If `kind` is still missing: error (non-preset host must specify `kind`).
 /// 4. Lookup registration by `kind` (error if provider not compiled in).
 /// 5. Fill defaults/inference:
-///    - `token_env`: if missing and `registration.default_token_env` set, use it
+///    - `token_env`: if missing and `registration.default_token_env` set, use it,
+///      unless the host is in [`Config::repo_only_hosts`] and is not a preset
 ///    - `api_base`: if missing, try `registration.infer_api_base(hostname)`
 /// 6. Validate `kind`, `api_base`, `token_env` present + `api_base` URL shape.
 /// 7. Validate `api_mode` compatibility with `registration.capabilities`.
@@ -94,7 +95,8 @@ pub fn effective_host(
 
     let kind = resolved.require_kind(hostname)?; // Step 3
     let registration = resolve_registration(registrations, kind, hostname)?; // Step 4
-    resolved.apply_defaults(hostname, registration); // Step 5
+    let repo_only = preset_reg.is_none() && config.repo_only_hosts.contains(hostname);
+    resolved.apply_defaults(hostname, registration, repo_only); // Step 5
 
     let api_mode = host_config
         .and_then(|hc| hc.api_mode)
@@ -107,8 +109,8 @@ pub fn effective_host(
     build_and_validate(
         hostname,
         kind,
-        resolved.api_base,
-        resolved.token_env,
+        resolved,
+        repo_only,
         api_mode,
         max_tags_per_repo,
         registration,
@@ -184,8 +186,9 @@ impl Resolved {
     /// Step 5 — fill remaining fields from the registration's defaults /
     /// inference hook. `token_env` only if the registration declares one;
     /// `api_base` only if the registration can infer it from the hostname.
-    fn apply_defaults(&mut self, hostname: &str, registration: &Registration) {
+    fn apply_defaults(&mut self, hostname: &str, registration: &Registration, repo_only: bool) {
         if self.token_env.is_none()
+            && !repo_only
             && let Some(default_te) = registration.default_token_env
         {
             self.token_env = Some(default_te.to_string());
@@ -226,8 +229,12 @@ fn resolve_registration<'a>(
 fn build_and_validate(
     hostname: &str,
     kind: HostKind,
-    api_base: Option<String>,
-    token_env: Option<String>,
+    Resolved {
+        api_base,
+        token_env,
+        ..
+    }: Resolved,
+    repo_only: bool,
     api_mode: ApiMode,
     max_tags_per_repo: std::num::NonZeroU8,
     registration: &Registration,
@@ -240,12 +247,14 @@ fn build_and_validate(
         reason: format!("api_base required for \"{hostname}\" (provider cannot infer; specify api_base in [hosts.\"{hostname}\"])"),
     })?;
 
-    let resolved_token_env = token_env.ok_or_else(|| Error::InvalidConfig {
-        path: ctx.clone(),
-        reason: format!(
-            "token_env required for \"{hostname}\" (specify token_env in [hosts.\"{hostname}\"])"
-        ),
-    })?;
+    if token_env.is_none() && !repo_only {
+        return Err(Error::InvalidConfig {
+            path: ctx,
+            reason: format!(
+                "token_env required for \"{hostname}\" (specify token_env in [hosts.\"{hostname}\"])"
+            ),
+        });
+    }
 
     let normalized_api_base = validate_api_base(&resolved_api_base, &ctx)?;
 
@@ -253,7 +262,7 @@ fn build_and_validate(
         host: hostname.to_string(),
         kind,
         api_base: normalized_api_base,
-        token_env: resolved_token_env,
+        token_env,
         api_mode,
         max_tags_per_repo,
     };
@@ -434,7 +443,7 @@ mod tests {
         assert_eq!(result.host, "github.com");
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
-        assert_eq!(result.token_env, "GITHUB_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
         assert_eq!(result.api_mode, ApiMode::Graphql);
         assert_eq!(result.max_tags_per_repo.get(), 10);
     }
@@ -455,7 +464,7 @@ mod tests {
         let result = effective_host("gitlab.com", &config, &regs, &fetch).unwrap();
         assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab.com/api/v4");
-        assert_eq!(result.token_env, "GITLAB_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITLAB_TOKEN"));
     }
 
     #[test]
@@ -475,7 +484,7 @@ mod tests {
         );
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
-        assert_eq!(result.token_env, "MY_CUSTOM_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("MY_CUSTOM_TOKEN"));
         // Other preset values unchanged
         assert_eq!(result.api_base, "https://api.github.com");
         assert_eq!(result.kind, HostKind::GitHub);
@@ -561,7 +570,7 @@ mod tests {
         assert_eq!(result.host, "ghe.corp.com");
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://ghe.corp.com/api/v3");
-        assert_eq!(result.token_env, "GHE_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(result.api_mode, ApiMode::Rest);
         assert_eq!(result.max_tags_per_repo.get(), 25);
     }
@@ -584,7 +593,7 @@ mod tests {
 
         let result = effective_host("ghe.corp.com", &config, &regs, &default_fetch()).unwrap();
         assert_eq!(result.api_base, "https://ghe.corp.com/api/v3");
-        assert_eq!(result.token_env, "GITHUB_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
     }
 
     #[test]
@@ -1086,7 +1095,8 @@ mod tests {
         assert_eq!(result.kind, HostKind::GitLab);
         assert_eq!(result.api_base, "https://gitlab-proxy.corp.com/api/v4");
         assert_eq!(
-            result.token_env, "GITLAB_TOKEN",
+            result.token_env.as_deref(),
+            Some("GITLAB_TOKEN"),
             "should use GitLab default, not GitHub preset"
         );
     }
@@ -1137,7 +1147,7 @@ mod tests {
         // All three fields come from the single preset
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
-        assert_eq!(result.token_env, "GITHUB_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
         assert_eq!(result.host, "github.com");
     }
 
@@ -1161,7 +1171,7 @@ mod tests {
         let result = effective_host("custom.host.io", &config, &regs, &default_fetch()).unwrap();
         assert_eq!(result.host, "custom.host.io");
         assert_eq!(result.api_base, "https://custom.host.io/api/v3");
-        assert_eq!(result.token_env, "CUSTOM_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("CUSTOM_TOKEN"));
     }
 
     #[test]
@@ -1183,7 +1193,7 @@ mod tests {
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://proxy.corp.com/gh");
-        assert_eq!(result.token_env, "CORP_GH_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("CORP_GH_TOKEN"));
         assert_eq!(result.api_mode, ApiMode::Rest);
         assert_eq!(result.max_tags_per_repo.get(), 99);
     }
@@ -1208,7 +1218,7 @@ mod tests {
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
         assert_eq!(result.kind, HostKind::GitHub);
         assert_eq!(result.api_base, "https://api.github.com");
-        assert_eq!(result.token_env, "GITHUB_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
     }
 
     #[test]
@@ -1302,7 +1312,40 @@ mod tests {
         );
 
         let result = effective_host("ghe.internal", &config, &regs, &default_fetch()).unwrap();
-        assert_eq!(result.token_env, "GITHUB_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN"));
+    }
+
+    #[test]
+    fn repo_only_non_preset_host_gets_no_default_token() -> Result<(), Error> {
+        let gh = github_registration();
+        let gitea = gitea_registration();
+        let regs: Vec<&Registration> = vec![&gh, &gitea];
+        let mut config = Config::default();
+        for (host, kind) in [
+            ("ghe.internal", HostKind::GitHub),
+            ("github.com", HostKind::GitHub),
+            ("gitea.internal", HostKind::Gitea),
+        ] {
+            config.hosts.insert(
+                host.into(),
+                HostConfig {
+                    kind: Some(kind),
+                    api_base: Some(format!("https://{host}/api/v1")),
+                    token_env: None,
+                    api_mode: Some(ApiMode::Rest),
+                    max_tags_per_repo: None,
+                },
+            );
+            config.repo_only_hosts.insert(host.into());
+        }
+
+        let ghe = effective_host("ghe.internal", &config, &regs, &default_fetch())?;
+        assert_eq!(ghe.token_env, None);
+        let gitea = effective_host("gitea.internal", &config, &regs, &default_fetch())?;
+        assert_eq!(gitea.token_env, None);
+        let preset = effective_host("github.com", &config, &regs, &default_fetch())?;
+        assert_eq!(preset.token_env.as_deref(), Some("GITHUB_TOKEN"));
+        Ok(())
     }
 
     #[test]
@@ -1323,7 +1366,7 @@ mod tests {
         );
 
         let result = effective_host("ghe.internal", &config, &regs, &default_fetch()).unwrap();
-        assert_eq!(result.token_env, "MY_GHE_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("MY_GHE_TOKEN"));
     }
 
     #[test]
@@ -1694,7 +1737,7 @@ mod tests {
         let result = effective_host("code.corp.io", &config, &regs, &fetch).unwrap();
         assert_eq!(result.kind, HostKind::Gitea);
         assert_eq!(result.api_base, "https://code.corp.io/api/v1");
-        assert_eq!(result.token_env, "GITEA_TOKEN");
+        assert_eq!(result.token_env.as_deref(), Some("GITEA_TOKEN"));
     }
 
     #[test]
@@ -1796,7 +1839,7 @@ mod tests {
         );
 
         let result = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
-        assert_eq!(result.token_env, "GITHUB_TOKEN"); // from preset
+        assert_eq!(result.token_env.as_deref(), Some("GITHUB_TOKEN")); // from preset
         assert_eq!(result.api_base, "https://proxy.github.com"); // from user
     }
 

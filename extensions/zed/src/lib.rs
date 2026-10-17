@@ -362,8 +362,13 @@ fn config_note(config: &Config) -> String {
                     let vars: Vec<String> = vars.iter().map(|var| format!("`{var}`")).collect();
                     format!("environment {}", vars.join(", "))
                 }
+                ConfigSource::Repo { path, ignored } if !ignored.is_empty() => {
+                    let ignored: Vec<String> =
+                        ignored.iter().map(|key| format!("`{key}`")).collect();
+                    format!("`{}` (ignored {})", path.display(), ignored.join(", "))
+                }
                 ConfigSource::User { path }
-                | ConfigSource::Repo { path }
+                | ConfigSource::Repo { path, .. }
                 | ConfigSource::Explicit { path } => format!("`{}`", path.display()),
             })
             .collect::<Vec<_>>()
@@ -810,9 +815,28 @@ mod tests {
         Config {
             sources: vec![ConfigSource::Repo {
                 path: PathBuf::from(path),
+                ignored: Vec::new(),
             }],
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn config_note_names_ignored_repo_keys() -> Result<(), String> {
+        let files = HashMap::from([(
+            "actup.toml",
+            "default_host = \"x.example\"\n[scan]\nextra_paths = [\"a.md\"]\n",
+        )]);
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&files, &requested), &[])?;
+        assert_eq!(config.default_host, None);
+        assert_eq!(
+            config_note(&config),
+            format!(
+                "Config: `actup.toml` (ignored `default_host`, `scan.extra_paths`). {SCOPE}\n\n"
+            )
+        );
+        Ok(())
     }
 
     #[test]

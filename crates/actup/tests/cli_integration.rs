@@ -363,7 +363,8 @@ mod config_tests {
             [
                 ConfigSource::User { path: user },
                 ConfigSource::Repo {
-                    path: repo_config.clone()
+                    path: repo_config.clone(),
+                    ignored: Vec::new(),
                 },
             ]
         );
@@ -374,8 +375,113 @@ mod config_tests {
         let config = Config::load(None, None, &repo, None)?;
         assert_eq!(
             file_sources(&config),
-            [ConfigSource::Repo { path: repo_config }]
+            [ConfigSource::Repo {
+                path: repo_config,
+                ignored: Vec::new(),
+            }]
         );
+        Ok(())
+    }
+
+    const RESTRICTED: &str = "default_host = \"ghe.corp.com\"\n\
+        [scan]\nextra_paths = [\"docs/*.md\"]\nignore = [\"a/b\"]\n\
+        [hosts.\"ghe.corp.com\"]\nkind = \"github\"\napi_base = \"https://evil.example/api/v3\"\ntoken_env = \"SECRET\"\n\
+        [hosts.\"shared.corp.com\"]\nkind = \"github\"\n";
+
+    #[test]
+    fn test_repo_config_cannot_set_restricted_keys() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(repo.join(".git"))?;
+        let repo_config = repo.join("actup.toml");
+        fs::write(&repo_config, RESTRICTED)?;
+        let user = temp.path().join("user.toml");
+        fs::write(
+            &user,
+            "[hosts.\"shared.corp.com\"]\ntoken_env = \"SHARED\"\n",
+        )?;
+
+        let config = Config::load(None, Some(&user), &repo, None)?;
+        assert_eq!(config.default_host, None);
+        assert_eq!(config.scan.extra_paths, []);
+        assert_eq!(config.scan.ignore.len(), 1);
+        let Some(host) = config.hosts.get("ghe.corp.com") else {
+            panic!("missing host: {:?}", config.hosts);
+        };
+        assert_eq!(host.kind, Some(actup_core::HostKind::GitHub));
+        assert_eq!(host.api_base, None);
+        assert_eq!(host.token_env, None);
+        assert_eq!(
+            config
+                .hosts
+                .get("shared.corp.com")
+                .and_then(|h| h.token_env.as_deref()),
+            Some("SHARED")
+        );
+        assert_eq!(
+            config
+                .repo_only_hosts
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["ghe.corp.com"]
+        );
+        let ignored = [
+            "default_host",
+            "scan.extra_paths",
+            "hosts.\"ghe.corp.com\".api_base",
+            "hosts.\"ghe.corp.com\".token_env",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        assert_eq!(
+            file_sources(&config),
+            [
+                ConfigSource::User { path: user },
+                ConfigSource::Repo {
+                    path: repo_config.clone(),
+                    ignored,
+                },
+            ]
+        );
+
+        let config = Config::load(Some(&repo_config), None, temp.path(), None)?;
+        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
+        assert_eq!(config.scan.extra_paths.len(), 1);
+        assert_eq!(
+            config
+                .hosts
+                .get("ghe.corp.com")
+                .and_then(|h| h.token_env.as_deref()),
+            Some("SECRET")
+        );
+        assert!(
+            config.repo_only_hosts.is_empty(),
+            "{:?}",
+            config.repo_only_hosts
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_explicit_config_rejects_escaping_extra_paths() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = TempDir::new()?;
+        let explicit = temp.path().join("explicit.toml");
+        fs::write(
+            &explicit,
+            "[scan]\nextra_paths = [\"../../../etc/*.yml\"]\n",
+        )?;
+        match Config::load(Some(&explicit), None, temp.path(), None) {
+            Err(actup_core::Error::InvalidConfig { path, reason }) => {
+                assert_eq!(path, explicit.display().to_string());
+                assert!(
+                    reason.contains("`scan.extra_paths` entry `../../../etc/*.yml` contains `..`"),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -658,7 +764,7 @@ max_tags_per_repo = 50
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
             fs::write(
-                temp.path().join("actup.toml"),
+                temp.path().join("explicit.toml"),
                 r#"
 [hosts."ghe.corp.com"]
 kind = "github"
@@ -669,7 +775,11 @@ token_env = "GHE_TOKEN"
             "write actup.toml with hosts",
         );
 
-        let config = ok_or_panic(Config::load(None, None, temp.path(), None), "load config");
+        let explicit = temp.path().join("explicit.toml");
+        let config = ok_or_panic(
+            Config::load(Some(&explicit), None, temp.path(), None),
+            "load config",
+        );
         assert_eq!(config.hosts.len(), 1);
         let host = config.hosts.get("ghe.corp.com").expect("ghe host present");
         assert_eq!(host.kind, Some(HostKind::GitHub));
@@ -685,13 +795,17 @@ token_env = "GHE_TOKEN"
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
             fs::write(
-                temp.path().join("actup.toml"),
+                temp.path().join("explicit.toml"),
                 r#"default_host = "github.com""#,
             ),
             "write actup.toml with default_host",
         );
 
-        let config = ok_or_panic(Config::load(None, None, temp.path(), None), "load config");
+        let explicit = temp.path().join("explicit.toml");
+        let config = ok_or_panic(
+            Config::load(Some(&explicit), None, temp.path(), None),
+            "load config",
+        );
         assert_eq!(config.default_host.as_deref(), Some("github.com"));
     }
 
@@ -750,7 +864,7 @@ max_tags_per_repo = 25
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
             fs::write(
-                temp.path().join("actup.toml"),
+                temp.path().join("explicit.toml"),
                 r#"
 default_host = "github.com"
 
@@ -777,7 +891,11 @@ token_env = "GHE_TOKEN"
             "write full new-format actup.toml",
         );
 
-        let config = ok_or_panic(Config::load(None, None, temp.path(), None), "load config");
+        let explicit = temp.path().join("explicit.toml");
+        let config = ok_or_panic(
+            Config::load(Some(&explicit), None, temp.path(), None),
+            "load config",
+        );
         assert_eq!(config.policy.bump.to_string(), "minor");
         assert_eq!(config.policy.pin.to_string(), "sha");
         assert_eq!(config.default_host.as_deref(), Some("github.com"));
@@ -1326,7 +1444,11 @@ mod cli_runs {
     }
 
     fn file_source(kind: &str, path: &Path) -> serde_json::Value {
-        serde_json::json!({ "kind": kind, "path": path.display().to_string() })
+        let mut source = serde_json::json!({ "kind": kind, "path": path.display().to_string() });
+        if kind == "repo" {
+            source["ignored"] = serde_json::json!([]);
+        }
+        source
     }
 
     #[test]
@@ -1579,6 +1701,52 @@ mod cli_runs {
         ] {
             assert!(stdout.contains(line), "{line:?}: {stdout}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn repo_config_restricted_keys_warn_and_are_ignored() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repo = TempDir::new()?;
+        fs::create_dir(repo.path().join(".git"))?;
+        let config = repo.path().join("actup.toml");
+        fs::write(
+            &config,
+            "default_host = \"x.example\"\n[hosts.\"x.example\"]\nkind = \"github\"\ntoken_env = \"SECRET\"\n",
+        )?;
+        let output = actup(repo.path())
+            .args(["config", "--format", "json"])
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0));
+        let stderr = String::from_utf8(output.stderr)?;
+        let path = config.display().to_string();
+        for key in ["default_host", "hosts.\"x.example\".token_env"] {
+            assert!(
+                stderr.lines().any(|line| line.contains("WARN")
+                    && line.contains("ignoring a key")
+                    && line.contains(key)
+                    && line.contains(&path)),
+                "{key}: {stderr}"
+            );
+        }
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(report["default_host"], serde_json::Value::Null);
+        assert_eq!(
+            report["sources"][0]["ignored"],
+            serde_json::json!(["default_host", "hosts.\"x.example\".token_env"])
+        );
+
+        let human = actup(repo.path()).arg("config").arg(repo.path()).output()?;
+        let stdout = String::from_utf8(human.stdout)?;
+        let host = stdout
+            .split_once("x.example")
+            .map(|(_, rest)| rest)
+            .ok_or("no x.example host section")?;
+        assert!(host.contains("token_env: "), "stdout: {stdout}");
+        assert!(host.contains("(repo-only host)"), "stdout: {stdout}");
+        assert!(!host.contains("SECRET"), "stdout: {stdout}");
         Ok(())
     }
 

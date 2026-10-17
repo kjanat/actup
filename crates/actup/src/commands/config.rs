@@ -235,7 +235,14 @@ fn display_effective_host(
                 is_preset,
                 user_config.and_then(|hc| hc.token_env.as_ref()).is_some(),
             );
-            println!("    token_env: {} {}", resolved.token_env, token_env_source);
+            match &resolved.token_env {
+                Some(token_env) => println!("    token_env: {token_env} {token_env_source}"),
+                None => println!(
+                    "    token_env: {} {}",
+                    "(none)".dimmed(),
+                    "(repo-only host)".dimmed()
+                ),
+            }
 
             // api_mode
             let api_mode_source = if user_config.and_then(|hc| hc.api_mode).is_some() {

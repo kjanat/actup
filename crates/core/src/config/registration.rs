@@ -50,8 +50,8 @@ pub struct ProviderConfig {
     pub kind: HostKind,
     /// Validated API base URL (scheme required, no query/fragment).
     pub api_base: String,
-    /// Env var name for auth token.
-    pub token_env: String,
+    /// Env var name for auth token, or `None` for a host that gets no token.
+    pub token_env: Option<String>,
     /// Effective API mode (from per-host override, `[fetch]`, or default).
     pub api_mode: ApiMode,
     /// Effective max tags per repo.
@@ -184,14 +184,14 @@ mod tests {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
-            token_env: "GHE_TOKEN".into(),
+            token_env: Some("GHE_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(50).unwrap(),
         };
         assert_eq!(pc.host, "ghe.corp.com");
         assert_eq!(pc.kind, HostKind::GitHub);
         assert_eq!(pc.api_base, "https://ghe.corp.com/api/v3");
-        assert_eq!(pc.token_env, "GHE_TOKEN");
+        assert_eq!(pc.token_env.as_deref(), Some("GHE_TOKEN"));
         assert_eq!(pc.api_mode, ApiMode::Rest);
         assert_eq!(pc.max_tags_per_repo.get(), 50);
     }
@@ -202,7 +202,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::default(),
             max_tags_per_repo: super::super::DEFAULT_MAX_TAGS_PER_REPO,
         };
@@ -296,7 +296,7 @@ mod tests {
             host: "gitlab.com".into(),
             kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
-            token_env: "GITLAB_TOKEN".into(),
+            token_env: Some("GITLAB_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
@@ -474,7 +474,7 @@ mod tests {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
-            token_env: "GHE_TOKEN".into(),
+            token_env: Some("GHE_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(25).unwrap(),
         };
@@ -493,7 +493,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
@@ -509,7 +509,7 @@ mod tests {
             host: "gitlab.com".into(),
             kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
-            token_env: "GITLAB_TOKEN".into(),
+            token_env: Some("GITLAB_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(20).unwrap(),
         };
@@ -523,7 +523,7 @@ mod tests {
             host: "gitea.example.com".into(),
             kind: HostKind::Gitea,
             api_base: "https://gitea.example.com/api/v1".into(),
-            token_env: "GITEA_TOKEN".into(),
+            token_env: Some("GITEA_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(5).unwrap(),
         };
@@ -537,7 +537,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(255).unwrap(),
         };
@@ -637,7 +637,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };

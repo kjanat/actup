@@ -136,7 +136,7 @@ pub fn validate_provider_config(config: &ProviderConfig) -> Result<(), Error> {
     // Validate api_base URL shape
     validate_api_base(&config.api_base, &ctx)?;
 
-    if config.token_env.is_empty() {
+    if config.token_env.as_deref() == Some("") {
         return Err(invalid_config(
             &ctx,
             &format!("token_env required for {}", config.host),
@@ -429,7 +429,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         }
@@ -446,7 +446,7 @@ mod tests {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
-            token_env: "GHE_TOKEN".into(),
+            token_env: Some("GHE_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(50).unwrap(),
         };
@@ -473,7 +473,7 @@ mod tests {
     #[test]
     fn provider_config_rejects_empty_token_env() {
         let mut config = valid_provider_config();
-        config.token_env = String::new();
+        config.token_env = Some(String::new());
         let err = validate_provider_config(&config).unwrap_err();
         assert!(err.to_string().contains("token_env"), "{err}");
         assert!(err.to_string().contains("github.com"), "{err}");
@@ -483,7 +483,7 @@ mod tests {
     fn provider_config_error_mentions_host() {
         let mut config = valid_provider_config();
         config.host = "custom.host.com".into();
-        config.token_env = String::new();
+        config.token_env = Some(String::new());
         let err = validate_provider_config(&config).unwrap_err();
         assert!(err.to_string().contains("custom.host.com"), "{err}");
     }
@@ -510,7 +510,7 @@ mod tests {
             host: "gitlab.com".into(),
             kind: HostKind::GitLab,
             api_base: "https://gitlab.com/api/v4".into(),
-            token_env: "GITLAB_TOKEN".into(),
+            token_env: Some("GITLAB_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(20).unwrap(),
         };
@@ -523,7 +523,7 @@ mod tests {
             host: "gitea.example.com".into(),
             kind: HostKind::Gitea,
             api_base: "https://gitea.example.com/api/v1".into(),
-            token_env: "GITEA_TOKEN".into(),
+            token_env: Some("GITEA_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(5).unwrap(),
         };
@@ -554,7 +554,7 @@ mod tests {
     fn provider_config_empty_token_env_checked_after_api_base() {
         // If api_base is valid but token_env is empty, error should be about token_env
         let mut config = valid_provider_config();
-        config.token_env = String::new();
+        config.token_env = Some(String::new());
         let err = validate_provider_config(&config).unwrap_err();
         assert!(err.to_string().contains("token_env"), "{err}");
     }
@@ -564,7 +564,7 @@ mod tests {
         // If both api_base and token_env are empty, api_base error comes first
         let mut config = valid_provider_config();
         config.api_base = String::new();
-        config.token_env = String::new();
+        config.token_env = Some(String::new());
         let err = validate_provider_config(&config).unwrap_err();
         assert!(err.to_string().contains("api_base"), "{err}");
     }
@@ -585,7 +585,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(255).unwrap(),
         };
@@ -598,7 +598,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "GITHUB_TOKEN".into(),
+            token_env: Some("GITHUB_TOKEN".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(1).unwrap(),
         };

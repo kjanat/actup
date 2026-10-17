@@ -78,7 +78,10 @@ fn infer_github_api_base(hostname: &str) -> Option<String> {
 /// Signature must match [`Registration::create`] fn pointer type.
 #[allow(clippy::needless_pass_by_value)]
 fn create_github_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
-    let token = std::env::var(&config.token_env).ok();
+    let token = config
+        .token_env
+        .as_deref()
+        .and_then(|var| std::env::var(var).ok());
     let provider = GitHubProvider::with_host_and_max_tags(
         &config.api_base,
         &config.host,
@@ -97,7 +100,10 @@ pub fn create_batch_fetcher<C: Cache>(
     config: &ProviderConfig,
     cache: Arc<C>,
 ) -> actup_core::Result<BatchFetcher<C>> {
-    let token = std::env::var(&config.token_env).ok();
+    let token = config
+        .token_env
+        .as_deref()
+        .and_then(|var| std::env::var(var).ok());
     create_batch_fetcher_with_token(config, cache, token.as_deref())
 }
 
@@ -212,7 +218,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into(),
+            token_env: Some("_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
@@ -226,7 +232,7 @@ mod tests {
             host: "ghe.corp.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://ghe.corp.com/api/v3".into(),
-            token_env: "_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into(),
+            token_env: Some("_ACTUP_TEST_NONEXISTENT_TOKEN_VAR".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(20).unwrap(),
         };
@@ -261,7 +267,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "_ACTUP_TEST_BATCH_FETCHER_REST".into(),
+            token_env: Some("_ACTUP_TEST_BATCH_FETCHER_REST".into()),
             api_mode: ApiMode::Rest,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
@@ -277,7 +283,7 @@ mod tests {
             host: "github.com".into(),
             kind: HostKind::GitHub,
             api_base: "https://api.github.com".into(),
-            token_env: "_ACTUP_UNUSED_TEST_TOKEN".into(),
+            token_env: Some("_ACTUP_UNUSED_TEST_TOKEN".into()),
             api_mode: ApiMode::Graphql,
             max_tags_per_repo: NonZeroU8::new(10).unwrap(),
         };
