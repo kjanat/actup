@@ -155,7 +155,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - uses: oven-sh/setup-bun@v2
       - name: Install wasm-pack
-        run: curl https://rustwasm.github.io/wasm-pack/installer/init.sh -sSf | sh
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-pack@0.15.0
       - name: Install deps
         working-directory: packages/actup-wasm
         run: bun install --frozen-lockfile
