@@ -111,13 +111,15 @@ jobs:
       - uses: actions/checkout@v7
       - run: rustup toolchain install
       - id: msrv
+        shell: bash
         run: |
-          version=$(cargo metadata --no-deps --format-version 1 | jq -r '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("crates disagree on rust-version: \(.)") end')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-      - run: rustup toolchain install "$MSRV" --profile minimal
+          metadata=$(cargo metadata --no-deps --format-version 1)
+          version=$(jq -r '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("crates disagree on rust-version: \(.)") end' <<< "${metadata}")
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+      - run: rustup toolchain install "${MSRV}" --profile minimal
         env: { MSRV: "${{ steps.msrv.outputs.version }}" }
       - uses: Swatinem/rust-cache@v2
-      - run: cargo "+$MSRV" check --all-targets --all-features
+      - run: cargo "+${MSRV}" check --workspace --all-targets --all-features
         env: { MSRV: "${{ steps.msrv.outputs.version }}" }
   coverage:
     name: Coverage
@@ -194,18 +196,29 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
+        env:
+          FMT: ${{ needs.fmt.result }}
+          CLIPPY: ${{ needs.clippy.result }}
+          TEST: ${{ needs.test.result }}
+          TEST_PLATFORMS: ${{ needs.test-platforms.result }}
+          DOC: ${{ needs.doc.result }}
+          DENY: ${{ needs.deny.result }}
+          MSRV: ${{ needs.msrv.result }}
+          COVERAGE: ${{ needs.coverage.result }}
+          CHECK_EXTENSIONS: ${{ needs.check-extensions.result }}
+          WASM: ${{ needs.wasm.result }}
         run: |
           # test-platforms may be skipped on PRs without ci:full label
-          if [[ "${{ needs.fmt.result }}" != "success" ]] || \
-             [[ "${{ needs.clippy.result }}" != "success" ]] || \
-             [[ "${{ needs.test.result }}" != "success" ]] || \
-             [[ "${{ needs.test-platforms.result }}" == "failure" ]] || \
-             [[ "${{ needs.doc.result }}" != "success" ]] || \
-             [[ "${{ needs.deny.result }}" != "success" ]] || \
-             [[ "${{ needs.msrv.result }}" != "success" ]] || \
-             [[ "${{ needs.coverage.result }}" != "success" ]] || \
-             [[ "${{ needs.check-extensions.result }}" != "success" ]] || \
-             [[ "${{ needs.wasm.result }}" != "success" ]]; then
+          if [[ "${FMT}" != "success" ]] || \
+             [[ "${CLIPPY}" != "success" ]] || \
+             [[ "${TEST}" != "success" ]] || \
+             [[ "${TEST_PLATFORMS}" == "failure" ]] || \
+             [[ "${DOC}" != "success" ]] || \
+             [[ "${DENY}" != "success" ]] || \
+             [[ "${MSRV}" != "success" ]] || \
+             [[ "${COVERAGE}" != "success" ]] || \
+             [[ "${CHECK_EXTENSIONS}" != "success" ]] || \
+             [[ "${WASM}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

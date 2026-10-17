@@ -10,15 +10,8 @@ branch     = "ignore"
 prerelease = false
 
 [scan]
-ignore      = ["dtolnay/rust-toolchain@1.91.0"]
+ignore      = []
 extra_paths = []
-
-# [[overrides]]
-# pattern = "dtolnay/rust-toolchain"
-# policy  = { bump = "patch" }
-# TODO: `ignore.versions` would be nice. or to be able to specify what to ignore.
-# e.g. `ignore = ["1.91.0"]` or `ignore = ["1.91.0", "1.92.0"]`
-#       or `ignore = ["<1.92.0"]` or `ignore = [">=1.91.0, <1.92.0"]`
 
 [cache]
 ttl     = 86400

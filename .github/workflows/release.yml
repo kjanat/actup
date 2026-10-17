@@ -31,7 +31,8 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Install Rust
-        run: rustup toolchain install && rustup target add "$TARGET"
+        shell: bash
+        run: rustup toolchain install && rustup target add "${TARGET}"
         env: { TARGET: "${{ matrix.target }}" }
 
       - name: Install musl tools
@@ -44,11 +45,15 @@ jobs:
 
       - name: Build (cross)
         if: matrix.cross
-        run: cross build --release --target "${{ matrix.target }}" -p "${{ matrix.package }}"
+        shell: bash
+        run: cross build --release --target "${TARGET}" -p "${PACKAGE}"
+        env: { TARGET: "${{ matrix.target }}", PACKAGE: "${{ matrix.package }}" }
 
       - name: Build (native)
         if: "!matrix.cross"
-        run: cargo build --release --target "${{ matrix.target }}" -p "${{ matrix.package }}"
+        shell: bash
+        run: cargo build --release --target "${TARGET}" -p "${PACKAGE}"
+        env: { TARGET: "${{ matrix.target }}", PACKAGE: "${{ matrix.package }}" }
 
       - name: Package
         shell: bash

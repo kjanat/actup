@@ -17,7 +17,7 @@ GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 ## Installation
 
 ```sh
-# From source (requires Rust 1.85+)
+# From source (requires Rust 1.96+)
 cargo install --git https://github.com/kjanat/actup-v2 actup
 ```
 
