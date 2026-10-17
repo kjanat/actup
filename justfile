@@ -250,7 +250,7 @@ schema:
 
 # Run full CI checks locally
 [group('ci')]
-ci: fmt-check clippy-strict clippy-wasm test wasm-node-test action-test examples-test
+ci: fmt-check clippy-strict clippy-wasm test wasm-node-test action-test examples-test crates-publish-test release-version-test
     @echo "All CI checks passed!"
 
 # Run actup on this repo
