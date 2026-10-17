@@ -445,3 +445,75 @@ describe("SHA-pinned refs", () => {
 		expect(actions).toEqual([]);
 	});
 });
+
+describe("branch refs that actup-lsp words specially", () => {
+	async function diagnoseRef(
+		name: string,
+		ref: string,
+		using: wasm.ActupProvider,
+		policy: string,
+	): Promise<{ document: FakeDocument; diagnostics: vscode.Diagnostic[] }> {
+		const text = `jobs:\n  build:\n    steps:\n      - uses: actions/checkout@${ref}\n`;
+		const document = new FakeDocument(name, text);
+		const config = wasm.parseConfig("actup.toml", policy);
+		await computeDiagnostics(
+			document.uri,
+			text,
+			using,
+			createDiagnosticCollection(),
+			() => Promise.resolve({ kind: "loaded", path: "actup.toml", config }),
+		);
+		return { document, diagnostics: vscode.languages.getDiagnostics(document.uri) };
+	}
+
+	test("a branch on the target commit gets same-commit information and keeps its pin", async () => {
+		const head = "e".repeat(40);
+		const branchOnRelease: wasm.ActupProvider = {
+			...provider,
+			getVersions: () =>
+				Promise.resolve({
+					semverTags: [{ version: "v1.0.4", sha: "c".repeat(40) }, { version: "v1.0.5", sha: head }],
+					defaultBranch: { name: "v1", sha: head },
+				}),
+		};
+		const { document, diagnostics } = await diagnoseRef(
+			"same-commit-branch.yml",
+			"v1",
+			branchOnRelease,
+			"[policy]\nbranch = \"update\"\n",
+		);
+		const [diag] = diagnostics;
+
+		expect(diagnostics).toHaveLength(1);
+		expect(diag?.severity).toBe(vscode.DiagnosticSeverity.Information);
+		expect(diag?.code).toBe("same-commit");
+		expect(diag?.message).toBe("actions/checkout@v1: pin available, same commit: branch v1 = v1.0.5 (eeeeeee)");
+		const actions = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(0).range,
+			codeActionContext(diagnostics),
+		);
+		expect(actions.map(action => action.title)).toEqual(["Pin to eeeeeee # v1"]);
+		expect(editsOf(actions[0])).toEqual([{ range: rangeOf(document, 3, "v1"), newText: `${head} # v1` }]);
+	});
+
+	test("a ref the version list lacks is a floating ref or a ref to pin", async () => {
+		const unlisted: wasm.ActupProvider = {
+			...provider,
+			getVersions: () =>
+				Promise.resolve({
+					semverTags: [{ version: "v1.0.0", sha: "b".repeat(40) }],
+					defaultBranch: { name: "main", sha: "d".repeat(40) },
+				}),
+		};
+		const warn = await diagnoseRef("unlisted-warn.yml", "stable", unlisted, "[policy]\nbranch = \"warn\"\n");
+		const update = await diagnoseRef("unlisted-update.yml", "stable", unlisted, "[policy]\nbranch = \"update\"\n");
+
+		expect(warn.diagnostics.map(diag => [diag.code, diag.message])).toEqual([
+			["floating", "actions/checkout@stable: 'stable' is a floating ref, pin to a tag or SHA"],
+		]);
+		expect(update.diagnostics.map(diag => [diag.code, diag.message])).toEqual([
+			["pin-branch", "actions/checkout@stable: pin ref 'stable' to aaaaaaa # stable"],
+		]);
+	});
+});
