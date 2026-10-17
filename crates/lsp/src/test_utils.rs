@@ -123,6 +123,7 @@ pub struct MockProvider {
     calls: Arc<AtomicUsize>,
     resolve: Result<String, CoreError>,
     resolve_calls: Arc<AtomicUsize>,
+    default_branch: Result<String, CoreError>,
     rewrite: Option<(std::path::PathBuf, String)>,
     search: Result<provider::Search, CoreError>,
     searches: Arc<AtomicUsize>,
@@ -139,6 +140,7 @@ impl MockProvider {
             calls: Arc::new(AtomicUsize::new(0)),
             resolve: Ok(DUMMY_SHA.to_string()),
             resolve_calls: Arc::new(AtomicUsize::new(0)),
+            default_branch: Ok("main".to_string()),
             rewrite: None,
             search: Ok(provider::Search::Unsupported),
             searches: Arc::new(AtomicUsize::new(0)),
@@ -148,6 +150,11 @@ impl MockProvider {
 
     pub fn with_resolve(mut self, result: Result<&str, CoreError>) -> Self {
         self.resolve = result.map(str::to_string);
+        self
+    }
+
+    pub fn with_default_branch(mut self, result: Result<&str, CoreError>) -> Self {
+        self.default_branch = result.map(str::to_string);
         self
     }
 
@@ -251,7 +258,8 @@ impl Provider for MockProvider {
         &self,
         _repo: &ActionRepoId,
     ) -> BoxFuture<'_, actup_core::Result<String>> {
-        Box::pin(async { Ok("main".to_string()) })
+        let result = self.default_branch.clone();
+        Box::pin(async move { result })
     }
 
     fn get_readme(

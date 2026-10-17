@@ -999,9 +999,14 @@ async fn pin_actions_for(
     doc_version: Option<i32>,
     supports_doc_changes: bool,
 ) -> Vec<tower_lsp_server::ls_types::CodeActionOrCommand> {
+    let cached = cached.filter(|versions| versions.stale().is_none());
     let fetched = if cached.is_none() {
         let repo_id = action.action_ref.to_repo_id().without_subpath();
-        provider.get_versions(&repo_id).await.ok()
+        provider
+            .get_versions(&repo_id)
+            .await
+            .ok()
+            .filter(|versions| versions.stale().is_none())
     } else {
         None
     };
@@ -1752,11 +1757,13 @@ mod tests {
         Ok(Some(format!("{}: {text}", unpin.title)))
     }
 
+    const DEV_LINE: &str = "  - uses: actions/checkout@dev # main keep";
+
     async fn pin_texts(
+        line: &str,
         cached: Option<&actup_core::version::Set>,
         provider: crate::test_utils::MockProvider,
     ) -> std::result::Result<(usize, Vec<(String, String)>), Box<dyn std::error::Error>> {
-        let line = "  - uses: actions/checkout@dev # main keep";
         let encoding = crate::position::PositionEncoding::Utf16;
         let action = crate::diagnostics::locate_action_at(
             line,
@@ -1814,13 +1821,13 @@ mod tests {
 
         let fetching = mock().with_versions("actions", "checkout", dev_and_main());
         assert_eq!(
-            pin_texts(None, fetching).await?,
+            pin_texts(DEV_LINE, None, fetching).await?,
             (1, listed("dev keep", "keep"))
         );
 
         let cached = dev_and_main();
         assert_eq!(
-            pin_texts(Some(&cached), mock()).await?,
+            pin_texts(DEV_LINE, Some(&cached), mock()).await?,
             (0, listed("dev keep", "keep"))
         );
 
@@ -1833,9 +1840,88 @@ mod tests {
             },
         );
         assert_eq!(
-            pin_texts(None, failing).await?,
+            pin_texts(DEV_LINE, None, failing).await?,
             (1, listed("main keep", "main keep"))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_actions_skip_stale_version_sets()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let a = "a".repeat(40);
+        let text = format!(
+            "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@{a} # v4.1.0\n      - uses: actions/checkout@dev # keep\n"
+        );
+        let rate_limited = || actup_core::Error::RateLimited {
+            provider: "github".to_string(),
+            retry_after: None,
+        };
+        let staleness =
+            actup_core::cache::Staleness::after(&rate_limited(), Duration::from_hours(30))
+                .ok_or("no staleness")?;
+        let fresh = crate::test_utils::simple_version_set("v4.1.0", &a);
+        let stale = fresh.clone().into_stale(staleness);
+        let limited = || {
+            crate::test_utils::MockProvider::new("github.com")
+                .with_resolve(Err(rate_limited()))
+                .with_default_branch(Err(rate_limited()))
+        };
+        let provider = limited().with_error("actions", "checkout", rate_limited());
+        let (service, _socket) = tower_lsp_server::LspService::new(|client| {
+            LspBackend::with_providers(client, None, crate::test_utils::MOCK_PROVIDERS)
+        });
+        let backend = service.inner();
+        *backend.registry.write().await =
+            Some(Arc::new(crate::test_utils::mock_registry(provider)));
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let repo = actup_core::ActionRepoId::new(None, "actions", "checkout", None);
+        let titles = |line: u32| {
+            let position = tower_lsp_server::ls_types::Position {
+                line,
+                character: 33,
+            };
+            let uri = uri.clone();
+            async move {
+                backend
+                    .pin_actions_at(&uri, position, Some(1), false)
+                    .await
+                    .into_iter()
+                    .map(|action| match action {
+                        tower_lsp_server::ls_types::CodeActionOrCommand::CodeAction(action) => {
+                            action.title
+                        }
+                        tower_lsp_server::ls_types::CodeActionOrCommand::Command(command) => {
+                            command.title
+                        }
+                    })
+                    .collect::<Vec<_>>()
+            }
+        };
+        let open = |versions: actup_core::version::Set| {
+            let mut doc = DocumentState::new(text.clone(), 1);
+            doc.version_sets = Arc::new(HashMap::from([(repo.clone(), versions)]));
+            backend.documents.insert(uri.clone(), doc);
+        };
+
+        open(fresh);
+        assert_eq!(
+            titles(3).await,
+            ["Pin to major tag v4", "actup: unpin to `v4.1.0`"]
+        );
+
+        open(stale.clone());
+        assert_eq!(titles(3).await, Vec::<String>::new());
+        assert_eq!(titles(4).await, Vec::<String>::new());
+
+        *backend.registry.write().await = Some(Arc::new(crate::test_utils::mock_registry(
+            limited().with_versions("actions", "checkout", stale),
+        )));
+        backend
+            .documents
+            .insert(uri.clone(), DocumentState::new(text.clone(), 1));
+        assert_eq!(titles(3).await, Vec::<String>::new());
+        assert_eq!(titles(4).await, Vec::<String>::new());
         Ok(())
     }
 
