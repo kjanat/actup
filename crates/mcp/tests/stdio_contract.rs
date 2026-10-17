@@ -1113,6 +1113,42 @@ fn update_all_pins_shas_honours_dry_run_and_is_idempotent(
     )
 }
 
+fn update_all_comments_lines_with_a_hash_before_the_value(
+    client: &mut Client,
+    ws: &Workspace,
+) -> TestResult {
+    let workflow = |pinned: &str, comment: &str, tag: &str| {
+        format!(
+            "on: push\njobs:\n  build:\n    runs-on: x\n    steps:\n      - {{ name: \"Build #1\", uses: actions/checkout@{pinned} }}{comment}\n      - {{ name: \"Build #2\", uses: actions/checkout@{tag} }}\n"
+        )
+    };
+    ws.write(
+        ".github/workflows/build.yml",
+        &workflow(&sha('a'), "", "v4.0.0"),
+    )?;
+    let all = client.call(
+        "updateAllUsesToVersion",
+        json!({
+            "workspaceRoot": ".",
+            "match": { "owner": "actions", "repo": "checkout" },
+            "targetRef": "v4.2.0",
+        }),
+    )?;
+    expect(!is_error(&all), || format!("updateAll failed: {all}"))?;
+    let written = &body(&all)["written"];
+    expect(
+        written
+            .as_array()
+            .is_some_and(|w| w.contains(&json!(".github/workflows/build.yml"))),
+        || format!("build.yml not written: {written}"),
+    )?;
+    let expected = workflow(&sha('b'), " # v4.2.0", "v4.2.0");
+    let actual = ws.read(".github/workflows/build.yml")?;
+    expect(actual == expected, || {
+        format!("build.yml:\n{actual}\nexpected:\n{expected}")
+    })
+}
+
 fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) -> TestResult {
     fs::create_dir_all(ws.path("docs"))?;
     fs::create_dir_all(ws.path("infra"))?;
@@ -1437,7 +1473,7 @@ const BINARY_CASES: [(&str, BinaryCase); 4] = [
     ),
 ];
 
-const CASES: [(&str, Case); 12] = [
+const CASES: [(&str, Case); 13] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -1473,6 +1509,10 @@ const CASES: [(&str, Case); 12] = [
     (
         "update_all_pins_shas_honours_dry_run_and_is_idempotent",
         update_all_pins_shas_honours_dry_run_and_is_idempotent,
+    ),
+    (
+        "update_all_comments_lines_with_a_hash_before_the_value",
+        update_all_comments_lines_with_a_hash_before_the_value,
     ),
     (
         "mutators_read_markdown_and_text_files",
