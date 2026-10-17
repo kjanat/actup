@@ -442,6 +442,56 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn keys_that_sanitize_alike_use_separate_entries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
+        let keys = [
+            "github::github.com/a/bc",
+            "github::github.com/ab/c",
+            "github::github.com/abc/x",
+            "github::git.hub.com/abc/x",
+            "github::github.com/abc.x",
+        ];
+        let paths: std::collections::HashSet<_> =
+            keys.iter().map(|key| cache.key_to_path(key)).collect();
+        assert_eq!(paths.len(), keys.len());
+
+        let tagged = |tag: &str| {
+            version::Set::build(
+                vec![std::sync::Arc::new(version::Info::new(
+                    version::Version::parse(tag),
+                    "a".repeat(40),
+                ))],
+                std::collections::HashMap::new(),
+                std::collections::HashMap::new(),
+                None,
+            )
+        };
+        cache
+            .set(keys[0], cache::Entry::new(tagged("v1.0.0")))
+            .await?;
+        assert!(matches!(
+            cache.get(keys[1]).await,
+            Err(cache::Error::NotFound)
+        ));
+        cache
+            .set(keys[1], cache::Entry::new(tagged("v2.0.0")))
+            .await?;
+        for (key, tag) in [(keys[0], "v1.0.0"), (keys[1], "v2.0.0")] {
+            let entry = cache.get(key).await?;
+            let tags: Vec<String> = entry
+                .versions()
+                .semver_tags()
+                .iter()
+                .map(|info| info.version().to_string())
+                .collect();
+            assert_eq!(tags, [tag], "{key}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn entry_stored_under_another_key_is_a_miss() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
         let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
