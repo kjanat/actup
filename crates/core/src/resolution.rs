@@ -663,30 +663,7 @@ fn find_best_target(
     Some(Arc::clone(target))
 }
 
-/// Fetch versions and check for CLI/LSP/MCP use.
-///
-/// This is the async version that handles provider lookup and version fetching.
-///
-/// # Errors
-/// Returns error if provider not found or version fetch fails.
-#[cfg_attr(
-    target_arch = "wasm32",
-    allow(
-        clippy::future_not_send,
-        reason = "wasm32 providers intentionally use non-Send boxed futures"
-    )
-)]
-pub async fn check_action_remote(
-    action_ref: &ActionRef,
-    config: &Config,
-    registry: &provider::Registry,
-) -> Result<CheckResult, Error> {
-    check_action_fetched(action_ref, config, registry)
-        .await
-        .map(|(result, _)| result)
-}
-
-/// Fetch versions and check like [`check_action_remote`], returning the fetched versions too.
+/// Find the provider, fetch versions and check, returning the fetched versions too.
 ///
 /// The versions are `None` for an ignored action.
 ///
@@ -2335,7 +2312,7 @@ mod tests {
         registry.set_default_host("github.com");
         registry.register(Box::new(ResolveMockProvider::with(Resolve::Offline)));
         let action = make_action_ref("actions", "checkout", "v1");
-        let result = check_action_remote(&action, &Config::default(), &registry).await?;
+        let (result, _) = check_action_fetched(&action, &Config::default(), &registry).await?;
         assert_eq!(
             result.status(),
             &unresolvable("network error during resolve: offline", true)
