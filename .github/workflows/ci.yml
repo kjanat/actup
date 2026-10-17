@@ -67,11 +67,11 @@ jobs:
 
   test-platforms:
     name: Test (${{ matrix.os }})
-    if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
-      matrix: { os: [macos-latest, windows-latest] }
+      matrix:
+        os: ${{ fromJSON((github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["macos-latest", "windows-latest"]' || '["windows-latest"]') }}
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
       - uses: actions/checkout@v7
@@ -214,11 +214,10 @@ jobs:
           CHECK_EXTENSIONS: ${{ needs.check-extensions.result }}
           WASM: ${{ needs.wasm.result }}
         run: |
-          # test-platforms may be skipped on PRs without ci:full label
           if [[ "${FMT}" != "success" ]] || \
              [[ "${CLIPPY}" != "success" ]] || \
              [[ "${TEST}" != "success" ]] || \
-             [[ "${TEST_PLATFORMS}" == "failure" ]] || \
+             [[ "${TEST_PLATFORMS}" != "success" ]] || \
              [[ "${DOC}" != "success" ]] || \
              [[ "${DENY}" != "success" ]] || \
              [[ "${MSRV}" != "success" ]] || \
