@@ -150,12 +150,50 @@ fn slug(action: &ActionRef) -> String {
     )
 }
 
+fn path(finding: &Finding) -> String {
+    finding.file().replace('\\', "/")
+}
+
+fn encode(segment: &str) -> String {
+    segment
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                char::from(b).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+const fn is_drive(segment: &str) -> bool {
+    matches!(segment.as_bytes(), [letter, b':'] if letter.is_ascii_alphabetic())
+}
+
 fn uri(finding: &Finding) -> String {
-    finding
-        .file()
-        .replace('\\', "/")
-        .trim_start_matches('/')
-        .to_string()
+    let path = path(finding);
+    let (absolute, rest) = path
+        .strip_prefix('/')
+        .map_or((false, path.as_str()), |rest| (true, rest));
+    let segments: Vec<String> = rest
+        .split('/')
+        .enumerate()
+        .map(|(index, segment)| {
+            if index == 0 && is_drive(segment) {
+                segment.to_string()
+            } else {
+                encode(segment)
+            }
+        })
+        .collect();
+    let drive = rest.split('/').next().is_some_and(is_drive);
+    let joined = segments.join("/");
+    if absolute || drive {
+        format!("file:///{joined}")
+    } else {
+        joined
+    }
 }
 
 /// A SARIF 2.1.0 log of every finding other than up-to-date and ignored ones, with `unreadable` files as execution notifications.
@@ -265,7 +303,7 @@ pub fn annotations(findings: &[Finding]) -> Vec<String> {
                 .unwrap_or_default();
             Some(format!(
                 "::{level} file={},line={}{columns}::{}",
-                escape_property(&uri(finding)),
+                escape_property(&path(finding)),
                 finding.line(),
                 escape_data(&describe(finding))
             ))
@@ -417,7 +455,7 @@ mod tests {
                     2,
                     ".github/workflows/ci.yml"
                 ),
-                ("actup/outdated", 0, "note", 3, "abs/ci.yml"),
+                ("actup/outdated", 0, "note", 3, "file:///abs/ci.yml"),
                 ("actup/unresolvable", 1, "error", 5, "ci.yml"),
                 ("actup/error", 2, "note", 6, "ci.yml"),
                 ("actup/floating", 3, "warning", 7, "ci.yml"),
@@ -472,6 +510,27 @@ mod tests {
     }
 
     #[test]
+    fn sarif_uris_are_uri_references() {
+        let at = |file: &str| uri(&finding(file, 1, "o/r@v1", FindingStatus::UpToDate));
+        assert_eq!(
+            at(".github/workflows/my ci#1.yml"),
+            ".github/workflows/my%20ci%231.yml"
+        );
+        assert_eq!(at("dé/a:b%.yml"), "d%C3%A9/a%3Ab%25.yml");
+        assert_eq!(at("/abs/ci.yml"), "file:///abs/ci.yml");
+        assert_eq!(at("C:\\work\\ci.yml"), "file:///C:/work/ci.yml");
+        assert_eq!(at("c:"), "file:///c:");
+        for file in ["my ci#1.yml", "/x y/[z].yml", "a?b.yml"] {
+            let uri = at(file);
+            assert!(
+                uri.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._~%/:".contains(&b)),
+                "{file}: {uri}"
+            );
+        }
+    }
+
+    #[test]
     fn annotations_cover_errors_and_warnings_with_escapes() {
         let mut findings = fixtures();
         findings.push(finding(
@@ -483,6 +542,14 @@ mod tests {
                 is_environment_error: false,
             },
         ));
+        findings.push(finding(
+            "/abs/ci.yml",
+            9,
+            "o/far@main",
+            FindingStatus::Floating {
+                ref_name: "main".to_string(),
+            },
+        ));
         assert_eq!(
             annotations(&findings),
             [
@@ -490,6 +557,7 @@ mod tests {
                 "::error file=ci.yml,line=5::o/gone@v9: tag 'v9' not found",
                 "::warning file=ci.yml,line=7::o/pin@main: floating branch 'main', pin to a tag or SHA",
                 "::error file=a%2Cb%3Ac.yml,line=8::o/esc@v1: 100%25 gone\u{fffd}",
+                "::warning file=/abs/ci.yml,line=9::o/far@main: floating ref 'main', pin to a tag or SHA",
             ]
         );
     }

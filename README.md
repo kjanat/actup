@@ -126,8 +126,9 @@ refs, under one rule per status (`actup/outdated`, `actup/floating`,
 `actup/unresolvable` and so on). Levels follow the LSP severities: `error` for
 an unresolvable ref, `warning` for an outdated or floating ref, and `note` for
 pinned and unknown refs, environment errors and same-commit pins. Paths are
-relative to the scanned directory, and columns count UTF-16 code units. Files
-that could not be read appear as execution notifications.
+percent-encoded URIs relative to the scanned directory, or `file:///` URIs for
+absolute paths, and columns count UTF-16 code units. Files that could not be
+read appear as execution notifications.
 
 `check --github-annotations` also writes one `::error` or `::warning` workflow
 command per error or warning finding to stderr, whatever `--format` is.
