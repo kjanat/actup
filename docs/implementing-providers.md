@@ -476,7 +476,7 @@ pub static REGISTRATION: Registration = Registration {
     create: create_provider,
 };
 
-fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
+fn create_provider(config: &ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
     let ProviderConfig {
         api_base,
         host,
@@ -484,9 +484,9 @@ fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provide
         max_tags_per_repo,
         ..
     } = config;
-    let token = std::env::var(&token_env).ok();
+    let token = token_env.as_deref().and_then(|var| std::env::var(var).ok());
     let provider =
-        YourProvider::new(&api_base, &host, token.as_deref())?.max_tags(max_tags_per_repo);
+        YourProvider::new(api_base, host, token.as_deref())?.max_tags(*max_tags_per_repo);
     Ok(Box::new(provider))
 }
 ```
