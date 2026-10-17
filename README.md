@@ -73,8 +73,9 @@ Human output is coloured only on a terminal. `--color always` and
 for piped output. `NO_COLOR` wins when both are set.
 
 Human output and LSP messages replace control characters other than tab and line
-breaks, zero-width and bidi control characters, and the byte order mark with
-U+FFFD. JSON and TOML output keep the raw text.
+feed, zero-width and bidi control characters, and the byte order mark with
+U+FFFD. In paths, `uses:` values, refs, versions and reasons they replace line
+feeds too. JSON and TOML output keep the raw text.
 
 With `--format json` or `toml`, `check` prints one entry per finding and
 `update` and `pin` print a report with `dry_run` and the lists `edited`,

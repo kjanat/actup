@@ -3,7 +3,7 @@
 use anstream::{eprintln, println};
 use std::{path::PathBuf, time::Duration};
 
-use actup_core::{Config, cache::Cache, sanitize_for_terminal};
+use actup_core::{Config, cache::Cache, sanitize_for_terminal, sanitize_line};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -65,7 +65,7 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
             println!(
                 "  {:<12} {}",
                 "Path:".dimmed(),
-                sanitize_for_terminal(&cache_dir.display().to_string())
+                sanitize_line(&cache_dir.display().to_string())
             );
             println!(
                 "  {:<12} {}",
@@ -229,10 +229,7 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
 
     match format {
         OutputFormat::Human => {
-            println!(
-                "{}",
-                sanitize_for_terminal(&cache_dir.display().to_string())
-            );
+            println!("{}", sanitize_line(&cache_dir.display().to_string()));
         }
         OutputFormat::Json => match serde_json::to_string(&output) {
             Ok(json) => println!("{json}"),

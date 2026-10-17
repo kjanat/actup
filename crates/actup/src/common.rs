@@ -10,7 +10,7 @@ use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
     SourceFormat, UsesLocation, discover_files, parse_uses,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
-    provider, resolve_within, rewrite_atomic, sanitize_for_terminal,
+    provider, resolve_within, rewrite_atomic, sanitize_for_terminal, sanitize_line,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -271,11 +271,7 @@ pub fn report_skipped(site: RefSite, reason: SkipReason, result: &mut EditResult
         site.action,
         reason.describe()
     );
-    eprintln!(
-        "{}: {}",
-        "Warning".yellow(),
-        sanitize_for_terminal(&warning)
-    );
+    eprintln!("{}: {}", "Warning".yellow(), sanitize_line(&warning));
     result.skipped.push(SkippedRef {
         site,
         reason: reason.into(),
@@ -292,11 +288,11 @@ pub fn report_ignored(site: RefSite, result: &mut EditResult) {
 
 /// Warn that `err` leaves `site` unchanged, count it, and record it as errored.
 pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
-    let warning = format!("{} - {err}", site.action);
     eprintln!(
-        "{}: {}",
+        "{}: {} - {}",
         "Warning".yellow(),
-        sanitize_for_terminal(&warning)
+        sanitize_line(&site.action),
+        sanitize_for_terminal(&err.to_string())
     );
     result.errors.record(err);
     result.errored.push(ErroredRef {
@@ -372,8 +368,9 @@ pub fn commit_file(
         write_splices(root, &path, &splices)
     };
     if let Err(refusal) = outcome {
-        let message = refusal.message(&path);
-        eprintln!("{}: {}", "Error".red(), sanitize_for_terminal(&message));
+        let message = refusal.message(path.display());
+        let shown = refusal.message(sanitize_line(&path.display().to_string()));
+        eprintln!("{}: {}", "Error".red(), sanitize_for_terminal(&shown));
         for (change, _) in written {
             if matches!(refusal, WriteRefusal::Invalid(_)) {
                 result.errors.record_user();
@@ -413,11 +410,11 @@ impl WriteRefusal {
         }
     }
 
-    fn message(&self, path: &Path) -> String {
+    fn message(&self, path: impl std::fmt::Display) -> String {
         match self {
-            Self::Io(e) => format!("writing {} failed: {e}", path.display()),
-            Self::Changed => format!("edit refused: {} changed since scan", path.display()),
-            Self::Invalid(e) => format!("edit refused: {} after edit: {e}", path.display()),
+            Self::Io(e) => format!("writing {path} failed: {e}"),
+            Self::Changed => format!("edit refused: {path} changed since scan"),
+            Self::Invalid(e) => format!("edit refused: {path} after edit: {e}"),
         }
     }
 }
@@ -483,7 +480,7 @@ impl<'a> WorkflowScanner<'a> {
             } else {
                 format!("No workflow files found under {}", self.path.display())
             };
-            println!("{}", sanitize_for_terminal(&message).dimmed());
+            println!("{}", sanitize_line(&message).dimmed());
         }
     }
 
@@ -493,11 +490,11 @@ impl<'a> WorkflowScanner<'a> {
         match fs::read_to_string(file.path()) {
             Ok(content) => Some(content),
             Err(e) => {
-                let warning = format!("{} - {e}", file.path().display());
                 eprintln!(
-                    "{}: {}",
+                    "{}: {} - {}",
                     "Warning".yellow(),
-                    sanitize_for_terminal(&warning)
+                    sanitize_line(&file.path().display().to_string()),
+                    sanitize_for_terminal(&e.to_string())
                 );
                 errors.record_env();
                 None

@@ -63,5 +63,5 @@ pub use resolution::{
 };
 pub use suggest::closest_tag;
 pub use syntax::SourceFormat;
-pub use text::sanitize_for_terminal;
+pub use text::{sanitize_for_terminal, sanitize_line};
 pub use version::{BranchInfo, Info, Version};

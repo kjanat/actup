@@ -3,7 +3,7 @@
 use anstream::{eprintln, println};
 use std::sync::Arc;
 
-use actup_core::{ActionRef, RefKind, sanitize_for_terminal, version};
+use actup_core::{ActionRef, RefKind, sanitize_line, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -319,7 +319,7 @@ fn print_human(findings: &[Finding]) {
             if !current_file.is_empty() {
                 println!();
             }
-            println!("{}", sanitize_for_terminal(finding.file()).bold());
+            println!("{}", sanitize_line(finding.file()).bold());
             current_file = finding.file().to_string();
         }
 
@@ -330,7 +330,7 @@ fn print_human(findings: &[Finding]) {
 /// Print one finding's `  Lnn: <action>  <status>` line.
 fn print_finding_line(finding: &Finding) {
     let line_prefix = format!("  L{}: ", finding.line());
-    let action_str = sanitize_for_terminal(&finding.action_ref().to_string()).into_owned();
+    let action_str = sanitize_line(&finding.action_ref().to_string()).into_owned();
 
     match finding.status() {
         _ if let Some(label) = same_commit_label(finding) => {
@@ -367,10 +367,10 @@ fn print_finding_line(finding: &Finding) {
                 "{}{}  {}{} -> {}{}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                sanitize_for_terminal(current).red(),
+                sanitize_line(current).red(),
                 kind_note(finding).dimmed(),
-                sanitize_for_terminal(&version_str).green(),
-                sanitize_for_terminal(&suffix).dimmed()
+                sanitize_line(&version_str).green(),
+                sanitize_line(&suffix).dimmed()
             );
         }
         FindingStatus::Pinned { sha, tag } => {
@@ -380,11 +380,11 @@ fn print_finding_line(finding: &Finding) {
                 line_prefix.dimmed(),
                 action_str,
                 format!("pinned to {}", &sha[..7.min(sha.len())]).cyan(),
-                sanitize_for_terminal(&tag_info).dimmed()
+                sanitize_line(&tag_info).dimmed()
             );
         }
         FindingStatus::Floating { ref_name } => {
-            let ref_name = sanitize_for_terminal(ref_name);
+            let ref_name = sanitize_line(ref_name);
             println!(
                 "{}{}  {}",
                 line_prefix.dimmed(),
@@ -393,7 +393,7 @@ fn print_finding_line(finding: &Finding) {
             );
         }
         FindingStatus::PinBranch { ref_name, sha } => {
-            let ref_name = sanitize_for_terminal(ref_name);
+            let ref_name = sanitize_line(ref_name);
             println!(
                 "{}{}  {}",
                 line_prefix.dimmed(),
@@ -406,7 +406,7 @@ fn print_finding_line(finding: &Finding) {
                 "{}{}  {}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                sanitize_for_terminal(&format!("unknown: {reason}")).yellow()
+                sanitize_line(&format!("unknown: {reason}")).yellow()
             );
         }
         FindingStatus::Unresolvable {
@@ -421,14 +421,14 @@ fn print_unresolvable(finding: &Finding, line_prefix: &str, reason: &str, enviro
     println!(
         "{}{}  {}",
         line_prefix.dimmed(),
-        sanitize_for_terminal(&finding.action_ref().to_string()).red(),
-        sanitize_for_terminal(&format!("{label}: {reason}")).red()
+        sanitize_line(&finding.action_ref().to_string()).red(),
+        sanitize_line(&format!("{label}: {reason}")).red()
     );
     if let Some(hint) = suggestion_hint(finding) {
         println!(
             "{}{}",
             " ".repeat(line_prefix.len()),
-            sanitize_for_terminal(&hint).dimmed()
+            sanitize_line(&hint).dimmed()
         );
     }
 }
@@ -473,7 +473,7 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
         target.version(),
         target.sha().get(..7).unwrap_or_else(|| target.sha()),
     );
-    Some(sanitize_for_terminal(&label).into_owned())
+    Some(sanitize_line(&label).into_owned())
 }
 
 fn print_json(findings: &[Finding]) {

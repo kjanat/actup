@@ -61,7 +61,9 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
   `anstream::ColorChoice` once in `main.rs`, and the streams strip ANSI codes
   when colour is off
 - Pass repo, config and provider text in human output through
-  `actup_core::sanitize_for_terminal` before styling it; JSON and TOML stay raw
+  `actup_core::sanitize_line` (single-line fields) or
+  `actup_core::sanitize_for_terminal` (multi-line error text) before styling it;
+  JSON and TOML stay raw
 - `--dry-run` for update/fix/pin shows changes without applying
 - Feature flags `github`, `gitlab`, `gitea` are placeholders that compile
   nothing; `default = ["github"]`

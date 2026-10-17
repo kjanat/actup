@@ -2018,6 +2018,44 @@ mod cli_runs {
     }
 
     #[test]
+    fn human_output_keeps_each_field_on_its_line() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        let workflows = repo.path().join(".github").join("workflows");
+        fs::create_dir_all(&workflows)?;
+        let name = if cfg!(unix) {
+            "ci\n  L9: forged.yml"
+        } else {
+            "ci.yml"
+        };
+        fs::write(
+            workflows.join(name),
+            "steps:\n  - uses: \"ghe.corp.example/o/r@v1\\r  L7: actions/checkout@v4  up to date\"\n",
+        )?;
+
+        let output = actup(repo.path()).arg("check").arg(repo.path()).output()?;
+        assert_eq!(output.status.code(), Some(3));
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(!stdout.contains('\r'), "stdout: {stdout:?}");
+        assert!(
+            stdout.contains("@v1\u{fffd}  L7: actions/checkout@v4  up to date"),
+            "stdout: {stdout:?}"
+        );
+        assert!(
+            !stdout
+                .lines()
+                .any(|line| line.starts_with("  L7:") || line.starts_with("  L9:")),
+            "stdout: {stdout:?}"
+        );
+        if cfg!(unix) {
+            assert!(
+                stdout.contains("ci\u{fffd}  L9: forged.yml"),
+                "stdout: {stdout:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn help_opens_with_the_program_description() -> Result<(), Box<dyn std::error::Error>> {
         let home = TempDir::new()?;
         for flag in ["--help", "-h"] {

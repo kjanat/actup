@@ -4,7 +4,9 @@
 //! `actup actions/checkout@v4` prints the latest within major v4.
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
-use actup_core::{ActionRef, Config, parse_action_path, provider, sanitize_for_terminal, version};
+use actup_core::{
+    ActionRef, Config, parse_action_path, provider, sanitize_for_terminal, sanitize_line, version,
+};
 use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -113,7 +115,7 @@ pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Regist
         eprintln!(
             "Invalid action reference: {}\n\
              Expected format: owner/repo or owner/repo@ref",
-            sanitize_for_terminal(action_str)
+            sanitize_line(action_str)
         );
         return CliExitCode::UserError.into();
     };
@@ -155,7 +157,7 @@ pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Regist
             "No versions found for {}/{}{context}",
             query.owner, query.repo
         );
-        eprintln!("{}", sanitize_for_terminal(&message));
+        eprintln!("{}", sanitize_line(&message));
         return CliExitCode::UserError.into();
     };
 
@@ -179,9 +181,9 @@ pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Regist
                 .unwrap_or_default();
             println!(
                 "{}  {}{}",
-                sanitize_for_terminal(&format!("{}/{}", query.owner, query.repo)),
-                sanitize_for_terminal(&result.latest).green(),
-                sanitize_for_terminal(&suffix).dimmed()
+                sanitize_line(&format!("{}/{}", query.owner, query.repo)),
+                sanitize_line(&result.latest).green(),
+                sanitize_line(&suffix).dimmed()
             );
         }
         OutputFormat::Json => match serde_json::to_string_pretty(&result) {
