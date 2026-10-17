@@ -145,6 +145,18 @@ mod tests {
     }
 
     #[test]
+    fn extension_dir_carries_the_repository_licences() {
+        assert_eq!(
+            include_str!("../LICENSE-MIT"),
+            include_str!("../../../LICENSE-MIT")
+        );
+        assert_eq!(
+            include_str!("../LICENSE-APACHE"),
+            include_str!("../../../LICENSE-APACHE")
+        );
+    }
+
+    #[test]
     fn mcp_command_runs_actup_mcp_from_path() {
         let command = mcp_command();
         assert_eq!(command.command, "actup-mcp");
