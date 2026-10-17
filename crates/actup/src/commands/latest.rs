@@ -5,8 +5,7 @@
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
 use actup_core::{
-    ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_for_terminal,
-    sanitize_line, version,
+    ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_line, version,
 };
 use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
@@ -143,7 +142,7 @@ pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Regist
     let versions = match versions_for(&fetched, &repo_id) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("{}", sanitize_for_terminal(&actup_core::error::chain(&e)));
+            eprintln!("{}", sanitize_line(&actup_core::error::chain(&e)));
             return if e.is_environment_error() {
                 CliExitCode::EnvironmentError.into()
             } else {

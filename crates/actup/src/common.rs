@@ -290,20 +290,22 @@ pub fn report_ignored(site: RefSite, result: &mut EditResult) {
     });
 }
 
+fn error_warning(site: &RefSite, err: &CoreError) -> String {
+    format!(
+        "{} - {}",
+        sanitize_line(&site.action),
+        sanitize_line(&actup_core::error::chain(err))
+    )
+}
+
 /// Warn that `err` leaves `site` unchanged, count it, and record it as errored.
 pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
-    let message = actup_core::error::chain(err);
-    eprintln!(
-        "{}: {} - {}",
-        "Warning".yellow(),
-        sanitize_line(&site.action),
-        sanitize_for_terminal(&message)
-    );
+    eprintln!("{}: {}", "Warning".yellow(), error_warning(&site, err));
     result.errors.record(err);
     result.errored.push(ErroredRef {
         site,
         kind: ErrorKind::from(err),
-        message,
+        message: actup_core::error::chain(err),
     });
 }
 
@@ -882,6 +884,23 @@ mod tests {
         assert_eq!(result.skipped, [skipped_ref(SkipReason::Unplaceable)]);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(result.exit_code(false), i32::from(CliExitCode::Outdated));
+    }
+
+    #[test]
+    fn test_error_warning_keeps_untrusted_text_on_one_line() {
+        let mut forged = site(3);
+        forged.action = "o/r@v1\n::error::x".to_string();
+        let err = CoreError::InvalidRef {
+            input: "v1\r\n  L9: forged".to_string(),
+            reason: "bad".to_string(),
+        };
+        let warning = error_warning(&forged, &err);
+        assert_eq!(warning.lines().count(), 1, "{warning:?}");
+        assert!(!warning.contains('\r'), "{warning:?}");
+        assert!(
+            warning.contains("o/r@v1\u{fffd}::error::x - "),
+            "{warning:?}"
+        );
     }
 
     #[test]
