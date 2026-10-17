@@ -332,8 +332,8 @@ both off, also per `[[overrides]]` entry.
 
 1. `-c, --config <path>` (or `ACTUP_CONFIG`) of the CLI and `actup-mcp`, or LSP
    `configPath` (explicit). A relative path resolves against the working
-   directory or the LSP workspace root. A missing file is an error (exit code
-   2).
+   directory or the LSP workspace root. A blank `configPath` counts as unset. A
+   missing file is an error (exit code 2).
 2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`, searched from the
    scanned path upward. The search stops at the first directory that contains
    `.git` (a directory, or a file in a worktree). The LSP searches only its

@@ -133,10 +133,11 @@ fn extract_workspace_root(params: &InitializeParams) -> Option<PathBuf> {
 ///
 /// Clients can pass `{ "configPath": "/path/to/actup.toml" }` to override
 /// the standard config discovery (analogous to CLI's `--config` flag).
+/// A blank `configPath` counts as unset.
 fn extract_config_path(params: &InitializeParams) -> Option<PathBuf> {
     let opts = params.initialization_options.as_ref()?;
     let path_str = opts.get("configPath")?.as_str()?;
-    Some(PathBuf::from(path_str))
+    (!path_str.trim().is_empty()).then(|| PathBuf::from(path_str))
 }
 
 fn resolve_config_path(config_path: Option<&Path>, start_dir: &Path) -> Option<PathBuf> {
@@ -1869,6 +1870,17 @@ mod tests {
             ..Default::default()
         };
         assert!(extract_config_path(&params).is_none());
+    }
+
+    #[test]
+    fn extract_config_path_treats_a_blank_value_as_unset() {
+        for blank in ["", "   ", "\t\n"] {
+            let params = InitializeParams {
+                initialization_options: Some(serde_json::json!({ "configPath": blank })),
+                ..Default::default()
+            };
+            assert_eq!(extract_config_path(&params), None, "{blank:?}");
+        }
     }
 
     #[test]

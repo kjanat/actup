@@ -1265,6 +1265,29 @@ async fn missing_config_path_pauses_diagnostics() -> Result<(), Box<dyn std::err
 }
 
 #[tokio::test]
+async fn blank_config_path_falls_back_to_discovery() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    std::fs::write(
+        temp.path().join("actup.toml"),
+        "[policy]\nbump = \"sideways\"\n",
+    )?;
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+
+    for blank in ["", "  "] {
+        let mut harness = TestHarness::new();
+        harness
+            .initialize_with(Some(root), Some(json!({ "configPath": blank })))
+            .await;
+        assert!(
+            harness.error_shown("sideways").await,
+            "configPath {blank:?} must leave discovery to find the repo config"
+        );
+        harness.shutdown().await;
+    }
+    Ok(())
+}
+
+#[tokio::test]
 async fn unrelated_file_change_does_not_reload() -> Result<(), Box<dyn std::error::Error>> {
     let temp = tempfile::tempdir()?;
     let config_file = temp.path().join("actup.toml");
