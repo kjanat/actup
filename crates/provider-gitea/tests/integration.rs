@@ -170,13 +170,32 @@ async fn get_versions_reads_tags_and_the_default_branch() -> TestResult {
     Ok(())
 }
 
-async fn serve_tag_page(server: &MockServer, page: u32, limit: &str, names: &[String]) {
+#[derive(Clone, Copy)]
+enum Next {
+    Linked,
+    Last,
+}
+
+async fn serve_tag_page(server: &MockServer, page: u32, limit: &str, names: &[String], next: Next) {
     let body: Vec<String> = names.iter().map(|name| tag(name, COMMIT_A)).collect();
+    let page_body = ResponseTemplate::new(200).set_body_string(format!("[{}]", body.join(",")));
+    let response = match next {
+        Next::Linked => page_body.insert_header(
+            "link",
+            format!(
+                "<{}{REPO}/tags?page={}&limit={limit}>; rel=\"next\",<{}{REPO}/tags?page=9&limit={limit}>; rel=\"last\"",
+                server.uri(),
+                page + 1,
+                server.uri()
+            ),
+        ),
+        Next::Last => page_body,
+    };
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/tags")))
         .and(query_param("page", page.to_string()))
         .and(query_param("limit", limit))
-        .respond_with(ResponseTemplate::new(200).set_body_string(format!("[{}]", body.join(","))))
+        .respond_with(response)
         .expect(1)
         .mount(server)
         .await;
@@ -195,8 +214,8 @@ fn max_tags(n: u8) -> Result<NonZeroU8, &'static str> {
 #[tokio::test]
 async fn get_versions_reads_the_next_page_after_a_full_page() -> TestResult {
     let server = MockServer::start().await;
-    serve_tag_page(&server, 1, "100", &patches(0, 100)).await;
-    serve_tag_page(&server, 2, "100", &["v2.0.0".to_string()]).await;
+    serve_tag_page(&server, 1, "100", &patches(0, 100), Next::Linked).await;
+    serve_tag_page(&server, 2, "100", &["v2.0.0".to_string()], Next::Last).await;
     serve_repository(&server).await;
 
     let set = provider(&server)?
@@ -215,8 +234,8 @@ async fn get_versions_reads_the_next_page_after_a_full_page() -> TestResult {
 #[tokio::test]
 async fn get_versions_stops_at_max_tags() -> TestResult {
     let server = MockServer::start().await;
-    serve_tag_page(&server, 1, "100", &patches(0, 100)).await;
-    serve_tag_page(&server, 2, "100", &patches(1, 100)).await;
+    serve_tag_page(&server, 1, "100", &patches(0, 100), Next::Linked).await;
+    serve_tag_page(&server, 2, "100", &patches(1, 100), Next::Linked).await;
     serve_repository(&server).await;
 
     let set = provider(&server)?
@@ -231,6 +250,40 @@ async fn get_versions_stops_at_max_tags() -> TestResult {
 }
 
 #[tokio::test]
+async fn get_versions_follows_the_link_header_past_a_capped_page() -> TestResult {
+    let server = MockServer::start().await;
+    serve_tag_page(&server, 1, "100", &patches(0, 50), Next::Linked).await;
+    serve_tag_page(&server, 2, "100", &patches(1, 50), Next::Linked).await;
+    serve_tag_page(&server, 3, "100", &patches(2, 50), Next::Linked).await;
+    serve_repository(&server).await;
+
+    let set = provider(&server)?
+        .max_tags(max_tags(120)?)
+        .get_versions(&repo())
+        .await?;
+
+    assert_eq!(set.semver_tags().len(), 120);
+    assert_eq!(set.tag_sha("v1.2.19"), Some(COMMIT_A));
+    assert_eq!(set.tag_sha("v1.2.20"), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_versions_stops_without_a_next_link() -> TestResult {
+    let server = MockServer::start().await;
+    serve_tag_page(&server, 1, "100", &patches(0, 100), Next::Last).await;
+    serve_repository(&server).await;
+
+    let set = provider(&server)?
+        .max_tags(max_tags(150)?)
+        .get_versions(&repo())
+        .await?;
+
+    assert_eq!(set.semver_tags().len(), 100);
+    Ok(())
+}
+
+#[tokio::test]
 async fn registration_passes_max_tags_per_repo() -> TestResult {
     let server = MockServer::start().await;
     serve_tag_page(
@@ -238,6 +291,7 @@ async fn registration_passes_max_tags_per_repo() -> TestResult {
         1,
         "1",
         &["v2.0.0".to_string(), "v1.0.0".to_string()],
+        Next::Linked,
     )
     .await;
     serve_repository(&server).await;

@@ -19,6 +19,14 @@ use crate::types::{
     GiteaArchive, GiteaBranch, GiteaCommit, GiteaContent, GiteaError, GiteaRepository, GiteaTag,
 };
 
+fn has_next_page(response: &Response) -> bool {
+    response
+        .headers()
+        .get("link")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|links| links.split(',').any(|link| link.contains("rel=\"next\"")))
+}
+
 fn encode_path(path: &str) -> String {
     path.split('/')
         .map(|segment| urlencoding::encode(segment).into_owned())
@@ -150,12 +158,13 @@ impl GiteaClient {
             debug!(url = %url, page = page, "fetching tags page");
 
             let response = self.get(&url).await?;
+            let has_next = has_next_page(&response);
             let tags: Vec<GiteaTag> = self.handle_response(response, owner, repo).await?;
-            let is_last_page = tags.len() < per_page;
+            let is_empty = tags.is_empty();
             let remaining = max_tags - all_tags.len();
             all_tags.extend(tags.into_iter().take(remaining));
 
-            if is_last_page || all_tags.len() >= max_tags {
+            if is_empty || !has_next || all_tags.len() >= max_tags {
                 break;
             }
 

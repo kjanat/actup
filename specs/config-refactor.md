@@ -298,11 +298,20 @@ are treated as `Some("")`, not as "inherit."
 
 ## Precedence Chain
 
-For `api_mode`, `max_tags_per_repo`:
+For `max_tags_per_repo`:
 
 ```txt
 per-host override > [fetch] > hardcoded default
 ```
+
+For `api_mode`:
+
+```txt
+per-host override > [fetch] (if the provider supports it) > the mode the provider supports
+```
+
+`[fetch] api_mode` is a preference. A REST-only provider uses REST when it is
+`"graphql"`. A per-host `api_mode` that the provider lacks is an error.
 
 For `kind`, `api_base`, `token_env`:
 
@@ -334,8 +343,14 @@ effective_host(hostname) =
      - token_env: if missing and registration.default_token_env set -> use it (non-user-specified)
      - api_base: if missing -> registration.infer_api_base(hostname)
   6. Validate kind, api_base, token_env present + api_base URL shape
-  7. Validate api_mode compatibility with registration.capabilities (error on mismatch)
+  7. Validate a per-host api_mode against registration.capabilities (error on mismatch)
 ```
+
+`Registry::from_config` runs `effective_host` for every `[hosts]` entry, the
+default host and every preset host of the compiled-in registrations. It creates
+the providers of `[hosts]` entries and the default host at once, so their
+creation errors fail config load. Any other preset host creates its provider on
+first use, and each call returns the creation error.
 
 ## Token Handling
 

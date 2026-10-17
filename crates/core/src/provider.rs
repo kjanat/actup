@@ -40,6 +40,16 @@ impl fmt::Display for Kind {
     }
 }
 
+impl From<crate::HostKind> for Kind {
+    fn from(kind: crate::HostKind) -> Self {
+        match kind {
+            crate::HostKind::GitHub => Self::GitHub,
+            crate::HostKind::GitLab => Self::GitLab,
+            crate::HostKind::Gitea => Self::Gitea,
+        }
+    }
+}
+
 impl Kind {
     /// Get the cache namespace for this provider kind
     #[must_use]
@@ -796,11 +806,14 @@ impl Registry {
     ///
     /// Registers every `[hosts]` entry, the default host and every preset host
     /// of `registrations`, each behind a [`CachingProvider`] that reuses
-    /// answers as long as `retention` allows.
+    /// answers as long as `retention` allows. A preset host that is neither in
+    /// `[hosts]` nor the default host creates its provider on first use, and a
+    /// creation error comes back from each call.
     ///
     /// # Errors
     ///
-    /// Returns an error if a host does not resolve or its provider cannot be created.
+    /// Returns an error if a host does not resolve, or if the provider of a
+    /// `[hosts]` entry or the default host cannot be created.
     ///
     /// # Panics
     ///
@@ -818,15 +831,19 @@ impl Registry {
             .iter()
             .flat_map(|registration| registration.presets.iter().map(|preset| preset.host));
         let mut registered = std::collections::HashSet::new();
-        for hostname in config
+        let named = config
             .hosts
             .keys()
             .map(String::as_str)
-            .chain(std::iter::once(default_host.as_str()))
-            .chain(presets)
-        {
+            .chain(std::iter::once(default_host.as_str()));
+        for hostname in named {
             if registered.insert(hostname.to_string()) {
-                registry.register_host(hostname, config, registrations, retention)?;
+                registry.register_host(hostname, config, registrations, retention, Creation::Eager)?;
+            }
+        }
+        for hostname in presets {
+            if registered.insert(hostname.to_string()) {
+                registry.register_host(hostname, config, registrations, retention, Creation::OnFirstUse)?;
             }
         }
         Ok(registry)
@@ -838,6 +855,7 @@ impl Registry {
         config: &Config,
         registrations: &[&Registration],
         retention: &Retention,
+        creation: Creation,
     ) -> Result<()> {
         let provider_config = effective_host(hostname, config, registrations, &config.fetch)?;
         let registration = registrations
@@ -849,12 +867,128 @@ impl Registry {
                 hint: None,
                 source: None,
             })?;
-        let provider = (registration.create)(provider_config)?;
+        let provider = match creation {
+            Creation::Eager => (registration.create)(provider_config)?,
+            Creation::OnFirstUse => Box::new(Deferred::new(provider_config, registration.create)),
+        };
         self.register(Box::new(CachingProvider::with_retention(
             provider,
             retention.clone(),
         )));
         Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Creation {
+    Eager,
+    OnFirstUse,
+}
+
+type Create = fn(crate::ProviderConfig) -> Result<Box<dyn Provider>>;
+
+/// A provider that `create` builds on its first call.
+struct Deferred {
+    kind: Kind,
+    config: crate::ProviderConfig,
+    create: Create,
+    built: std::sync::OnceLock<Result<Box<dyn Provider>>>,
+}
+
+impl Deferred {
+    fn new(config: crate::ProviderConfig, create: Create) -> Self {
+        Self {
+            kind: config.kind.into(),
+            config,
+            create,
+            built: std::sync::OnceLock::new(),
+        }
+    }
+
+    fn provider(&self) -> std::result::Result<&dyn Provider, Error> {
+        self.built
+            .get_or_init(|| (self.create)(self.config.clone()))
+            .as_ref()
+            .map(AsRef::as_ref)
+            .map_err(Clone::clone)
+    }
+
+    fn call<'a, T: MaybeSend + 'a>(
+        &'a self,
+        call: impl FnOnce(&'a dyn Provider) -> BoxFuture<'a, Result<T>>,
+    ) -> BoxFuture<'a, Result<T>> {
+        match self.provider() {
+            Ok(provider) => call(provider),
+            Err(e) => Box::pin(std::future::ready(Err(e))),
+        }
+    }
+}
+
+impl Provider for Deferred {
+    fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    fn supports_batch_fetch(&self) -> bool {
+        self.provider()
+            .is_ok_and(<dyn Provider>::supports_batch_fetch)
+    }
+
+    fn host(&self) -> &str {
+        &self.config.host
+    }
+
+    fn cache_namespace(&self) -> &str {
+        self.provider()
+            .map_or_else(|_| self.kind.cache_namespace(), <dyn Provider>::cache_namespace)
+    }
+
+    fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+        self.call(|provider| provider.get_versions(repo))
+    }
+
+    fn resolve_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>> {
+        self.call(|provider| provider.resolve_ref_to_sha(repo, ref_name))
+    }
+
+    fn refresh_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>> {
+        self.call(|provider| provider.refresh_ref_to_sha(repo, ref_name))
+    }
+
+    fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+        self.call(|provider| provider.get_default_branch(repo))
+    }
+
+    fn get_readme(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: Option<&str>,
+    ) -> BoxFuture<'_, Result<Option<String>>> {
+        self.call(|provider| provider.get_readme(repo, ref_name))
+    }
+
+    fn get_action_yml(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<ActionYml>> {
+        self.call(|provider| provider.get_action_yml(repo, ref_name))
+    }
+
+    fn search_actions(&self, query: &str) -> BoxFuture<'_, Result<Search>> {
+        self.call(|provider| provider.search_actions(query))
+    }
+
+    fn get_repo_state(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<Option<RepoState>>> {
+        self.call(|provider| provider.get_repo_state(repo))
     }
 }
 
@@ -1219,13 +1353,8 @@ mod tests {
                 source: None,
             });
         }
-        let kind = match config.kind {
-            crate::HostKind::GitHub => Kind::GitHub,
-            crate::HostKind::GitLab => Kind::GitLab,
-            crate::HostKind::Gitea => Kind::Gitea,
-        };
         Ok(Box::new(MockProvider {
-            kind,
+            kind: config.kind.into(),
             host: config.host,
         }))
     }
@@ -1289,6 +1418,115 @@ mod tests {
             assert_eq!(provider.map(Provider::kind), Some(kind), "{uses}");
         }
         Ok(())
+    }
+
+    fn create_failing(config: crate::ProviderConfig) -> Result<Box<dyn Provider>> {
+        Err(Error::Auth {
+            provider: config.host,
+            reason: "malformed token".into(),
+            source: None,
+        })
+    }
+
+    static FAILING_PRESET_REGISTRATION: Registration = Registration {
+        kind: crate::HostKind::Gitea,
+        presets: &[crate::Preset {
+            host: "codeberg.org",
+            api_base: "https://codeberg.org/api/v1",
+            token_env: "CODEBERG_TOKEN",
+        }],
+        default_token_env: Some("GITEA_TOKEN"),
+        infer_api_base: |host| Some(format!("https://{host}/api/v1")),
+        capabilities: crate::Capabilities {
+            supports_graphql: false,
+            supports_rest: true,
+        },
+        create: create_failing,
+    };
+
+    #[tokio::test]
+    async fn from_config_creates_an_unnamed_preset_on_first_use() -> std::result::Result<(), Error>
+    {
+        let registry = Registry::from_config(
+            &Config::default(),
+            &[
+                &MOCK_REGISTRATION,
+                &REST_ONLY_REGISTRATION,
+                &FAILING_PRESET_REGISTRATION,
+            ],
+            &Retention::Run,
+        )?;
+        let repo = ActionRepoId::simple("o", "r");
+
+        let gitlab = registry
+            .find(Some("gitlab.com"))
+            .ok_or_else(|| Error::Internal {
+                context: "find".into(),
+                message: "gitlab.com".into(),
+                source: None,
+            })?;
+        assert_eq!((gitlab.kind(), gitlab.host()), (Kind::GitLab, "gitlab.com"));
+        gitlab.get_versions(&repo).await?;
+        gitlab.refresh_ref_to_sha(&repo, "v1").await?;
+        assert!(matches!(
+            gitlab.search_actions("lint").await,
+            Ok(Search::Unsupported)
+        ));
+        assert!(gitlab.get_repo_state(&repo).await?.is_none());
+        assert_eq!(gitlab.cache_namespace(), "gitlab");
+
+        let codeberg = registry
+            .find(Some("codeberg.org"))
+            .ok_or_else(|| Error::Internal {
+                context: "find".into(),
+                message: "codeberg.org".into(),
+                source: None,
+            })?;
+        assert_eq!(
+            (codeberg.kind(), codeberg.host()),
+            (Kind::Gitea, "codeberg.org")
+        );
+        assert!(!codeberg.supports_batch_fetch());
+        let error = codeberg.get_versions(&repo).await;
+        assert!(
+            matches!(&error, Err(Error::Auth { provider, .. }) if provider == "codeberg.org"),
+            "{error:?}"
+        );
+        let error = codeberg.resolve_ref_to_sha(&repo, "v1").await;
+        assert!(matches!(error, Err(Error::Auth { .. })), "{error:?}");
+        let error = codeberg.refresh_ref_to_sha(&repo, "v1").await;
+        assert!(matches!(error, Err(Error::Auth { .. })), "{error:?}");
+        assert!(matches!(
+            codeberg.search_actions("lint").await,
+            Err(Error::Auth { .. })
+        ));
+        assert!(matches!(
+            codeberg.get_repo_state(&repo).await,
+            Err(Error::Auth { .. })
+        ));
+        assert_eq!(codeberg.cache_namespace(), "gitea");
+        Ok(())
+    }
+
+    #[test]
+    fn from_config_creates_a_named_preset_at_once() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "codeberg.org".into(),
+            crate::HostConfig {
+                kind: None,
+                api_base: None,
+                token_env: None,
+                api_mode: None,
+                max_tags_per_repo: None,
+            },
+        );
+        let result = Registry::from_config(
+            &config,
+            &[&MOCK_REGISTRATION, &FAILING_PRESET_REGISTRATION],
+            &Retention::Run,
+        );
+        assert!(matches!(result, Err(Error::Auth { .. })), "{result:?}");
     }
 
     #[test]

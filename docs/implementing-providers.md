@@ -635,11 +635,13 @@ Box::pin(async move {
 ### Gitea/Forgejo
 
 - Uses `/repos/{owner}/{repo}/tags`
-- Pagination via `page` and `limit` parameters (no header indicator for next
-  page)
+- Pagination via `page` and `limit` parameters, with a `Link` header naming
+  `rel="next"` while more pages exist
 - Auth: `Authorization: token {token}` (note: "token", not "Bearer")
 - `limit` is `max_tags_per_repo` up to 100; paging stops at `max_tags_per_repo`
-  tags or after a page shorter than `limit`
+  tags or on a page without a `rel="next"` link
+- **Gotcha**: The server caps `limit` at its `MAX_RESPONSE_ITEMS` (50 by
+  default), so a page can hold fewer tags than `limit` while more pages exist
 - **Gotcha**: Percent-encode each path segment and the `ref` query value. A raw
   `+` reads as a space and a raw `#` cuts the URL
 
