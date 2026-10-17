@@ -68,6 +68,7 @@ typedef enum {
     R_EXPR_BGN,
     BR_EXPR_BGN,
     B_EXPR_BGN,
+    EXPR_NWL,
 } TokenType;
 
 // clang-format on
@@ -1106,6 +1107,11 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
     int16_t bgn_row = scanner->cur_row;
     int16_t bgn_col = scanner->cur_col;
     int32_t bgn_chr = lexer->lookahead;
+
+    if (valid_symbols[EXPR_NWL] && !valid_symbols[ERR_REC] && bgn_row > scanner->row && bgn_col > cur_ind) {
+        mrk_end(scanner, lexer);
+        RET_SYM(EXPR_NWL);
+    }
 
     if (valid_symbols[BL] && bgn_col <= cur_ind && !has_tab_ind) {
         if (cur_ind == prt_ind && cur_ind_typ == IND_SEQ ? bgn_col < cur_ind || lexer->lookahead != '-'

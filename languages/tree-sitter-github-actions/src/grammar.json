@@ -7453,11 +7453,20 @@
       ]
     },
     "_expr_ws": {
-      "type": "TOKEN",
-      "content": {
-        "type": "PATTERN",
-        "value": "[ \\t\\r\\n]+"
-      }
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "TOKEN",
+          "content": {
+            "type": "PATTERN",
+            "value": "[ \\t]+"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_expr_nwl"
+        }
+      ]
     },
     "_evaluation": {
       "type": "CHOICE",
@@ -9401,6 +9410,10 @@
     {
       "type": "SYMBOL",
       "name": "_b_expr_bgn"
+    },
+    {
+      "type": "SYMBOL",
+      "name": "_expr_nwl"
     }
   ],
   "inline": [

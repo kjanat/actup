@@ -1791,3 +1791,97 @@ jobs:
                                   (identifier)))
                               (context
                                 (identifier)))))))))))))))))
+
+============================================================================
+Bare if: an unclosed index leaves the next key intact
+============================================================================
+jobs:
+  build:
+    if: a[b
+    runs-on: u
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (expression
+                          (context
+                            (identifier)
+                            (property
+                              (index
+                                (context
+                                  (identifier))
+                                (MISSING "]")))))))
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (string_scalar))))))))))))))
+
+============================================================================
+Bare if: an unclosed call in an expression leaves the next key intact
+============================================================================
+jobs:
+  build:
+    if: ${{ fromJSON(a }}
+    runs-on: u
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (delimited_expression
+                            (expression_marker)
+                            (context
+                              (identifier))
+                            (ERROR
+                              (context
+                                (identifier)))))))
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (flow_node
+                        (plain_scalar
+                          (string_scalar))))))))))))))

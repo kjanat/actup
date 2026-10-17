@@ -150,6 +150,7 @@ const base = grammar({
 		$._r_expr_bgn,
 		$._br_expr_bgn,
 		$._b_expr_bgn,
+		$._expr_nwl,
 	],
 
 	extras: $ => [$.comment],
@@ -780,7 +781,7 @@ const base = grammar({
 		// Optional horizontal whitespace inside expression bodies. Defined as a private
 		// rule (not via `extras`) so it's only valid where expression rules expect it,
 		// keeping YAML's structural whitespace handling untouched elsewhere.
-		_expr_ws: _ => token(/[ \t\r\n]+/),
+		_expr_ws: $ => choice(token(/[ \t]+/), $._expr_nwl),
 
 		_evaluation: $ => choice($._literal, $.context, $._call, $._group),
 		_call: $ => seq($.function_call, repeat($.property)),
