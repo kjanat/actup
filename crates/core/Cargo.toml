@@ -28,6 +28,7 @@ tsify-next    = { workspace = true, optional = true }  # gated by `tsify` featur
 wasm-bindgen  = { workspace = true, optional = true }  # required by tsify-next for `typescript_custom_section`
 
 [dev-dependencies]
+pulldown-cmark     = { workspace = true }
 serde_json         = { workspace = true }
 tempfile           = { workspace = true }
 tokio              = { workspace = true }

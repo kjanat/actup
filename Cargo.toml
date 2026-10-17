@@ -92,6 +92,10 @@ version          = "0.57"
 default-features = false
 features         = ["blocking-client", "http-client-reqwest-rust-tls"]
 
+[workspace.dependencies.pulldown-cmark]  # markdown (testing)
+version          = "0.13.4"
+default-features = false
+
 [workspace.dependencies.reqwest]  # HTTP/API
 version          = "0.13"
 default-features = false

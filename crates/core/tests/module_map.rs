@@ -2,64 +2,58 @@
 
 use std::{fs, path::Path};
 
+use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+
 type TestResult<T> = Result<T, Box<dyn std::error::Error>>;
 
 struct Section {
+    level: HeadingLevel,
     heading: String,
     cells: Vec<String>,
 }
 
-#[derive(Clone, Copy)]
-struct Fence {
-    marker: char,
-    len: usize,
-}
-
-fn fence_run(line: &str) -> Option<(Fence, &str)> {
-    let rest = line.trim_start_matches(' ');
-    if line.len() - rest.len() > 3 {
-        return None;
-    }
-    let marker = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
-    let info = rest.trim_start_matches(marker);
-    let len = rest.len() - info.len();
-    (len >= 3).then_some((Fence { marker, len }, info))
-}
-
-fn closes(open: Fence, line: &str) -> bool {
-    fence_run(line).is_some_and(|(close, info)| {
-        close.marker == open.marker && close.len >= open.len && info.trim().is_empty()
-    })
-}
-
-fn opens(line: &str) -> Option<Fence> {
-    fence_run(line)
-        .filter(|(open, info)| open.marker == '~' || !info.contains('`'))
-        .map(|(open, _)| open)
-}
-
 fn sections(agents: &str) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
-    let mut fence: Option<Fence> = None;
-    for line in agents.lines() {
-        if let Some(open) = fence {
-            if closes(open, line) {
-                fence = None;
-            }
-        } else if let Some(open) = opens(line) {
-            fence = Some(open);
-        } else if line.starts_with('#') {
-            sections.push(Section {
-                heading: line.to_owned(),
-                cells: Vec::new(),
-            });
-        } else if let Some(cell) = line
-            .strip_prefix("| `")
-            .and_then(|rest| rest.split_once('`'))
-            .map(|(cell, _)| cell.to_owned())
+    let mut heading: Option<(HeadingLevel, String)> = None;
+    let mut row = false;
+    let mut first_cell = false;
+    for event in Parser::new_ext(agents, Options::ENABLE_TABLES) {
+        if first_cell
+            && let Event::Code(cell) = &event
             && let Some(section) = sections.last_mut()
         {
-            section.cells.push(cell);
+            section.cells.push(cell.to_string());
+        }
+        first_cell = false;
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => heading = Some((level, String::new())),
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some((level, heading)) = heading.take() {
+                    sections.push(Section {
+                        level,
+                        heading,
+                        cells: Vec::new(),
+                    });
+                }
+            }
+            Event::Text(text) => {
+                if let Some((_, heading)) = &mut heading {
+                    heading.push_str(&text);
+                }
+            }
+            Event::Code(code) => {
+                if let Some((_, heading)) = &mut heading {
+                    heading.push('`');
+                    heading.push_str(&code);
+                    heading.push('`');
+                }
+            }
+            Event::Start(Tag::TableRow) => row = true,
+            Event::Start(Tag::TableCell) => {
+                first_cell = row;
+                row = false;
+            }
+            _ => {}
         }
     }
     sections
@@ -70,7 +64,7 @@ fn table<'a>(sections: &'a [Section], dir: &str) -> Option<&'a [String]> {
         .iter()
         .find(|section| {
             if dir.is_empty() {
-                section.heading == "## Module Map"
+                section.level == HeadingLevel::H2 && section.heading == "Module Map"
             } else {
                 section.heading.contains(&format!("(`{dir}/`)"))
             }
@@ -203,20 +197,23 @@ fn module_map_check_follows_commonmark_fence_rules() -> TestResult<()> {
     }
     let hidden: &[&str] = &["src/b.rs"];
     let counted: &[&str] = &[];
+    let b = "| Module | Purpose |\n| --- | --- |\n| `b` | B |\n";
     let cases = [
-        ("~~~\n| `b` | B |\n~~~\n", hidden),
-        ("   ```\n| `b` | B |\n  ```\n", hidden),
-        ("    ```\n| `b` | B |\n    ```\n", counted),
-        ("```\n~~~\n| `b` | B |\n```\n", hidden),
-        ("````\n```yaml\n| `b` | B |\n```\n````\n", hidden),
-        ("```\n``` rust\n| `b` | B |\n```\n", hidden),
-        ("```\n| `b` | B |\n`````\n", hidden),
-        ("``` a`b\n| `b` | B |\n", counted),
-        ("~~~ a`b\n| `b` | B |\n~~~\n", hidden),
+        (format!("~~~\n{b}~~~\n"), hidden),
+        (format!("   ```\n{b}  ```\n"), hidden),
+        (format!("    ```\n\n{b}\n    ```\n"), counted),
+        (format!("```\n~~~\n{b}```\n"), hidden),
+        (format!("````\n```yaml\n{b}```\n````\n"), hidden),
+        (format!("```\n``` rust\n{b}```\n"), hidden),
+        (format!("```\n{b}`````\n"), hidden),
+        (format!("``` a`b\n\n{b}"), counted),
+        (format!("~~~ a`b\n{b}~~~\n"), hidden),
+        (format!("```\n{b}```\u{a0}\n```\n"), hidden),
+        (format!("- ```sh\n  cmd\n  ```\n\n{b}"), counted),
     ];
     for (block, expected) in cases {
         let agents =
-            format!("## Module Map\n\n| Module | Purpose |\n| --- | --- |\n{block}| `a` | A |\n");
+            format!("## Module Map\n\n{block}\n| Module | Purpose |\n| --- | --- |\n| `a` | A |\n");
         assert_eq!(missing_rows(&agents, src)?, expected, "{block}");
     }
     Ok(())
