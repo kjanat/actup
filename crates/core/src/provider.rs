@@ -1189,13 +1189,15 @@ mod tests {
             .hosts
             .insert(COUNTED_HOST.into(), host_of_kind(crate::HostKind::GitHub));
         let clock = crate::clock::ManualClock::new();
-        let dyn_clock: std::sync::Arc<dyn crate::Clock + Send + Sync> = clock.clone();
+        let dyn_clock: std::sync::Arc<dyn crate::Clock> = clock.clone();
         let retention = Retention::Expiring {
             ttl: std::time::Duration::from_secs(60),
             clock: dyn_clock,
         };
         let registry = Registry::from_config(&config, &[&MOCK_REGISTRATION], &retention)?;
-        let provider = registry.find(Some(COUNTED_HOST)).unwrap();
+        let Some(provider) = registry.find(Some(COUNTED_HOST)) else {
+            panic!("{COUNTED_HOST} is registered");
+        };
         let repo = ActionRepoId::simple("actions", "checkout");
         let fetches = || COUNTED_FETCHES.load(std::sync::atomic::Ordering::SeqCst);
 

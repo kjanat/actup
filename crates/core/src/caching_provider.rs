@@ -31,7 +31,7 @@ pub enum Retention {
         /// How long an answer stays reusable.
         ttl: Duration,
         /// The clock that dates each answer.
-        clock: Arc<dyn Clock + Send + Sync>,
+        clock: Arc<dyn Clock>,
     },
 }
 
@@ -47,20 +47,20 @@ impl Retention {
 
     fn stamp<T>(&self, value: T) -> Stamped<T> {
         let at = match self {
-            Self::Run => None,
-            Self::Expiring { clock, .. } => Some(clock.now()),
+            Self::Run => SystemTime::UNIX_EPOCH,
+            Self::Expiring { clock, .. } => clock.now(),
         };
         Stamped { value, at }
     }
 
     fn fresh<T: Clone>(&self, stamped: Option<&Stamped<T>>) -> Option<T> {
         let stamped = stamped?;
-        let holds = match (self, stamped.at) {
-            (Self::Run, _) => true,
-            (Self::Expiring { ttl, clock }, Some(at)) => {
-                clock.now().duration_since(at).is_ok_and(|age| age <= *ttl)
-            }
-            (Self::Expiring { .. }, None) => false,
+        let holds = match self {
+            Self::Run => true,
+            Self::Expiring { ttl, clock } => clock
+                .now()
+                .duration_since(stamped.at)
+                .is_ok_and(|age| age <= *ttl),
         };
         holds.then(|| stamped.value.clone())
     }
@@ -68,7 +68,7 @@ impl Retention {
 
 struct Stamped<T> {
     value: T,
-    at: Option<SystemTime>,
+    at: SystemTime,
 }
 
 type Memo<K, V> = RwLock<HashMap<K, Stamped<V>>>;
@@ -212,24 +212,26 @@ impl<P: Provider> CachingProvider<P> {
     }
 }
 
-// Diagnostic methods need a real `Sync` bound: they hold `&self` across
-// `RwLock::{read,write}().await`, which makes the future `Send` only if
-// `P: Sync`. The `Provider` trait alone gives `MaybeSync`, which is
-// unconditional on `wasm32` and would trip `clippy::future-not-send`.
-impl<P: Provider + Sync> CachingProvider<P> {
+impl<P> CachingProvider<P> {
     /// Clear all cached data.
-    pub async fn clear_cache(&self) {
-        self.version_cache.write().await.clear();
-        self.sha_cache.write().await.clear();
-        self.branch_cache.write().await.clear();
+    pub fn clear_cache(&self) -> impl Future<Output = ()> + '_ {
+        let (versions, shas, branches) = (&self.version_cache, &self.sha_cache, &self.branch_cache);
+        async move {
+            versions.write().await.clear();
+            shas.write().await.clear();
+            branches.write().await.clear();
+        }
     }
 
     /// Get cache statistics for debugging.
-    pub async fn cache_stats(&self) -> CacheStats {
-        CacheStats {
-            versions: self.version_cache.read().await.len(),
-            shas: self.sha_cache.read().await.len(),
-            branches: self.branch_cache.read().await.len(),
+    pub fn cache_stats(&self) -> impl Future<Output = CacheStats> + '_ {
+        let (versions, shas, branches) = (&self.version_cache, &self.sha_cache, &self.branch_cache);
+        async move {
+            CacheStats {
+                versions: versions.read().await.len(),
+                shas: shas.read().await.len(),
+                branches: branches.read().await.len(),
+            }
         }
     }
 }
@@ -1274,14 +1276,20 @@ mod tests {
         );
     }
 
-    async fn lookup_all<P: Provider>(cached: &CachingProvider<P>, repo: &ActionRepoId) {
-        cached.get_versions(repo).await.unwrap();
-        cached.resolve_ref_to_sha(repo, "v4").await.unwrap();
-        cached.get_default_branch(repo).await.unwrap();
+    type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
+
+    async fn lookup_all<P: Provider>(
+        cached: &CachingProvider<P>,
+        repo: &ActionRepoId,
+    ) -> TestResult {
+        cached.get_versions(repo).await?;
+        cached.resolve_ref_to_sha(repo, "v4").await?;
+        cached.get_default_branch(repo).await?;
+        Ok(())
     }
 
     fn expiring(clock: &Arc<crate::clock::ManualClock>, secs: u64) -> Retention {
-        let clock: Arc<dyn crate::Clock + Send + Sync> = clock.clone();
+        let clock: Arc<dyn crate::Clock> = clock.clone();
         Retention::Expiring {
             ttl: std::time::Duration::from_secs(secs),
             clock,
@@ -1289,33 +1297,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn expiring_retention_refetches_each_answer_after_the_ttl() {
+    async fn expiring_retention_refetches_each_answer_after_the_ttl() -> TestResult {
         let clock = crate::clock::ManualClock::new();
         let cached = CachingProvider::with_retention(CountingProvider::new(), expiring(&clock, 60));
         let repo = make_repo("actions", "checkout");
 
-        lookup_all(&cached, &repo).await;
+        lookup_all(&cached, &repo).await?;
         assert_eq!(cached.inner.calls(), 3);
         clock.advance(std::time::Duration::from_secs(60));
-        lookup_all(&cached, &repo).await;
+        lookup_all(&cached, &repo).await?;
         assert_eq!(cached.inner.calls(), 3);
         clock.advance(std::time::Duration::from_secs(1));
-        lookup_all(&cached, &repo).await;
+        lookup_all(&cached, &repo).await?;
         assert_eq!(cached.inner.calls(), 6);
-        lookup_all(&cached, &repo).await;
+        lookup_all(&cached, &repo).await?;
         assert_eq!(cached.inner.calls(), 6);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn expiring_retention_refetches_after_the_clock_moves_back() {
+    async fn expiring_retention_refetches_after_the_clock_moves_back() -> TestResult {
         let clock = crate::clock::ManualClock::new();
         let cached = CachingProvider::with_retention(CountingProvider::new(), expiring(&clock, 60));
         let repo = make_repo("actions", "checkout");
 
-        lookup_all(&cached, &repo).await;
+        lookup_all(&cached, &repo).await?;
         clock.rewind(std::time::Duration::from_secs(1));
-        lookup_all(&cached, &repo).await;
+        lookup_all(&cached, &repo).await?;
         assert_eq!(cached.inner.calls(), 6);
+        Ok(())
     }
 
     struct Moving {
@@ -1373,34 +1383,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_ref_to_sha_bypasses_and_replaces_the_cached_sha() {
+    async fn refresh_ref_to_sha_bypasses_and_replaces_the_cached_sha() -> TestResult {
         let cached = CachingProvider::new(Moving {
             calls: AtomicUsize::new(0),
         });
         let repo = make_repo("actions", "checkout");
-        let sha = |c: &str| Sha40::new(c.repeat(40)).unwrap();
+        let sha = |c: &str| Sha40::new(c.repeat(40)).ok_or("invalid test SHA");
 
-        assert_eq!(
-            cached.resolve_ref_to_sha(&repo, "main").await.unwrap(),
-            sha("a")
-        );
-        assert_eq!(
-            cached.refresh_ref_to_sha(&repo, "main").await.unwrap(),
-            sha("b")
-        );
-        assert_eq!(
-            cached.resolve_ref_to_sha(&repo, "main").await.unwrap(),
-            sha("b")
-        );
-        assert_eq!(
-            cached.refresh_ref_to_sha(&repo, "main").await.unwrap(),
-            sha("c")
-        );
+        assert_eq!(cached.resolve_ref_to_sha(&repo, "main").await?, sha("a")?);
+        assert_eq!(cached.refresh_ref_to_sha(&repo, "main").await?, sha("b")?);
+        assert_eq!(cached.resolve_ref_to_sha(&repo, "main").await?, sha("b")?);
+        assert_eq!(cached.refresh_ref_to_sha(&repo, "main").await?, sha("c")?);
         assert!(cached.refresh_ref_to_sha(&repo, "main").await.is_err());
-        assert_eq!(
-            cached.resolve_ref_to_sha(&repo, "main").await.unwrap(),
-            sha("c")
-        );
+        assert_eq!(cached.resolve_ref_to_sha(&repo, "main").await?, sha("c")?);
         assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 4);
+        Ok(())
     }
 }

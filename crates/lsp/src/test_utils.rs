@@ -254,20 +254,31 @@ impl StepClock {
 
     /// Move the clock forward by `by`.
     pub fn advance(&self, by: std::time::Duration) {
-        let mut now = self.0.lock().unwrap();
-        *now += by;
+        self.set(|now| now.checked_add(by));
     }
 
     /// Move the clock back by `by`.
     pub fn rewind(&self, by: std::time::Duration) {
-        let mut now = self.0.lock().unwrap();
-        *now -= by;
+        self.set(|now| now.checked_sub(by));
+    }
+
+    fn set(&self, to: impl FnOnce(std::time::SystemTime) -> Option<std::time::SystemTime>) {
+        let mut now = match self.0.lock() {
+            Ok(now) => now,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(moved) = to(*now) {
+            *now = moved;
+        }
     }
 }
 
 impl actup_core::Clock for StepClock {
     fn now(&self) -> std::time::SystemTime {
-        *self.0.lock().unwrap()
+        match self.0.lock() {
+            Ok(now) => *now,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
     }
 }
 

@@ -2863,8 +2863,15 @@ mod tests {
             &self,
             _repo: &actup_core::ActionRepoId,
         ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::version::Set>> {
-            let set = self.0.lock().unwrap().clone();
-            Box::pin(async move { Ok(set) })
+            let set =
+                self.0
+                    .lock()
+                    .map(|set| set.clone())
+                    .map_err(|e| actup_core::Error::Internal {
+                        context: "releases".into(),
+                        message: e.to_string(),
+                    });
+            Box::pin(async move { set })
         }
 
         fn resolve_ref_to_sha(
@@ -2872,8 +2879,13 @@ mod tests {
             _repo: &actup_core::ActionRepoId,
             _ref_name: &str,
         ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::Sha40>> {
-            let sha = actup_core::provider::Sha40::new("a".repeat(40)).unwrap();
-            Box::pin(async move { Ok(sha) })
+            let sha = actup_core::provider::Sha40::new("a".repeat(40)).ok_or_else(|| {
+                actup_core::Error::Internal {
+                    context: "releases".into(),
+                    message: "invalid SHA".into(),
+                }
+            });
+            Box::pin(async move { sha })
         }
 
         fn get_default_branch(
@@ -2952,7 +2964,7 @@ mod tests {
 
         let releases: Releases = Arc::new(std::sync::Mutex::new(released("v4.1.0", 'b')));
         let clock = Arc::new(crate::test_utils::StepClock::new());
-        let dyn_clock: Arc<dyn actup_core::Clock + Send + Sync> = clock.clone();
+        let dyn_clock: Arc<dyn actup_core::Clock> = clock.clone();
         let ttl = Duration::from_secs(60);
         let mut registry = provider::Registry::new();
         registry.set_default_host("github.com");
@@ -2972,7 +2984,7 @@ mod tests {
         let first = published_messages(backend, &mut socket, &uri, 1).await?;
         assert_eq!(targets(&first, "-> v4.1.0"), 1, "{first:?}");
 
-        *releases.lock().unwrap() = released("v4.2.0", 'c');
+        *releases.lock().map_err(|e| e.to_string())? = released("v4.2.0", 'c');
         clock.advance(ttl);
         let cached = published_messages(backend, &mut socket, &uri, 2).await?;
         assert_eq!(cached, first);
