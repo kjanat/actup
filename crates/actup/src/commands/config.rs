@@ -3,11 +3,29 @@
 use std::path::Path;
 
 use actup_core::{
-    Config, Registration, effective_host, iter_config_candidates, resolve_default_host,
+    Config, ConfigSource, Registration, effective_host, iter_config_candidates,
+    resolve_default_host,
 };
 use owo_colors::OwoColorize;
+use serde::Serialize;
 
 use crate::cli::{CliExitCode, OutputFormat};
+
+#[derive(Serialize)]
+struct Report<'a> {
+    #[serde(flatten)]
+    config: &'a Config,
+    sources: &'a [ConfigSource],
+}
+
+impl<'a> Report<'a> {
+    fn new(config: &'a Config) -> Self {
+        Self {
+            config,
+            sources: &config.sources,
+        }
+    }
+}
 
 pub fn run(
     path: &Path,
@@ -20,7 +38,7 @@ pub fn run(
             display_human(config, path, registrations);
         }
         OutputFormat::Json => {
-            let json = match serde_json::to_string_pretty(config) {
+            let json = match serde_json::to_string_pretty(&Report::new(config)) {
                 Ok(j) => j,
                 Err(e) => {
                     eprintln!("Error serializing config: {e}");
@@ -30,7 +48,7 @@ pub fn run(
             println!("{json}");
         }
         OutputFormat::Toml => {
-            let toml = match toml::to_string_pretty(config) {
+            let toml = match toml::to_string_pretty(&Report::new(config)) {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("Error serializing config: {e}");
@@ -106,11 +124,8 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
         println!();
     }
 
-    // Show source
-    println!("{}", "Source".dimmed());
-    if let Some(loaded_from) = &config.loaded_from {
-        println!("  Loaded from: {}", loaded_from.display());
-    } else {
+    println!("{}", "Sources (lowest to highest precedence)".dimmed());
+    if config.sources.is_empty() {
         let found: Vec<_> = iter_config_candidates(path)
             .filter(|p| p.exists())
             .collect();
@@ -125,6 +140,9 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
                 println!("    {}", p.display());
             }
         }
+    }
+    for source in &config.sources {
+        println!("  - {source}");
     }
 }
 

@@ -183,11 +183,15 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
 2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`, searched from the
    scanned path upward. The search stops at the first directory that contains
    `.git` (a directory, or a file in a worktree). The LSP searches only its
-   workspace folder. The CLI logs the loaded file at `info`, and `actup config`
-   shows it.
+   workspace folder.
 3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
    (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)
+
+The CLI and the LSP log every config source at `info`: the user file, the repo
+file, the explicit file and the `ACTUP_*` variables that set config keys.
+`actup config` lists the same sources from lowest to highest precedence, under
+`sources` in JSON and TOML output.
 
 ### Environment Variables
 

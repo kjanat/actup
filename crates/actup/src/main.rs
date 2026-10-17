@@ -91,8 +91,8 @@ async fn run(cli: Cli) -> i32 {
         None,
     ) {
         Ok(c) => {
-            if let Some(from) = &c.loaded_from {
-                tracing::info!(path = %from.display(), "loaded config");
+            for source in &c.sources {
+                tracing::info!(%source, "loaded config");
             }
             c
         }

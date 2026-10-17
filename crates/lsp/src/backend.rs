@@ -430,11 +430,7 @@ impl LanguageServer for LspBackend {
             workspace_root.as_deref(),
         ) {
             Ok(c) => {
-                if let Some(from) = &c.loaded_from {
-                    tracing::info!(path = %from.display(), "loaded config");
-                } else {
-                    tracing::info!("using default config (no config file found)");
-                }
+                log_config_sources(&c, "loaded config");
                 ConfigState::Loaded(c)
             }
             Err(e) => self.invalid_config(&e).await,
@@ -1263,11 +1259,7 @@ impl LspBackend {
             workspace_root.as_deref(),
         ) {
             Ok(c) => {
-                if let Some(from) = &c.loaded_from {
-                    tracing::info!(path = %from.display(), "reloaded config");
-                } else {
-                    tracing::info!("reloaded defaults (no config file found)");
-                }
+                log_config_sources(&c, "reloaded config");
                 c
             }
             Err(e) => {
@@ -1360,6 +1352,15 @@ impl LspBackend {
                     .await;
             }
         }
+    }
+}
+
+fn log_config_sources(config: &Config, message: &str) {
+    if config.sources.is_empty() {
+        tracing::info!("{message} from defaults");
+    }
+    for source in &config.sources {
+        tracing::info!(%source, "{message}");
     }
 }
 
@@ -2568,10 +2569,68 @@ mod tests {
         let ConfigState::Loaded(config) = stored else {
             panic!("stale reload stored {stored:?}");
         };
-        assert_eq!(config.loaded_from.as_deref(), Some(latest_config.as_path()));
+        assert_eq!(config.loaded_from(), Some(latest_config.as_path()));
         assert!(!config.cache.enabled);
         assert!(backend.registry.read().await.is_some());
         assert!(backend.file_cache.read().await.is_some());
+        Ok(())
+    }
+
+    #[derive(Clone, Default)]
+    struct LogBuffer(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .map_err(|e| std::io::Error::other(e.to_string()))?
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn logged(config: &Config) -> std::result::Result<String, Box<dyn std::error::Error>> {
+        let buffer = LogBuffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            log_config_sources(config, "loaded config");
+        });
+        let bytes = buffer.0.lock().map_err(|e| e.to_string())?.clone();
+        Ok(String::from_utf8(bytes)?)
+    }
+
+    #[test]
+    fn config_log_names_every_source() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let config = Config {
+            sources: vec![
+                actup_core::ConfigSource::User {
+                    path: PathBuf::from("/home/u/.config/actup/config.toml"),
+                },
+                actup_core::ConfigSource::Env {
+                    vars: vec!["ACTUP_POLICY__PIN".to_owned()],
+                },
+            ],
+            ..Config::default()
+        };
+        assert_eq!(
+            logged(&config)?,
+            " INFO loaded config source=user config /home/u/.config/actup/config.toml\n \
+             INFO loaded config source=environment ACTUP_POLICY__PIN\n"
+        );
+        assert_eq!(
+            logged(&Config::default())?,
+            " INFO loaded config from defaults\n"
+        );
         Ok(())
     }
 
@@ -2592,7 +2651,7 @@ mod tests {
         let ConfigState::Loaded(config) = stored else {
             panic!("initialize stored {stored:?}");
         };
-        assert_eq!(config.loaded_from, None);
+        assert_eq!(config.loaded_from(), None);
         assert_eq!(config.policy.bump, actup_core::policy::Update::Latest);
         let watched = backend.watched_configs().await;
         assert_eq!(watched.search_dirs, [std::path::absolute(&root)?]);

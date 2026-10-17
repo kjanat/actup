@@ -167,9 +167,9 @@ pub struct Config {
     /// ```
     pub hosts: HashMap<String, HostConfig>,
 
-    /// Path this config was loaded from (if any)
+    /// Every layer that contributed to this config, lowest precedence first.
     #[serde(skip)]
-    pub loaded_from: Option<PathBuf>,
+    pub sources: Vec<Source>,
 
     /// Rejects the renamed `update_policy` key.
     #[serde(skip_serializing, deserialize_with = "renamed::<_, 0>")]
@@ -205,6 +205,54 @@ pub struct Config {
     #[serde(skip_serializing, deserialize_with = "renamed::<_, 6>")]
     #[schemars(skip)]
     pub actions: Option<Infallible>,
+}
+
+/// One layer that contributed to a loaded [`Config`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Source {
+    /// The user config file.
+    User {
+        /// Path of the file.
+        path: PathBuf,
+    },
+    /// The repo config file found by discovery.
+    Repo {
+        /// Path of the file.
+        path: PathBuf,
+    },
+    /// The file named by `--config`, `ACTUP_CONFIG` or the LSP `configPath`.
+    Explicit {
+        /// Path of the file.
+        path: PathBuf,
+    },
+    /// `ACTUP_*` environment variables that set config keys.
+    Env {
+        /// Variable names, sorted.
+        vars: Vec<String>,
+    },
+}
+
+impl Source {
+    /// Return the file path of a file source.
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::User { path } | Self::Repo { path } | Self::Explicit { path } => Some(path),
+            Self::Env { .. } => None,
+        }
+    }
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::User { path } => write!(f, "user config {}", path.display()),
+            Self::Repo { path } => write!(f, "repo config {}", path.display()),
+            Self::Explicit { path } => write!(f, "explicit config {}", path.display()),
+            Self::Env { vars } => write!(f, "environment {}", vars.join(", ")),
+        }
+    }
 }
 
 /// The `[policy]` table.
@@ -562,7 +610,6 @@ impl Config {
     ///
     /// # Errors
     /// Returns [`Error::InvalidConfig`] if a config file is invalid or `config_path` cannot be read.
-    #[allow(clippy::option_if_let_else)] // Readability: mutating figment in if-let is clearer
     pub fn load(
         config_path: Option<&Path>,
         user_config: Option<&Path>,
@@ -570,27 +617,28 @@ impl Config {
         ceiling: Option<&Path>,
     ) -> Result<Self, Error> {
         let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
+        let mut sources = Vec::new();
 
         if let Some(user_config) = user_config
             && user_config.exists()
         {
             figment = figment.merge(Toml::file(user_config));
+            sources.push(Source::User {
+                path: user_config.to_path_buf(),
+            });
         }
 
-        let loaded_from = if let Some(repo_config) = find_repo_config(start_dir, ceiling) {
+        if let Some(repo_config) = find_repo_config(start_dir, ceiling) {
             figment = Self::merge_config_file(figment, &repo_config)?;
-            Some(repo_config)
-        } else {
-            None
-        };
+            sources.push(Source::Repo { path: repo_config });
+        }
 
-        // Explicit --config path (high precedence)
-        let loaded_from = if let Some(path) = config_path {
+        if let Some(path) = config_path {
             figment = Self::merge_config_file(figment, path)?;
-            Some(path.to_path_buf())
-        } else {
-            loaded_from
-        };
+            sources.push(Source::Explicit {
+                path: path.to_path_buf(),
+            });
+        }
 
         let env = EnvOverrides::from_vars(std::env::vars_os().map(|(name, value)| {
             (
@@ -598,29 +646,47 @@ impl Config {
                 value.to_string_lossy().into_owned(),
             )
         }));
-        Self::extract(&figment.merge(env), loaded_from)
+        Self::extract(figment, sources, env)
     }
 
-    /// Parse one config `file`, given as path and contents, over the defaults and apply `env`.
+    /// Parse one repo config `file`, given as path and contents, over the defaults and apply `env`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidConfig`] for an invalid value.
     pub fn from_contents(file: Option<(&Path, &str)>, env: EnvOverrides) -> Result<Self, Error> {
         let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
+        let mut sources = Vec::new();
         if let Some((path, contents)) = file {
             figment = figment.merge(FileContents::new(path, contents)?);
+            sources.push(Source::Repo {
+                path: path.to_path_buf(),
+            });
         }
-        let loaded_from = file.map(|(path, _)| path.to_path_buf());
-        Self::extract(&figment.merge(env), loaded_from)
+        Self::extract(figment, sources, env)
     }
 
-    fn extract(figment: &Figment, loaded_from: Option<PathBuf>) -> Result<Self, Error> {
+    fn extract(
+        figment: Figment,
+        mut sources: Vec<Source>,
+        env: EnvOverrides,
+    ) -> Result<Self, Error> {
+        let vars = env.names();
+        let figment = figment.merge(env);
         let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
-            path: error_origin(&e, loaded_from.as_deref()),
+            path: error_origin(&e, sources.iter().rev().find_map(Source::path)),
             reason: e.to_string(),
         })?;
-        config.loaded_from = loaded_from;
+        if !vars.is_empty() {
+            sources.push(Source::Env { vars });
+        }
+        config.sources = sources;
         Ok(config)
+    }
+
+    /// Return the highest-precedence config file in [`Config::sources`].
+    #[must_use]
+    pub fn loaded_from(&self) -> Option<&Path> {
+        self.sources.iter().rev().find_map(Source::path)
     }
 
     /// Merge a config file into figment based on extension
@@ -747,7 +813,7 @@ mod tests {
         assert_eq!(config.scan.ignore, Vec::<ActionPattern>::new());
         assert_eq!(config.scan.extra_paths, Vec::<ExtraPath>::new());
         assert_eq!(config.overrides, Vec::<Override>::new());
-        assert!(config.loaded_from.is_none());
+        assert!(config.loaded_from().is_none());
         assert!(config.default_host.is_none());
         assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
         assert_eq!(config.fetch.max_tags_per_repo.get(), 10);
@@ -1566,7 +1632,7 @@ mod tests {
                 Config::from_contents(Some((Path::new(name), contents)), EnvOverrides::default())?;
             assert_eq!(config.policy.bump, policy::Update::Minor, "{name}");
             assert_eq!(config.policy.pin, Policy::default().pin, "{name}");
-            assert_eq!(config.loaded_from.as_deref(), Some(Path::new(name)));
+            assert_eq!(config.loaded_from(), Some(Path::new(name)));
         }
         Ok(())
     }
@@ -1636,8 +1702,72 @@ mod tests {
         )?;
         assert_eq!(config.policy.bump, policy::Update::Patch);
         assert_eq!(config.policy.pin, policy::Style::Sha);
-        assert_eq!(config.loaded_from.as_deref(), Some(Path::new("actup.toml")));
+        assert_eq!(config.loaded_from(), Some(Path::new("actup.toml")));
         Ok(())
+    }
+
+    #[test]
+    fn test_from_contents_records_the_file_and_env_sources() -> Result<(), Error> {
+        let env = || {
+            EnvOverrides::from_vars([
+                ("ACTUP_POLICY__PIN", "sha"),
+                (" actup_cache__ttl ", "60"),
+                ("ACTUP_VERBOSE", "1"),
+                ("GITHUB_TOKEN", "t"),
+            ])
+        };
+        let vars = vec![
+            "ACTUP_POLICY__PIN".to_owned(),
+            "actup_cache__ttl".to_owned(),
+        ];
+
+        let config = Config::from_contents(None, env())?;
+        assert_eq!(config.sources, [Source::Env { vars: vars.clone() }]);
+        assert_eq!(config.loaded_from(), None);
+
+        let config = Config::from_contents(Some((Path::new("actup.toml"), "")), env())?;
+        assert_eq!(
+            config.sources,
+            [
+                Source::Repo {
+                    path: "actup.toml".into()
+                },
+                Source::Env { vars },
+            ]
+        );
+        assert_eq!(config.loaded_from(), Some(Path::new("actup.toml")));
+
+        let config = Config::from_contents(None, EnvOverrides::default())?;
+        assert_eq!(config.sources, []);
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_source_display_and_path() {
+        let path = PathBuf::from("/x/actup.toml");
+        let cases = [
+            (
+                Source::User { path: path.clone() },
+                "user config /x/actup.toml",
+            ),
+            (
+                Source::Repo { path: path.clone() },
+                "repo config /x/actup.toml",
+            ),
+            (
+                Source::Explicit { path: path.clone() },
+                "explicit config /x/actup.toml",
+            ),
+        ];
+        for (source, text) in cases {
+            assert_eq!(source.to_string(), text);
+            assert_eq!(source.path(), Some(path.as_path()));
+        }
+        let env = Source::Env {
+            vars: vec!["ACTUP_A".into(), "ACTUP_B".into()],
+        };
+        assert_eq!(env.to_string(), "environment ACTUP_A, ACTUP_B");
+        assert_eq!(env.path(), None);
     }
 
     #[test]
@@ -1648,7 +1778,7 @@ mod tests {
         )?;
         assert_eq!(config.policy.branch, policy::Branch::Warn);
         assert_eq!(config.policy.bump, Policy::default().bump);
-        assert!(config.loaded_from.is_none());
+        assert!(config.loaded_from().is_none());
         Ok(())
     }
 

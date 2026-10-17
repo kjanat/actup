@@ -176,7 +176,8 @@ mod config_tests {
     use std::{fs, path::PathBuf};
 
     use actup_core::{
-        ActionRef, Config, find_repo_config, iter_config_candidates, parse_uses, repo_search_dirs,
+        ActionRef, Config, ConfigSource, find_repo_config, iter_config_candidates, parse_uses,
+        repo_search_dirs,
     };
     use tempfile::TempDir;
 
@@ -271,7 +272,7 @@ mod config_tests {
             assert_eq!(repo_search_dirs(&sub, None), [sub.clone(), repo.clone()]);
             assert_eq!(find_repo_config(&sub, None), None);
             let config = Config::load(None, None, &sub, None)?;
-            assert_eq!(config.loaded_from, None);
+            assert_eq!(config.loaded_from(), None);
             assert_eq!(config.policy.bump.to_string(), "latest");
 
             let repo_config = repo.join(".config/actup.toml");
@@ -279,7 +280,7 @@ mod config_tests {
             fs::write(&repo_config, "[policy]\nbump = \"minor\"\n")?;
             assert_eq!(find_repo_config(&sub, None), Some(repo_config.clone()));
             let config = Config::load(None, None, &sub, None)?;
-            assert_eq!(config.loaded_from, Some(repo_config));
+            assert_eq!(config.loaded_from(), Some(repo_config.as_path()));
             assert_eq!(config.policy.bump.to_string(), "minor");
         }
         Ok(())
@@ -311,7 +312,7 @@ mod config_tests {
         assert_eq!(repo_search_dirs(&sub, Some(&sub)), [sub.as_path()]);
         assert_eq!(find_repo_config(&sub, Some(&repo)), None);
         assert_eq!(
-            Config::load(None, None, &sub, Some(&repo))?.loaded_from,
+            Config::load(None, None, &sub, Some(&repo))?.loaded_from(),
             None
         );
         Ok(())
@@ -324,6 +325,56 @@ mod config_tests {
         assert_eq!(
             repo_search_dirs(std::path::Path::new(""), None),
             [PathBuf::new()]
+        );
+        Ok(())
+    }
+
+    fn file_sources(config: &Config) -> Vec<ConfigSource> {
+        config
+            .sources
+            .iter()
+            .filter(|source| source.path().is_some())
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn test_config_load_records_file_sources_in_precedence_order()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let repo = temp.path().join("repo");
+        fs::create_dir_all(repo.join(".git"))?;
+        let user = temp.path().join("user.toml");
+        let repo_config = repo.join("actup.toml");
+        fs::write(&user, "[policy]\nbump = \"patch\"\n")?;
+
+        let config = Config::load(None, Some(&user), &repo, None)?;
+        assert_eq!(
+            file_sources(&config),
+            [ConfigSource::User { path: user.clone() }]
+        );
+        assert_eq!(config.loaded_from(), Some(user.as_path()));
+        assert_eq!(config.policy.bump.to_string(), "patch");
+
+        fs::write(&repo_config, "[policy]\npin = \"sha\"\n")?;
+        let config = Config::load(None, Some(&user), &repo, None)?;
+        assert_eq!(
+            file_sources(&config),
+            [
+                ConfigSource::User { path: user },
+                ConfigSource::Repo {
+                    path: repo_config.clone()
+                },
+            ]
+        );
+        assert_eq!(config.loaded_from(), Some(repo_config.as_path()));
+        assert_eq!(config.policy.bump.to_string(), "patch");
+        assert_eq!(config.policy.pin.to_string(), "sha");
+
+        let config = Config::load(None, None, &repo, None)?;
+        assert_eq!(
+            file_sources(&config),
+            [ConfigSource::Repo { path: repo_config }]
         );
         Ok(())
     }
@@ -458,7 +509,7 @@ policy  = { bump = "patch" }
             temp.path(),
             None,
         )?;
-        assert_eq!(config.loaded_from, Some(repo_config));
+        assert_eq!(config.loaded_from(), Some(repo_config.as_path()));
         assert!(!config.cache.enabled);
         Ok(())
     }
@@ -1215,6 +1266,117 @@ mod cli_runs {
         Ok(())
     }
 
+    struct Layers {
+        home: TempDir,
+        repo: TempDir,
+        user: std::path::PathBuf,
+        repo_config: std::path::PathBuf,
+        explicit: std::path::PathBuf,
+    }
+
+    fn layers() -> Result<Layers, Box<dyn std::error::Error>> {
+        let home = TempDir::new()?;
+        let repo = TempDir::new()?;
+        fs::create_dir(repo.path().join(".git"))?;
+        let user = home.path().join("actup").join("config.toml");
+        fs::create_dir_all(home.path().join("actup"))?;
+        fs::write(&user, "[policy]\nbump = \"patch\"\n")?;
+        let repo_config = repo.path().join("actup.toml");
+        fs::write(&repo_config, "[policy]\npin = \"sha\"\n")?;
+        let explicit = home.path().join("explicit.toml");
+        fs::write(&explicit, "[policy]\ntrack = \"exact\"\n")?;
+        Ok(Layers {
+            home,
+            repo,
+            user,
+            repo_config,
+            explicit,
+        })
+    }
+
+    fn file_source(kind: &str, path: &Path) -> serde_json::Value {
+        serde_json::json!({ "kind": kind, "path": path.display().to_string() })
+    }
+
+    #[test]
+    fn config_lists_every_source_in_precedence_order() -> Result<(), Box<dyn std::error::Error>> {
+        let l = layers()?;
+        let run = |format: &str| {
+            actup(l.home.path())
+                .env("ACTUP_CACHE__TTL", "60")
+                .arg("--config")
+                .arg(&l.explicit)
+                .args(["config", "--format", format])
+                .arg(l.repo.path())
+                .output()
+        };
+        let expected = serde_json::json!([
+            file_source("user", &l.user),
+            file_source("repo", &l.repo_config),
+            file_source("explicit", &l.explicit),
+            { "kind": "env", "vars": ["ACTUP_CACHE__TTL"] },
+        ]);
+
+        let json = run("json")?;
+        assert_eq!(json.status.code(), Some(0));
+        let report: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+        assert_eq!(report["sources"], expected);
+        assert_eq!(report["policy"]["bump"], "patch");
+        assert_eq!(report["policy"]["pin"], "sha");
+        assert_eq!(report["policy"]["track"], "exact");
+        assert_eq!(report["cache"]["ttl"], 60);
+        let stderr = String::from_utf8(json.stderr)?;
+        for source in [
+            format!("user config {}", l.user.display()),
+            format!("repo config {}", l.repo_config.display()),
+            format!("explicit config {}", l.explicit.display()),
+            "environment ACTUP_CACHE__TTL".to_owned(),
+        ] {
+            assert!(stderr.contains(&source), "stderr: {stderr}");
+        }
+
+        let toml_out = run("toml")?;
+        assert_eq!(toml_out.status.code(), Some(0));
+        let report: toml::Value = toml::from_str(&String::from_utf8(toml_out.stdout)?)?;
+        assert_eq!(serde_json::to_value(&report["sources"])?, expected);
+
+        let human = run("human")?;
+        assert_eq!(human.status.code(), Some(0));
+        let stdout = String::from_utf8(human.stdout)?;
+        let listed = format!(
+            "  - user config {}\n  - repo config {}\n  - explicit config {}\n  - environment ACTUP_CACHE__TTL\n",
+            l.user.display(),
+            l.repo_config.display(),
+            l.explicit.display()
+        );
+        assert!(stdout.contains(&listed), "stdout: {stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn config_names_the_user_config_when_it_is_the_only_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let l = layers()?;
+        fs::remove_file(&l.repo_config)?;
+        let output = actup(l.home.path())
+            .arg("config")
+            .arg(l.repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0));
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(
+            stdout.contains(&format!("  - user config {}\n", l.user.display())),
+            "stdout: {stdout}"
+        );
+        assert!(!stdout.contains("Using defaults"), "stdout: {stdout}");
+        assert!(
+            stdout.contains("  bump:        patch\n"),
+            "stdout: {stdout}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn config_human_shows_track_and_overrides() -> Result<(), Box<dyn std::error::Error>> {
         let repo = TempDir::new()?;
@@ -1336,8 +1498,9 @@ mod cli_runs {
                 stdout.contains("  pin:         sha\n"),
                 "{args:?}: {stdout}"
             );
+            assert!(stdout.contains("  - repo config "), "{args:?}: {stdout}");
             assert!(
-                stdout.contains("  Loaded from: x.toml\n"),
+                stdout.contains("  - explicit config x.toml\n"),
                 "{args:?}: {stdout}"
             );
         }

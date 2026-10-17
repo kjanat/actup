@@ -26,6 +26,7 @@ pub const CLI_FLAG_VARS: [&str; 4] = [CONFIG_VAR, VERBOSE_VAR, FORMAT_VAR, STRIC
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvOverrides {
     keys: Vec<(Key, String)>,
+    names: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,13 +42,23 @@ impl EnvOverrides {
         K: AsRef<str>,
         V: AsRef<str>,
     {
-        let keys = vars
-            .into_iter()
-            .filter_map(|(name, value)| {
-                config_key(name.as_ref()).map(|key| (key, value.as_ref().to_owned()))
-            })
-            .collect();
-        Self { keys }
+        let mut keys = Vec::new();
+        let mut names = Vec::new();
+        for (name, value) in vars {
+            if let Some(key) = config_key(name.as_ref()) {
+                keys.push((key, value.as_ref().to_owned()));
+                names.push(name.as_ref().trim().to_owned());
+            }
+        }
+        names.sort();
+        names.dedup();
+        Self { keys, names }
+    }
+
+    /// Return the names of the variables that set a config key, sorted.
+    #[must_use]
+    pub fn names(&self) -> Vec<String> {
+        self.names.clone()
     }
 }
 

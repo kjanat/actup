@@ -7,7 +7,7 @@ mod provider;
 use std::{collections::HashMap, env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
-    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, UsesLocation,
+    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, ConfigSource, UsesLocation,
     config::{EnvOverrides, repo_candidates},
     extract_uses_from_yaml,
 };
@@ -351,10 +351,24 @@ fn slash_output(text: String, label: &str) -> SlashCommandOutput {
 }
 
 fn config_note(config: &Config) -> String {
-    let source = config.loaded_from.as_deref().map_or_else(
-        || "defaults".to_string(),
-        |path| format!("`{}`", path.display()),
-    );
+    let source = if config.sources.is_empty() {
+        "defaults".to_string()
+    } else {
+        config
+            .sources
+            .iter()
+            .map(|source| match source {
+                ConfigSource::Env { vars } => {
+                    let vars: Vec<String> = vars.iter().map(|var| format!("`{var}`")).collect();
+                    format!("environment {}", vars.join(", "))
+                }
+                ConfigSource::User { path }
+                | ConfigSource::Repo { path }
+                | ConfigSource::Explicit { path } => format!("`{}`", path.display()),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
     format!("Config: {source}. Parent-directory configs and the user config are not applied.\n\n")
 }
 
@@ -716,10 +730,7 @@ mod tests {
         let requested = RefCell::new(Vec::new());
         let config = read_config(read_from(&files, &requested), &[])?;
         assert_eq!(config.policy.bump, policy::Update::Minor);
-        assert_eq!(
-            config.loaded_from.as_deref(),
-            Some(Path::new(".github/actup.yaml"))
-        );
+        assert_eq!(config.loaded_from(), Some(Path::new(".github/actup.yaml")));
         Ok(())
     }
 
@@ -741,7 +752,7 @@ mod tests {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
         let config = read_config(read_from(&files, &requested), &[])?;
-        assert!(config.loaded_from.is_none());
+        assert!(config.loaded_from().is_none());
         let requested: Vec<PathBuf> = requested.borrow().iter().map(PathBuf::from).collect();
         let core: Vec<PathBuf> = iter_config_candidates(Path::new("")).collect();
         assert_eq!(requested, core);
@@ -763,7 +774,7 @@ mod tests {
         let config = read_config(read_from(&files, &requested), &env)?;
         assert_eq!(config.policy.bump, policy::Update::Patch);
         assert_eq!(config.policy.pin, policy::Style::Sha);
-        assert_eq!(config.loaded_from.as_deref(), Some(Path::new("actup.toml")));
+        assert_eq!(config.loaded_from(), Some(Path::new("actup.toml")));
         Ok(())
     }
 
@@ -774,7 +785,7 @@ mod tests {
         let env = shell_env(&[("actup_policy__branch", "warn")]);
         let config = read_config(read_from(&files, &requested), &env)?;
         assert_eq!(config.policy.branch, policy::Branch::Warn);
-        assert!(config.loaded_from.is_none());
+        assert!(config.loaded_from().is_none());
         Ok(())
     }
 
@@ -797,9 +808,26 @@ mod tests {
 
     fn loaded(path: &str) -> Config {
         Config {
-            loaded_from: Some(PathBuf::from(path)),
+            sources: vec![ConfigSource::Repo {
+                path: PathBuf::from(path),
+            }],
             ..Config::default()
         }
+    }
+
+    #[test]
+    fn config_note_names_the_file_and_environment() -> Result<(), String> {
+        let files = HashMap::from([("actup.toml", "[policy]\nbump = \"minor\"\n")]);
+        let requested = RefCell::new(Vec::new());
+        let env = shell_env(&[("ACTUP_POLICY__PIN", "sha"), ("ACTUP_CACHE__TTL", "60")]);
+        let config = read_config(read_from(&files, &requested), &env)?;
+        assert_eq!(
+            config_note(&config),
+            format!(
+                "Config: `actup.toml`, environment `ACTUP_CACHE__TTL`, `ACTUP_POLICY__PIN`. {SCOPE}\n\n"
+            )
+        );
+        Ok(())
     }
 
     #[test]
