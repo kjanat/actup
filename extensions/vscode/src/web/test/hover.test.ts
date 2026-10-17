@@ -138,6 +138,16 @@ describe("hover range", () => {
 		expect(rows(second)).toEqual(expect.arrayContaining(["**actions/setup-node**", "$(check) Up to date at `v1.2.0`"]));
 	});
 
+	test("shows nothing for a local action or a docker image", async () => {
+		const document = new FakeDocument(
+			"hover-unparsed.yml",
+			"jobs:\n  build:\n    steps:\n      - uses: ./local/action\n      - uses: docker://alpine:3\n",
+		);
+
+		expect(await hoverAt(document, 3, 16)).toBeUndefined();
+		expect(await hoverAt(document, 4, 16)).toBeUndefined();
+	});
+
 	test("shows nothing when the cursor is outside every value on the line", async () => {
 		const line = "    steps: [{ uses: actions/checkout@v1.0.0 }, { uses: actions/setup-node@v1.2.0 }]";
 		const document = new FakeDocument("hover-between.yml", `jobs:\n  build:\n${line}\n`);
