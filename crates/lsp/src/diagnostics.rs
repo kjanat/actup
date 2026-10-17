@@ -1998,12 +1998,13 @@ jobs:
     }
 
     #[test]
-    fn uri_format_reads_the_path_extension() {
-        let format = |uri: &str| uri_format(&uri.parse::<Uri>().unwrap());
-        assert_eq!(format("file:///repo/ci.yml"), SourceFormat::Yaml);
-        assert_eq!(format("file:///repo/README.md"), SourceFormat::Markdown);
-        assert_eq!(format("file:///repo/main.tf"), SourceFormat::Text);
-        assert_eq!(format("untitled:Untitled-1"), SourceFormat::Yaml);
+    fn uri_format_reads_the_path_extension() -> Result<(), Box<dyn std::error::Error>> {
+        let format = |uri: &str| uri.parse::<Uri>().map(|uri| uri_format(&uri));
+        assert_eq!(format("file:///repo/ci.yml")?, SourceFormat::Yaml);
+        assert_eq!(format("file:///repo/README.md")?, SourceFormat::Markdown);
+        assert_eq!(format("file:///repo/main.tf")?, SourceFormat::Text);
+        assert_eq!(format("untitled:Untitled-1")?, SourceFormat::Yaml);
+        Ok(())
     }
 
     #[tokio::test]

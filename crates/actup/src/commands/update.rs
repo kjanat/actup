@@ -673,7 +673,7 @@ mod tests {
         let readme = dir.path().join("README.md");
         let script = dir.path().join("playground/index.ts");
         let md = "# Usage\n\n```yaml\nsteps:\n  - uses: o/p@OLD\n  - uses: actions/checkout@v4.0.0\n```\n\nProse uses: o/q@v4.0.0\n";
-        let ts = "const workflow = `\n  - uses: o/p@OLD # v4.0.0\n  - uses: actions/checkout@v4.0.0\n`;\nexport const step = { uses: \"o/r@v4.0.0\" };\n";
+        let ts = "const workflow = `\n  - uses: o/p@OLD # v4.0.0\n  - uses: actions/checkout@v4.0.0\n`;\nexport const step = { uses: \"o/r@v4.0.0\" };\nprint(\"- uses: o/p@OLD # v4.0.0\\n\");\n";
         std::fs::write(&readme, md.replace("OLD", &sha40('a')))?;
         std::fs::write(&script, ts.replace("OLD", &sha40('a')))?;
         let mut config = uncached();
@@ -682,7 +682,7 @@ mod tests {
 
         let md_expected = "# Usage\n\n```yaml\nsteps:\n  - uses: o/p@NEW # v4.2.0\n  - uses: actions/checkout@v4.2.0\n```\n\nProse uses: o/q@v4.0.0\n"
             .replace("NEW", &sha40('b'));
-        let ts_expected = "const workflow = `\n  - uses: o/p@NEW # v4.0.0\n  - uses: actions/checkout@v4.2.0\n`;\nexport const step = { uses: \"o/r@v4.2.0\" };\n"
+        let ts_expected = "const workflow = `\n  - uses: o/p@NEW # v4.0.0\n  - uses: actions/checkout@v4.2.0\n`;\nexport const step = { uses: \"o/r@v4.2.0\" };\nprint(\"- uses: o/p@NEW # v4.0.0\\n\");\n"
             .replace("NEW", &sha40('b'));
         for _ in 0..2 {
             let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;

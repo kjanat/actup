@@ -1529,6 +1529,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pin_and_unpin_keep_code_after_a_comment_in_plain_text()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let file = dir.path().join("gen.py");
+        let line = |a: &str, g: &str| {
+            format!(
+                "f.write(\"  - uses: o/a@{a} # v4.1.0\\n\")\nf.write(\"  - uses: o/g@{g} # v4.0.0\\n\")\n"
+            )
+        };
+        std::fs::write(&file, line(&sha('a'), "v4"))?;
+        let pinned = line(&sha('b'), &sha('a'));
+        let repinned = line(&sha('b'), &sha('b'));
+        let registry = unpin_registry()?;
+        let config = Config::default();
+
+        for (mode, expected) in [
+            (Mode::Pin, &pinned),
+            (Mode::Pin, &repinned),
+            (Mode::Unpin, &repinned),
+        ] {
+            let code = run(&file, mode, false, OutputFormat::Json, &config, &registry).await;
+            assert_eq!(code, i32::from(CliExitCode::Success), "{mode:?}");
+            assert_eq!(&std::fs::read_to_string(&file)?, expected, "{mode:?}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_unpin_dry_run_reports_without_writing() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = tempfile::tempdir()?;

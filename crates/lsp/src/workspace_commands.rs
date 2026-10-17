@@ -1348,21 +1348,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scan_files_edits_markdown_and_text_extra_paths() {
-        let temp = tempfile::TempDir::new().unwrap();
-        std::fs::create_dir_all(temp.path().join("playground")).unwrap();
+    async fn scan_files_edits_markdown_and_text_extra_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::TempDir::new()?;
+        std::fs::create_dir_all(temp.path().join("playground"))?;
         let readme = temp.path().join("README.md");
         let script = temp.path().join("playground/index.ts");
         std::fs::write(
             &readme,
             "# Usage\n\n```yaml\n- uses: actions/checkout@v3\n```\nuses: actions/checkout@v3\n",
-        )
-        .unwrap();
+        )?;
         std::fs::write(
             &script,
             "export const step = { uses: \"actions/checkout@v3\" };\n",
-        )
-        .unwrap();
+        )?;
 
         let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
@@ -1371,10 +1370,7 @@ mod tests {
         let cache = FileCache::disabled();
         let documents = DashMap::new();
         let cancelled = Cancelled::new();
-        let extra = [
-            "README.md".parse().unwrap(),
-            "playground/*.ts".parse().unwrap(),
-        ];
+        let extra = ["README.md".parse()?, "playground/*.ts".parse()?];
         let discovered = discover_files(temp.path(), &extra);
 
         let config = Config::default();
@@ -1392,9 +1388,12 @@ mod tests {
 
         assert_eq!(result.files_changed, 2);
         assert_eq!(result.refs_updated, 2);
-        let changes = result.edit.changes.unwrap();
-        let lines = |path: &std::path::Path| -> Vec<(u32, u32, String)> {
-            changes[&Uri::from_file_path(path).unwrap()]
+        let changes = result.edit.changes.ok_or("no changes")?;
+        let lines = |path: &std::path::Path| -> Result<Vec<(u32, u32, String)>, &str> {
+            let uri = Uri::from_file_path(path).ok_or("bad file uri")?;
+            Ok(changes
+                .get(&uri)
+                .ok_or("no edits for the file")?
                 .iter()
                 .map(|e| {
                     (
@@ -1403,14 +1402,13 @@ mod tests {
                         e.new_text.clone(),
                     )
                 })
-                .collect()
+                .collect())
         };
-        let readme_edits = lines(&readme);
-        let script_edits = lines(&script);
-        assert_eq!(readme_edits.len(), 1);
-        assert_eq!(script_edits.len(), 1);
-        assert_eq!((readme_edits[0].0, readme_edits[0].1), (3, 25));
-        assert_eq!((script_edits[0].0, script_edits[0].1), (0, 46));
-        assert_eq!(readme_edits[0].2, script_edits[0].2);
+        let [readme_edit] = lines(&readme)?.try_into().map_err(|_| "one README edit")?;
+        let [script_edit] = lines(&script)?.try_into().map_err(|_| "one script edit")?;
+        assert_eq!((readme_edit.0, readme_edit.1), (3, 25));
+        assert_eq!((script_edit.0, script_edit.1), (0, 46));
+        assert_eq!(readme_edit.2, script_edit.2);
+        Ok(())
     }
 }
