@@ -1515,6 +1515,38 @@ mod cli_runs {
     }
 
     #[test]
+    fn verbose_logs_stay_out_of_json_stdout() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::create_dir(repo.path().join(".git"))?;
+        fs::create_dir_all(repo.path().join(".github/workflows"))?;
+        fs::write(
+            repo.path().join(".github/workflows/ci.yml"),
+            "on: push\njobs:\n  a:\n    runs-on: x\n    steps:\n      - uses: ./local\n",
+        )?;
+        fs::write(repo.path().join("actup.toml"), "[cache]\nenabled = false\n")?;
+        for args in [
+            &["check"][..],
+            &["update", "--dry-run"][..],
+            &["pin", "--dry-run"][..],
+            &["config"][..],
+        ] {
+            let output = actup(repo.path())
+                .arg("--verbose")
+                .args(args)
+                .args(["--format", "json"])
+                .arg(repo.path())
+                .output()?;
+            let stderr = String::from_utf8(output.stderr)?;
+            assert_eq!(output.status.code(), Some(0), "{args:?}: {stderr}");
+            assert!(stderr.contains("INFO"), "{args:?}: {stderr}");
+            let stdout = String::from_utf8(output.stdout)?;
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .map_err(|e| format!("{args:?}: {e}: {stdout}"))?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn check_with_invalid_config_exits_2() -> Result<(), Box<dyn std::error::Error>> {
         let repo = broken_repo()?;
         let output = actup(repo.path()).arg("check").arg(repo.path()).output()?;

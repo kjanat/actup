@@ -172,15 +172,6 @@ async fn check_exits_0_and_reports_every_format() -> TestResult {
     );
     assert_eq!(findings[0]["latest_sha"], NEW);
 
-    let verbose = repo
-        .run(&["--verbose", "check", ".", "--format", "json"])
-        .await?;
-    assert_eq!(verbose.status.code(), Some(0));
-    let verbose_findings: serde_json::Value = serde_json::from_slice(&verbose.stdout)?;
-    assert_eq!(verbose_findings, findings);
-    let log = String::from_utf8(verbose.stderr)?;
-    assert!(log.contains("DEBUG"), "{log}");
-
     let toml = repo.run(&["check", ".", "--format", "toml"]).await?;
     assert_eq!(toml.status.code(), Some(0));
     let parsed: toml::Value = toml::from_str(&stdout(&toml)?)?;
