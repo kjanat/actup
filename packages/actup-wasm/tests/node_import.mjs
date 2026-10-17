@@ -856,4 +856,28 @@ assert.equal(
 
 console.log("PASS: label comments follow the fetched refs");
 
+// Test 24: `policy.branch = "update"` pins a branch ref to the commit its fetched branch names.
+const updateBranchYaml =
+	"jobs:\n  build:\n    steps:\n      - uses: actions/checkout@main\n      - uses: actions/checkout@main # main keep\n";
+const ignoredResults = await checkRefs(updateBranchYaml, branchProvider);
+assert.deepEqual(
+	ignoredResults.map((r) => r.status),
+	["UpToDate", "UpToDate"],
+	"the default branch policy ignores a branch ref",
+);
+assert.deepEqual(planUpdates(ignoredResults), [], "an ignored branch ref gets no edit");
+const updateBranchResults = await checkRefs(updateBranchYaml, branchProvider, { policy: { branch: "update" } });
+assert.deepEqual(
+	updateBranchResults.map((r) => r.status),
+	[{ PinBranch: { ref_name: "main", sha: branchSha } }, { PinBranch: { ref_name: "main", sha: branchSha } }],
+	"policy.branch = update reaches core",
+);
+assert.equal(
+	applyEdits(updateBranchYaml, planUpdates(updateBranchResults)),
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@${branchSha} # main\n      - uses: actions/checkout@${branchSha} # main keep\n`,
+	"planUpdates pins the branch with its name as the label",
+);
+
+console.log("PASS: policy.branch = update pins branch refs");
+
 console.log("\nAll npm package integration tests PASSED");
