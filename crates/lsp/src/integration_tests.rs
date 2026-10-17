@@ -26,22 +26,27 @@ use tower_lsp_server::{
         ClientCapabilities, CodeActionContext, CodeActionKind, CodeActionOrCommand,
         CodeActionParams, CompletionContext, CompletionParams, CompletionTriggerKind,
         DidChangeTextDocumentParams, DidChangeWatchedFilesClientCapabilities,
-        DidChangeWatchedFilesParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-        DocumentChanges, ExecuteCommandParams, FileChangeType, FileEvent, HoverParams,
-        InitializeParams, InitializeResult, InitializedParams, MessageType, OneOf,
-        PartialResultParams, Position, PublishDiagnosticsParams, Range, ShowMessageParams,
+        DidChangeWatchedFilesParams, DidChangeWorkspaceFoldersParams, DidCloseTextDocumentParams,
+        DidOpenTextDocumentParams, DocumentChanges, ExecuteCommandParams, FileChangeType,
+        FileEvent, HoverParams, InitializeParams, InitializeResult, InitializedParams, MessageType,
+        OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range, ShowMessageParams,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
         TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
         WorkDoneProgressParams, WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
-        WorkspaceFolder,
+        WorkspaceFolder, WorkspaceFoldersChangeEvent,
     },
 };
 
 use crate::{backend::LspBackend, diagnostics::DIAGNOSTIC_SOURCE, test_utils};
 
-fn initialize_request(id: i64, workspace_root: Option<&str>) -> Request {
+fn initialize_request(
+    id: i64,
+    workspace_root: Option<&str>,
+    options: Option<serde_json::Value>,
+) -> Request {
     #[allow(deprecated)]
     let params = InitializeParams {
+        initialization_options: options,
         workspace_folders: workspace_root.map(|root| {
             vec![WorkspaceFolder {
                 uri: Uri::from_file_path(root).unwrap(),
@@ -52,7 +57,7 @@ fn initialize_request(id: i64, workspace_root: Option<&str>) -> Request {
             workspace: Some(WorkspaceClientCapabilities {
                 did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
                     dynamic_registration: Some(true),
-                    ..Default::default()
+                    relative_pattern_support: Some(true),
                 }),
                 workspace_edit: Some(WorkspaceEditClientCapabilities {
                     document_changes: Some(true),
@@ -198,6 +203,7 @@ fn execute_command_request(id: i64, command: &str, args: Vec<serde_json::Value>)
 struct CollectedMessages {
     diagnostics: Vec<PublishDiagnosticsParams>,
     messages: Vec<ShowMessageParams>,
+    requests: Vec<(String, serde_json::Value)>,
 }
 
 /// Integration test harness.
@@ -226,7 +232,12 @@ impl TestHarness {
     // can cause live network calls during didOpen → diagnostics. Refactor to
     // inject a mock provider registry or clear auth env vars before construction.
     fn new() -> Self {
-        let (service, socket) = LspService::new(LspBackend::new);
+        Self::with_user_config(None)
+    }
+
+    fn with_user_config(user_config: Option<std::path::PathBuf>) -> Self {
+        let (service, socket) =
+            LspService::new(move |client| LspBackend::with_user_config(client, user_config));
         let collected = Arc::new(Mutex::new(CollectedMessages::default()));
         let collected_clone = Arc::clone(&collected);
 
@@ -251,7 +262,17 @@ impl TestHarness {
     }
 
     async fn initialize(&mut self, workspace_root: Option<&str>) -> InitializeResult {
-        let resp = self.request(initialize_request(1, workspace_root)).await;
+        self.initialize_with(workspace_root, None).await
+    }
+
+    async fn initialize_with(
+        &mut self,
+        workspace_root: Option<&str>,
+        options: Option<serde_json::Value>,
+    ) -> InitializeResult {
+        let resp = self
+            .request(initialize_request(1, workspace_root, options))
+            .await;
         let resp = resp.expect("initialize should return a response");
         let (_, body) = resp.into_parts();
         let value = body.unwrap();
@@ -342,6 +363,12 @@ async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMe
         if let Some(id_val) = parsed.get("id")
             && let Ok(id) = serde_json::from_value::<Id>(id_val.clone())
         {
+            let params = parsed.get("params").cloned().unwrap_or_default();
+            collected
+                .lock()
+                .await
+                .requests
+                .push((method.to_owned(), params));
             let resp = Response::from_ok(id, json!(null));
             if socket.send(resp).await.is_err() {
                 break;
@@ -817,6 +844,295 @@ async fn config_reload_rejects_renamed_key() -> Result<(), Box<dyn std::error::E
         })
         .await;
     assert!(shown, "expected an error showMessage naming the new key");
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+const UNRESOLVED_WORKFLOW: &str =
+    "jobs:\n  build:\n    steps:\n      - uses: gitlab.com/owner/repo@v1\n";
+
+impl TestHarness {
+    async fn error_shown(&self, needle: &str) -> bool {
+        self.wait_until(Duration::from_secs(2), |c| {
+            c.messages
+                .iter()
+                .any(|m| m.typ == MessageType::ERROR && m.message.contains(needle))
+        })
+        .await
+    }
+
+    async fn diagnostics_published(&self, uri: &Uri) -> bool {
+        self.wait_until(Duration::from_secs(5), |c| {
+            c.diagnostics
+                .iter()
+                .any(|d| d.uri == *uri && !d.diagnostics.is_empty())
+        })
+        .await
+    }
+
+    async fn assert_paused(&self, uri: &Uri) {
+        let paused = self.wait_for_diagnostics(uri, Duration::from_secs(2)).await;
+        assert_ne!(
+            paused,
+            [],
+            "expected an empty publish for the open document"
+        );
+        assert!(
+            paused.iter().all(|d| d.diagnostics.is_empty()),
+            "invalid config must suppress diagnostics: {paused:?}"
+        );
+    }
+
+    async fn notify_changed(
+        &mut self,
+        file: &std::path::Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path(file).ok_or("bad config uri")?;
+        self.notify(did_change_watched_files_notification(&uri))
+            .await;
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn invalid_github_yaml_config_reloads_on_change() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    std::fs::create_dir(temp.path().join(".github"))?;
+    let config_file = temp.path().join(".github/actup.yaml");
+    std::fs::write(&config_file, "policy:\n  bump: sideways\n")?;
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness.initialize(Some(root)).await;
+    assert!(
+        harness
+            .error_shown(&config_file.display().to_string())
+            .await,
+        "expected an error showMessage naming .github/actup.yaml"
+    );
+
+    let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+    harness
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
+        .await;
+    harness.assert_paused(&uri).await;
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&config_file, "cache:\n  enabled: false\n")?;
+    harness.notify_changed(&config_file).await?;
+    assert!(
+        harness.diagnostics_published(&uri).await,
+        "diagnostics must resume after .github/actup.yaml parses"
+    );
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_user_config_reloads_on_change() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    std::fs::write(repo.join("actup.toml"), "[cache]\nenabled = false\n")?;
+    let user = temp.path().join("config.toml");
+    std::fs::write(&user, "[policy\n")?;
+    let root = repo.to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::with_user_config(Some(user.clone()));
+    harness.initialize(Some(root)).await;
+    assert!(
+        harness.error_shown(&user.display().to_string()).await,
+        "expected an error showMessage naming the user config"
+    );
+
+    let uri = Uri::from_file_path(repo.join("ci.yml")).ok_or("bad file uri")?;
+    harness
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
+        .await;
+    harness.assert_paused(&uri).await;
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&user, "[cache]\nenabled = false\n")?;
+    harness.notify_changed(&user).await?;
+    assert!(
+        harness.diagnostics_published(&uri).await,
+        "diagnostics must resume after the user config parses"
+    );
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn invalid_config_path_beside_valid_repo_config_is_invalid()
+-> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo)?;
+    std::fs::write(repo.join("actup.toml"), "[cache]\nenabled = false\n")?;
+    let explicit = temp.path().join("custom.toml");
+    std::fs::write(&explicit, "[policy]\nbump = \"sideways\"\n")?;
+    let root = repo.to_str().ok_or("temp path is not UTF-8")?;
+    let explicit_str = explicit.to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness
+        .initialize_with(Some(root), Some(json!({ "configPath": explicit_str })))
+        .await;
+    assert!(
+        harness.error_shown(explicit_str).await,
+        "expected an error showMessage naming configPath"
+    );
+
+    let uri = Uri::from_file_path(repo.join("ci.yml")).ok_or("bad file uri")?;
+    harness
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
+        .await;
+    harness.assert_paused(&uri).await;
+
+    harness.clear_diagnostics().await;
+    std::fs::write(&explicit, "[cache]\nenabled = false\n")?;
+    harness.notify_changed(&explicit).await?;
+    assert!(
+        harness.diagnostics_published(&uri).await,
+        "diagnostics must resume after configPath parses"
+    );
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn unrelated_file_change_does_not_reload() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let config_file = temp.path().join("actup.toml");
+    std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness.initialize(Some(root)).await;
+
+    std::fs::write(&config_file, "[policy]\nbump = \"sideways\"\n")?;
+    harness
+        .notify_changed(&temp.path().join("nested/actup.toml"))
+        .await?;
+    assert!(
+        !harness.error_shown("sideways").await,
+        "a non-candidate file must not trigger a reload"
+    );
+
+    harness.notify_changed(&config_file).await?;
+    assert!(harness.error_shown("sideways").await);
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+fn registered_relative_patterns(requests: &[(String, serde_json::Value)]) -> Vec<(String, String)> {
+    requests
+        .iter()
+        .filter(|(method, _)| method == "client/registerCapability")
+        .flat_map(|(_, params)| {
+            params["registrations"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .flat_map(|r| {
+            r["registerOptions"]["watchers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+        })
+        .filter_map(|w| {
+            let glob = &w["globPattern"];
+            Some((
+                glob["baseUri"].as_str()?.to_owned(),
+                glob["pattern"].as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn config_watchers_follow_workspace_root() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let first = temp.path().join("first");
+    let second = temp.path().join("second");
+    std::fs::create_dir(&first)?;
+    std::fs::create_dir(&second)?;
+    let user = temp.path().join("user/config.toml");
+    let explicit = temp.path().join("custom.toml");
+    let explicit_str = explicit.to_str().ok_or("temp path is not UTF-8")?;
+    let root = first.to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::with_user_config(Some(user.clone()));
+    harness
+        .initialize_with(Some(root), Some(json!({ "configPath": explicit_str })))
+        .await;
+
+    let uri = |path: &std::path::Path| {
+        Uri::from_file_path(path)
+            .map(|u| u.as_str().to_owned())
+            .ok_or("bad uri")
+    };
+    let patterns = registered_relative_patterns(&harness.collected.lock().await.requests);
+    for expected in [
+        (
+            uri(&first.join(".github"))?,
+            "{actup.toml,actup.json,actup.jsonc,actup.yaml,actup.yml}",
+        ),
+        (uri(temp.path())?, "custom.toml"),
+        (uri(&temp.path().join("user"))?, "config.toml"),
+    ] {
+        assert!(
+            patterns.contains(&(expected.0.clone(), expected.1.to_owned())),
+            "missing {expected:?} in {patterns:?}"
+        );
+    }
+
+    harness.collected.lock().await.requests.clear();
+    let change = DidChangeWorkspaceFoldersParams {
+        event: WorkspaceFoldersChangeEvent {
+            added: vec![WorkspaceFolder {
+                uri: Uri::from_file_path(&second).ok_or("bad uri")?,
+                name: "second".to_owned(),
+            }],
+            removed: vec![WorkspaceFolder {
+                uri: Uri::from_file_path(&first).ok_or("bad uri")?,
+                name: "first".to_owned(),
+            }],
+        },
+    };
+    harness
+        .notify(
+            Request::build("workspace/didChangeWorkspaceFolders")
+                .params(json!(change))
+                .finish(),
+        )
+        .await;
+    let switched = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            c.requests
+                .iter()
+                .any(|(method, _)| method == "client/registerCapability")
+        })
+        .await;
+    assert!(switched, "expected a new watcher registration");
+
+    let requests = harness.collected.lock().await.requests.clone();
+    let methods: Vec<_> = requests.iter().map(|(m, _)| m.as_str()).collect();
+    assert_eq!(
+        methods,
+        ["client/unregisterCapability", "client/registerCapability"]
+    );
+    let patterns = registered_relative_patterns(&requests);
+    let second_github = uri(&second.join(".github"))?;
+    let first = uri(&first)?;
+    assert!(patterns.iter().any(|(base, _)| *base == second_github));
+    assert!(!patterns.iter().any(|(base, _)| *base == first));
 
     harness.shutdown().await;
     Ok(())

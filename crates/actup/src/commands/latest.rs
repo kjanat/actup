@@ -116,7 +116,7 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
             "Invalid action reference: {action_str}\n\
              Expected format: owner/repo or owner/repo@ref"
         );
-        return CliExitCode::Unresolvable.into();
+        return CliExitCode::UserError.into();
     };
 
     // Build a synthetic ActionRef for provider lookup
@@ -136,7 +136,7 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
             return if e.is_environment_error() {
                 CliExitCode::EnvironmentError.into()
             } else {
-                CliExitCode::Unresolvable.into()
+                CliExitCode::UserError.into()
             };
         }
     };
@@ -151,7 +151,7 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
             "No versions found for {}/{}{context}",
             query.owner, query.repo
         );
-        return CliExitCode::Unresolvable.into();
+        return CliExitCode::UserError.into();
     };
 
     let result = LookupResult {

@@ -437,7 +437,7 @@ pub fn print_summary(findings: &[Finding]) {
 /// Exit codes:
 /// - 0: Success ([`FindingStatus::UpToDate`], Ignored, Pinned, Floating are all considered healthy)
 /// - 1: Outdated or pinnable branch found (only with `strict` mode)
-/// - 2: Unresolvable user error (bad ref, repo not found)
+/// - 2: User error (bad ref, repo not found)
 /// - 3: Environment error (network, rate limit, auth)
 pub fn determine_exit_code(findings: &[Finding], strict: bool) -> i32 {
     let has_outdated = findings.iter().any(|f| {

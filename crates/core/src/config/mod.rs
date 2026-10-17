@@ -535,20 +535,23 @@ impl Config {
     /// 1. Environment variables (ACTUP_*)
     /// 2. Explicit `config_path` (if provided)
     /// 3. Repo config (searched upward from `start_dir`)
-    /// 4. User config (~/.config/actup/config.toml) - fills gaps only
+    /// 4. User config at `user_config`, usually [`user_config_path`] - fills gaps only
     /// 5. Defaults
     ///
     /// # Errors
     /// Returns error if config file exists but is invalid.
     #[allow(clippy::option_if_let_else)] // Readability: mutating figment in if-let is clearer
-    pub fn load(config_path: Option<&Path>, start_dir: &Path) -> Result<Self, Error> {
+    pub fn load(
+        config_path: Option<&Path>,
+        user_config: Option<&Path>,
+        start_dir: &Path,
+    ) -> Result<Self, Error> {
         let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
 
-        // User config fills gaps (lowest precedence file)
-        if let Some(user_config) = user_config_path()
+        if let Some(user_config) = user_config
             && user_config.exists()
         {
-            figment = figment.join(Toml::file(&user_config));
+            figment = figment.join(Toml::file(user_config));
         }
 
         // Repo config (searched upward from `start_dir`)

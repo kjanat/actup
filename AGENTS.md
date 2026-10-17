@@ -385,7 +385,7 @@ Exit codes:
 
 - `0` success
 - `1` outdated found (in check) if `--fail-on-outdated`
-- `2` confirmed unresolvable refs
+- `2` user error: confirmed unresolvable refs, invalid config, invalid CLI input
 - `3` network/auth/rate-limit prevented verification (document)
 
 ---

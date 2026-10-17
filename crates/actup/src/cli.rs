@@ -182,8 +182,8 @@ pub enum CliExitCode {
     Success = 0,
     /// Outdated found (in check with --strict, or dry-run with changes)
     Outdated = 1,
-    /// User error: a confirmed unresolvable ref or an invalid config file.
-    Unresolvable = 2,
+    /// User error: a confirmed unresolvable ref, an invalid config file, or invalid CLI input.
+    UserError = 2,
     /// Network/auth/rate-limit prevented verification (environment error)
     EnvironmentError = 3,
 }

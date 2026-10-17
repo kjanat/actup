@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use actup_core::{
     CachingProvider, Config, Registration, effective_host, provider, resolve_default_host,
-    validate_no_duplicate_presets,
+    user_config_path, validate_no_duplicate_presets,
 };
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -87,11 +87,11 @@ async fn run(cli: Cli) -> i32 {
         Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
     };
 
-    let config = match Config::load(None, &start_dir) {
+    let config = match Config::load(None, user_config_path().as_deref(), &start_dir) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Error: {e}");
-            return CliExitCode::Unresolvable.into();
+            return CliExitCode::UserError.into();
         }
     };
 

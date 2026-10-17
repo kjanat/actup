@@ -63,7 +63,7 @@ impl ErrorTally {
         if self.env > 0 {
             CliExitCode::EnvironmentError
         } else if self.user > 0 {
-            CliExitCode::Unresolvable
+            CliExitCode::UserError
         } else {
             CliExitCode::Success
         }
@@ -499,7 +499,7 @@ mod tests {
         tally.record_user();
 
         assert_eq!(tally.total(), 2);
-        assert_eq!(tally.exit_code(), CliExitCode::Unresolvable);
+        assert_eq!(tally.exit_code(), CliExitCode::UserError);
         assert_eq!(tally.summary(), Some("2 user error(s)".to_string()));
     }
 
@@ -548,7 +548,7 @@ mod tests {
             host: None,
         };
         tally2.record(&not_found);
-        assert_eq!(tally2.exit_code(), CliExitCode::Unresolvable);
+        assert_eq!(tally2.exit_code(), CliExitCode::UserError);
     }
 
     // PendingEdit tests

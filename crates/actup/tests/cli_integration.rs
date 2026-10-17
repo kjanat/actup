@@ -267,7 +267,10 @@ policy  = { bump = "patch" }
             "write actup.toml fixture",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config from fixture");
+        let config = ok_or_panic(
+            Config::load(None, None, temp.path()),
+            "load config from fixture",
+        );
         let bump = |uses: &str| config.policy_for(&action(uses)).bump.to_string();
         assert_eq!(bump("normal/action@v1"), "minor");
         assert_eq!(bump("special/other@v1"), "major");
@@ -292,7 +295,7 @@ policy  = { bump = "patch" }
             "write actup.toml fixture",
         );
 
-        match Config::load(None, temp.path()) {
+        match Config::load(None, None, temp.path()) {
             Err(actup_core::Error::InvalidConfig { path, reason }) => {
                 assert_eq!(path, temp.path().join("actup.toml").display().to_string());
                 assert!(
@@ -312,7 +315,7 @@ policy  = { bump = "patch" }
         fs::write(&explicit, "[policy]\nbump = \"minor\"\n")?;
         fs::write(temp.path().join("actup.toml"), "ref_style = \"sha\"\n")?;
 
-        match Config::load(Some(&explicit), temp.path()) {
+        match Config::load(Some(&explicit), None, temp.path()) {
             Err(actup_core::Error::InvalidConfig { path, reason }) => {
                 assert_eq!(path, temp.path().join("actup.toml").display().to_string());
                 assert!(
@@ -330,12 +333,45 @@ policy  = { bump = "patch" }
         let temp = TempDir::new()?;
         fs::write(temp.path().join("actup.toml"), "[policy\n")?;
 
-        match Config::load(None, temp.path()) {
+        match Config::load(None, None, temp.path()) {
             Err(actup_core::Error::InvalidConfig { path, .. }) => {
                 assert_eq!(path, temp.path().join("actup.toml").display().to_string());
             }
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_invalid_user_config_names_the_user_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let user = temp.path().join("user.toml");
+        let repo = temp.path().join("repo");
+        fs::create_dir(&repo)?;
+        fs::write(repo.join("actup.toml"), "[cache]\nenabled = false\n")?;
+
+        for broken in ["update_policy = \"minor\"\n", "[policy\n"] {
+            fs::write(&user, broken)?;
+            match Config::load(None, Some(&user), &repo) {
+                Err(actup_core::Error::InvalidConfig { path, .. }) => {
+                    assert_eq!(path, user.display().to_string(), "{broken}");
+                }
+                other => panic!("expected InvalidConfig for {broken:?}, got {other:?}"),
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_skips_missing_user_config() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let repo_config = temp.path().join("actup.toml");
+        fs::write(&repo_config, "[cache]\nenabled = false\n")?;
+
+        let config = Config::load(None, Some(&temp.path().join("absent.toml")), temp.path())?;
+        assert_eq!(config.loaded_from, Some(repo_config));
+        assert!(!config.cache.enabled);
         Ok(())
     }
 
@@ -346,7 +382,7 @@ policy  = { bump = "patch" }
         let explicit = temp.path().join("actup.jsonc");
         fs::write(&explicit, "{\n  // old key\n  \"extra_paths\": []\n}\n")?;
 
-        match Config::load(Some(&explicit), temp.path()) {
+        match Config::load(Some(&explicit), None, temp.path()) {
             Err(actup_core::Error::InvalidConfig { path, reason }) => {
                 assert_eq!(path, explicit.display().to_string());
                 assert!(
@@ -375,7 +411,10 @@ ignore = ["internal/*", "deprecated/action"]
             "write actup.toml fixture",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config from fixture");
+        let config = ok_or_panic(
+            Config::load(None, None, temp.path()),
+            "load config from fixture",
+        );
         assert!(config.should_ignore(&action("internal/anything@v1")));
         assert!(config.should_ignore(&action("deprecated/action@v2")));
         assert!(!config.should_ignore(&action("external/action@v1")));
@@ -400,7 +439,7 @@ mod new_config_format_tests {
             "write empty actup.toml",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load empty config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load empty config");
         assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
         assert_eq!(config.fetch.max_tags_per_repo.get(), 10);
         assert!(config.hosts.is_empty());
@@ -422,7 +461,7 @@ max_tags_per_repo = 50
             "write actup.toml with fetch",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load config");
         assert_eq!(config.fetch.api_mode, ApiMode::Rest);
         assert_eq!(config.fetch.max_tags_per_repo.get(), 50);
     }
@@ -443,7 +482,7 @@ token_env = "GHE_TOKEN"
             "write actup.toml with hosts",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load config");
         assert_eq!(config.hosts.len(), 1);
         let host = config.hosts.get("ghe.corp.com").expect("ghe host present");
         assert_eq!(host.kind, Some(HostKind::GitHub));
@@ -465,7 +504,7 @@ token_env = "GHE_TOKEN"
             "write actup.toml with default_host",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load config");
         assert_eq!(config.default_host.as_deref(), Some("github.com"));
     }
 
@@ -488,7 +527,7 @@ token_env = "GITLAB_TOKEN"
             "write actup.toml with multiple hosts",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load config");
         assert_eq!(config.hosts.len(), 2);
         assert!(config.hosts.contains_key("ghe.corp.com"));
         assert!(config.hosts.contains_key("gitlab.corp.com"));
@@ -513,7 +552,7 @@ max_tags_per_repo = 25
             "write actup.toml with per-host fetch overrides",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load config");
         let host = config.hosts.get("ghe.corp.com").unwrap();
         assert_eq!(host.api_mode, Some(ApiMode::Rest));
         assert_eq!(host.max_tags_per_repo.map(NonZeroU8::get), Some(25));
@@ -551,7 +590,7 @@ token_env = "GHE_TOKEN"
             "write full new-format actup.toml",
         );
 
-        let config = ok_or_panic(Config::load(None, temp.path()), "load config");
+        let config = ok_or_panic(Config::load(None, None, temp.path()), "load config");
         assert_eq!(config.policy.bump.to_string(), "minor");
         assert_eq!(config.policy.pin.to_string(), "sha");
         assert_eq!(config.default_host.as_deref(), Some("github.com"));
@@ -704,7 +743,7 @@ bogus_field = "oops"
             "write actup.toml with unknown field in hosts",
         );
 
-        let result = Config::load(None, temp.path());
+        let result = Config::load(None, None, temp.path());
         assert!(
             result.is_err(),
             "unknown field in hosts should error due to deny_unknown_fields"
@@ -726,7 +765,7 @@ not_a_field = true
             "write actup.toml with unknown field in fetch",
         );
 
-        let result = Config::load(None, temp.path());
+        let result = Config::load(None, None, temp.path());
         assert!(
             result.is_err(),
             "unknown field in fetch should error due to deny_unknown_fields"
@@ -747,7 +786,7 @@ kind = "bitbucket"
             "write actup.toml with invalid kind",
         );
 
-        let result = Config::load(None, temp.path());
+        let result = Config::load(None, None, temp.path());
         assert!(
             result.is_err(),
             "unsupported host kind should error during deserialization"
@@ -999,7 +1038,12 @@ mod cli_runs {
 
     fn actup(home: &Path) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_actup"));
-        cmd.env("XDG_CONFIG_HOME", home);
+        cmd.env("XDG_CONFIG_HOME", home).env("HOME", home);
+        for (key, _) in std::env::vars_os() {
+            if key.to_string_lossy().starts_with("ACTUP_") {
+                cmd.env_remove(key);
+            }
+        }
         cmd
     }
 
@@ -1023,11 +1067,7 @@ mod cli_runs {
             repo.path().join("actup.toml"),
             "[policy]\ntrack = \"exact\"\n\n[[overrides]]\npattern = \"my-org/*\"\npolicy = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"ghe.example.com/platform/*\"\npolicy = { bump = \"patch\" }\n",
         )?;
-        let output = actup(repo.path())
-            .env_remove("ACTUP_FORMAT")
-            .arg("config")
-            .arg(repo.path())
-            .output()?;
+        let output = actup(repo.path()).arg("config").arg(repo.path()).output()?;
 
         assert_eq!(output.status.code(), Some(0));
         let stdout = String::from_utf8(output.stdout)?;

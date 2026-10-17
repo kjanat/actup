@@ -205,7 +205,9 @@ Helix, Zed).
 
 **Phase:** 3 | **Effort:** S | **Depends on:** D7
 
-- Watch `actup.toml` for changes (via `workspace/didChangeWatchedFiles`)
+- Watch every config discovery candidate of the workspace root and its
+  ancestors, the user config, and `configPath` (via
+  `workspace/didChangeWatchedFiles`)
 - Re-publish diagnostics when config changes
 - Handle workspace folder add/remove
 - Invalidate cached diagnostics on policy change

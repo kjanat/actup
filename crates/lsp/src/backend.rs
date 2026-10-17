@@ -1,9 +1,12 @@
 //! LSP backend implementing the [`LanguageServer`] trait.
 
 use std::{
-    collections::HashMap,
-    path::PathBuf,
-    sync::{Arc, OnceLock},
+    collections::{BTreeMap, HashMap},
+    path::{Path, PathBuf},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -19,16 +22,19 @@ use tower_lsp_server::{
         DidChangeTextDocumentParams, DidChangeWatchedFilesParams,
         DidChangeWatchedFilesRegistrationOptions, DidChangeWorkspaceFoldersParams,
         DidCloseTextDocumentParams, DidOpenTextDocumentParams, DidSaveTextDocumentParams,
-        ExecuteCommandOptions, ExecuteCommandParams, FileChangeType, FileSystemWatcher,
-        GlobPattern, Hover, HoverParams, HoverProviderCapability, InitializeParams,
-        InitializeResult, InitializedParams, MessageType, OneOf, Registration, ServerCapabilities,
+        ExecuteCommandOptions, ExecuteCommandParams, FileSystemWatcher, GlobPattern, Hover,
+        HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
+        InitializedParams, MessageType, OneOf, Registration, RelativePattern, ServerCapabilities,
         ServerInfo, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-        TextDocumentSyncSaveOptions, Uri, WorkDoneProgressOptions,
+        TextDocumentSyncSaveOptions, Unregistration, Uri, WorkDoneProgressOptions,
         WorkspaceFoldersServerCapabilities, WorkspaceServerCapabilities,
     },
 };
 
 use crate::{file_cache::FileCache, provider_setup};
+
+const CONFIG_WATCHER_ID: &str = "actup-config-watcher";
+const DID_CHANGE_WATCHED_FILES: &str = "workspace/didChangeWatchedFiles";
 
 /// Debounce delay for diagnostic computation on document changes.
 ///
@@ -236,6 +242,8 @@ pub struct LspBackend {
     /// Stored so that `reload_config` can re-use it (analogous to CLI's
     /// `--config` flag).
     config_path: RwLock<Option<PathBuf>>,
+    user_config: Option<PathBuf>,
+    config_watchers_registered: AtomicBool,
     /// Negotiated position encoding for `Position::character` columns.
     ///
     /// Set once during `initialize` based on client capabilities.
@@ -249,6 +257,11 @@ impl LspBackend {
     ///
     /// Used as the constructor passed to `LspService::new`.
     pub fn new(client: Client) -> Self {
+        Self::with_user_config(client, actup_core::user_config_path())
+    }
+
+    /// Create a new backend that reads the user config from `user_config`.
+    pub fn with_user_config(client: Client, user_config: Option<PathBuf>) -> Self {
         Self {
             client,
             documents: Arc::new(DashMap::new()),
@@ -261,6 +274,8 @@ impl LspBackend {
             action_meta_cache: crate::hover::new_action_meta_cache(),
             error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
             config_path: RwLock::new(None),
+            user_config,
+            config_watchers_registered: AtomicBool::new(false),
             position_encoding: OnceLock::new(),
         }
     }
@@ -397,7 +412,11 @@ impl LanguageServer for LspBackend {
             std::path::Path::new(".")
         });
 
-        let config = match Config::load(config_path.as_deref(), start_dir) {
+        let config = match Config::load(
+            config_path.as_deref(),
+            self.user_config.as_deref(),
+            start_dir,
+        ) {
             Ok(c) => {
                 if let Some(from) = &c.loaded_from {
                     tracing::info!(path = %from.display(), "loaded config");
@@ -804,15 +823,15 @@ impl LanguageServer for LspBackend {
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
-        let is_config_change = params.changes.iter().any(|event| {
-            let path = event.uri.as_str();
-            is_actup_config_path(path) && event.typ != FileChangeType::DELETED
-        });
-        let is_config_deleted = params.changes.iter().any(|event| {
-            is_actup_config_path(event.uri.as_str()) && event.typ == FileChangeType::DELETED
+        let watched = self.watched_configs().await;
+        let is_config_event = params.changes.iter().any(|event| {
+            event
+                .uri
+                .to_file_path()
+                .is_some_and(|path| watched.contains(&path))
         });
 
-        if !is_config_change && !is_config_deleted {
+        if !is_config_event {
             return;
         }
 
@@ -851,6 +870,7 @@ impl LanguageServer for LspBackend {
 
         // Reload config from new workspace root and refresh diagnostics.
         self.reload_config().await;
+        self.register_config_watchers().await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -1113,11 +1133,13 @@ impl LspBackend {
     /// dynamic registration. Silently skips if not supported.
     async fn register_config_watchers(&self) {
         let caps = self.client_capabilities.read().await;
-        let supports_watch = caps
+        let watch_caps = caps
             .workspace
             .as_ref()
-            .and_then(|ws| ws.did_change_watched_files.as_ref())
-            .is_some_and(|w| w.dynamic_registration == Some(true));
+            .and_then(|ws| ws.did_change_watched_files.as_ref());
+        let supports_watch = watch_caps.is_some_and(|w| w.dynamic_registration == Some(true));
+        let relative_patterns =
+            watch_caps.is_some_and(|w| w.relative_pattern_support == Some(true));
         drop(caps);
 
         if !supports_watch {
@@ -1125,19 +1147,56 @@ impl LspBackend {
             return;
         }
 
+        if self
+            .config_watchers_registered
+            .swap(false, Ordering::SeqCst)
+        {
+            let unregistration = Unregistration {
+                id: CONFIG_WATCHER_ID.to_owned(),
+                method: DID_CHANGE_WATCHED_FILES.to_owned(),
+            };
+            if let Err(e) = self
+                .client
+                .unregister_capability(vec![unregistration])
+                .await
+            {
+                tracing::warn!(error = %e, "failed to unregister config file watchers");
+            }
+        }
+
+        let watched = self.watched_configs().await;
         let watch_options = DidChangeWatchedFilesRegistrationOptions {
-            watchers: config_file_watchers(),
+            watchers: config_file_watchers(&watched, relative_patterns),
         };
 
         let registration = Registration {
-            id: "actup-config-watcher".to_owned(),
-            method: "workspace/didChangeWatchedFiles".to_owned(),
+            id: CONFIG_WATCHER_ID.to_owned(),
+            method: DID_CHANGE_WATCHED_FILES.to_owned(),
             register_options: serde_json::to_value(watch_options).ok(),
         };
 
         match self.client.register_capability(vec![registration]).await {
-            Ok(()) => tracing::info!("registered config file watchers"),
+            Ok(()) => {
+                self.config_watchers_registered
+                    .store(true, Ordering::SeqCst);
+                tracing::info!("registered config file watchers");
+            }
             Err(e) => tracing::warn!(error = %e, "failed to register config file watchers"),
+        }
+    }
+
+    async fn watched_configs(&self) -> WatchedConfigs {
+        let start_dir = self
+            .workspace_root
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("."));
+        let explicit = self.config_path.read().await.clone();
+        WatchedConfigs {
+            start_dir: std::path::absolute(start_dir).ok(),
+            user: self.user_config.clone(),
+            explicit: explicit.and_then(|p| std::path::absolute(p).ok()),
         }
     }
 
@@ -1166,7 +1225,11 @@ impl LspBackend {
 
         let old_state = self.config.read().await.clone();
 
-        let new_config = match Config::load(config_path.as_deref(), start_dir) {
+        let new_config = match Config::load(
+            config_path.as_deref(),
+            self.user_config.as_deref(),
+            start_dir,
+        ) {
             Ok(c) => {
                 if let Some(from) = &c.loaded_from {
                     tracing::info!(path = %from.display(), "reloaded config");
@@ -1178,6 +1241,8 @@ impl LspBackend {
             Err(e) => {
                 let invalid = self.invalid_config(&e).await;
                 *self.config.write().await = invalid;
+                *self.registry.write().await = None;
+                *self.file_cache.write().await = None;
                 self.refresh_all_diagnostics().await;
                 return;
             }
@@ -1264,33 +1329,86 @@ impl LspBackend {
     }
 }
 
-/// Returns `true` if the path (as a URI string) refers to an actup config file.
-///
-/// This intentionally matches any file named `actup.toml` or `.actup.toml`
-/// regardless of directory depth. This is broader than strictly necessary
-/// (e.g. it would match `node_modules/.../actup.toml`), but false positives
-/// only trigger a config reload attempt that will either succeed (correct)
-/// or find no config (harmless no-op). The simplicity outweighs the cost
-/// of a rare spurious reload.
-fn is_actup_config_path(uri_str: &str) -> bool {
-    // Check the filename component of the URI.
-    let path = uri_str.rsplit('/').next().unwrap_or("");
-    path == "actup.toml" || path == ".actup.toml"
+#[derive(Debug, Clone, Default)]
+struct WatchedConfigs {
+    start_dir: Option<PathBuf>,
+    user: Option<PathBuf>,
+    explicit: Option<PathBuf>,
 }
 
-/// Build the set of [`FileSystemWatcher`] entries for actup config files.
-///
-/// Watches for creation, change, and deletion of all config file patterns
-/// that actup discovers: `actup.toml`, `.actup.toml`, `.config/actup.toml`.
-fn config_file_watchers() -> Vec<FileSystemWatcher> {
-    let patterns = ["**/actup.toml", "**/.actup.toml", "**/.config/actup.toml"];
-    patterns
+impl WatchedConfigs {
+    fn contains(&self, path: &Path) -> bool {
+        self.user.as_deref() == Some(path)
+            || self.explicit.as_deref() == Some(path)
+            || self.start_dir.as_deref().is_some_and(|start| {
+                start.ancestors().any(|dir| {
+                    actup_core::iter_config_candidates(dir).any(|candidate| candidate == path)
+                })
+            })
+    }
+}
+
+fn candidate_groups(base: &Path) -> BTreeMap<PathBuf, Vec<String>> {
+    let mut groups: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
+    for candidate in actup_core::iter_config_candidates(base) {
+        if let (Some(dir), Some(name)) = (candidate.parent(), candidate.file_name()) {
+            groups
+                .entry(dir.to_path_buf())
+                .or_default()
+                .push(name.to_string_lossy().into_owned());
+        }
+    }
+    groups
+}
+
+fn relative_watcher(base: &Path, pattern: String) -> Option<FileSystemWatcher> {
+    Some(FileSystemWatcher {
+        glob_pattern: GlobPattern::Relative(RelativePattern {
+            base_uri: OneOf::Right(Uri::from_file_path(base)?),
+            pattern,
+        }),
+        kind: None,
+    })
+}
+
+fn file_watcher(file: &Path) -> Option<FileSystemWatcher> {
+    let name = file.file_name()?.to_string_lossy().into_owned();
+    relative_watcher(file.parent()?, name)
+}
+
+fn config_file_watchers(
+    watched: &WatchedConfigs,
+    relative_patterns: bool,
+) -> Vec<FileSystemWatcher> {
+    if !relative_patterns {
+        return candidate_groups(Path::new(""))
+            .into_iter()
+            .map(|(dir, names)| {
+                let mut segments = vec!["**".to_owned()];
+                segments.extend(
+                    dir.components()
+                        .map(|c| c.as_os_str().to_string_lossy().into_owned()),
+                );
+                segments.push(format!("{{{}}}", names.join(",")));
+                FileSystemWatcher {
+                    glob_pattern: GlobPattern::String(segments.join("/")),
+                    kind: None,
+                }
+            })
+            .collect();
+    }
+
+    let candidates = watched
+        .start_dir
+        .iter()
+        .flat_map(|start| start.ancestors())
+        .flat_map(|dir| candidate_groups(dir).into_iter())
+        .filter_map(|(dir, names)| relative_watcher(&dir, format!("{{{}}}", names.join(","))));
+    let files = [&watched.user, &watched.explicit]
         .into_iter()
-        .map(|p| FileSystemWatcher {
-            glob_pattern: GlobPattern::String(p.to_owned()),
-            kind: None, // None = watch all events (create + change + delete)
-        })
-        .collect()
+        .flatten()
+        .filter_map(|file| file_watcher(file));
+    candidates.chain(files).collect()
 }
 
 /// Returns `true` if two configs differ in ways that affect diagnostic output.
@@ -1542,53 +1660,192 @@ mod tests {
         assert!(!should_publish);
     }
 
-    #[test]
-    fn is_actup_config_path_matches_config_files() {
-        assert!(is_actup_config_path("file:///home/user/project/actup.toml"));
-        assert!(is_actup_config_path(
-            "file:///home/user/project/.actup.toml"
-        ));
-        assert!(is_actup_config_path(
-            "file:///home/user/project/.config/actup.toml"
-        ));
-    }
-
-    #[test]
-    fn is_actup_config_path_rejects_non_config_files() {
-        assert!(!is_actup_config_path(
-            "file:///home/user/project/Cargo.toml"
-        ));
-        assert!(!is_actup_config_path(
-            "file:///home/user/project/.github/workflows/ci.yml"
-        ));
-        assert!(!is_actup_config_path(
-            "file:///home/user/project/actup.yaml"
-        ));
-    }
-
-    #[test]
-    fn config_file_watchers_returns_three_patterns() {
-        let watchers = config_file_watchers();
-        assert_eq!(watchers.len(), 3);
-
-        let patterns: Vec<_> = watchers
+    fn relative_watchers(watchers: &[FileSystemWatcher]) -> Vec<(PathBuf, String)> {
+        watchers
             .iter()
             .filter_map(|w| match &w.glob_pattern {
-                GlobPattern::String(s) => Some(s.as_str()),
-                GlobPattern::Relative(_) => None,
+                GlobPattern::Relative(RelativePattern {
+                    base_uri: OneOf::Right(uri),
+                    pattern,
+                }) => Some((uri.to_file_path()?.into_owned(), pattern.clone())),
+                _ => None,
             })
-            .collect();
-        assert!(patterns.contains(&"**/actup.toml"));
-        assert!(patterns.contains(&"**/.actup.toml"));
-        assert!(patterns.contains(&"**/.config/actup.toml"));
+            .collect()
+    }
+
+    const ROOT_NAMES: &str = "{actup.toml,actup.json,actup.jsonc,actup.yaml,actup.yml,\
+                              .actup.toml,.actup.json,.actup.jsonc,.actup.yaml,.actup.yml}";
+    const SUBDIR_NAMES: &str = "{actup.toml,actup.json,actup.jsonc,actup.yaml,actup.yml}";
+
+    #[test]
+    fn watched_configs_contain_every_discovery_candidate() -> std::io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let start = temp.path().join("repo");
+        let watched = WatchedConfigs {
+            start_dir: Some(start.clone()),
+            ..WatchedConfigs::default()
+        };
+
+        for candidate in [
+            start.join("actup.toml"),
+            start.join(".actup.json"),
+            start.join("actup.yaml"),
+            start.join(".config/actup.yml"),
+            start.join(".github/actup.jsonc"),
+            temp.path().join("actup.toml"),
+            temp.path().join(".github/actup.yaml"),
+        ] {
+            assert!(watched.contains(&candidate), "{}", candidate.display());
+        }
+        for other in [
+            start.join("nested/actup.toml"),
+            start.join(".github/.actup.toml"),
+            start.join("Cargo.toml"),
+            start.join("actup.toml.bak"),
+            start.join("not-actup.toml"),
+        ] {
+            assert!(!watched.contains(&other), "{}", other.display());
+        }
+        Ok(())
     }
 
     #[test]
-    fn config_file_watchers_watch_all_events() {
-        for watcher in config_file_watchers() {
-            // kind: None means watch all events (create + change + delete)
-            assert!(watcher.kind.is_none());
+    fn watched_configs_contain_user_and_explicit_config() {
+        let user = PathBuf::from("/home/user/.config/actup/config.toml");
+        let explicit = PathBuf::from("/elsewhere/custom.toml");
+        let watched = WatchedConfigs {
+            start_dir: None,
+            user: Some(user.clone()),
+            explicit: Some(explicit.clone()),
+        };
+        assert!(watched.contains(&user));
+        assert!(watched.contains(&explicit));
+        assert!(!watched.contains(Path::new("/elsewhere/actup.toml")));
+        assert!(!WatchedConfigs::default().contains(&user));
+    }
+
+    #[test]
+    fn config_file_watchers_cover_candidates_user_and_explicit() -> std::io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let start = temp.path().join("repo");
+        let user = temp.path().join("home/actup/config.toml");
+        let explicit = temp.path().join("custom.yaml");
+        let watched = WatchedConfigs {
+            start_dir: Some(start.clone()),
+            user: Some(user),
+            explicit: Some(explicit),
+        };
+        let watchers = config_file_watchers(&watched, true);
+        assert!(watchers.iter().all(|w| w.kind.is_none()));
+
+        let relative = relative_watchers(&watchers);
+        assert_eq!(relative.len(), watchers.len());
+        for expected in [
+            (start.clone(), ROOT_NAMES),
+            (start.join(".config"), SUBDIR_NAMES),
+            (start.join(".github"), SUBDIR_NAMES),
+            (temp.path().to_path_buf(), ROOT_NAMES),
+            (temp.path().join(".github"), SUBDIR_NAMES),
+            (temp.path().join("home/actup"), "config.toml"),
+            (temp.path().to_path_buf(), "custom.yaml"),
+        ] {
+            assert!(
+                relative.contains(&(expected.0.clone(), expected.1.to_owned())),
+                "missing {expected:?} in {relative:?}"
+            );
         }
+        assert_eq!(watchers.len(), start.ancestors().count() * 3 + 2);
+        Ok(())
+    }
+
+    #[test]
+    fn config_file_watchers_without_relative_patterns_use_workspace_globs() {
+        let watched = WatchedConfigs {
+            start_dir: Some(PathBuf::from("/repo")),
+            user: Some(PathBuf::from("/home/user/.config/actup/config.toml")),
+            explicit: None,
+        };
+        let watchers = config_file_watchers(&watched, false);
+        let patterns: Vec<_> = watchers
+            .iter()
+            .map(|w| match &w.glob_pattern {
+                GlobPattern::String(s) => s.clone(),
+                GlobPattern::Relative(r) => panic!("unexpected relative pattern {r:?}"),
+            })
+            .collect();
+        assert_eq!(
+            patterns,
+            [
+                format!("**/{ROOT_NAMES}"),
+                format!("**/.config/{SUBDIR_NAMES}"),
+                format!("**/.github/{SUBDIR_NAMES}"),
+            ]
+        );
+        assert!(watchers.iter().all(|w| w.kind.is_none()));
+    }
+
+    #[tokio::test]
+    async fn failed_reload_drops_registry_and_file_cache()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let config_file = temp.path().join("actup.toml");
+        std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+        let (service, _socket) =
+            tower_lsp_server::LspService::new(|client| LspBackend::with_user_config(client, None));
+        let backend = service.inner();
+        let root = Uri::from_file_path(temp.path()).ok_or("bad root uri")?;
+        backend
+            .initialize(InitializeParams {
+                workspace_folders: Some(vec![tower_lsp_server::ls_types::WorkspaceFolder {
+                    uri: root,
+                    name: "test".to_owned(),
+                }]),
+                ..Default::default()
+            })
+            .await?;
+        assert!(backend.registry.read().await.is_some());
+        assert!(backend.file_cache.read().await.is_some());
+
+        let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+        let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.1.0\n";
+        backend
+            .documents
+            .insert(uri.clone(), DocumentState::new(text.to_owned(), 1));
+
+        std::fs::write(&config_file, "[policy]\nbump = \"sideways\"\n")?;
+        backend.reload_config().await;
+
+        assert!(matches!(
+            &*backend.config.read().await,
+            ConfigState::Invalid(_)
+        ));
+        assert!(backend.registry.read().await.is_none());
+        assert!(backend.file_cache.read().await.is_none());
+
+        let position = tower_lsp_server::ls_types::Position {
+            line: 3,
+            character: 30,
+        };
+        let completion = backend
+            .completion(CompletionParams {
+                text_document_position: tower_lsp_server::ls_types::TextDocumentPositionParams {
+                    text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
+                        uri: uri.clone(),
+                    },
+                    position,
+                },
+                work_done_progress_params:
+                    tower_lsp_server::ls_types::WorkDoneProgressParams::default(),
+                partial_result_params: tower_lsp_server::ls_types::PartialResultParams::default(),
+                context: None,
+            })
+            .await?;
+        assert!(completion.is_none());
+        assert_eq!(
+            backend.pin_actions_at(&uri, position, Some(1), true).await,
+            []
+        );
+        Ok(())
     }
 
     #[test]
@@ -1722,18 +1979,6 @@ mod tests {
     }
 
     #[test]
-    fn is_actup_config_path_handles_nested_config_dir() {
-        // .config/actup.toml — the last path segment is "actup.toml"
-        assert!(is_actup_config_path("file:///project/.config/actup.toml"));
-    }
-
-    #[test]
-    fn is_actup_config_path_rejects_partial_matches() {
-        assert!(!is_actup_config_path("file:///project/not-actup.toml"));
-        assert!(!is_actup_config_path("file:///actup.toml.bak"));
-    }
-
-    #[test]
     fn document_state_clone_is_independent() {
         let state = DocumentState::new("original".into(), 1);
         let mut cloned = state.clone();
@@ -1756,11 +2001,6 @@ mod tests {
     fn has_uses_keyword_case_sensitive() {
         assert!(!has_uses_keyword("USES: actions/checkout@v4"));
         assert!(has_uses_keyword("uses: actions/checkout@v4"));
-    }
-
-    #[test]
-    fn is_actup_config_path_handles_empty_string() {
-        assert!(!is_actup_config_path(""));
     }
 
     #[test]
