@@ -30,7 +30,8 @@ Model Context Protocol server for AI agents, served over stdio with
   `SourceFormat::validate_edit` refuses invalid YAML or a changed `uses:` count
   unless `updateFile` passes `validateYaml: false`.
 - Each file is read in the `SourceFormat` of its extension. Edits are built from
-  `FileEdits::writable`, so a plain-text line never gets a version comment.
+  `FileEdits::writable`, so a plain-text line never gets a new version comment
+  and only a label comment right after the value is rewritten.
 - Every path argument resolves through `Root::file` / `Root::dir`, and every
   discovered file through `Root::contain`. Canonicalization rejects `..` and
   symlinks that leave the root.

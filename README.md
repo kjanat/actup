@@ -343,7 +343,9 @@ label comment right after the value is still rewritten. Writers read the word
 after `#` as the label and the next word as the note, and leave the rest of the
 line as written: `run("uses: o/p@<sha> # v4.0.0 keep this")` re-pinned becomes
 `run("uses: o/p@<new> # v4.2.0 keep this")`. A word ends at whitespace, a quote,
-a backslash, a bracket, `<`, `>`, `;` or `,`.
+a backslash, a bracket, `<`, `>`, `;` or `,`. In a plain-text file the comment
+may also follow a closing quote and `}`, `]` or `,`, as in
+`{"uses": "o/p@<sha>"},  # v4.0.0`.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose
@@ -540,8 +542,9 @@ and the server answers the next call afresh.
 actup reads a file by its extension. It parses `.yml` and `.yaml` files as YAML,
 and Markdown files (`.md`, `.markdown`) through their fenced `yaml` or `yml`
 blocks. In every other file it reads `uses:` values that contain `@` line by
-line. It never writes or rewrites a version comment on such a line, and it
-checks an edit there for an unchanged `uses:` count only.
+line. It never adds a version comment on such a line, rewrites only a label
+comment right after the value as [Pin Style](#pin-style) describes, and checks
+an edit there for an unchanged `uses:` count only.
 
 actup rejects an `extra_paths` entry that is absolute or contains a `..`
 segment. It skips any match that resolves outside the scan root through a
