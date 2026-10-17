@@ -91,59 +91,61 @@ pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` error when `config` does not match [`ActupConfig`], on
-/// serde failures, or if the provider throws.
-#[wasm_bindgen(js_name = "checkRefs", unchecked_return_type = "CheckResult[]")]
-pub async fn check_refs(
-    yaml: &str,
+/// The returned promise rejects when `config` does not match [`ActupConfig`],
+/// on serde failures, or if the provider throws.
+#[wasm_bindgen(
+    js_name = "checkRefs",
+    unchecked_return_type = "Promise<CheckResult[]>"
+)]
+pub fn check_refs(
+    yaml: String,
     provider: JsProvider,
     #[wasm_bindgen(unchecked_param_type = "ActupConfig | null | undefined")] config: Option<
         JsValue,
     >,
-) -> Result<JsValue, JsValue> {
-    let config = match config {
-        Some(value) => parse_config(&value)?,
-        None => Config::default(),
-    };
-
-    let host = config
-        .default_host
-        .as_deref()
-        .unwrap_or("github.com")
-        .to_owned();
-    let adapter = JsProviderAdapter::new(provider, host.clone(), Kind::GitHub);
-
-    let mut registry = Registry::new();
-    registry.set_default_host(&host);
-    registry.register(Box::new(adapter));
-
-    let locations = extract_uses_from_yaml(yaml);
-    let mut results: Vec<CheckResult> = Vec::with_capacity(locations.len());
-
-    for loc in &locations {
-        let parsed = match parse_uses(loc.value()) {
-            Ok(Some(action_ref)) => action_ref,
-            // Local/docker refs or parse errors — skip
-            Ok(None) => continue,
-            Err(_) => continue,
+) -> js_sys::Promise {
+    wasm_bindgen_futures::future_to_promise(async move {
+        let config = match config {
+            Some(value) => parse_config(&value)?,
+            None => Config::default(),
         };
 
-        match check_action_remote(&parsed, &config, &registry).await {
-            Ok(result) => results.push(result),
-            Err(e) => {
-                // Convert provider errors to Unresolvable status
-                results.push(CheckResult::new(
-                    parsed,
-                    CheckStatus::Unresolvable {
-                        reason: e.to_string(),
-                        is_environment_error: e.is_environment_error(),
-                    },
-                ));
+        let host = config
+            .default_host
+            .as_deref()
+            .unwrap_or("github.com")
+            .to_owned();
+        let adapter = JsProviderAdapter::new(provider, host.clone(), Kind::GitHub);
+
+        let mut registry = Registry::new();
+        registry.set_default_host(&host);
+        registry.register(Box::new(adapter));
+
+        let locations = extract_uses_from_yaml(&yaml);
+        let mut results: Vec<CheckResult> = Vec::with_capacity(locations.len());
+
+        for loc in &locations {
+            let Ok(Some(parsed)) = parse_uses(loc.value()) else {
+                continue;
+            };
+
+            match check_action_remote(&parsed, &config, &registry).await {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    // Convert provider errors to Unresolvable status
+                    results.push(CheckResult::new(
+                        parsed,
+                        CheckStatus::Unresolvable {
+                            reason: e.to_string(),
+                            is_environment_error: e.is_environment_error(),
+                        },
+                    ));
+                }
             }
         }
-    }
 
-    serde_wasm_bindgen::to_value(&results).map_err(|e| JsValue::from_str(&e.to_string()))
+        serde_wasm_bindgen::to_value(&results).map_err(|e| JsValue::from_str(&e.to_string()))
+    })
 }
 
 /// A text edit to apply to the YAML content.

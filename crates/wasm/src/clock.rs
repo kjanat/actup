@@ -18,7 +18,6 @@ impl Clock for JsClock {
     fn now(&self) -> SystemTime {
         let secs = js_sys::Date::now() / 1000.0;
         Duration::try_from_secs_f64(secs)
-            .map(|d| SystemTime::UNIX_EPOCH + d)
-            .unwrap_or(SystemTime::UNIX_EPOCH)
+            .map_or(SystemTime::UNIX_EPOCH, |d| SystemTime::UNIX_EPOCH + d)
     }
 }

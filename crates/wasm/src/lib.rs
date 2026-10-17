@@ -16,6 +16,6 @@
 #[cfg(target_arch = "wasm32")]
 pub mod bridge;
 #[cfg(target_arch = "wasm32")]
-pub mod clock;
+mod clock;
 #[cfg(target_arch = "wasm32")]
 mod wasm_api;

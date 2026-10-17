@@ -41,6 +41,9 @@ wasm-pack build crates/wasm --target web --out-dir ../../packages/actup-wasm/was
 Or via the npm package's build script: `bun run build:wasm` from
 `packages/actup-wasm/`.
 
+Workspace clippy builds this crate for the host target, which skips every
+module. Lint the wasm32 build with `just clippy-wasm`.
+
 ## Architecture
 
 - `#[cfg(target_arch = "wasm32")]` guards all functional code — native builds

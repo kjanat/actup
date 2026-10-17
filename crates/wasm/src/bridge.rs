@@ -117,7 +117,8 @@ pub struct JsProviderAdapter {
 
 impl JsProviderAdapter {
     /// Create a new adapter for the given JS provider and host.
-    pub fn new(inner: JsProvider, host: String, kind: Kind) -> Self {
+    #[must_use]
+    pub const fn new(inner: JsProvider, host: String, kind: Kind) -> Self {
         Self { inner, host, kind }
     }
 }
@@ -131,12 +132,12 @@ impl std::fmt::Debug for JsProviderAdapter {
     }
 }
 
-/// Convert a `JsValue` error from wasm_bindgen into an `actup_core::Error`.
-fn js_err(val: JsValue) -> actup_core::Error {
+/// Convert a `JsValue` error from `wasm_bindgen` into an `actup_core::Error`.
+fn js_err(val: &JsValue) -> actup_core::Error {
     let msg = val
         .as_string()
         .or_else(|| {
-            js_sys::Reflect::get(&val, &JsValue::from_str("message"))
+            js_sys::Reflect::get(val, &JsValue::from_str("message"))
                 .ok()
                 .and_then(|m| m.as_string())
         })
@@ -159,10 +160,10 @@ fn build_version_set(js: VersionSet, clock: &dyn actup_core::Clock) -> version::
         let info = Arc::new(version::Info::new(ver.clone(), tag.sha));
 
         // Track major-only tags
-        if ver.is_major_only() {
-            if let Some(major) = ver.major() {
-                major_tags.insert(major, Arc::clone(&info));
-            }
+        if ver.is_major_only()
+            && let Some(major) = ver.major()
+        {
+            major_tags.insert(major, Arc::clone(&info));
         }
 
         // Track latest per major
@@ -216,7 +217,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_versions_js(&host, &owner, &repo_name)
                 .await
-                .map_err(js_err)?;
+                .map_err(|e| js_err(&e))?;
             let js_set: VersionSet = serde_wasm_bindgen::from_value(js_val).map_err(|e| {
                 actup_core::Error::Internal {
                     context: "deserialize VersionSet from JS".into(),
@@ -241,7 +242,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .resolve_ref_to_sha_js(&host, &owner, &repo_name, &ref_name)
                 .await
-                .map_err(js_err)?;
+                .map_err(|e| js_err(&e))?;
             let sha_str: String = serde_wasm_bindgen::from_value(js_val).map_err(|e| {
                 actup_core::Error::Internal {
                     context: "deserialize SHA from JS".into(),
@@ -264,7 +265,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_default_branch_js(&host, &owner, &repo_name)
                 .await
-                .map_err(js_err)?;
+                .map_err(|e| js_err(&e))?;
             serde_wasm_bindgen::from_value(js_val).map_err(|e| actup_core::Error::Internal {
                 context: "deserialize default branch from JS".into(),
                 message: e.to_string(),
@@ -286,7 +287,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_readme_js(&host, &owner, &repo_name, ref_name)
                 .await
-                .map_err(js_err)?;
+                .map_err(|e| js_err(&e))?;
             if js_val.is_null() || js_val.is_undefined() {
                 return Ok(None);
             }
@@ -314,7 +315,7 @@ impl Provider for JsProviderAdapter {
                 .inner
                 .get_action_yml_js(&host, &owner, &repo_name, &ref_name)
                 .await
-                .map_err(js_err)?;
+                .map_err(|e| js_err(&e))?;
             serde_wasm_bindgen::from_value(js_val).map_err(|e| actup_core::Error::Internal {
                 context: "deserialize ActionYml from JS".into(),
                 message: e.to_string(),

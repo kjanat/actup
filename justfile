@@ -134,6 +134,11 @@ clippy-nightly:
 clippy-strict:
     cargo clippy --all-targets --all-features -- -D warnings
 
+# Run clippy strict on actup-wasm for wasm32
+[group('lint')]
+clippy-wasm:
+    cargo clippy -p actup-wasm --target wasm32-unknown-unknown -- -D warnings
+
 # Format code
 [group('lint')]
 fmt:
@@ -146,7 +151,7 @@ fmt-check:
 
 # Run all lints (fmt + clippy strict)
 [group('lint')]
-lint: fmt-check clippy clippy-strict
+lint: fmt-check clippy clippy-strict clippy-wasm
 
 # Run
 
@@ -209,7 +214,7 @@ schema:
 
 # Run full CI checks locally
 [group('ci')]
-ci: fmt-check clippy-strict test
+ci: fmt-check clippy-strict clippy-wasm test
     @echo "All CI checks passed!"
 
 # Run actup on this repo

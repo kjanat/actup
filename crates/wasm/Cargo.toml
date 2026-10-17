@@ -9,9 +9,6 @@ repository.workspace   = true
 license.workspace      = true
 publish                = false  # Published via npm, not crates.io
 
-[package.metadata.cargo-machete]
-ignored = ["wasm-bindgen-futures"]
-
 [lib]
 crate-type = ["cdylib", "rlib"]
 
