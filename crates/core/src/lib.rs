@@ -50,7 +50,7 @@ pub use config::{
     user_config_path,
     validation::{validate_api_base, validate_hostname, validate_provider_config},
 };
-pub use discovery::{DiscoveredFile, ExtraPath, FileKind, discover_files, resolves_inside};
+pub use discovery::{DiscoveredFile, ExtraPath, FileKind, discover_files};
 pub use error::{Error, Result};
 pub use parser::{
     EditValidationError, UsesLocation, extract_uses_from_yaml, is_host_segment, line_spans,

@@ -213,13 +213,6 @@ pub fn discover_files(root: &Path, extra_patterns: &[ExtraPath]) -> Vec<Discover
     files
 }
 
-/// Return whether `path` resolves inside `root`, or to `root` itself, after following symlinks.
-#[must_use]
-pub fn resolves_inside(root: &Path, path: &Path) -> bool {
-    root.canonicalize()
-        .is_ok_and(|root| canonical_inside(&root, path))
-}
-
 fn canonical_inside(canonical_root: &Path, path: &Path) -> bool {
     path.canonicalize()
         .is_ok_and(|path| path.starts_with(canonical_root))
@@ -442,12 +435,6 @@ mod tests {
             found,
             [workflows.join("alias.yml"), workflows.join("ci.yml")]
         );
-        assert!(resolves_inside(&root, &workflows.join("alias.yml")));
-        assert!(!resolves_inside(&root, &workflows.join("evil.yml")));
-        assert!(!resolves_inside(
-            &temp.join("absent"),
-            &workflows.join("ci.yml")
-        ));
 
         fs::remove_dir_all(temp)?;
         Ok(())
