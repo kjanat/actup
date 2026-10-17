@@ -8,11 +8,11 @@ the Cargo workspace.
 
 ## Module Map
 
-| File          | Lines | Purpose                                      | Key Exports                                                                |
-| ------------- | ----- | -------------------------------------------- | -------------------------------------------------------------------------- |
-| `index.ts`    | 191   | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags` |
-| `provider.ts` | 428   | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                              |
-| `types.ts`    | 18    | Hand-maintained provider interface           | `ActupProvider`                                                            |
+| File          | Lines | Purpose                                      | Key Exports                                                                                                                 |
+| ------------- | ----- | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `index.ts`    | 191   | WASM initialization + typed API wrappers     | `initWasm`, `parseUsesRefs`, `checkRefs`, `planUpdates`, `sortVersionTags`, `parseUses`, `parseActionPath`, `isHostSegment` |
+| `provider.ts` | 428   | Default `fetch()`-based GitHub REST provider | `createGitHubProvider`, `GitHubProviderError`                                                                               |
+| `types.ts`    | 18    | Hand-maintained provider interface           | `ActupProvider`                                                                                                             |
 
 ## Package Exports
 

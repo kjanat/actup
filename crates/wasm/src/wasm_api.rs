@@ -3,7 +3,7 @@
 use actup_core::{
     ActionRef, UsesLocation,
     config::Config,
-    extract_uses_from_yaml, parse_uses, policy,
+    extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses, policy,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, check_action_remote},
 };
@@ -88,6 +88,37 @@ fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
 #[wasm_bindgen(js_name = "parseUsesRefs", unchecked_return_type = "UsesLocation[]")]
 pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
     to_js(&extract_uses_from_yaml(yaml))
+}
+
+/// Parse one `uses:` value into an [`ActionRef`].
+///
+/// Returns `null` for local (`./path`) and `docker://` references.
+///
+/// # Errors
+///
+/// Returns `JsValue` error when `value` is not a valid action reference.
+#[wasm_bindgen(js_name = "parseUses", unchecked_return_type = "ActionRef | null")]
+pub fn parse_uses_value(value: &str) -> Result<JsValue, JsValue> {
+    let parsed = parse_uses(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    to_js(&parsed)
+}
+
+/// Parse the `[host/]owner/repo[/subpath]` part of a `uses:` value.
+///
+/// # Errors
+///
+/// Returns `JsValue` error when `path` does not name `owner/repo`.
+#[wasm_bindgen(js_name = "parseActionPath", unchecked_return_type = "ActionRepoId")]
+pub fn parse_action_path_value(path: &str) -> Result<JsValue, JsValue> {
+    let id = parse_action_path(path).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    to_js(&id)
+}
+
+/// Whether `segment` names a host when it starts a path of three or more segments.
+#[wasm_bindgen(js_name = "isHostSegment")]
+#[must_use]
+pub fn is_host_segment_value(segment: &str) -> bool {
+    is_host_segment(segment)
 }
 
 /// Sort version tags newest first by semver precedence.

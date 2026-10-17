@@ -100,6 +100,12 @@ fn check_name(input: &str, field: &str, name: &str) -> Result<()> {
     })
 }
 
+/// Whether `segment` names a host when it starts a path of three or more segments.
+#[must_use]
+pub fn is_host_segment(segment: &str) -> bool {
+    names_host(segment, 3)
+}
+
 pub(crate) fn names_host(first: &str, segments: usize) -> bool {
     if segments < 3 {
         return false;
@@ -840,6 +846,35 @@ jobs:
         assert_eq!(json["ref_range"], serde_json::Value::Null);
         assert_eq!(escaped.value_range(), None);
         Ok(())
+    }
+
+    #[test]
+    fn is_host_segment_matches_host_detection() {
+        for host in [
+            "github.com",
+            "GitHub.COM",
+            "localhost",
+            "localhost:8080",
+            "[::1]",
+            "[::1]:3000",
+        ] {
+            assert!(is_host_segment(host), "{host}");
+            let parsed = parse_action_path(&format!("{host}/o/r")).ok();
+            assert_eq!(
+                parsed.as_ref().and_then(ActionRepoId::host),
+                Some(host.to_ascii_lowercase()).as_deref()
+            );
+        }
+        for segment in [
+            "actions",
+            "my_org",
+            "-bad.host",
+            "a..b",
+            "host:99999",
+            "[nope]",
+        ] {
+            assert!(!is_host_segment(segment), "{segment}");
+        }
     }
 
     #[test]

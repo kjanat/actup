@@ -122,6 +122,26 @@ and `newRef`. A result whose `location.ref_range` is `null` gets no edit.
 Sort `VersionTag[]` newest first by `actup-core` version precedence. Pure,
 synchronous. Tags of equal precedence keep their input order.
 
+### `parseUses(value)`
+
+Parse one `uses:` value with `actup-core`'s parser. Pure, synchronous.
+
+Returns an `ActionRef` (`host`, `owner`, `repo`, `subpath`, `ref_str`), or
+`null` for local (`./path`) and `docker://` refs. Throws on an invalid
+reference. A first segment counts as a host only in a path of three or more
+segments, and the host is lower-cased.
+
+### `parseActionPath(path)`
+
+Parse the `[host/]owner/repo[/subpath]` text before `@`. Pure, synchronous.
+Returns an `ActionRepoId` and throws when `path` does not name `owner/repo`.
+
+### `isHostSegment(segment)`
+
+Return whether `segment` names a host when it starts a path of three or more
+segments: a DNS name with a dot, `localhost`, either with an optional port, or a
+bracketed IPv6 literal.
+
 ### `createGitHubProvider(options?)`
 
 *Import from `"actup-wasm/provider"`.*

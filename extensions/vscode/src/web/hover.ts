@@ -1,5 +1,5 @@
-import { parseUsesRefs } from "actup-wasm";
-import type { ActupProvider, LocatedCheckResult, UsesLocation } from "actup-wasm";
+import { parseUses, parseUsesRefs } from "actup-wasm";
+import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from "actup-wasm";
 import * as vscode from "vscode";
 import { byteToColumn } from "./position.ts";
 
@@ -23,7 +23,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 			return undefined;
 		}
 
-		const ref = parseActionRef(loc.value);
+		const ref = parseRef(loc.value);
 		if (ref === undefined) {
 			return undefined;
 		}
@@ -45,7 +45,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 				ref.host ?? "github.com",
 				ref.owner,
 				ref.repo,
-				ref.gitRef,
+				ref.ref_str,
 			);
 			if (actionYml.name !== null) {
 				md.appendMarkdown(`*${actionYml.name}*\n\n`);
@@ -61,10 +61,10 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		if (matchingResult !== undefined) {
 			const status = matchingResult.status;
 			if (status === "UpToDate") {
-				md.appendMarkdown(`$(check) Up to date at \`${ref.gitRef}\`\n`);
+				md.appendMarkdown(`$(check) Up to date at \`${ref.ref_str}\`\n`);
 			} else if (typeof status === "object" && "Outdated" in status) {
 				const target = status.Outdated.target.version;
-				md.appendMarkdown(`$(warning) Outdated: \`${ref.gitRef}\` → \`${target}\`\n`);
+				md.appendMarkdown(`$(warning) Outdated: \`${ref.ref_str}\` → \`${target}\`\n`);
 			} else if (typeof status === "object" && "Unresolvable" in status) {
 				md.appendMarkdown(`$(error) ${status.Unresolvable.reason}\n`);
 			}
@@ -87,40 +87,10 @@ function valueColumns(loc: UsesLocation): { start: number; end: number } | undef
 		: { start: byteToColumn(loc.raw_line, range.start), end: byteToColumn(loc.raw_line, range.end) };
 }
 
-function parseActionRef(
-	value: string,
-): { owner: string; repo: string; gitRef: string; host: string | null; subpath: string | null } | undefined {
-	const atIdx = value.lastIndexOf("@");
-	if (atIdx === -1) return undefined;
-
-	const path = value.slice(0, atIdx);
-	const gitRef = value.slice(atIdx + 1);
-	const parts = path.split("/").filter(p => p !== "");
-
-	if (parts.length < 2) return undefined;
-
-	// Host detection: first segment with `.` is treated as a host (e.g. `github.com`).
-	const first = parts[0] ?? "";
-	let host: string | null = null;
-	let owner: string;
-	let repo: string;
-	let subpathParts: string[];
-	if (first.includes(".") && parts.length >= 3) {
-		host = first;
-		owner = parts[1] ?? "";
-		repo = parts[2] ?? "";
-		subpathParts = parts.slice(3);
-	} else {
-		owner = first;
-		repo = parts[1] ?? "";
-		subpathParts = parts.slice(2);
+function parseRef(value: string): ActionRef | undefined {
+	try {
+		return parseUses(value) ?? undefined;
+	} catch {
+		return undefined;
 	}
-
-	return {
-		owner,
-		repo,
-		gitRef,
-		host,
-		subpath: subpathParts.length > 0 ? subpathParts.join("/") : null,
-	};
 }

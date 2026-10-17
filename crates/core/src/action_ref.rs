@@ -157,6 +157,7 @@ impl fmt::Display for ActionRef {
 ///
 /// Used as a cache key and for provider lookups.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub struct ActionRepoId {
     /// Optional explicit host
     host: Option<String>,

@@ -16,7 +16,7 @@
 
 /// <reference types="node" />
 
-import type { ActupConfig, LocatedCheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
+import type { ActionRef, ActionRepoId, ActupConfig, LocatedCheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
 import type { ActupProvider } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
@@ -27,6 +27,7 @@ export type {
 	ActionInput,
 	ActionOutput,
 	ActionRef,
+	ActionRepoId,
 	ActionRuns,
 	ActionStep,
 	ActionYml,
@@ -126,6 +127,49 @@ function requireInit(): WasmBindings {
 export function parseUsesRefs(yaml: string): UsesLocation[] {
 	const w = requireInit();
 	return w.parseUsesRefs(yaml);
+}
+
+/**
+ * Parse one `uses:` value with actup-core's parser.
+ *
+ * Pure, synchronous. A host prefix is recognized only in a path of three or
+ * more segments and is lower-cased.
+ *
+ * @param value - A `uses:` value, for example `actions/checkout@v4`.
+ * @returns The parsed reference, or `null` for local and `docker://` refs.
+ * @throws When `value` is not a valid action reference.
+ */
+export function parseUses(value: string): ActionRef | null {
+	const w = requireInit();
+	return w.parseUses(value);
+}
+
+/**
+ * Parse the `[host/]owner/repo[/subpath]` part of a `uses:` value with
+ * actup-core's parser.
+ *
+ * Pure, synchronous.
+ *
+ * @param path - The text before `@`.
+ * @returns The repository id.
+ * @throws When `path` does not name `owner/repo`.
+ */
+export function parseActionPath(path: string): ActionRepoId {
+	const w = requireInit();
+	return w.parseActionPath(path);
+}
+
+/**
+ * Whether `segment` names a host when it starts a path of three or more
+ * segments, by actup-core's host rule.
+ *
+ * Pure, synchronous.
+ *
+ * @param segment - The first path segment, for example `github.com`.
+ */
+export function isHostSegment(segment: string): boolean {
+	const w = requireInit();
+	return w.isHostSegment(segment);
 }
 
 /**

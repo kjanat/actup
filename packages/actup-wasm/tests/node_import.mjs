@@ -15,7 +15,9 @@ try {
 	process.exit(1);
 }
 
-const { checkRefs, initWasm, parseUsesRefs, planUpdates, sortVersionTags } = await import("../dist/index.js");
+const { checkRefs, initWasm, isHostSegment, parseActionPath, parseUses, parseUsesRefs, planUpdates, sortVersionTags } = await import(
+	"../dist/index.js"
+);
 
 // Test 1: initWasm + parseUsesRefs
 await initWasm();
@@ -325,5 +327,25 @@ assert.deepEqual(
 assert.equal(sorted[0].sha, "d".repeat(40), "each tag keeps its sha");
 
 console.log("PASS: sortVersionTags orders newest first");
+
+// Test 16: core's ref parser, host rule included.
+assert.deepEqual(parseUses("a.b/c@v1"), { host: null, owner: "a.b", repo: "c", subpath: null, ref_str: "v1" });
+assert.deepEqual(parseUses("GitHub.COM/actions/checkout/sub@v4"), {
+	host: "github.com",
+	owner: "actions",
+	repo: "checkout",
+	subpath: "sub",
+	ref_str: "v4",
+});
+assert.equal(parseUses("./local/action"), null, "local ref is null");
+assert.throws(() => parseUses("bad owner/repo@v1"), /owner/);
+assert.deepEqual(parseActionPath("localhost:8080/o/r"), { host: "localhost:8080", owner: "o", repo: "r", subpath: null });
+assert.deepEqual(parseActionPath("a.b/c"), { host: null, owner: "a.b", repo: "c", subpath: null });
+assert.throws(() => parseActionPath("only-owner"), /owner\/repo/);
+assert.equal(isHostSegment("ghe.corp"), true);
+assert.equal(isHostSegment("[::1]"), true);
+assert.equal(isHostSegment("-bad.host"), false);
+
+console.log("PASS: parseUses, parseActionPath and isHostSegment follow core");
 
 console.log("\nAll npm package integration tests PASSED");

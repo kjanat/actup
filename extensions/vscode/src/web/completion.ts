@@ -1,5 +1,5 @@
 import type { ActupProvider } from "actup-wasm";
-import { GitHubProviderError, sortVersionTags } from "actup-wasm";
+import { GitHubProviderError, isHostSegment, parseActionPath, sortVersionTags } from "actup-wasm";
 import * as vscode from "vscode";
 
 /** Popular actions for name completion, matching the LSP's list. */
@@ -69,10 +69,6 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 	}
 
 	private completeActionNames(prefix: string, range: vscode.Range): vscode.CompletionList {
-		// Normalize: strip a leading quote and an optional host prefix
-		// (segment containing a `.` followed by `/`, e.g. "github.com/",
-		// "ghe.corp/") so we can match against the bare `owner/repo`.
-		// Preserve the originals so the inserted text keeps the user's form.
 		let stripped = prefix;
 		let quoteChar = "";
 		if (stripped.startsWith("\"") || stripped.startsWith("'")) {
@@ -81,7 +77,7 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 		}
 		let hostPrefix = "";
 		const slashIdx = stripped.indexOf("/");
-		if (slashIdx > 0 && stripped.slice(0, slashIdx).includes(".")) {
+		if (slashIdx > 0 && isHostSegment(stripped.slice(0, slashIdx))) {
 			hostPrefix = stripped.slice(0, slashIdx + 1);
 			stripped = stripped.slice(slashIdx + 1);
 		}
@@ -107,7 +103,7 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 		actionPath: string,
 		versionPrefix: string,
 	): Promise<vscode.CompletionList> {
-		const parsed = parseActionPath(actionPath);
+		const parsed = repositoryOf(actionPath);
 		if (parsed === undefined) return new vscode.CompletionList([], false);
 
 		const items: vscode.CompletionItem[] = [];
@@ -152,20 +148,13 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 	}
 }
 
-/** Parse `[host/]owner/repo[/subpath]`. Skips local refs (`./...`) and quoted forms. */
-function parseActionPath(path: string): { host: string; owner: string; repo: string } | undefined {
-	let trimmed = path.trim();
-	if (trimmed === "" || trimmed.startsWith("./") || trimmed.startsWith("../")) return undefined;
-	if (trimmed.startsWith("\"") || trimmed.startsWith("'")) {
-		trimmed = trimmed.slice(1);
+function repositoryOf(path: string): { host: string; owner: string; repo: string } | undefined {
+	const trimmed = path.trim();
+	const unquoted = trimmed.startsWith("\"") || trimmed.startsWith("'") ? trimmed.slice(1) : trimmed;
+	try {
+		const id = parseActionPath(unquoted);
+		return { host: id.host ?? "github.com", owner: id.owner, repo: id.repo };
+	} catch {
+		return undefined;
 	}
-	const parts = trimmed.split("/").filter(p => p !== "");
-	if (parts.length < 2) return undefined;
-
-	// Host detection: first segment contains a `.` (e.g. `github.com`, `ghe.corp.internal`).
-	const first = parts[0] ?? "";
-	if (first.includes(".") && parts.length >= 3) {
-		return { host: first, owner: parts[1] ?? "", repo: parts[2] ?? "" };
-	}
-	return { host: "github.com", owner: first, repo: parts[1] ?? "" };
 }

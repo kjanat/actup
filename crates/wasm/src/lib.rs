@@ -5,6 +5,7 @@
 //! - `checkRefs` — async version checking via a host-provided JS provider
 //! - `planUpdates` — compute text edits from check results
 //! - `sortVersionTags`: sort version tags newest first
+//! - `parseUses`, `parseActionPath`, `isHostSegment`: core's ref parser
 //!
 //! Runs entirely in-browser or Node.js — no filesystem access.
 //!
