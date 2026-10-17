@@ -1,4 +1,4 @@
-//! File-based persistent cache for version information
+//! Disk cache for version sets, shared by the CLI, the LSP and `actup-mcp`.
 //!
 //! Stores cached version data in:
 //! - Linux: `~/.cache/actup/`
@@ -7,12 +7,13 @@
 
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
-use actup_core::{
-    Config,
-    cache::{self, Cache},
-    write_atomic,
-};
 use tracing::debug;
+
+use crate::{
+    Config,
+    atomic_write::write_atomic,
+    cache::{self, Cache},
+};
 
 /// What a [`FileCache`] does with its entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +26,8 @@ pub enum Access {
     WriteOnly,
 }
 
-/// File-based cache implementation
+/// A [`Cache`] that stores each entry as a JSON file named by [`cache::entry_file_name`].
+#[derive(Debug, Clone)]
 pub struct FileCache {
     cache_dir: PathBuf,
     ttl: Duration,
@@ -246,10 +248,10 @@ impl Cache for FileCache {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
-    use actup_core::version;
     use tempfile::TempDir;
 
     use super::*;
+    use crate::version;
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();
@@ -261,7 +263,7 @@ mod tests {
     async fn test_set_and_get() {
         let (cache, _temp) = make_test_cache(3600);
 
-        let entry = actup_core::cache::Entry::new(version::Set::default());
+        let entry = cache::Entry::new(version::Set::default());
         cache.set("test_key", entry.clone()).await.unwrap();
 
         let retrieved = cache.get("test_key").await.unwrap();
@@ -273,19 +275,19 @@ mod tests {
         let (cache, _temp) = make_test_cache(3600);
 
         let result = cache.get("nonexistent").await;
-        assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
+        assert!(matches!(result, Err(cache::Error::NotFound)));
     }
 
     #[tokio::test]
     async fn test_expired_entry_returns_not_found() {
         let (cache, _temp) = make_test_cache(0); // 0 TTL = immediately expired
 
-        let entry = actup_core::cache::Entry::new(version::Set::default());
+        let entry = cache::Entry::new(version::Set::default());
         cache.set("test_key", entry).await.unwrap();
 
         // Should be expired immediately
         let result = cache.get("test_key").await;
-        assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
+        assert!(matches!(result, Err(cache::Error::NotFound)));
     }
 
     #[tokio::test]
@@ -293,28 +295,39 @@ mod tests {
     {
         let (cache, _temp) = make_test_cache(0);
         cache
-            .set(
-                "key",
-                actup_core::cache::Entry::new(version::Set::default()),
-            )
+            .set("key", cache::Entry::new(version::Set::default()))
             .await?;
 
         assert!(cache.get("key").await.is_err());
         assert!(matches!(
             cache.lookup("key").await?,
-            actup_core::cache::Lookup::Expired(_)
+            cache::Lookup::Expired(_)
         ));
 
         let (fresh, _temp) = make_test_cache(3600);
         fresh
-            .set(
-                "key",
-                actup_core::cache::Entry::new(version::Set::default()),
-            )
+            .set("key", cache::Entry::new(version::Set::default()))
             .await?;
         assert!(matches!(
             fresh.lookup("key").await?,
-            actup_core::cache::Lookup::Fresh(_)
+            cache::Lookup::Fresh(_)
+        ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn expired_entry_stays_on_disk_for_lookup() -> Result<(), Box<dyn std::error::Error>> {
+        let (cache, _temp) = make_test_cache(0);
+        let entry = cache::Entry::new(version::Set::default());
+        cache.set("expire_test", entry).await?;
+
+        let result = cache.get("expire_test").await;
+        assert!(matches!(result, Err(cache::Error::NotFound)));
+
+        assert!(tokio::fs::try_exists(cache.key_to_path("expire_test")).await?);
+        assert!(matches!(
+            cache.lookup("expire_test").await?,
+            cache::Lookup::Expired(_)
         ));
         Ok(())
     }
@@ -323,7 +336,7 @@ mod tests {
     async fn test_remove() {
         let (cache, _temp) = make_test_cache(3600);
 
-        let entry = actup_core::cache::Entry::new(version::Set::default());
+        let entry = cache::Entry::new(version::Set::default());
         cache.set("test_key", entry).await.unwrap();
 
         // Verify it exists
@@ -335,7 +348,7 @@ mod tests {
         // Verify it's gone
         assert!(matches!(
             cache.get("test_key").await,
-            Err(actup_core::cache::Error::NotFound)
+            Err(cache::Error::NotFound)
         ));
     }
 
@@ -345,7 +358,7 @@ mod tests {
 
         // Add multiple entries
         for i in 0..5 {
-            let entry = actup_core::cache::Entry::new(version::Set::default());
+            let entry = cache::Entry::new(version::Set::default());
             cache.set(&format!("key_{i}"), entry).await.unwrap();
         }
 
@@ -355,7 +368,7 @@ mod tests {
         // Verify all gone
         for i in 0..5 {
             let result = cache.get(&format!("key_{i}")).await;
-            assert!(matches!(result, Err(actup_core::cache::Error::NotFound)));
+            assert!(matches!(result, Err(cache::Error::NotFound)));
         }
     }
 
@@ -366,12 +379,12 @@ mod tests {
         assert!(!cache.is_enabled());
 
         // Set should succeed silently
-        let entry = actup_core::cache::Entry::new(version::Set::default());
+        let entry = cache::Entry::new(version::Set::default());
         assert!(cache.set("test_key", entry).await.is_ok());
 
         // Get should return Disabled
         let result = cache.get("test_key").await;
-        assert!(matches!(result, Err(actup_core::cache::Error::Disabled)));
+        assert!(matches!(result, Err(cache::Error::Disabled)));
     }
 
     #[tokio::test]
@@ -383,17 +396,17 @@ mod tests {
         config.cache.ttl = Duration::ZERO;
         let reader = FileCache::from_config(&config, Access::ReadWrite);
         let writer = FileCache::from_config(&config, Access::WriteOnly);
-        let entry = actup_core::cache::Entry::new(version::Set::default());
+        let entry = cache::Entry::new(version::Set::default());
         reader.set("stored", entry.clone()).await?;
 
         assert!(writer.is_enabled());
         assert!(matches!(
             writer.get("stored").await,
-            Err(actup_core::cache::Error::NotFound)
+            Err(cache::Error::NotFound)
         ));
         assert!(matches!(
             writer.lookup("stored").await,
-            Err(actup_core::cache::Error::NotFound)
+            Err(cache::Error::NotFound)
         ));
         assert!(writer.key_to_path("stored").exists());
         writer.set("written", entry).await?;
@@ -417,13 +430,10 @@ mod tests {
         )
         .await?;
 
-        assert!(matches!(
-            cache.get(key).await,
-            Err(actup_core::cache::Error::NotFound)
-        ));
+        assert!(matches!(cache.get(key).await, Err(cache::Error::NotFound)));
 
         cache
-            .set(key, actup_core::cache::Entry::new(version::Set::default()))
+            .set(key, cache::Entry::new(version::Set::default()))
             .await?;
         assert!(cache.get(key).await.is_ok());
         Ok(())
@@ -520,10 +530,7 @@ mod tests {
             std::fs::write(temp.path().join(name), "{}")?;
         }
         cache
-            .set(
-                "key",
-                actup_core::cache::Entry::new(version::Set::default()),
-            )
+            .set("key", cache::Entry::new(version::Set::default()))
             .await?;
 
         cache.clear().await?;
@@ -533,6 +540,43 @@ mod tests {
             .collect::<Result<_, _>>()?;
         names.sort();
         assert_eq!(names, ["notes.txt", "package.json", "tsconfig.json"]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn remove_and_clear_tolerate_missing_files_and_a_disabled_cache()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (cache, temp) = make_test_cache(3600);
+        cache.remove("never_existed").await?;
+        cache.clear().await?;
+        let missing = FileCache::with_path(temp.path().join("absent"), Duration::from_hours(1));
+        missing.clear().await?;
+        let disabled = FileCache::disabled();
+        disabled.remove("key").await?;
+        disabled.clear().await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn set_creates_the_directory_and_leaves_no_temp_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let dir = temp.path().join("nested").join("dirs");
+        let cache = FileCache::with_path(dir.clone(), Duration::from_hours(1));
+        cache
+            .set("atomic_test", cache::Entry::new(version::Set::default()))
+            .await?;
+        let names: Vec<std::ffi::OsString> = std::fs::read_dir(&dir)?
+            .map(|entry| entry.map(|e| e.file_name()))
+            .collect::<Result<_, _>>()?;
+        let Some(name) = cache
+            .key_to_path("atomic_test")
+            .file_name()
+            .map(ToOwned::to_owned)
+        else {
+            panic!("entry path has no file name");
+        };
+        assert_eq!(names, [name]);
         Ok(())
     }
 

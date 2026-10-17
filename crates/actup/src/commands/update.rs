@@ -4,7 +4,7 @@ use anstream::println;
 use std::{path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, check_action_with_provider,
+    ActionRef, CheckStatus, Config, FileCache, check_action_with_provider,
     patch::{FileEdits, SkipReason, pin_edit, retarget_edit},
     policy, provider, sanitize_line, version,
 };
@@ -16,7 +16,6 @@ use crate::{
         Change, EditResult, WorkflowScanner, commit_file, report_invalid, report_skipped,
         report_unwritable, writable_versions,
     },
-    file_cache::FileCache,
     scan::{Scan, versions_for},
 };
 
@@ -160,11 +159,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::file_cache::Access;
     use crate::{
         cli::CliExitCode,
         common::{ErrorKind, SkipCause},
     };
+    use actup_core::Access;
 
     fn uncached() -> Config {
         Config {
@@ -790,7 +789,7 @@ mod tests {
                 &registry,
                 &Arc::new(FileCache::from_config(
                     &config,
-                    crate::file_cache::Access::ReadWrite,
+                    actup_core::Access::ReadWrite,
                 )),
             )
             .await;
@@ -928,7 +927,7 @@ mod tests {
             &registry,
             &Arc::new(FileCache::from_config(
                 &uncached(),
-                crate::file_cache::Access::ReadWrite,
+                actup_core::Access::ReadWrite,
             )),
         )
         .await
@@ -975,7 +974,7 @@ mod tests {
             &registry("v4.2.0"),
             &Arc::new(FileCache::from_config(
                 &uncached(),
-                crate::file_cache::Access::ReadWrite,
+                actup_core::Access::ReadWrite,
             )),
         )
         .await

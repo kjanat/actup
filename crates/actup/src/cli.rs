@@ -13,7 +13,7 @@ use clap::{
 };
 use clap_complete::Shell;
 
-use crate::file_cache::Access;
+use actup_core::Access;
 
 #[derive(Parser)]
 #[command(name = "actup")]

@@ -21,6 +21,8 @@ pub mod config;
 pub mod discovery;
 pub mod error;
 pub mod fetch;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod file_cache;
 pub mod parser;
 pub mod patch;
 pub mod policy;
@@ -53,6 +55,8 @@ pub use config::{
 };
 pub use discovery::{DiscoveredFile, ExtraPath, FileKind, discover_files};
 pub use error::{Error, Result};
+#[cfg(not(target_arch = "wasm32"))]
+pub use file_cache::{Access, FileCache};
 pub use parser::{
     EditValidationError, Uses, UsesLocation, check_ref_name, classify_uses, extract_uses_from_yaml,
     is_host_segment, line_spans, lines_ending_in_scalars, parse_action_path, parse_uses,

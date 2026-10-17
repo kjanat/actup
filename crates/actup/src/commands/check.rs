@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, ActionRepoId, CheckResult, CheckStatus, Config, NO_VERSIONS_FOUND_REASON,
+    ActionRef, ActionRepoId, CheckResult, CheckStatus, Config, FileCache, NO_VERSIONS_FOUND_REASON,
     check_action_with_provider, provider, version,
 };
 
@@ -12,7 +12,6 @@ use anstream::eprintln;
 use crate::{
     cli::{CheckFormat, FailOn, OutputFormat},
     common::{ErrorTally, InvalidUses, WorkflowScanner},
-    file_cache::FileCache,
     output::{Finding, FindingStatus, Span, determine_exit_code, print_findings, print_summary},
     sarif,
     scan::{Scan, Versions},
@@ -368,7 +367,7 @@ mod tests {
     };
 
     use super::*;
-    use crate::file_cache::Access;
+    use actup_core::Access;
 
     struct TestProvider {
         resolve_error: Option<actup_core::Error>,

@@ -16,7 +16,7 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | `hover.rs`              | 873   | Hover info: version status, README, action.yml  |
 | `workspace_commands.rs` | 839   | Workspace-level scan + update all               |
 | `code_actions.rs`       | 778   | Quick-fix code actions (update, pin)            |
-| `file_cache.rs`         | 460   | LSP-specific file-based cache                   |
+| `file_cache.rs`         | 190   | Version lookup through the shared `FileCache`   |
 | `error_ux.rs`           | 420   | User-friendly error messages                    |
 | `provider_setup.rs`     | 218   | Provider registry construction for LSP          |
 | `position.rs`           | 316   | Position/range conversion utilities             |
@@ -36,7 +36,7 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | Fix position calculation   | `position.rs`                          |
 | Improve error messages     | `error_ux.rs`                          |
 | Change LSP lifecycle       | `backend.rs` → `initialize`/`shutdown` |
-| Modify cache behavior      | `file_cache.rs`                        |
+| Modify cache behavior      | `actup-core` `file_cache.rs`           |
 | Wire new provider          | `provider_setup.rs`                    |
 
 ## Code Actions

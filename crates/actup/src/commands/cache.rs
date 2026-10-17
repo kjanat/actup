@@ -7,17 +7,14 @@ use std::{
 };
 
 use actup_core::{
-    Config,
+    Config, FileCache,
     cache::{self, Cache},
     sanitize_line,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::{
-    cli::{CacheAction, OutputFormat},
-    file_cache::FileCache,
-};
+use crate::cli::{CacheAction, OutputFormat};
 
 /// Cache info for JSON output
 #[derive(Serialize)]

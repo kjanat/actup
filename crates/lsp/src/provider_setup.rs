@@ -52,7 +52,7 @@ impl Providers {
 /// Respects `config.cache.enabled`, `config.cache.path`, and `config.cache.ttl`.
 #[must_use]
 pub fn build_file_cache(config: &Config) -> crate::file_cache::FileCache {
-    crate::file_cache::FileCache::from_config(config)
+    crate::file_cache::FileCache::from_config(config, actup_core::Access::ReadWrite)
 }
 
 #[cfg(test)]

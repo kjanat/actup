@@ -4,7 +4,7 @@ use anstream::println;
 use std::{ops::Range, path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
+    ActionRef, CheckStatus, Config, FileCache, UsesLocation, check_action_with_provider,
     patch::{FileEdits, PendingEdit, SkipReason, pin_edit, repin_sha_edit, rewrite_edit},
     provider,
     rewrite::{PinMarker, Rewrite, after_value},
@@ -18,7 +18,6 @@ use crate::{
         Change, EditResult, RefSite, Unwritable, WorkflowScanner, commit_file, report_invalid,
         report_skipped, report_unwritable, writable_versions,
     },
-    file_cache::FileCache,
     scan::{Scan, versions_for},
 };
 
@@ -329,11 +328,11 @@ mod tests {
     };
 
     use super::*;
-    use crate::file_cache::Access;
     use crate::{
         cli::CliExitCode,
         common::{ErrorKind, SkipCause},
     };
+    use actup_core::Access;
 
     fn uncached() -> Config {
         Config {
@@ -648,7 +647,7 @@ mod tests {
                     &registry,
                     &Arc::new(FileCache::from_config(
                         &config,
-                        crate::file_cache::Access::ReadWrite,
+                        actup_core::Access::ReadWrite,
                     )),
                 )
                 .await;
@@ -794,7 +793,7 @@ mod tests {
                 &repo_sha_registry(),
                 &Arc::new(FileCache::from_config(
                     &uncached(),
-                    crate::file_cache::Access::ReadWrite,
+                    actup_core::Access::ReadWrite,
                 )),
             )
             .await
@@ -1309,7 +1308,7 @@ mod tests {
                 &registry,
                 &Arc::new(FileCache::from_config(
                     &uncached(),
-                    crate::file_cache::Access::ReadWrite,
+                    actup_core::Access::ReadWrite,
                 )),
             )
             .await
@@ -1526,7 +1525,7 @@ mod tests {
             &registry,
             &Arc::new(FileCache::from_config(
                 &uncached(),
-                crate::file_cache::Access::ReadWrite,
+                actup_core::Access::ReadWrite,
             )),
         )
         .await
@@ -1570,7 +1569,7 @@ mod tests {
             &registry,
             &Arc::new(FileCache::from_config(
                 &uncached(),
-                crate::file_cache::Access::ReadWrite,
+                actup_core::Access::ReadWrite,
             )),
         )
         .await
@@ -1847,7 +1846,7 @@ mod tests {
                 &registry,
                 &Arc::new(FileCache::from_config(
                     &config,
-                    crate::file_cache::Access::ReadWrite,
+                    actup_core::Access::ReadWrite,
                 )),
             )
             .await;

@@ -7,7 +7,8 @@
 use std::sync::Arc;
 
 use actup_core::{
-    ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_line, version,
+    ActionRef, Config, FileCache, check_ref_name, parse_action_path, provider, sanitize_line,
+    version,
 };
 use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
@@ -15,7 +16,6 @@ use serde::Serialize;
 
 use crate::{
     cli::{CliExitCode, LatestArgs, OutputFormat},
-    file_cache::FileCache,
     scan::{batch_fetch_versions, versions_for},
 };
 
@@ -296,7 +296,7 @@ mod tests {
                 &registry,
                 &Arc::new(FileCache::from_config(
                     &config,
-                    crate::file_cache::Access::ReadWrite
+                    actup_core::Access::ReadWrite
                 ))
             )
             .await,
@@ -362,7 +362,7 @@ mod tests {
                 &registry,
                 &Arc::new(FileCache::from_config(
                     &config,
-                    crate::file_cache::Access::ReadWrite
+                    actup_core::Access::ReadWrite
                 ))
             )
             .await,

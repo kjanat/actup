@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
 use actup_core::{
-    ActionRef, ActionRepoId, Config, DiscoveredFile, Error as CoreError, SourceFormat,
+    ActionRef, ActionRepoId, Config, DiscoveredFile, Error as CoreError, FileCache, SourceFormat,
     UsesLocation, provider, version,
 };
 use itertools::Itertools;
@@ -11,7 +11,6 @@ use tracing::debug;
 
 use crate::{
     common::{ErrorTally, InvalidUses, Remote, WorkflowScanner},
-    file_cache::FileCache,
     progress::Spinner,
 };
 

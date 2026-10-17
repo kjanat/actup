@@ -78,13 +78,12 @@ impl Provider for Offline {
 mod tests {
     use std::{sync::Arc, time::Duration};
 
-    use actup_core::{Config, cache::Cache, provider};
+    use actup_core::{Access, Config, FileCache, cache::Cache, provider};
 
     use super::*;
     use crate::{
         cli::{CheckFormat, CliExitCode, OutputFormat},
         commands::check,
-        file_cache::{Access, FileCache},
     };
 
     struct Unreachable;

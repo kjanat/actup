@@ -5,7 +5,6 @@
 mod cli;
 mod commands;
 mod common;
-mod file_cache;
 mod offline;
 mod output;
 mod progress;
@@ -17,15 +16,12 @@ use anstream::{eprintln, println};
 use std::{process::ExitCode, sync::Arc};
 
 use actup_core::{
-    Config, Registration, Retention, error::chain, neutralize_workflow_commands, provider,
-    sanitize_line, user_config_path, validate_no_duplicate_presets,
+    Config, FileCache, Registration, Retention, error::chain, neutralize_workflow_commands,
+    provider, sanitize_line, user_config_path, validate_no_duplicate_presets,
 };
 use tracing_subscriber::EnvFilter;
 
-use crate::{
-    cli::{CacheMode, Cli, CliExitCode, Command},
-    file_cache::FileCache,
-};
+use crate::cli::{CacheMode, Cli, CliExitCode, Command};
 
 #[tokio::main]
 async fn main() -> ExitCode {

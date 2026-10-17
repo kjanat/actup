@@ -4,15 +4,14 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 
 ## Module Map
 
-| Module          | Purpose                                  | Key Types/Functions               |
-| --------------- | ---------------------------------------- | --------------------------------- |
-| `cli.rs`        | Clap args, command enum                  | `Cli`, `Command`, `CliExitCode`   |
-| `main.rs`       | Entry point, registry bootstrap          | `run()`, `build_registry()`       |
-| `commands/`     | Subcommand implementations               | `check`, `update`, `cache`, `pin` |
-| `output.rs`     | Human/JSON formatting, colors            | `OutputFormat`, print helpers     |
-| `common.rs`     | Shared command logic, result aggregation | `process_files`, `aggregate`      |
-| `file_cache.rs` | File-based cache storage                 | `FileCache`, TTL handling         |
-| `scan.rs`       | Read files, batch-fetch versions once    | `Scan`, `Scan::fetch`             |
+| Module      | Purpose                                  | Key Types/Functions               |
+| ----------- | ---------------------------------------- | --------------------------------- |
+| `cli.rs`    | Clap args, command enum                  | `Cli`, `Command`, `CliExitCode`   |
+| `main.rs`   | Entry point, registry bootstrap          | `run()`, `build_registry()`       |
+| `commands/` | Subcommand implementations               | `check`, `update`, `cache`, `pin` |
+| `output.rs` | Human/JSON formatting, colors            | `OutputFormat`, print helpers     |
+| `common.rs` | Shared command logic, result aggregation | `process_files`, `aggregate`      |
+| `scan.rs`   | Read files, batch-fetch versions once    | `Scan`, `Scan::fetch`             |
 
 ## Commands
 
@@ -35,7 +34,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 | Change output format  | `output.rs`                           |
 | Add new subcommand    | `commands/mod.rs` + new file          |
 | Modify exit codes     | `cli.rs` → `CliExitCode` enum         |
-| Change cache location | `file_cache.rs` + `actup-core` config |
+| Change cache location | `actup-core` `file_cache.rs` + config |
 | Provider registration | `main.rs` → `build_registry()`        |
 
 ## Exit Codes
