@@ -1,5 +1,6 @@
 name: Upload data
 on: { pull_request: }
+permissions: {}
 
 jobs:
   upload:
