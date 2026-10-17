@@ -162,6 +162,7 @@ typedef struct {
     int16_t blk_imp_tab;
     int16_t key_cls;
     bool if_val;
+    int16_t blk_str_row;
     Array(int16_t) ind_typ_stk;
     Array(int16_t) ind_len_stk;
     Array(int16_t) ind_key_stk;
@@ -202,6 +203,8 @@ static unsigned serialize(Scanner *scanner, char *buffer) {
     size += sizeof(int16_t);
     *(int16_t *)&buffer[size] = scanner->if_val;
     size += sizeof(int16_t);
+    *(int16_t *)&buffer[size] = scanner->blk_str_row;
+    size += sizeof(int16_t);
     int16_t *typ_itr = scanner->ind_typ_stk.contents + 1;
     int16_t *typ_end = scanner->ind_typ_stk.contents + scanner->ind_typ_stk.size;
     int16_t *len_itr = scanner->ind_len_stk.contents + 1;
@@ -226,6 +229,7 @@ static void deserialize(Scanner *scanner, const char *buffer, unsigned length) {
     scanner->blk_imp_tab = 0;
     scanner->key_cls = KEY_OTHER;
     scanner->if_val = false;
+    scanner->blk_str_row = -1;
     array_delete(&scanner->ind_typ_stk);
     array_push(&scanner->ind_typ_stk, IND_ROT);
     array_delete(&scanner->ind_len_stk);
@@ -247,6 +251,8 @@ static void deserialize(Scanner *scanner, const char *buffer, unsigned length) {
         scanner->key_cls = *(int16_t *)&buffer[size];
         size += sizeof(int16_t);
         scanner->if_val = *(int16_t *)&buffer[size];
+        size += sizeof(int16_t);
+        scanner->blk_str_row = *(int16_t *)&buffer[size];
         size += sizeof(int16_t);
         while (size < length) {
             array_push(&scanner->ind_typ_stk, *(int16_t *)&buffer[size]);
@@ -918,6 +924,7 @@ static bool scn_blk_str_bgn(Scanner *scanner, TSLexer *lexer, TSSymbol result_sy
         }
     }
     PUSH_IND(IND_STR, ind);
+    scanner->blk_str_row = scanner->end_row;
     RET_SYM(result_symbol);
 }
 
@@ -1067,7 +1074,7 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
                 RET_SYM(BL);
             }
             if (valid_symbols[BR_BLK_STR_CTN]
-                    ? scanner->cur_row == scanner->row
+                    ? scanner->cur_row == scanner->blk_str_row
                     : scanner->cur_col == 0 || scanner->cur_row != scanner->row || scanner->cur_col > scanner->col) {
                 adv(scanner, lexer);
                 while (!is_nwl(lexer->lookahead) && lexer->lookahead != 0) {

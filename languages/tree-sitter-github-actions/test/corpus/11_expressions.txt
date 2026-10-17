@@ -871,3 +871,72 @@ n: ${{ a }}-x
                 (context
                   (identifier)))
               (string_scalar))))))))
+
+============================================================================
+Hash after an expression in a block scalar is content
+============================================================================
+run: |
+  echo ${{ github.ref }} # not a comment
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)
+                  (property
+                    (property_deref)
+                    (identifier)))))))))))
+
+============================================================================
+Header comments and hash content in block scalars with expressions
+============================================================================
+run: | # header
+  a
+  echo ${{ a }} # one ${{ b }} # two
+k: > # header
+  ${{ c }}#x
+  # line
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_scalar
+              (comment)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_scalar
+              (comment)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier))))))))))
