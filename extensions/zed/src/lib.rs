@@ -79,6 +79,7 @@ impl zed::Extension for ActupExtension {
         let (os, _) = zed::current_platform();
         let lookup = path_lookup(os);
         mcp_command(
+            os,
             zed::process::Command::new(lookup.command)
                 .args(lookup.args.iter().copied())
                 .output(),
@@ -121,7 +122,20 @@ const fn path_lookup(os: zed::Os) -> PathLookup {
     }
 }
 
-fn mcp_command(lookup: Result<zed::process::Output, String>) -> zed::Result<zed::Command> {
+fn is_absolute(os: zed::Os, path: &str) -> bool {
+    match os {
+        zed::Os::Mac | zed::Os::Linux => path.starts_with('/'),
+        zed::Os::Windows => {
+            path.starts_with(r"\\")
+                || matches!(path.as_bytes(), [drive, b':', b'\\' | b'/', ..] if drive.is_ascii_alphabetic())
+        }
+    }
+}
+
+fn mcp_command(
+    os: zed::Os,
+    lookup: Result<zed::process::Output, String>,
+) -> zed::Result<zed::Command> {
     let output = lookup.map_err(|error| {
         format!(
             "`{CONTEXT_SERVER}` PATH lookup failed: {error}. \
@@ -141,6 +155,7 @@ fn mcp_command(lookup: Result<zed::process::Output, String>) -> zed::Result<zed:
         .lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
+        .filter(|path| is_absolute(os, path))
         .map(|path| zed::Command {
             command: path.to_owned(),
             args: Vec::new(),
@@ -271,7 +286,10 @@ mod tests {
     #[test]
     fn mcp_command_runs_the_path_the_lookup_prints() -> Result<(), String> {
         assert_runs(
-            mcp_command(Ok(output(Some(0), "/home/user/.cargo/bin/actup-mcp\n"))),
+            mcp_command(
+                zed::Os::Linux,
+                Ok(output(Some(0), "/home/user/.cargo/bin/actup-mcp\n")),
+            ),
             "/home/user/.cargo/bin/actup-mcp",
         )
     }
@@ -279,24 +297,59 @@ mod tests {
     #[test]
     fn mcp_command_takes_the_first_path_where_exe_prints() -> Result<(), String> {
         assert_runs(
-            mcp_command(Ok(output(
-                Some(0),
-                "\r\nC:\\Users\\u\\.cargo\\bin\\actup-mcp.exe\r\nC:\\tools\\actup-mcp.exe\r\n",
-            ))),
+            mcp_command(
+                zed::Os::Windows,
+                Ok(output(
+                    Some(0),
+                    "\r\nC:\\Users\\u\\.cargo\\bin\\actup-mcp.exe\r\nC:\\tools\\actup-mcp.exe\r\n",
+                )),
+            ),
             r"C:\Users\u\.cargo\bin\actup-mcp.exe",
         )
     }
 
     #[test]
     fn mcp_command_rejects_empty_output() {
-        assert_names_the_setting(mcp_command(Ok(output(Some(0), ""))));
-        assert_names_the_setting(mcp_command(Ok(output(Some(0), "\r\n  \n"))));
+        assert_names_the_setting(mcp_command(zed::Os::Linux, Ok(output(Some(0), ""))));
+        assert_names_the_setting(mcp_command(zed::Os::Linux, Ok(output(Some(0), "\r\n  \n"))));
+    }
+
+    #[test]
+    fn mcp_command_rejects_a_relative_lookup_result() {
+        for stdout in ["actup-mcp\n", "alias actup-mcp='x'\n", "bin/actup-mcp\n"] {
+            assert_names_the_setting(mcp_command(zed::Os::Linux, Ok(output(Some(0), stdout))));
+            assert_names_the_setting(mcp_command(zed::Os::Windows, Ok(output(Some(0), stdout))));
+        }
+    }
+
+    #[test]
+    fn mcp_command_accepts_windows_drive_and_unc_paths() -> Result<(), String> {
+        for (stdout, path) in [
+            ("C:\\x\\actup-mcp.exe\r\n", r"C:\x\actup-mcp.exe"),
+            ("C:/x/actup-mcp.exe\r\n", "C:/x/actup-mcp.exe"),
+            ("\\\\host\\x\\actup-mcp.exe\r\n", r"\\host\x\actup-mcp.exe"),
+        ] {
+            assert_runs(
+                mcp_command(zed::Os::Windows, Ok(output(Some(0), stdout))),
+                path,
+            )?;
+        }
+        Ok(())
     }
 
     #[test]
     fn mcp_command_rejects_a_failed_lookup() {
-        assert_names_the_setting(mcp_command(Ok(output(Some(1), "/usr/bin/actup-mcp\n"))));
-        assert_names_the_setting(mcp_command(Ok(output(None, "/usr/bin/actup-mcp\n"))));
-        assert_names_the_setting(mcp_command(Err("process:exec denied".to_owned())));
+        assert_names_the_setting(mcp_command(
+            zed::Os::Linux,
+            Ok(output(Some(1), "/usr/bin/actup-mcp\n")),
+        ));
+        assert_names_the_setting(mcp_command(
+            zed::Os::Linux,
+            Ok(output(None, "/usr/bin/actup-mcp\n")),
+        ));
+        assert_names_the_setting(mcp_command(
+            zed::Os::Linux,
+            Err("process:exec denied".to_owned()),
+        ));
     }
 }
