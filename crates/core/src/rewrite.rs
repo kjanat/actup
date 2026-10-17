@@ -1,6 +1,6 @@
 //! The text written for an updated `uses:` ref and the comment after it.
 
-use crate::{policy::Style, version};
+use crate::{SourceFormat, policy::Style, version};
 
 /// What follows a `uses:` ref on its line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,12 +119,13 @@ pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
 
 /// The length of the `# <label> [<word>]` comment that starts `rest`, the text after a value, or 0.
 ///
-/// The comment needs whitespace before its `#`. A word ends at whitespace, a
-/// quote, a backslash, a bracket, `<`, `>`, `;` or `,`, and the word after the label is
+/// On a [`SourceFormat::Text`] line the comment may follow one closing quote
+/// and any `}`, `]`, `,` and spaces. It needs whitespace before its `#`. A word ends at whitespace, a quote, a
+/// backslash, a bracket, `<`, `>`, `;` or `,`, and the word after the label is
 /// read as its note. A writer reads this span on a line that takes no new
 /// comment and leaves the rest of the line as written.
 #[must_use]
-pub fn label_span(rest: &str) -> usize {
+pub fn label_span(format: SourceFormat, rest: &str) -> usize {
     let is_word = |c: char| {
         !c.is_whitespace()
             && !matches!(
@@ -141,8 +142,19 @@ pub fn label_span(rest: &str) -> usize {
         rest.get(from..)
             .map_or(from, |tail| from + tail.len() - tail.trim_start().len())
     };
-    let hash = gap_end(0);
-    if hash == 0 || rest.get(hash..hash + 1) != Some("#") {
+    let closing = |c: char| {
+        c.is_whitespace() || (format == SourceFormat::Text && matches!(c, '}' | ']' | ','))
+    };
+    let quote = usize::from(format == SourceFormat::Text && rest.starts_with(['"', '\'']));
+    let hash = rest
+        .get(quote..)
+        .and_then(|tail| tail.find(|c: char| !closing(c)))
+        .map_or(rest.len(), |len| quote + len);
+    let spaced = rest
+        .get(..hash)
+        .and_then(|closer| closer.chars().next_back())
+        .is_some_and(char::is_whitespace);
+    if !spaced || rest.get(hash..hash + 1) != Some("#") {
         return 0;
     }
     let label_start = gap_end(hash + 1);
@@ -561,7 +573,7 @@ mod tests {
     #[test]
     fn label_span_covers_the_label_and_one_note_word() {
         fn span(rest: &str) -> Option<&str> {
-            rest.get(..label_span(rest))
+            rest.get(..label_span(SourceFormat::Text, rest))
         }
         assert_eq!(span(" # v4.0.0\");"), Some(" # v4.0.0"));
         assert_eq!(span(" # v4.0.0 keep this\");"), Some(" # v4.0.0 keep"));
@@ -569,9 +581,24 @@ mod tests {
         assert_eq!(span(" # main, x"), Some(" # main"));
         assert_eq!(span(" # v4 \");"), Some(" # v4"));
         assert_eq!(span(" # v4.0.0\\n\");"), Some(" # v4.0.0"));
-        for rest in ["", "\");", "# v4", " #", " # \")", " x # v4", "\" # v4"] {
-            assert_eq!(label_span(rest), 0, "{rest:?}");
+        assert_eq!(span("\"},  # v4.0.0 keep"), Some("\"},  # v4.0.0 keep"));
+        assert_eq!(span("' ] # v4"), Some("' ] # v4"));
+        for rest in [
+            "",
+            "\");",
+            "# v4",
+            " #",
+            " # \")",
+            " x # v4",
+            "\")  # v4",
+            "\"\" # v4",
+            "\"}# v4",
+        ] {
+            assert_eq!(label_span(SourceFormat::Text, rest), 0, "{rest:?}");
         }
+        assert_eq!(label_span(SourceFormat::Yaml, " # v4 keep x"), 10);
+        assert_eq!(label_span(SourceFormat::Yaml, " }] # v4"), 0);
+        assert_eq!(label_span(SourceFormat::Markdown, "\" # v4"), 0);
     }
 
     #[test]

@@ -299,7 +299,7 @@ fn locate_uses(
                     raw_line
                 } else {
                     raw_line
-                        .get(..r.end + label_span(raw_line.get(r.end..).unwrap_or("")))
+                        .get(..r.end + label_span(format, raw_line.get(r.end..).unwrap_or("")))
                         .unwrap_or(raw_line)
                 };
                 (

@@ -335,7 +335,9 @@ impl<L> FileEdits<L> {
         let head = loc
             .value_range()
             .filter(|_| !self.comment_lines.contains(&loc.line()))
-            .and_then(|range| raw.get(..range.end + label_span(raw.get(range.end..)?)));
+            .and_then(|range| {
+                raw.get(..range.end + label_span(self.format, raw.get(range.end..)?))
+            });
         head.map_or_else(
             || loc.clone(),
             |head| {
@@ -1227,6 +1229,7 @@ mod tests {
         let text = format!("run(\"uses: o/p@{old} # v4.0.0\");\n");
         let noted = format!("run(\"uses: o/p@{old} # v4.0.0 keep this\");\n");
         let foreign = format!("run(\"uses: o/p@{old} # TODO fix\");\n");
+        let closed = format!("[{{\"uses\": \"o/p@{old}\"}},  # v4.0.0 keep\n");
         let markdown = format!("```yaml\n- uses: o/p@{old} # v4.0.0\n```\n");
         let cases = [
             (
@@ -1258,6 +1261,12 @@ mod tests {
                 &foreign,
                 Style::Preserve,
                 format!("run(\"uses: o/p@{new} # TODO fix\");\n"),
+            ),
+            (
+                SourceFormat::Text,
+                &closed,
+                Style::Preserve,
+                format!("[{{\"uses\": \"o/p@{new}\"}}, # v4.2.0 keep\n"),
             ),
             (
                 SourceFormat::Markdown,
