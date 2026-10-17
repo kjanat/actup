@@ -320,12 +320,42 @@ mod tests {
             assert_names_the_setting(mcp_command(zed::Os::Linux, Ok(output(Some(0), stdout))));
             assert_names_the_setting(mcp_command(zed::Os::Windows, Ok(output(Some(0), stdout))));
         }
+        for stdout in [
+            "C:\r\n",
+            "C:foo\r\n",
+            "actup-mcp\r\nC:\\x\\actup-mcp.exe\r\n",
+        ] {
+            assert_names_the_setting(mcp_command(zed::Os::Windows, Ok(output(Some(0), stdout))));
+        }
+        assert_names_the_setting(mcp_command(
+            zed::Os::Linux,
+            Ok(output(Some(0), "bin/actup-mcp\n/usr/bin/actup-mcp\n")),
+        ));
+    }
+
+    #[test]
+    fn mcp_command_trims_whitespace_before_an_absolute_path() -> Result<(), String> {
+        assert_runs(
+            mcp_command(
+                zed::Os::Linux,
+                Ok(output(Some(0), "  /usr/bin/actup-mcp\n")),
+            ),
+            "/usr/bin/actup-mcp",
+        )?;
+        assert_runs(
+            mcp_command(
+                zed::Os::Windows,
+                Ok(output(Some(0), "\t C:\\x\\actup-mcp.exe\r\n")),
+            ),
+            r"C:\x\actup-mcp.exe",
+        )
     }
 
     #[test]
     fn mcp_command_accepts_windows_drive_and_unc_paths() -> Result<(), String> {
         for (stdout, path) in [
             ("C:\\x\\actup-mcp.exe\r\n", r"C:\x\actup-mcp.exe"),
+            ("c:\\x\\actup-mcp.exe\r\n", r"c:\x\actup-mcp.exe"),
             ("C:/x/actup-mcp.exe\r\n", "C:/x/actup-mcp.exe"),
             ("\\\\host\\x\\actup-mcp.exe\r\n", r"\\host\x\actup-mcp.exe"),
         ] {
