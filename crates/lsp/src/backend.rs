@@ -1404,7 +1404,11 @@ fn prefix_glob(prefix: Prefix<'_>) -> String {
         )
     };
     match prefix {
-        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => format!("{}:", char::from(letter)),
+        Prefix::Disk(letter) | Prefix::VerbatimDisk(letter) => format!(
+            "[{}{}]:",
+            char::from(letter.to_ascii_lowercase()),
+            char::from(letter.to_ascii_uppercase())
+        ),
         Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => unc(server, share),
         Prefix::DeviceNS(device) => format!("//./{}", glob_escape(&device.to_string_lossy())),
         Prefix::Verbatim(name) => format!("//[?]/{}", glob_escape(&name.to_string_lossy())),
@@ -1821,7 +1825,19 @@ mod tests {
     }
 
     fn slash_glob(path: &Path) -> String {
-        path.to_string_lossy().replace('\\', "/")
+        let slashed = path.to_string_lossy().replace('\\', "/");
+        match slashed.split_once(':') {
+            Some((drive, rest))
+                if drive.len() == 1 && drive.chars().all(|c| c.is_ascii_alphabetic()) =>
+            {
+                format!(
+                    "[{}{}]:{rest}",
+                    drive.to_ascii_lowercase(),
+                    drive.to_ascii_uppercase()
+                )
+            }
+            _ => slashed,
+        }
     }
 
     fn slash_glob_in(dir: &Path, pattern: &str) -> String {
@@ -1894,8 +1910,9 @@ mod tests {
     fn prefix_glob_uses_forward_slashes() {
         let os = OsStr::new;
         for (prefix, expected) in [
-            (Prefix::Disk(b'C'), "C:"),
-            (Prefix::VerbatimDisk(b'D'), "D:"),
+            (Prefix::Disk(b'C'), "[cC]:"),
+            (Prefix::Disk(b'c'), "[cC]:"),
+            (Prefix::VerbatimDisk(b'D'), "[dD]:"),
             (Prefix::UNC(os("server"), os("share")), "//server/share"),
             (
                 Prefix::UNC(os("wsl.localhost"), os("Ubuntu")),
@@ -1913,11 +1930,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn disk_prefix_glob_matches_either_drive_case() -> std::result::Result<(), glob::PatternError> {
+        for letter in *b"cC" {
+            let pattern = glob::Pattern::new(&format!(
+                "{}/repo/actup.toml",
+                prefix_glob(Prefix::Disk(letter))
+            ))?;
+            for reported in ["c:/repo/actup.toml", "C:/repo/actup.toml"] {
+                assert!(pattern.matches(reported), "{pattern} vs {reported}");
+            }
+            assert!(!pattern.matches("d:/repo/actup.toml"), "{pattern}");
+        }
+        Ok(())
+    }
+
     #[cfg(windows)]
     #[test]
     fn absolute_glob_writes_windows_prefixes_with_forward_slashes() {
         for (path, expected) in [
-            (r"C:\repo\actup.toml", "C:/repo/actup.toml"),
+            (r"C:\repo\actup.toml", "[cC]:/repo/actup.toml"),
+            (r"c:\repo\actup.toml", "[cC]:/repo/actup.toml"),
             (
                 r"\\server\share\repo\actup.toml",
                 "//server/share/repo/actup.toml",
@@ -1926,7 +1959,7 @@ mod tests {
                 r"\\wsl.localhost\Ubuntu\home\actup.toml",
                 "//wsl.localhost/Ubuntu/home/actup.toml",
             ),
-            (r"\\?\C:\repo\actup.toml", "C:/repo/actup.toml"),
+            (r"\\?\C:\repo\actup.toml", "[cC]:/repo/actup.toml"),
             (
                 r"\\?\UNC\server\share\repo\actup.toml",
                 "//server/share/repo/actup.toml",
@@ -1945,7 +1978,7 @@ mod tests {
         );
         assert_eq!(
             absolute_glob_in(Path::new(r"\\?\C:\"), "{actup.toml}"),
-            "C:/{actup.toml}"
+            "[cC]:/{actup.toml}"
         );
     }
 
