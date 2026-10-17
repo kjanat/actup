@@ -18,7 +18,7 @@ pub const MAX_EXPANDED_NODES: usize = 10_000;
 pub enum Dialect {
     /// actup config files: aliases expand up to [`MAX_EXPANDED_NODES`] nodes, keys compare exactly and collection tags must be core tags.
     Config,
-    /// Files the actions runner reads: anchors are rejected, keys compare as .NET `OrdinalIgnoreCase` and collection tags are ignored.
+    /// Files the actions runner reads, as its legacy `YamlObjectReader` does: anchors and `!!str` scalars are rejected, collection tags are ignored, a scalar read as a string takes the runner's `ToString()` form, and keys compare by that form under .NET `OrdinalIgnoreCase`.
     Runner,
 }
 
@@ -99,7 +99,8 @@ impl de::Error for Error {
 ///
 /// Returns [`Error`] for invalid YAML, a `<<` merge key, a duplicate or
 /// non-scalar mapping key, a tag outside the core schema, a second document,
-/// a tag on a quoted or block scalar other than `!!str`, a `0x` or `0o`
+/// a tag on a quoted or block scalar other than `!!str`, `!!str` under
+/// [`Dialect::Runner`], a `0x` or `0o`
 /// integer wider than 32 bits, nesting past [`Dialect::max_depth`], an
 /// anchor, key or tag that `dialect` rejects, alias expansion past
 /// [`MAX_EXPANDED_NODES`], or a document that does not fit `T`.
@@ -119,6 +120,7 @@ struct Node {
 enum Kind {
     Scalar {
         text: String,
+        string: String,
         value: Scalar,
         plain: bool,
     },
@@ -200,7 +202,13 @@ fn load(text: &str, dialect: Dialect) -> Result<Node, Error> {
                 }
             }
             Event::Scalar(text, style, anchor, tag) => {
-                let node = scalar(text.into_owned(), style, tag.as_deref(), mark)?;
+                let node = scalar(
+                    loader.dialect,
+                    text.into_owned(),
+                    style,
+                    tag.as_deref(),
+                    mark,
+                )?;
                 loader.define(anchor, &node)?;
                 loader.push(node)?;
             }
@@ -355,7 +363,13 @@ impl Loader {
                     entries.push((k, node));
                     return Ok(());
                 }
-                let Kind::Scalar { text, plain, .. } = &node.kind else {
+                let Kind::Scalar {
+                    text,
+                    string,
+                    plain,
+                    ..
+                } = &node.kind
+                else {
                     return Err(Error::at("a mapping key must be a scalar", node.mark));
                 };
                 if *plain && text == "<<" {
@@ -363,8 +377,8 @@ impl Loader {
                 }
                 let folded = match dialect {
                     Dialect::Config => Some(text.clone()),
-                    Dialect::Runner if text.contains("${{") => None,
-                    Dialect::Runner => Some(fold_case(text)),
+                    Dialect::Runner if string.contains("${{") => None,
+                    Dialect::Runner => Some(fold_case(string)),
                 };
                 if folded.is_some_and(|folded| !seen.insert(folded)) {
                     return Err(Error::at(format!("duplicate key `{text}`"), node.mark));
@@ -423,10 +437,20 @@ fn expect_tag(dialect: Dialect, tag: Option<&Tag>, kind: CoreTag, mark: Mark) ->
     }
 }
 
-fn scalar(text: String, style: ScalarStyle, tag: Option<&Tag>, mark: Mark) -> Result<Node, Error> {
+fn scalar(
+    dialect: Dialect,
+    text: String,
+    style: ScalarStyle,
+    tag: Option<&Tag>,
+    mark: Mark,
+) -> Result<Node, Error> {
     let plain = style == ScalarStyle::Plain;
     let resolved = |text: &str| resolve(text).map_err(|message| Error::at(message, mark));
-    let value = match tag.map(|t| core_tag(t, mark)).transpose()? {
+    let core = tag.map(|t| core_tag(t, mark)).transpose()?;
+    if dialect == Dialect::Runner && core == Some(CoreTag::Str) {
+        return Err(Error::at("tag `!!str` is not supported on a scalar", mark));
+    }
+    let value = match core {
         None if plain => resolved(&text)?,
         None | Some(CoreTag::Str) => Scalar::Str,
         Some(_) if !plain => {
@@ -458,8 +482,17 @@ fn scalar(text: String, style: ScalarStyle, tag: Option<&Tag>, mark: Mark) -> Re
             value
         }
     };
+    let string = match dialect {
+        Dialect::Config => text.clone(),
+        Dialect::Runner => runner_string(&text, value),
+    };
     Ok(Node {
-        kind: Kind::Scalar { text, value, plain },
+        kind: Kind::Scalar {
+            text,
+            string,
+            value,
+            plain,
+        },
         mark,
         size: 1,
         height: 0,
@@ -529,6 +562,68 @@ fn resolve(text: &str) -> Result<Scalar, String> {
     Ok(Scalar::Str)
 }
 
+fn runner_number(text: &str, value: Scalar) -> Option<f64> {
+    match value {
+        Scalar::Unsigned(n) => u32::try_from(n).map(f64::from).ok(),
+        Scalar::Signed(n) => i32::try_from(n).map(f64::from).ok(),
+        Scalar::Float(n) => Some(n),
+        Scalar::Null | Scalar::Bool(_) | Scalar::Str => None,
+    }
+    .or_else(|| text.parse().ok())
+}
+
+fn runner_string(text: &str, value: Scalar) -> String {
+    match value {
+        Scalar::Null => String::new(),
+        Scalar::Bool(b) => b.to_string(),
+        Scalar::Str => text.to_owned(),
+        Scalar::Unsigned(_) | Scalar::Signed(_) | Scalar::Float(_) => {
+            runner_number(text, value).map_or_else(|| text.to_owned(), general_15)
+        }
+    }
+}
+
+fn general_15(value: f64) -> String {
+    if value.is_nan() {
+        return "NaN".to_owned();
+    }
+    if value.is_infinite() {
+        return if value < 0.0 { "-Infinity" } else { "Infinity" }.to_owned();
+    }
+    if value == 0.0 {
+        return if value.is_sign_negative() { "-0" } else { "0" }.to_owned();
+    }
+    let scientific = format!("{value:.14e}");
+    let Some((mantissa, exponent)) = scientific.split_once('e') else {
+        return scientific;
+    };
+    let Ok(exponent) = exponent.parse::<i32>() else {
+        return scientific;
+    };
+    let (sign, mantissa) = mantissa
+        .strip_prefix('-')
+        .map_or(("", mantissa), |rest| ("-", rest));
+    let digits: String = mantissa.chars().filter(char::is_ascii_digit).collect();
+    let digits = digits.trim_end_matches('0');
+    let magnitude = usize::try_from(exponent.unsigned_abs()).unwrap_or(usize::MAX);
+    if !(-4..15).contains(&exponent) {
+        let (first, rest) = digits.split_at(1);
+        let point = if rest.is_empty() { "" } else { "." };
+        let exponent_sign = if exponent < 0 { '-' } else { '+' };
+        return format!("{sign}{first}{point}{rest}E{exponent_sign}{magnitude:02}");
+    }
+    if exponent < 0 {
+        return format!("{sign}0.{}{digits}", "0".repeat(magnitude - 1));
+    }
+    let whole = magnitude + 1;
+    if digits.len() <= whole {
+        format!("{sign}{digits}{}", "0".repeat(whole - digits.len()))
+    } else {
+        let (int, frac) = digits.split_at(whole);
+        format!("{sign}{int}.{frac}")
+    }
+}
+
 fn fold_case(text: &str) -> String {
     text.chars()
         .map(|c| {
@@ -591,8 +686,8 @@ impl<'de> Deserializer<'de> for &Node {
 
     fn deserialize_str<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match &self.kind {
-            Kind::Scalar { text, value, .. } if *value != Scalar::Null => visitor
-                .visit_str::<Error>(text)
+            Kind::Scalar { string, value, .. } if *value != Scalar::Null => visitor
+                .visit_str::<Error>(string)
                 .map_err(|e| e.located(self.mark)),
             _ => self.deserialize_any(visitor),
         }
@@ -905,7 +1000,7 @@ mod tests {
 
     #[test]
     fn enums_newtypes_and_strings_deserialize() -> Result<(), Error> {
-        let typed: Typed = from_str("mode: Slow\nport: 8080\nname: 0x1F\n", Dialect::Runner)?;
+        let typed: Typed = from_str("mode: Slow\nport: 8080\nname: 0x1F\n", Dialect::Config)?;
         assert_eq!(
             typed,
             Typed {
@@ -933,7 +1028,7 @@ mod tests {
                 "missing field `port` at line 1, column 1",
             ),
         ] {
-            let Err(err) = from_str::<Typed>(text, Dialect::Runner) else {
+            let Err(err) = from_str::<Typed>(text, Dialect::Config) else {
                 panic!("{text:?} must be rejected");
             };
             assert!(err.to_string().contains(needle), "{text:?}: {err}");
@@ -945,7 +1040,7 @@ mod tests {
     fn core_tags_type_their_node() -> Result<(), Error> {
         let parsed: HashMap<String, figment::value::Value> = from_str(
             "f: !!float 1\ni: !!int 12\nb: !!bool True\nn: !!null ~\ns: !!str true\nm: !!map {}\nq: !!seq []\nt: !!str 'quoted'\n",
-            Dialect::Runner,
+            Dialect::Config,
         )?;
         let num = |key: &str| parsed.get(key).and_then(figment::value::Value::to_num);
         assert_eq!(num("f"), Some(figment::value::Num::F64(1.0)));
@@ -996,5 +1091,107 @@ mod tests {
             assert!(err.to_string().contains(needle), "{text:?}: {err}");
         }
         Ok(())
+    }
+
+    #[test]
+    fn simple_upper_table_is_sorted_and_complete() {
+        let table = simple_upper::SIMPLE_UPPER;
+        assert_eq!(table.len(), 1448);
+        assert!(
+            table
+                .windows(2)
+                .all(|pair| matches!(pair, [a, b] if a.0 < b.0))
+        );
+        assert!(
+            !table
+                .iter()
+                .any(|&(lower, _)| matches!(lower, '\u{0131}' | '\u{017F}'))
+        );
+        assert_eq!(fold_case("az\u{1F80}\u{0131}"), "AZ\u{1F88}\u{0131}");
+    }
+
+    #[test]
+    fn numbers_print_as_dotnet_general_15() {
+        for (value, printed) in [
+            (1.0, "1"),
+            (1.5, "1.5"),
+            (1e3, "1000"),
+            (-2_147_483_648.0, "-2147483648"),
+            (123_456_789_012_345.0, "123456789012345"),
+            (1_234_567_890_123_456.0, "1.23456789012346E+15"),
+            (1e15, "1E+15"),
+            (1e20, "1E+20"),
+            (1e100, "1E+100"),
+            (0.0001, "0.0001"),
+            (0.00001, "1E-05"),
+            (2.5e-7, "2.5E-07"),
+            (1.0 / 3.0, "0.333333333333333"),
+            (0.1 + 0.2, "0.3"),
+            (0.0, "0"),
+            (-0.0, "-0"),
+            (f64::NAN, "NaN"),
+            (f64::INFINITY, "Infinity"),
+            (f64::NEG_INFINITY, "-Infinity"),
+        ] {
+            assert_eq!(general_15(value), printed, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn runner_reads_scalars_into_strings_as_the_runner_prints_them() -> Result<(), Error> {
+        let text =
+            "a: 0x1F\nb: 1.50\nc: TRUE\nd: .inf\ne: 1e20\nf: 0xFFFFFFFF\ng: '0x1F'\nh: !!int 012\n";
+        let runner: HashMap<String, String> = from_str(text, Dialect::Runner)?;
+        let config: HashMap<String, String> = from_str(text, Dialect::Config)?;
+        for (key, printed, raw) in [
+            ("a", "31", "0x1F"),
+            ("b", "1.5", "1.50"),
+            ("c", "true", "TRUE"),
+            ("d", "Infinity", ".inf"),
+            ("e", "1E+20", "1e20"),
+            ("f", "-1", "0xFFFFFFFF"),
+            ("g", "0x1F", "0x1F"),
+            ("h", "12", "012"),
+        ] {
+            assert_eq!(runner.get(key).map(String::as_str), Some(printed), "{key}");
+            assert_eq!(config.get(key).map(String::as_str), Some(raw), "{key}");
+        }
+        for text in ["x: !!str a\n", "x: !!str 'a'\n"] {
+            let Err(err) = from_str::<HashMap<String, String>>(text, Dialect::Runner) else {
+                panic!("{text:?} must be rejected");
+            };
+            assert_eq!(
+                err.to_string(),
+                "tag `!!str` is not supported on a scalar at line 1, column 10"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn runner_keys_compare_by_their_printed_form() {
+        for (first, second) in [
+            ("1", "1.0"),
+            ("1", "0x1"),
+            ("1", "01"),
+            ("1", "'1'"),
+            ("~", "null"),
+            ("''", "~"),
+            ("true", "'TRUE'"),
+        ] {
+            let text = format!("{first}: a\n{second}: b\n");
+            let Err(err) = from_str::<figment::value::Value>(&text, Dialect::Runner) else {
+                panic!("{text:?} must be rejected");
+            };
+            assert!(
+                err.to_string().contains("at line 2, column 1"),
+                "{text:?}: {err}"
+            );
+        }
+        for (first, second) in [("1", "1.0"), ("1", "0x1"), ("1", "01"), ("true", "'TRUE'")] {
+            let text = format!("{first}: a\n{second}: b\n");
+            let loaded = from_str::<figment::value::Value>(&text, Dialect::Config);
+            assert!(loaded.is_ok(), "{text:?}: {loaded:?}");
+        }
     }
 }

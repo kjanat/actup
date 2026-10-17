@@ -525,15 +525,19 @@ runs:
     fn scalars_follow_the_core_schema() -> std::result::Result<(), Box<dyn std::error::Error>> {
         for (text, default) in [
             ("30", Some("30")),
-            ("0x1F", Some("0x1F")),
-            ("1.50", Some("1.50")),
-            (".inf", Some(".inf")),
+            ("0x1F", Some("31")),
+            ("0xFFFFFFFF", Some("-1")),
+            ("1.50", Some("1.5")),
+            ("1e20", Some("1E+20")),
+            (".inf", Some("Infinity")),
             ("true", Some("true")),
+            ("TRUE", Some("true")),
             ("yes", Some("yes")),
             ("ON", Some("ON")),
             ("tRUE", Some("tRUE")),
             ("'~'", Some("~")),
-            ("!!str 12", Some("12")),
+            ("'0x1F'", Some("0x1F")),
+            ("!!int 12", Some("12")),
             ("~", None),
             ("Null", None),
             ("", None),
@@ -601,6 +605,14 @@ runs:
                 "duplicate key `token` at line 3, column 3",
             ),
             (
+                "inputs:\n  1: {}\n  1.0: {}\n",
+                "duplicate key `1.0` at line 3, column 3",
+            ),
+            (
+                "name: !!str x\n",
+                "tag `!!str` is not supported on a scalar at line 1, column 13",
+            ),
+            (
                 "inputs:\n  \u{1F88}: {}\n  \u{1F80}: {}\n",
                 "duplicate key `\u{1F80}` at line 3, column 3",
             ),
@@ -627,15 +639,15 @@ runs:
     fn runner_rules_accept_what_the_runner_accepts()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let parsed = parse_action_yml(
-            "inputs: !custom\n  i: {}\n  \u{0131}: {}\n  s: {}\n  \u{017F}: {}\n  ${{ a }}: {}\n  ${{ A }}: {}\n",
+            "inputs: !custom\n  i: {}\n  \u{0131}: {}\n  s: {}\n  \u{017F}: {}\n",
             "action.yml",
         )?;
-        assert_eq!(parsed.inputs().len(), 6);
-        let parsed = parse_action_yml("inputs:\n  t:\n    default: 0xFFFFFFFF\n", "action.yml")?;
-        assert_eq!(
-            parsed.inputs().get("t").and_then(ActionInput::default),
-            Some("0xFFFFFFFF")
-        );
+        assert_eq!(parsed.inputs().len(), 4);
+        let parsed = parse_action_yml(
+            "runs:\n  using: composite\n  steps:\n    - uses: a/b@v1\n      with:\n        ${{ a }}: 1\n        ${{ A }}: 2\n",
+            "action.yml",
+        )?;
+        assert_eq!(parsed.runs().map(|runs| runs.steps().len()), Some(1));
         Ok(())
     }
 

@@ -246,6 +246,11 @@ schema:
     @mkdir -p {{ schema_dir }}
     cargo run --bin actup -- schema > {{ config-schema }}
 
+# Regenerate the `actup_core::yaml` simple uppercase table from a UnicodeData.txt 15.0.0 path
+[group('docs')]
+simple-upper ucd:
+    cargo run --quiet -p actup-core --example gen_simple_upper -- {{ ucd }} crates/core/src/yaml/simple_upper.rs
+
 # CI
 
 # Run full CI checks locally
