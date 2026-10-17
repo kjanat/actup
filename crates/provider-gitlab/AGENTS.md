@@ -12,7 +12,7 @@ behind a default feature; the LSP and the MCP server always register it.
 | Module        | Purpose                         | Key Types                          |
 | ------------- | ------------------------------- | ---------------------------------- |
 | `provider.rs` | `Provider` trait implementation | `GitLabProvider`                   |
-| `client.rs`   | HTTP client for GitLab REST API | `GitLabClient` (427 lines)         |
+| `client.rs`   | HTTP client for GitLab REST API | `GitLabClient`                     |
 | `types.rs`    | GitLab API response types       | `GitLabTag`, `GitLabProject`, etc. |
 | `lib.rs`      | Constants + re-exports          | `GITLAB_HOST`                      |
 

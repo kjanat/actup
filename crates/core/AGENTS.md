@@ -21,17 +21,17 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 
 ### Config Submodule (`config/`)
 
-| File              | Lines | Purpose                                          |
-| ----------------- | ----- | ------------------------------------------------ |
-| `mod.rs`          | 1088  | `Config` struct, figment-based loading           |
-| `registration.rs` | 930   | Provider `Registration` statics, preset matching |
-| `resolution.rs`   | 1834  | Host resolution, api_base inference, token_env   |
-| `validation.rs`   | 607   | Hostname, api_base, config validation            |
-| `discovery.rs`    | ~100  | Config file path search                          |
+| File              | Purpose                                          |
+| ----------------- | ------------------------------------------------ |
+| `mod.rs`          | `Config` struct, figment-based loading           |
+| `registration.rs` | Provider `Registration` statics, preset matching |
+| `resolution.rs`   | Host resolution, api_base inference, token_env   |
+| `validation.rs`   | Hostname, api_base, config validation            |
+| `discovery.rs`    | Config file path search                          |
 
-`config/resolution.rs` is the largest file in the workspace. It handles the full
-provider config resolution algorithm: merging presets, inferring api_base,
-resolving token_env, validating host configs.
+`config/resolution.rs` handles the full provider config resolution algorithm:
+merging presets, inferring api_base, resolving token_env, validating host
+configs.
 
 ## Where to Look
 
@@ -68,16 +68,16 @@ resolving token_env, validating host configs.
 
 ## Large Files (complexity hotspots)
 
-| File                     | Lines | Notes                                    |
-| ------------------------ | ----- | ---------------------------------------- |
-| `config/resolution.rs`   | 1834  | Host resolution, the most complex module |
-| `config/mod.rs`          | 1088  | Config struct + figment loading          |
-| `version.rs`             | 951   | Semver parsing, `VersionSet` logic       |
-| `config/registration.rs` | 930   | Provider presets + registration          |
-| `provider.rs`            | 889   | Provider trait + `ProviderKind` enum     |
-| `resolution.rs`          | 791   | `check_action` orchestration             |
-| `config/validation.rs`   | 607   | Config validation rules                  |
-| `policy.rs`              | 491   | Update policy matching                   |
-| `error.rs`               | 480   | Structured error types                   |
-| `action_ref.rs`          | 469   | ActionRef parsing                        |
-| `caching_provider.rs`    | 441   | In-memory dedup with call counting       |
+| File                     | Notes                                    |
+| ------------------------ | ---------------------------------------- |
+| `config/resolution.rs`   | Host resolution, the most complex module |
+| `config/mod.rs`          | Config struct + figment loading          |
+| `version.rs`             | Semver parsing, `VersionSet` logic       |
+| `config/registration.rs` | Provider presets + registration          |
+| `provider.rs`            | Provider trait + `ProviderKind` enum     |
+| `resolution.rs`          | `check_action` orchestration             |
+| `config/validation.rs`   | Config validation rules                  |
+| `policy.rs`              | Update policy matching                   |
+| `error.rs`               | Structured error types                   |
+| `action_ref.rs`          | ActionRef parsing                        |
+| `caching_provider.rs`    | In-memory dedup with call counting       |

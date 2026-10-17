@@ -17,7 +17,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 
 | Command       | File                 | Notes                                           |
 | ------------- | -------------------- | ----------------------------------------------- |
-| `check`       | `commands/check.rs`  | Largest file (902 lines)                        |
+| `check`       | `commands/check.rs`  | Batch fetch, findings, exit code                |
 | `update`      | `commands/update.rs` | Alias: `fix`                                    |
 | `pin`         | `commands/pin.rs`    | Force SHA pinning                               |
 | `latest`      | `commands/latest.rs` | Quick lookup: positional arg, no subcommand     |

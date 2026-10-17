@@ -8,21 +8,21 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 
 ## Module Map
 
-| Module                  | Lines | Purpose                                         |
-| ----------------------- | ----- | ----------------------------------------------- |
-| `backend.rs`            | 1546  | `LspBackend` — core LSP trait impl, lifecycle   |
-| `diagnostics.rs`        | 1109  | Diagnostic generation from `CheckResult`        |
-| `completion.rs`         | 839   | Action-name and version completion for `uses:`  |
-| `hover.rs`              | 873   | Hover info: version status, README, action.yml  |
-| `workspace_commands.rs` | 839   | Workspace-level scan + update all               |
-| `code_actions.rs`       | 778   | Quick-fix code actions (update, pin)            |
-| `file_cache.rs`         | 163   | Version lookup through the shared `FileCache`   |
-| `error_ux.rs`           | 420   | User-friendly error messages                    |
-| `provider_setup.rs`     | 218   | Provider registry construction for LSP          |
-| `position.rs`           | 316   | Position/range conversion utilities             |
-| `test_utils.rs`         | 287   | `MockProvider` with builder pattern (test-only) |
-| `integration_tests.rs`  | 994   | Full LSP protocol flow tests (test-only)        |
-| `main.rs`               | 51    | Entry point, tracing to stderr, service setup   |
+| Module                  | Purpose                                         |
+| ----------------------- | ----------------------------------------------- |
+| `backend.rs`            | `LspBackend` — core LSP trait impl, lifecycle   |
+| `diagnostics.rs`        | Diagnostic generation from `CheckResult`        |
+| `completion.rs`         | Action-name and version completion for `uses:`  |
+| `hover.rs`              | Hover info: version status, README, action.yml  |
+| `workspace_commands.rs` | Workspace-level scan + update all               |
+| `code_actions.rs`       | Quick-fix code actions (update, pin)            |
+| `file_cache.rs`         | Version lookup through the shared `FileCache`   |
+| `error_ux.rs`           | User-friendly error messages                    |
+| `provider_setup.rs`     | Provider registry construction for LSP          |
+| `position.rs`           | Position/range conversion utilities             |
+| `test_utils.rs`         | `MockProvider` with builder pattern (test-only) |
+| `integration_tests.rs`  | Full LSP protocol flow tests (test-only)        |
+| `main.rs`               | Entry point, tracing to stderr, service setup   |
 
 ## Where to Look
 
@@ -84,8 +84,8 @@ edits that pass on their own.
 
 ## Tests
 
-- Integration tests in `src/integration_tests.rs` (972 lines, 20 tests) —
-  `#[cfg(test)]` inside binary crate
+- Integration tests in `src/integration_tests.rs` — `#[cfg(test)]` inside binary
+  crate
 - Mock provider in `src/test_utils.rs` — `MockProvider` with builder pattern
 - Custom `TestHarness` wrapping `LspService` with background socket drain
 - Test backends use
@@ -97,6 +97,4 @@ edits that pass on their own.
 
 ## Complexity Hotspots
 
-`backend.rs` (1546 lines) and `diagnostics.rs` (1109 lines) are the most
-complex. `workspace_commands.rs` (839 lines) and `code_actions.rs` (778 lines)
-have `too_many_lines` and `too_many_arguments` lint suppressions.
+`backend.rs` and `diagnostics.rs` are the most complex modules.

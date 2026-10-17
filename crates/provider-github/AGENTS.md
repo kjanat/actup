@@ -60,6 +60,6 @@ system.
 
 ## Tests
 
-- Mock HTTP with `wiremock` in `tests/integration.rs` (5 tests)
+- Mock HTTP with `wiremock` in `tests/integration.rs`
 - Fixtures in `tests/fixtures/` (JSON API responses)
 - Never rely on live network in tests

@@ -18,7 +18,7 @@ workspace** — they have independent build systems.
 - Finds `actup-lsp` binary in PATH or configured `actup.serverPath` setting
 - Build: `bun run compile` (TypeScript → `out/extension.js`)
 - Package: `vsce package` → `.vsix`
-- Entry: `src/extension.ts` (single file, ~200 lines)
+- Entry: `src/extension.ts`
 
 ## Zed Extension (`zed/`)
 
