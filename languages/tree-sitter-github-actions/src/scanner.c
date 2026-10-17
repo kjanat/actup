@@ -1557,18 +1557,23 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
     if (maybe_sgl_pln_blk || maybe_sgl_pln_flw || maybe_mtl_pln_blk || maybe_mtl_pln_flw) {
         bool is_in_blk = maybe_sgl_pln_blk || maybe_mtl_pln_blk;
         bool (*is_plain_safe)(int32_t) = is_in_blk ? is_plain_safe_in_block : is_plain_safe_in_flow;
+        bool is_pln_ctn = is_r    ? !valid_symbols[R_SGL_PLN_NUL_BLK] && !valid_symbols[R_SGL_PLN_NUL_FLW]
+                          : is_br ? !valid_symbols[BR_SGL_PLN_NUL_BLK] && !valid_symbols[BR_SGL_PLN_NUL_FLW]
+                                  : false;
         if (scanner->cur_col - bgn_col == 0) {
             scanner->rec_len = 0;
             adv(scanner, lexer);
         }
         if (scanner->cur_col - bgn_col == 1) {
             bool is_plain_first =
-                (is_ns_char(bgn_chr) && !is_c_indicator(bgn_chr)) ||
-                ((bgn_chr == '-' || bgn_chr == '?' || bgn_chr == ':') && is_plain_safe(lexer->lookahead));
+                is_pln_ctn ? is_plain_safe(bgn_chr) && (bgn_chr != ':' || is_plain_safe(lexer->lookahead))
+                           : (is_ns_char(bgn_chr) && !is_c_indicator(bgn_chr)) ||
+                                 ((bgn_chr == '-' || bgn_chr == '?' || bgn_chr == ':') &&
+                                  is_plain_safe(lexer->lookahead));
             if (!is_plain_first) {
                 return false;
             }
-            scanner->sch_stt = adv_sch_stt(scanner->sch_stt, scanner->cur_chr, &scanner->rlt_sch);
+            scanner->sch_stt = is_pln_ctn ? SCH_STT_FRZ : adv_sch_stt(scanner->sch_stt, scanner->cur_chr, &scanner->rlt_sch);
         } else {
             // no need to check the following cases:
             // ..X
@@ -1610,7 +1615,7 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         if (scanner->end_row == bgn_row) {
             if (maybe_sgl_pln_blk) {
                 MAY_UPD_IMP_COL();
-                scanner->pln_key = key_of(scanner, scanner->end_col - bgn_col);
+                scanner->pln_key = is_pln_ctn ? KEY_OTHER : key_of(scanner, scanner->end_col - bgn_col);
                 RET_SYM(is_r ? SGL_PLN_SYM(R, BLK) : is_br ? SGL_PLN_SYM(BR, BLK) : SGL_PLN_SYM(B, BLK));
             }
             if (maybe_sgl_pln_flw)

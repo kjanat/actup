@@ -614,3 +614,260 @@ name: ${{ !!a && 1E3 }}
                 (operator
                   (and))
                 (number)))))))))
+
+============================================================================
+Indicator and schema text after an expression stays string
+============================================================================
+url: https://e.com/?a=${{ x }}&b=y
+image: ghcr.io/o/i:${{ x }}@sha256
+link: https://e.com/${{ x }}#readme
+path: a${{ x }}%20
+name: Node ${{ x }} 12
+k: ${{ a }} true
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (string_scalar)
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))))))
+
+============================================================================
+Schema text on the next line after an expression stays string
+============================================================================
+k: ${{ a }}
+  true
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))))))
+
+============================================================================
+Flow text after an expression stays string
+============================================================================
+k: [${{ a }} true, ${{ b }}&c, ${{ d }}:e]
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (flow_sequence
+              (flow_node
+                (plain_scalar
+                  (delimited_expression
+                    (expression_marker)
+                    (context
+                      (identifier)))
+                  (string_scalar)))
+              (flow_node
+                (plain_scalar
+                  (delimited_expression
+                    (expression_marker)
+                    (context
+                      (identifier)))
+                  (string_scalar)))
+              (flow_node
+                (plain_scalar
+                  (delimited_expression
+                    (expression_marker)
+                    (context
+                      (identifier)))
+                  (string_scalar))))))))))
+
+============================================================================
+Text after an expression never names an if key
+============================================================================
+jobs:
+  build:
+    steps:
+      - ${{ x }}if: always()
+        run: echo
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (delimited_expression
+                                        (expression_marker)
+                                        (context
+                                          (identifier)))
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Comment, flow separator and hyphen after an expression
+============================================================================
+k: ${{ a }} # c
+m: [${{ a }}, b]
+n: ${{ a }}-x
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier))))))
+        (comment)
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (flow_sequence
+              (flow_node
+                (plain_scalar
+                  (delimited_expression
+                    (expression_marker)
+                    (context
+                      (identifier)))))
+              (flow_node
+                (plain_scalar
+                  (string_scalar))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (flow_node
+            (plain_scalar
+              (delimited_expression
+                (expression_marker)
+                (context
+                  (identifier)))
+              (string_scalar))))))))
