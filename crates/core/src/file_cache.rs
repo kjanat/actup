@@ -89,10 +89,11 @@ impl FileCache {
         self.cache_dir.join(cache::entry_file_name(key))
     }
 
-    /// Return the version set of `repo` from the cache, else from `provider`, writing a fetched set back.
+    /// Return the version set of `repo` from the cache, else from `provider`, writing a fresh fetched set back.
     ///
     /// A rate limit or network failure with an expired entry returns that
-    /// entry's versions marked stale.
+    /// entry's versions marked stale. A stale set from `provider` is returned
+    /// and never written.
     ///
     /// # Errors
     ///
@@ -112,7 +113,9 @@ impl FileCache {
         };
         match provider.get_versions(&repo).await {
             Ok(versions) => {
-                if let Err(e) = self.set(&key, cache::Entry::new(versions.clone())).await {
+                if versions.stale().is_none()
+                    && let Err(e) = self.set(&key, cache::Entry::new(versions.clone())).await
+                {
                     debug!(key = %key, error = %e, "failed to write version cache");
                 }
                 Ok(versions)
@@ -286,6 +289,132 @@ mod tests {
 
     use super::*;
     use crate::version;
+
+    struct Answering {
+        calls: std::sync::atomic::AtomicUsize,
+        stale: bool,
+    }
+
+    impl Answering {
+        const fn new(stale: bool) -> Self {
+            Self {
+                calls: std::sync::atomic::AtomicUsize::new(0),
+                stale,
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl Provider for Answering {
+        fn kind(&self) -> crate::provider::Kind {
+            crate::provider::Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> crate::BoxFuture<'_, crate::Result<version::Set>> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let set = version::Set::default();
+            let stale = crate::cache::Staleness::after(
+                &crate::Error::RateLimited {
+                    provider: "github".into(),
+                    retry_after: None,
+                },
+                Duration::from_hours(26),
+            );
+            let set = match stale {
+                Some(stale) if self.stale => set.into_stale(stale),
+                _ => set,
+            };
+            Box::pin(async move { Ok(set) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            ref_name: &str,
+        ) -> crate::BoxFuture<'_, crate::Result<crate::provider::Sha40>> {
+            let err = crate::Error::RefNotFound {
+                owner: String::new(),
+                repo: String::new(),
+                ref_name: ref_name.to_owned(),
+                host: None,
+            };
+            Box::pin(async move { Err(err) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> crate::BoxFuture<'_, crate::Result<String>> {
+            Box::pin(async { Ok("main".to_owned()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> crate::BoxFuture<'_, crate::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> crate::BoxFuture<'_, crate::Result<crate::provider::ActionYml>> {
+            Box::pin(async { Ok(crate::provider::ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn versions_never_write_a_stale_set_back() -> Result<(), Box<dyn std::error::Error>> {
+        let (cache, _temp) = make_test_cache(3600);
+        let repo = ActionRepoId::simple("actions", "checkout");
+        let key = repo.cache_key("github", "github.com");
+        let stale = Answering::new(true);
+
+        for _ in 0..2 {
+            assert!(cache.versions(&repo, &stale).await?.stale().is_some());
+        }
+        assert_eq!(stale.calls(), 2);
+        assert!(matches!(
+            cache.lookup(&key).await,
+            Err(cache::Error::NotFound)
+        ));
+
+        let fresh = Answering::new(false);
+        assert!(cache.versions(&repo, &fresh).await?.stale().is_none());
+        assert!(matches!(cache.lookup(&key).await?, cache::Lookup::Fresh(_)));
+        assert!(cache.versions(&repo, &stale).await?.stale().is_none());
+        assert_eq!(stale.calls(), 2);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn versions_keep_the_expired_entry_under_a_stale_answer()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (cache, _temp) = make_test_cache(0);
+        let repo = ActionRepoId::simple("actions", "checkout");
+        let key = repo.cache_key("github", "github.com");
+        let stored = cache::Entry::new(version::Set::default());
+        cache.set(&key, stored.clone()).await?;
+        let path = cache.key_to_path(&key);
+        let before = std::fs::read(&path)?;
+
+        let stale = Answering::new(true);
+        assert!(cache.versions(&repo, &stale).await?.stale().is_some());
+        assert_eq!(std::fs::read(&path)?, before);
+        Ok(())
+    }
 
     fn make_test_cache(ttl_secs: u64) -> (FileCache, TempDir) {
         let temp = TempDir::new().unwrap();

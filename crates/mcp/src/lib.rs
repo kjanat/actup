@@ -667,16 +667,14 @@ mod tests {
     async fn read_tools_report_stale_versions_and_leave_them_out_of_the_cache()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
+        let cache_dir = tempfile::tempdir()?;
         let calls = Arc::new(AtomicUsize::new(0));
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(StaleProvider(Arc::clone(&calls))));
-        let server = Server::new(
-            Config::default(),
-            registry,
-            Root::new(dir.path())?,
-            FileCache::disabled(),
-        );
+        let config = Config::default();
+        let file_cache = FileCache::with_path(cache_dir.path().to_path_buf(), config.cache.ttl);
+        let server = Server::new(config, registry, Root::new(dir.path())?, file_cache);
         let args = |json: Value| match json {
             Value::Object(args) => Some(args),
             _ => None,
@@ -714,6 +712,7 @@ mod tests {
 
         assert_eq!(calls.load(Ordering::SeqCst), 3);
         assert!(server.memo.lock().map_err(|e| e.to_string())?.is_empty());
+        assert_eq!(std::fs::read_dir(cache_dir.path())?.count(), 0);
         Ok(())
     }
 
