@@ -104,11 +104,13 @@ Check `uses:` references against a provider. Async.
 
 Parses the YAML, resolves each non-local ref through the provider, and returns
 `LocatedCheckResult[]`. Each entry has the `location` (`UsesLocation`) of the
-value it checked, the parsed `action_ref`, and a status: `"UpToDate"`,
-`{ Outdated: ... }`, or `{ Unresolvable: ... }`. `ref_kind` says whether the ref
-names a `"tag"`, `"branch"` or `"sha"` (or `null` when the version list lacks
-it). `same_commit` holds the target (`{ version, sha }`) when the suggested
-update sits on the commit the ref already names, and `null` otherwise.
+value it checked, the parsed `action_ref`, a status (`"UpToDate"`,
+`{ Outdated: ... }`, or `{ Unresolvable: ... }`), and `takes_comment`, which is
+`true` when the line can hold a comment and holds no other `uses:` value.
+`ref_kind` says whether the ref names a `"tag"`, `"branch"` or `"sha"` (or
+`null` when the version list lacks it). `same_commit` holds the target
+(`{ version, sha }`) when the suggested update sits on the commit the ref
+already names, and `null` otherwise.
 
 Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
 `[policy]` table of `actup.toml` with the same defaults: `bump` is `"patch"` |
@@ -135,6 +137,13 @@ tag to its commit as `@<sha> # <ref>`. Each entry has `line`, `refStart`,
 version from their version comment. A tag ref written as a new tag gets its
 version comment refreshed to the new version. A note after the version, as in
 `# v4.0.0 pinned for node16`, stays in every case.
+
+An edit writes or rewrites a comment only for a result whose `takes_comment` is
+`true`. It adds a missing comment only when nothing but a closing quote, flow
+`}`, `]` and `,`, and spaces follows the value, and writes the comment after
+them, as in `{ uses: "o/b@<sha>" } # v4.2.0`. It refreshes a version comment at
+the end of the line, also after other flow keys, and leaves any other comment
+alone.
 
 ### `sortVersionTags(tags)`
 
