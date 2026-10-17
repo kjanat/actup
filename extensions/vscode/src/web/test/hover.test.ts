@@ -172,6 +172,18 @@ describe("hover status like the LSP hover", () => {
 		);
 	});
 
+	test("names a ref the version list lacks as a floating ref under policy.branch = warn", async () => {
+		expect(await hoverRows("hover-floating-ref.yml", "stable", "[policy]\nbranch = \"warn\"\n")).toContain(
+			"**Floating ref** `stable` — pin to a tag or SHA",
+		);
+	});
+
+	test("names the pin of a ref the version list lacks under policy.branch = update", async () => {
+		expect(await hoverRows("hover-pin-ref.yml", "stable", "[policy]\nbranch = \"update\"\n")).toContain(
+			"**Pin ref** `stable` -> `aaaaaaaaaaaa` # stable",
+		);
+	});
+
 	test("names an unresolvable ref", async () => {
 		const missing: wasm.ActupProvider = {
 			...provider,
