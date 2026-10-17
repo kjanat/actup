@@ -103,8 +103,8 @@ pub fn iter_config_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_
 /// first directory that contains `.git` or equals `ceiling`.
 #[must_use]
 pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf> {
-    let start = resolve_dir(start_dir);
-    let ceiling = ceiling.map(resolve_dir);
+    let start = canonical_path(start_dir);
+    let ceiling = ceiling.map(canonical_path);
     let mut dirs = Vec::new();
     for dir in start.ancestors() {
         dirs.push(dir.to_path_buf());
@@ -115,10 +115,46 @@ pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf
     dirs
 }
 
-fn resolve_dir(dir: &Path) -> PathBuf {
-    dir.canonicalize()
-        .or_else(|_| std::path::absolute(dir))
-        .unwrap_or_else(|_| dir.to_path_buf())
+/// Return `path` resolved through symlinks and `..`, in the form the OS displays.
+///
+/// A Windows `\\?\` verbatim prefix is removed when the path stays valid
+/// without it. When `path` cannot be resolved, the result is the absolute
+/// path, else `path` itself.
+#[must_use]
+pub fn canonical_path(path: &Path) -> PathBuf {
+    path.canonicalize()
+        .map(|canonical| {
+            if cfg!(windows) {
+                canonical
+                    .to_str()
+                    .and_then(without_verbatim_prefix)
+                    .map_or_else(|| canonical.clone(), PathBuf::from)
+            } else {
+                canonical
+            }
+        })
+        .or_else(|_| std::path::absolute(path))
+        .unwrap_or_else(|_| path.to_path_buf())
+}
+
+const MAX_PATH: usize = 260;
+
+fn without_verbatim_prefix(path: &str) -> Option<String> {
+    let plain = if let Some(unc) = path.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{unc}")
+    } else {
+        let disk = path.strip_prefix(r"\\?\")?;
+        let bytes = disk.as_bytes();
+        let drive = bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && bytes[2] == b'\\';
+        if !drive {
+            return None;
+        }
+        disk.to_owned()
+    };
+    (plain.len() < MAX_PATH).then_some(plain)
 }
 
 /// Find the first existing repo config in [`repo_search_dirs`].
@@ -248,6 +284,43 @@ mod tests {
             );
         }
         assert_eq!(user_config_path_from(None, || None), None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_without_verbatim_prefix_keeps_valid_plain_paths() {
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\C:\Users\me\repo").as_deref(),
+            Some(r"C:\Users\me\repo")
+        );
+        assert_eq!(
+            without_verbatim_prefix(r"\\?\UNC\server\share\repo").as_deref(),
+            Some(r"\\server\share\repo")
+        );
+        let long = format!(r"\\?\C:\{}", "a".repeat(MAX_PATH));
+        for kept in [
+            r"C:\Users\me",
+            r"\\?\Volume{1234}\repo",
+            r"\\?\C:",
+            "/tmp/repo",
+            long.as_str(),
+        ] {
+            assert_eq!(without_verbatim_prefix(kept), None, "{kept}");
+        }
+    }
+
+    #[test]
+    fn test_canonical_path_resolves_parents_and_falls_back() -> std::io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let sub = temp.path().join("sub");
+        std::fs::create_dir(&sub)?;
+        let resolved = canonical_path(&sub.join("..").join("sub"));
+        assert_eq!(resolved, canonical_path(&sub));
+        assert!(resolved.ends_with("sub"));
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
+        let missing = temp.path().join("missing");
+        assert_eq!(canonical_path(&missing), std::path::absolute(&missing)?);
+        assert_eq!(canonical_path(Path::new("")), PathBuf::new());
         Ok(())
     }
 

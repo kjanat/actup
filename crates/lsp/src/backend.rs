@@ -1404,10 +1404,10 @@ impl WatchedConfigs {
 }
 
 fn resolve_event_path(path: &Path) -> Option<PathBuf> {
-    path.canonicalize().ok().or_else(|| {
-        let name = path.file_name()?;
-        Some(path.parent()?.canonicalize().ok()?.join(name))
-    })
+    if path.exists() {
+        return Some(actup_core::canonical_path(path));
+    }
+    Some(actup_core::canonical_path(path.parent()?).join(path.file_name()?))
 }
 
 fn candidate_groups(base: &Path) -> BTreeMap<PathBuf, Vec<String>> {
@@ -2639,7 +2639,7 @@ mod tests {
         std::fs::create_dir(&stale)?;
         std::fs::create_dir(&latest)?;
         std::fs::write(stale.join("actup.toml"), "[policy]\nbump = \"sideways\"\n")?;
-        let latest_config = latest.join("actup.toml");
+        let latest_config = actup_core::canonical_path(&latest).join("actup.toml");
         std::fs::write(&latest_config, "[cache]\nenabled = false\n")?;
         let (service, mut socket) = initialized_service(temp.path()).await?;
         let backend = service.inner();
@@ -2760,7 +2760,7 @@ mod tests {
         assert_eq!(config.loaded_from(), None);
         assert_eq!(config.policy.bump, actup_core::policy::Update::Latest);
         let watched = backend.watched_configs().await;
-        assert_eq!(watched.search_dirs, [root.canonicalize()?]);
+        assert_eq!(watched.search_dirs, [actup_core::canonical_path(&root)]);
         assert!(!watched.contains(&temp.path().join("actup.toml")));
         Ok(())
     }

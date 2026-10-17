@@ -822,7 +822,10 @@ async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
     let mut harness = TestHarness::new();
     harness.initialize(Some(root)).await;
 
-    let config_path = config_file.display().to_string();
+    let config_path = actup_core::canonical_path(temp.path())
+        .join("actup.toml")
+        .display()
+        .to_string();
     let shown = harness
         .wait_until(Duration::from_secs(2), |c| {
             c.messages.iter().any(|m| {
@@ -969,7 +972,10 @@ async fn config_reload_rejects_renamed_key() -> Result<(), Box<dyn std::error::E
         .notify(did_change_watched_files_notification(&config_uri))
         .await;
 
-    let config_path = config_file.display().to_string();
+    let config_path = actup_core::canonical_path(temp.path())
+        .join("actup.toml")
+        .display()
+        .to_string();
     let shown = harness
         .wait_until(Duration::from_secs(2), |c| {
             c.messages.iter().any(|m| {
@@ -1044,7 +1050,13 @@ async fn invalid_github_yaml_config_reloads_on_change() -> Result<(), Box<dyn st
     harness.initialize(Some(root)).await;
     assert!(
         harness
-            .error_shown(&config_file.display().to_string())
+            .error_shown(
+                &actup_core::canonical_path(temp.path())
+                    .join(".github")
+                    .join("actup.yaml")
+                    .display()
+                    .to_string()
+            )
             .await,
         "expected an error showMessage naming .github/actup.yaml"
     );

@@ -27,8 +27,8 @@ use discovery::Format;
 #[allow(clippy::module_name_repetitions)]
 pub use discovery::find_repo_config;
 pub use discovery::{
-    CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, repo_search_dirs,
-    user_config_path,
+    CONFIG_EXTENSIONS, Candidate, canonical_path, iter_config_candidates, repo_candidates,
+    repo_search_dirs, user_config_path,
 };
 pub use env::{
     CLI_FLAG_VARS, COLOR_VAR, CONFIG_VAR, EnvOverrides, FORMAT_VAR, STRICT_VAR, VERBOSE_VAR,

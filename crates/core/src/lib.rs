@@ -41,7 +41,7 @@ pub use clock::{Clock, SystemClock};
 pub use compat::{BoxFuture, MaybeSend, MaybeSync};
 pub use config::{
     ApiMode, CONFIG_EXTENSIONS, Config, FetchSettings, HostConfig, HostKind,
-    Source as ConfigSource, find_repo_config, iter_config_candidates,
+    Source as ConfigSource, canonical_path, find_repo_config, iter_config_candidates,
     registration::{
         Capabilities, Preset, ProviderConfig, Registration, validate_no_duplicate_presets,
     },

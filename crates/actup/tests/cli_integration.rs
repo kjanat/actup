@@ -252,7 +252,7 @@ mod config_tests {
         git: impl Fn(&std::path::Path) -> std::io::Result<()>,
     ) -> std::io::Result<(TempDir, PathBuf, PathBuf)> {
         let temp = TempDir::new()?;
-        let repo = temp.path().canonicalize()?.join("repo");
+        let repo = actup_core::canonical_path(temp.path()).join("repo");
         let sub = repo.join("sub");
         fs::create_dir_all(&sub)?;
         git(&repo.join(".git"))?;
@@ -290,7 +290,7 @@ mod config_tests {
     fn test_repo_search_without_git_walks_past_the_start() -> Result<(), Box<dyn std::error::Error>>
     {
         let (temp, repo, sub) = nested_repo(|_| Ok(()))?;
-        let root = temp.path().canonicalize()?;
+        let root = actup_core::canonical_path(temp.path());
         let dirs = repo_search_dirs(&sub, None);
         assert_eq!(dirs.get(..3), Some(&[sub.clone(), repo, root.clone()][..]));
         assert_eq!(find_repo_config(&sub, None), Some(root.join("actup.toml")));
@@ -300,7 +300,7 @@ mod config_tests {
     #[test]
     fn test_repo_search_resolves_parent_components() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let root = temp.path().canonicalize()?;
+        let root = actup_core::canonical_path(temp.path());
         let sub = root.join("sub");
         let other = root.join("other");
         fs::create_dir_all(sub.join(".git"))?;
@@ -342,7 +342,10 @@ mod config_tests {
     #[test]
     fn test_repo_search_absolutizes_relative_start() -> Result<(), Box<dyn std::error::Error>> {
         let dirs = repo_search_dirs(std::path::Path::new("."), None);
-        assert_eq!(dirs.first(), Some(&std::env::current_dir()?));
+        assert_eq!(
+            dirs.first(),
+            Some(&actup_core::canonical_path(&std::env::current_dir()?))
+        );
         assert_eq!(
             repo_search_dirs(std::path::Path::new(""), None),
             [PathBuf::new()]
@@ -363,7 +366,7 @@ mod config_tests {
     fn test_config_load_records_file_sources_in_precedence_order()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = temp.path().canonicalize()?.join("repo");
+        let repo = actup_core::canonical_path(temp.path()).join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let user = temp.path().join("user.toml");
         let repo_config = repo.join("actup.toml");
@@ -412,7 +415,7 @@ mod config_tests {
     #[test]
     fn test_repo_config_cannot_set_restricted_keys() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = temp.path().canonicalize()?.join("repo");
+        let repo = actup_core::canonical_path(temp.path()).join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let repo_config = repo.join("actup.toml");
         fs::write(&repo_config, RESTRICTED)?;
@@ -487,7 +490,7 @@ mod config_tests {
     #[test]
     fn test_repo_config_cannot_set_the_cache_path() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = temp.path().canonicalize()?.join("repo");
+        let repo = actup_core::canonical_path(temp.path()).join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let repo_config = repo.join("actup.toml");
         fs::write(
@@ -529,7 +532,7 @@ mod config_tests {
     fn test_explicit_config_found_by_discovery_loads_once() -> Result<(), Box<dyn std::error::Error>>
     {
         let temp = TempDir::new()?;
-        let repo = temp.path().canonicalize()?.join("repo");
+        let repo = actup_core::canonical_path(temp.path()).join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         fs::create_dir(repo.join("sub"))?;
         let repo_config = repo.join("actup.toml");
@@ -644,7 +647,8 @@ policy  = { bump = "patch" }
 
         match Config::load(None, None, temp.path(), None) {
             Err(actup_core::Error::InvalidConfig { path, reason }) => {
-                assert_eq!(path, temp.path().join("actup.toml").display().to_string());
+                let found = actup_core::canonical_path(temp.path()).join("actup.toml");
+                assert_eq!(path, found.display().to_string());
                 assert!(
                     reason.starts_with("`actions` is no longer supported; use `[[overrides]]`"),
                     "{reason}"
@@ -664,7 +668,8 @@ policy  = { bump = "patch" }
 
         match Config::load(Some(&explicit), None, temp.path(), None) {
             Err(actup_core::Error::InvalidConfig { path, reason }) => {
-                assert_eq!(path, temp.path().join("actup.toml").display().to_string());
+                let found = actup_core::canonical_path(temp.path()).join("actup.toml");
+                assert_eq!(path, found.display().to_string());
                 assert!(
                     reason.starts_with("`ref_style` is no longer supported; use `policy.pin`"),
                     "{reason}"
@@ -682,7 +687,8 @@ policy  = { bump = "patch" }
 
         match Config::load(None, None, temp.path(), None) {
             Err(actup_core::Error::InvalidConfig { path, .. }) => {
-                assert_eq!(path, temp.path().join("actup.toml").display().to_string());
+                let found = actup_core::canonical_path(temp.path()).join("actup.toml");
+                assert_eq!(path, found.display().to_string());
             }
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
@@ -713,7 +719,7 @@ policy  = { bump = "patch" }
     #[test]
     fn test_config_load_skips_missing_user_config() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo_config = temp.path().join("actup.toml");
+        let repo_config = actup_core::canonical_path(temp.path()).join("actup.toml");
         fs::write(&repo_config, "[cache]\nenabled = false\n")?;
 
         let config = Config::load(
@@ -1553,7 +1559,10 @@ mod cli_runs {
 
         assert_eq!(output.status.code(), Some(2));
         let stderr = String::from_utf8(output.stderr)?;
-        let config_path = repo.path().join("actup.toml").display().to_string();
+        let config_path = actup_core::canonical_path(repo.path())
+            .join("actup.toml")
+            .display()
+            .to_string();
         assert!(stderr.contains(&config_path), "stderr: {stderr}");
         assert!(stderr.contains("sideways"), "stderr: {stderr}");
         Ok(())
@@ -1593,7 +1602,7 @@ mod cli_runs {
         let user = home.path().join("actup").join("config.toml");
         fs::create_dir_all(home.path().join("actup"))?;
         fs::write(&user, "[policy]\nbump = \"patch\"\n")?;
-        let repo_config = repo.path().join("actup.toml");
+        let repo_config = actup_core::canonical_path(repo.path()).join("actup.toml");
         fs::write(&repo_config, "[policy]\npin = \"sha\"\n")?;
         let explicit = home.path().join("explicit.toml");
         fs::write(&explicit, "[policy]\ntrack = \"exact\"\n")?;
@@ -1872,7 +1881,7 @@ mod cli_runs {
     {
         let repo = TempDir::new()?;
         fs::create_dir(repo.path().join(".git"))?;
-        let config = repo.path().join("actup.toml");
+        let config = actup_core::canonical_path(repo.path()).join("actup.toml");
         fs::write(
             &config,
             "default_host = \"x.example\"\n[hosts.\"x.example\"]\nkind = \"github\"\ntoken_env = \"SECRET\"\n",
@@ -1917,7 +1926,7 @@ mod cli_runs {
     fn unknown_keys_exit_2_with_a_hint() -> Result<(), Box<dyn std::error::Error>> {
         let repo = TempDir::new()?;
         fs::create_dir(repo.path().join(".git"))?;
-        let config = repo.path().join("actup.toml");
+        let config = actup_core::canonical_path(repo.path()).join("actup.toml");
         fs::write(&config, "update-policy = \"patch\"\n")?;
         let output = actup(repo.path()).arg("config").arg(repo.path()).output()?;
         assert_eq!(output.status.code(), Some(2));
