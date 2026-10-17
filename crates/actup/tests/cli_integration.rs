@@ -797,7 +797,7 @@ kind = "bitbucket"
 mod version_tests {
     use std::{collections::HashMap, sync::Arc};
 
-    use actup_core::version;
+    use actup_core::{policy, version};
 
     use super::test_support::some_or_panic;
 
@@ -832,7 +832,7 @@ mod version_tests {
         );
 
         let current = version::Version::parse("v1.0.0");
-        let latest = versions.find_latest_for(&current, false, false);
+        let latest = versions.find_latest_for(&current, policy::Update::Minor, false);
 
         let latest = some_or_panic(latest, "expected latest version for minor policy");
         assert_eq!(latest.version().to_string(), "v1.2.0");
@@ -852,7 +852,7 @@ mod version_tests {
         );
 
         let current = version::Version::parse("v1.0.0");
-        let latest = versions.find_latest_for(&current, true, false);
+        let latest = versions.find_latest_for(&current, policy::Update::Major, false);
 
         let latest = some_or_panic(latest, "expected latest version for major policy");
         assert_eq!(latest.version().to_string(), "v3.0.0");

@@ -407,8 +407,7 @@ fn find_best_target(
     current: &version::Version,
     policy: Policy,
 ) -> Option<Arc<version::Info>> {
-    let latest =
-        versions.find_latest_for(current, policy.bump.allows_major(), policy.prerelease)?;
+    let latest = versions.find_latest_for(current, policy.bump, policy.prerelease)?;
     let major_tag = latest
         .version()
         .major()
@@ -1624,6 +1623,133 @@ mod tests {
         assert_eq!(
             target_under("[policy]\ntrack = \"major\"", &action, &versions)?.as_deref(),
             Some("v6")
+        );
+        Ok(())
+    }
+
+    const BUMPS: [&str; 4] = ["patch", "minor", "major", "latest"];
+
+    fn bump_versions(major_tags: bool) -> version::Set {
+        let tags = [
+            ("v4.1.0", "1"),
+            ("v4.1.3", "2"),
+            ("v4.9.3", "3"),
+            ("v5.0.0", "5"),
+        ];
+        let mut infos: Vec<version::Info> = tags
+            .iter()
+            .map(|(tag, sha)| make_version_info(tag, &sha.repeat(40)))
+            .collect();
+        let mut majors = HashMap::new();
+        if major_tags {
+            for (major, tag, sha) in [(4, "v4", "3"), (5, "v5", "5")] {
+                let info = make_version_info(tag, &sha.repeat(40));
+                infos.push(info.clone());
+                majors.insert(major, info);
+            }
+        }
+        make_version_set(infos, None, HashMap::new(), majors)
+    }
+
+    fn bump_config(bump: &str) -> String {
+        format!("[policy]\nbump = \"{bump}\"")
+    }
+
+    #[test]
+    fn test_bump_limits_full_version_target() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = bump_versions(false);
+        let action = make_action_ref("actions", "checkout", "v4.1.0");
+        for (bump, want) in BUMPS
+            .into_iter()
+            .zip(["v4.1.3", "v4.9.3", "v5.0.0", "v5.0.0"])
+        {
+            assert_eq!(
+                target_under(&bump_config(bump), &action, &versions)?.as_deref(),
+                Some(want),
+                "bump = {bump}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_bump_on_major_only_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = bump_versions(true);
+        let action = make_action_ref("actions", "checkout", "v4");
+        for (bump, want) in BUMPS.into_iter().zip([None, None, Some("v5"), Some("v5")]) {
+            assert_eq!(
+                target_under(&bump_config(bump), &action, &versions)?.as_deref(),
+                want,
+                "bump = {bump}"
+            );
+        }
+        for (bump, want) in BUMPS
+            .into_iter()
+            .zip(["v4.9.3", "v4.9.3", "v5.0.0", "v5.0.0"])
+        {
+            let config = format!("{}\ntrack = \"exact\"", bump_config(bump));
+            assert_eq!(
+                target_under(&config, &action, &versions)?.as_deref(),
+                Some(want),
+                "bump = {bump}, track = exact"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_bump_on_minor_only_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = bump_versions(false);
+        let action = make_action_ref("actions", "checkout", "v4.1");
+        for (bump, want) in
+            BUMPS
+                .into_iter()
+                .zip([None, Some("v4.9.3"), Some("v5.0.0"), Some("v5.0.0")])
+        {
+            assert_eq!(
+                target_under(&bump_config(bump), &action, &versions)?.as_deref(),
+                want,
+                "bump = {bump}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_bump_on_sha_pinned_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = bump_versions(false);
+        let action = make_action_ref("actions", "checkout", &"1".repeat(40));
+        for (bump, want, sha) in [
+            ("patch", "v4.1.3", "2"),
+            ("minor", "v4.9.3", "3"),
+            ("major", "v5.0.0", "5"),
+            ("latest", "v5.0.0", "5"),
+        ] {
+            let config: Config = toml::from_str(&bump_config(bump))?;
+            let result = check_action(&action, &versions, &config);
+            let CheckStatus::Outdated { current, target } = result.status() else {
+                return Err(format!("bump = {bump}: got {:?}", result.status()).into());
+            };
+            assert_eq!(current, "v4.1.0", "bump = {bump}");
+            assert_eq!(target.version().as_str(), want, "bump = {bump}");
+            assert_eq!(target.sha(), sha.repeat(40), "bump = {bump}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_bump_from_override() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = bump_versions(false);
+        let checkout = make_action_ref("actions", "checkout", "v4.1.0");
+        let other = make_action_ref("other", "tool", "v4.1.0");
+        let config = "[policy]\nbump = \"latest\"\n\n[[overrides]]\npattern = \"actions/*\"\npolicy = { bump = \"patch\" }";
+        assert_eq!(
+            target_under(config, &checkout, &versions)?.as_deref(),
+            Some("v4.1.3")
+        );
+        assert_eq!(
+            target_under(config, &other, &versions)?.as_deref(),
+            Some("v5.0.0")
         );
         Ok(())
     }

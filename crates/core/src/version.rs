@@ -9,7 +9,10 @@ use std::{cmp::Ordering, fmt, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 
-use crate::clock::{Clock, SystemClock};
+use crate::{
+    clock::{Clock, SystemClock},
+    policy,
+};
 
 /// A parsed version from a git ref.
 ///
@@ -563,20 +566,30 @@ impl Set {
             .any(|t| t.version().as_str() == ref_str)
     }
 
-    /// Find the latest version that satisfies the given policy for a current version
+    /// Find the latest version that `bump` allows for a current version
     ///
-    /// Prereleases count when `allow_prerelease` is set or when `current` is a
-    /// prerelease of the same `major.minor.patch`.
+    /// A component that `current` leaves out matches any value, so `v4` under
+    /// [`policy::Update::Patch`] covers every `v4.x.y`. Prereleases count when
+    /// `allow_prerelease` is set or when `current` is a prerelease of the same
+    /// `major.minor.patch`.
     #[must_use]
     pub fn find_latest_for(
         &self,
         current: &Version,
-        allow_major: bool,
+        bump: policy::Update,
         allow_prerelease: bool,
     ) -> Option<&Arc<Info>> {
+        let in_range = |v: &Version| match bump {
+            policy::Update::Major | policy::Update::Latest => true,
+            policy::Update::Minor => v.major() == current.major(),
+            policy::Update::Patch => {
+                v.major() == current.major()
+                    && current.minor().is_none_or(|minor| v.minor() == Some(minor))
+            }
+        };
         let allows = |v: &Version| {
             v.is_semver()
-                && (allow_major || v.major() == current.major())
+                && in_range(v)
                 && (!v.is_prerelease()
                     || allow_prerelease
                     || (current.is_prerelease() && v.release() == current.release()))
@@ -1123,7 +1136,7 @@ mod tests {
         };
 
         let current = Version::parse("v3.0.0");
-        let result = vs.find_latest_for(&current, true, false);
+        let result = vs.find_latest_for(&current, policy::Update::Major, false);
         assert!(result.is_some());
         assert_eq!(result.unwrap().version.to_string(), "v4.0.0");
     }
@@ -1148,7 +1161,7 @@ mod tests {
         };
 
         let current = Version::parse("v3.0.0");
-        let result = vs.find_latest_for(&current, false, false);
+        let result = vs.find_latest_for(&current, policy::Update::Minor, false);
         assert!(result.is_some());
         assert_eq!(result.unwrap().version.to_string(), "v3.1.0");
     }
@@ -1170,12 +1183,12 @@ mod tests {
         // Non-semver current version
         let current = Version::parse("main");
 
-        // With allow_major, returns latest
-        let result = vs.find_latest_for(&current, true, false);
+        // Under major, returns latest
+        let result = vs.find_latest_for(&current, policy::Update::Major, false);
         assert!(result.is_some());
 
-        // Without allow_major, returns None
-        let result = vs.find_latest_for(&current, false, false);
+        // Under minor, returns None
+        let result = vs.find_latest_for(&current, policy::Update::Minor, false);
         assert!(result.is_none());
     }
 
@@ -1199,11 +1212,11 @@ mod tests {
         let current = Version::parse("v4.0.0");
 
         // Without allow_prerelease, filters out beta
-        let result = vs.find_latest_for(&current, false, false);
+        let result = vs.find_latest_for(&current, policy::Update::Minor, false);
         assert!(result.is_none());
 
         // With allow_prerelease, includes beta
-        let result = vs.find_latest_for(&current, false, true);
+        let result = vs.find_latest_for(&current, policy::Update::Minor, true);
         assert!(result.is_some());
     }
 
@@ -1223,22 +1236,55 @@ mod tests {
             HashMap::new(),
             None,
         );
-        let pick = |current: &str, allow_major: bool, allow_prerelease: bool| {
-            vs.find_latest_for(&Version::parse(current), allow_major, allow_prerelease)
+        let pick = |current: &str, bump: policy::Update, allow_prerelease: bool| {
+            vs.find_latest_for(&Version::parse(current), bump, allow_prerelease)
                 .map(|t| t.sha().to_string())
         };
 
-        assert_eq!(pick("v1.0.0", true, false).as_deref(), Some("d"));
-        assert_eq!(pick("v1.0.0", false, true).as_deref(), Some("f"));
-        assert_eq!(pick("v1.0.0", true, true).as_deref(), Some("c"));
-        assert_eq!(pick("nightly", true, false).as_deref(), Some("d"));
-        assert_eq!(pick("nightly", false, true), None);
-        let Some(latest) = vs.find_latest_for(&Version::parse("v1.3.0-beta.1"), false, false)
+        let (major, minor) = (policy::Update::Major, policy::Update::Minor);
+        assert_eq!(pick("v1.0.0", major, false).as_deref(), Some("d"));
+        assert_eq!(pick("v1.0.0", minor, true).as_deref(), Some("f"));
+        assert_eq!(pick("v1.0.0", major, true).as_deref(), Some("c"));
+        assert_eq!(pick("nightly", major, false).as_deref(), Some("d"));
+        assert_eq!(pick("nightly", minor, true), None);
+        let Some(latest) = vs.find_latest_for(&Version::parse("v1.3.0-beta.1"), minor, false)
         else {
             return Err("expected a target for a prerelease current".into());
         };
         assert_eq!(latest.version().as_str(), "v1.3.0-beta.1");
         Ok(())
+    }
+
+    #[test]
+    fn find_latest_for_honours_bump() {
+        use policy::Update::{Latest, Major, Minor, Patch};
+
+        let tag = |name: &str| Arc::new(Info::new(Version::parse(name), name));
+        let vs = Set::build(
+            ["v4", "v4.1.0", "v4.1.3", "v4.1.4-rc.1", "v4.9.3", "v5.0.0"]
+                .into_iter()
+                .map(tag)
+                .collect(),
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        let pick = |current: &str, bump: policy::Update, allow_prerelease: bool| {
+            vs.find_latest_for(&Version::parse(current), bump, allow_prerelease)
+                .map(|t| t.sha().to_string())
+        };
+
+        assert_eq!(pick("v4.1.0", Patch, false).as_deref(), Some("v4.1.3"));
+        assert_eq!(pick("v4.1.0", Patch, true).as_deref(), Some("v4.1.4-rc.1"));
+        assert_eq!(pick("v4.1.0", Minor, false).as_deref(), Some("v4.9.3"));
+        assert_eq!(pick("v4.1.0", Major, false).as_deref(), Some("v5.0.0"));
+        assert_eq!(pick("v4.1.0", Latest, false).as_deref(), Some("v5.0.0"));
+        assert_eq!(pick("v4.1", Patch, false).as_deref(), Some("v4.1.3"));
+        assert_eq!(pick("v4", Patch, false).as_deref(), Some("v4.9.3"));
+        assert_eq!(pick("v4.2.0", Patch, false), None);
+        assert_eq!(pick("v3.0.0", Patch, false), None);
+        assert_eq!(pick("v3.0.0", Minor, false), None);
+        assert_eq!(pick("nightly", Patch, false), None);
     }
 
     #[test]

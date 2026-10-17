@@ -78,18 +78,6 @@ pub enum Update {
 }
 
 impl Update {
-    /// Returns true if this policy allows major version bumps
-    #[must_use]
-    pub const fn allows_major(&self) -> bool {
-        matches!(self, Self::Major | Self::Latest)
-    }
-
-    /// Returns true if this policy allows minor version bumps
-    #[must_use]
-    pub const fn allows_minor(&self) -> bool {
-        !matches!(self, Self::Patch)
-    }
-
     /// Parse from string (case-insensitive)
     #[must_use]
     pub fn from_str_loose(s: &str) -> Option<Self> {
@@ -431,21 +419,6 @@ mod tests {
     use super::*;
 
     // Update tests
-
-    #[test]
-    fn test_update_policy_allows() {
-        assert!(!Update::Patch.allows_major());
-        assert!(!Update::Patch.allows_minor());
-
-        assert!(!Update::Minor.allows_major());
-        assert!(Update::Minor.allows_minor());
-
-        assert!(Update::Major.allows_major());
-        assert!(Update::Major.allows_minor());
-
-        assert!(Update::Latest.allows_major());
-        assert!(Update::Latest.allows_minor());
-    }
 
     #[test]
     fn test_update_policy_from_str() {

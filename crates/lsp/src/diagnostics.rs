@@ -1154,6 +1154,85 @@ jobs:
     }
 
     #[tokio::test]
+    async fn bump_policy_limits_quickfix_target() -> Result<(), Box<dyn std::error::Error>> {
+        use actup_core::policy::Update;
+        use tower_lsp_server::ls_types::{CodeActionOrCommand, DocumentChanges, OneOf};
+
+        let versions = version::Set::build(
+            [
+                ("v4.1.0", DUMMY_SHA),
+                ("v4.1.3", DUMMY_SHA_2),
+                ("v4.9.3", DUMMY_SHA_2),
+                ("v5.0.0", DUMMY_SHA_2),
+            ]
+            .into_iter()
+            .map(|(tag, sha)| test_utils::make_version_info(tag, sha))
+            .collect(),
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            None,
+        );
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let yaml = "    - uses: actions/checkout@v4.1.0\n";
+        for (bump, want) in [
+            (Update::Patch, "v4.1.3"),
+            (Update::Minor, "v4.9.3"),
+            (Update::Major, "v5.0.0"),
+            (Update::Latest, "v5.0.0"),
+        ] {
+            let provider = test_utils::MockProvider::new("github.com").with_versions(
+                "actions",
+                "checkout",
+                versions.clone(),
+            );
+            let registry = test_utils::mock_registry(provider);
+            let cache = crate::file_cache::FileCache::disabled();
+            let config = Config {
+                policy: actup_core::config::Policy {
+                    bump,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let result = compute_diagnostics(
+                yaml,
+                &uri,
+                &config,
+                &registry,
+                &cache,
+                crate::position::PositionEncoding::Utf16,
+            )
+            .await;
+
+            let actions = crate::code_actions::code_actions_for_diagnostics(
+                &uri,
+                Some(1),
+                &result.diagnostics,
+                true,
+            );
+            let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
+                return Err(format!("bump = {bump}: expected one action, got {actions:?}").into());
+            };
+            let Some(DocumentChanges::Edits(doc_edits)) = action
+                .edit
+                .as_ref()
+                .and_then(|e| e.document_changes.as_ref())
+            else {
+                return Err(format!("bump = {bump}: expected document edits").into());
+            };
+            let [doc_edit] = doc_edits.as_slice() else {
+                return Err(format!("bump = {bump}: expected one document edit").into());
+            };
+            let [OneOf::Left(edit)] = doc_edit.edits.as_slice() else {
+                return Err(format!("bump = {bump}: expected one text edit").into());
+            };
+            assert_eq!(edit.new_text, want, "bump = {bump}");
+            assert_eq!(action.title, format!("Update to {want}"), "bump = {bump}");
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn compute_diagnostics_provider_error_produces_env_diagnostic() {
         let provider = test_utils::MockProvider::new("github.com").with_error(
             "actions",
