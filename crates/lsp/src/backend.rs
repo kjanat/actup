@@ -1387,12 +1387,27 @@ struct WatchedConfigs {
 
 impl WatchedConfigs {
     fn contains(&self, path: &Path) -> bool {
+        let resolved = resolve_event_path(path);
+        [Some(path), resolved.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|path| self.lists(path))
+    }
+
+    fn lists(&self, path: &Path) -> bool {
         self.user.as_deref() == Some(path)
             || self.explicit.as_deref() == Some(path)
             || self.search_dirs.iter().any(|dir| {
                 actup_core::iter_config_candidates(dir).any(|candidate| candidate == path)
             })
     }
+}
+
+fn resolve_event_path(path: &Path) -> Option<PathBuf> {
+    path.canonicalize().ok().or_else(|| {
+        let name = path.file_name()?;
+        Some(path.parent()?.canonicalize().ok()?.join(name))
+    })
 }
 
 fn candidate_groups(base: &Path) -> BTreeMap<PathBuf, Vec<String>> {
@@ -1984,6 +1999,27 @@ mod tests {
         assert!(watched.contains(&explicit));
         assert!(!watched.contains(Path::new("/elsewhere/actup.toml")));
         assert!(!WatchedConfigs::default().contains(&user));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn watched_configs_match_events_through_a_symlink() -> std::io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let real = temp.path().canonicalize()?.join("real");
+        std::fs::create_dir(&real)?;
+        let link = temp.path().join("link");
+        std::os::unix::fs::symlink(&real, &link)?;
+        let watched = WatchedConfigs {
+            search_dirs: actup_core::repo_search_dirs(&link, Some(&link)),
+            ..WatchedConfigs::default()
+        };
+        assert_eq!(watched.search_dirs, std::slice::from_ref(&real));
+        assert!(watched.contains(&link.join("actup.toml")));
+        std::fs::write(real.join("actup.toml"), "")?;
+        assert!(watched.contains(&link.join("actup.toml")));
+        assert!(!watched.contains(&link.join("other.toml")));
+        assert!(!watched.contains(&link.join("missing/actup.toml")));
+        Ok(())
     }
 
     #[test]
@@ -2724,7 +2760,7 @@ mod tests {
         assert_eq!(config.loaded_from(), None);
         assert_eq!(config.policy.bump, actup_core::policy::Update::Latest);
         let watched = backend.watched_configs().await;
-        assert_eq!(watched.search_dirs, [std::path::absolute(&root)?]);
+        assert_eq!(watched.search_dirs, [root.canonicalize()?]);
         assert!(!watched.contains(&temp.path().join("actup.toml")));
         Ok(())
     }

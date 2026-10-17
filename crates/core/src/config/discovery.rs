@@ -99,11 +99,12 @@ pub fn iter_config_candidates(base: &Path) -> impl Iterator<Item = PathBuf> + '_
 
 /// Return the directories repo config discovery searches, from `start_dir` upward.
 ///
-/// The walk ends at the first directory that contains `.git` or equals `ceiling`.
+/// Both paths resolve through symlinks and `..` first. The walk ends at the
+/// first directory that contains `.git` or equals `ceiling`.
 #[must_use]
 pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf> {
-    let start = std::path::absolute(start_dir).unwrap_or_else(|_| start_dir.to_path_buf());
-    let ceiling = ceiling.map(|c| std::path::absolute(c).unwrap_or_else(|_| c.to_path_buf()));
+    let start = resolve_dir(start_dir);
+    let ceiling = ceiling.map(resolve_dir);
     let mut dirs = Vec::new();
     for dir in start.ancestors() {
         dirs.push(dir.to_path_buf());
@@ -112,6 +113,12 @@ pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf
         }
     }
     dirs
+}
+
+fn resolve_dir(dir: &Path) -> PathBuf {
+    dir.canonicalize()
+        .or_else(|_| std::path::absolute(dir))
+        .unwrap_or_else(|_| dir.to_path_buf())
 }
 
 /// Find the first existing repo config in [`repo_search_dirs`].

@@ -252,7 +252,7 @@ mod config_tests {
         git: impl Fn(&std::path::Path) -> std::io::Result<()>,
     ) -> std::io::Result<(TempDir, PathBuf, PathBuf)> {
         let temp = TempDir::new()?;
-        let repo = temp.path().join("repo");
+        let repo = temp.path().canonicalize()?.join("repo");
         let sub = repo.join("sub");
         fs::create_dir_all(&sub)?;
         git(&repo.join(".git"))?;
@@ -290,14 +290,35 @@ mod config_tests {
     fn test_repo_search_without_git_walks_past_the_start() -> Result<(), Box<dyn std::error::Error>>
     {
         let (temp, repo, sub) = nested_repo(|_| Ok(()))?;
+        let root = temp.path().canonicalize()?;
         let dirs = repo_search_dirs(&sub, None);
+        assert_eq!(dirs.get(..3), Some(&[sub.clone(), repo, root.clone()][..]));
+        assert_eq!(find_repo_config(&sub, None), Some(root.join("actup.toml")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_repo_search_resolves_parent_components() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let root = temp.path().canonicalize()?;
+        let sub = root.join("sub");
+        let other = root.join("other");
+        fs::create_dir_all(sub.join(".git"))?;
+        fs::create_dir(&other)?;
+        fs::write(sub.join("actup.toml"), "[policy]\nbump = \"minor\"\n")?;
+        fs::write(root.join("actup.toml"), "[policy]\nbump = \"patch\"\n")?;
+
+        let start = sub.join("..").join("other");
+        let dirs = repo_search_dirs(&start, None);
+        assert_eq!(dirs.get(..2), Some(&[other.clone(), root.clone()][..]));
+        assert!(!dirs.contains(&sub));
         assert_eq!(
-            dirs.get(..3),
-            Some(&[sub.clone(), repo, temp.path().to_path_buf()][..])
+            find_repo_config(&start, None),
+            Some(root.join("actup.toml"))
         );
         assert_eq!(
-            find_repo_config(&sub, None),
-            Some(temp.path().join("actup.toml"))
+            repo_search_dirs(&start, Some(&sub.join("..").join("other"))),
+            [other]
         );
         Ok(())
     }
@@ -342,7 +363,7 @@ mod config_tests {
     fn test_config_load_records_file_sources_in_precedence_order()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = temp.path().join("repo");
+        let repo = temp.path().canonicalize()?.join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let user = temp.path().join("user.toml");
         let repo_config = repo.join("actup.toml");
@@ -391,7 +412,7 @@ mod config_tests {
     #[test]
     fn test_repo_config_cannot_set_restricted_keys() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = temp.path().join("repo");
+        let repo = temp.path().canonicalize()?.join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let repo_config = repo.join("actup.toml");
         fs::write(&repo_config, RESTRICTED)?;
