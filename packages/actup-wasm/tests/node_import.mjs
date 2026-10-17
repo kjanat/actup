@@ -853,6 +853,19 @@ assert.equal(
 	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.2.0 # v4.2.0 keep\n      - uses: actions/checkout@v4.2.0 # keep\n      - uses: actions/checkout@v4.2.0 # lint keep\n      - uses: actions/checkout@v4.2.0 # TODO fix\n      - uses: actions/checkout@v4.2.0 # keep\n`,
 	"a SHA pin unpinned to a tag keeps the note",
 );
+const sharedLabelYaml =
+	`jobs:\n  build:\n    steps: [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@${oldSha} # main keep\n      }]\n`;
+const sharedLabelResults = await checkRefs(sharedLabelYaml, branchProvider);
+assert.deepEqual(
+	sharedLabelResults.map((r) => [r.takes_comment, r.label_listed]),
+	[[false, false], [false, true]],
+	"a listed label right after a ref counts on a line with two values",
+);
+assert.equal(
+	applyEdits(sharedLabelYaml, planUpdates(sharedLabelResults)),
+	sharedLabelYaml.replace(`${oldSha} # main keep`, `${newSha} # v4.2.0 keep`),
+	"a listed branch label on a line with two values is rewritten",
+);
 const labelBranchYaml = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@main # main keep\n";
 const labelBranchResults = (await checkRefs(labelBranchYaml, mockProvider)).map((r) => ({
 	...r,
