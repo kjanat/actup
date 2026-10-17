@@ -245,7 +245,7 @@ fn build_action_yml(path: &str, source: &str, raw: RawActionYml) -> Result<Actio
 /// invariants are violated (missing `main`/`image`/empty `steps` per type).
 pub fn parse_action_yml(raw: &str, path: &str) -> Result<ActionYml> {
     let parsed: RawActionYml =
-        yaml::from_str(raw, yaml::Anchors::Reject).map_err(|e| actup_core::Error::YamlParse {
+        yaml::from_str(raw, yaml::Dialect::Runner).map_err(|e| actup_core::Error::YamlParse {
             path: path.into(),
             reason: String::new(),
             source: Some(std::sync::Arc::new(e)),
@@ -595,6 +595,22 @@ runs:
             (
                 "name: a\n---\nname: b\n",
                 "more than one YAML document at line 2, column 1",
+            ),
+            (
+                "inputs:\n  Token: {}\n  token: {}\n",
+                "duplicate key `token` at line 3, column 3",
+            ),
+            (
+                "inputs:\n  t:\n    default: !!int \"1\"\n",
+                "tag `!!int` needs a plain scalar at line 3, column 20",
+            ),
+            (
+                "inputs:\n  t:\n    default: 0x80000000\n",
+                "`0x80000000` is outside the 32-bit signed integer range at line 3, column 14",
+            ),
+            (
+                &format!("runs:\n  steps: {}x{}\n", "[".repeat(200), "]".repeat(200)),
+                "nest deeper than 128 levels at line 2, column 136",
             ),
         ] {
             let reason = rejected(yaml);

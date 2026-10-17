@@ -1048,7 +1048,7 @@ impl figment::Provider for FileContents {
         match self.format {
             Format::Toml => figment::Provider::data(&Toml::string(&self.contents)),
             Format::Json | Format::Jsonc => figment::Provider::data(&Json::string(&self.contents)),
-            Format::Yaml => crate::yaml::from_str(&self.contents, crate::yaml::Anchors::Expand)
+            Format::Yaml => crate::yaml::from_str(&self.contents, crate::yaml::Dialect::Config)
                 .map(|dict| figment::Profile::Default.collect(dict))
                 .map_err(|e| figment::Error::from(e.to_string())),
         }
@@ -2211,6 +2211,18 @@ mod tests {
             (
                 "? [a]\n: b\n",
                 "a mapping key must be a scalar at line 1, column 3",
+            ),
+            (
+                "fetch:\n  max_tags_per_repo: 0x80000000\n",
+                "`0x80000000` is outside the 32-bit signed integer range at line 2, column 22",
+            ),
+            (
+                "fetch:\n  max_tags_per_repo: !!int \"12\"\n",
+                "tag `!!int` needs a plain scalar at line 2, column 28",
+            ),
+            (
+                "hosts:\n  Ghe.Corp: {}\n  ghe.corp: {}\n  ghe.corp: {}\n",
+                "duplicate key `ghe.corp` at line 4, column 3",
             ),
         ];
         for (contents, needle) in cases {
