@@ -255,7 +255,7 @@ pub struct Policy {
     /// Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.
     ///
     /// ```toml
-    /// prerelease = false   # skip -rc/-beta tags unless already on one
+    /// prerelease = false   # skip -rc/-beta tags unless already on one of that version
     /// ```
     pub prerelease: bool,
 }

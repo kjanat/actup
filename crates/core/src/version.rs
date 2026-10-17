@@ -198,6 +198,18 @@ impl Version {
         }
     }
 
+    fn release(&self) -> Option<(u32, u32, u32)> {
+        match self {
+            Self::Semver {
+                major,
+                minor,
+                patch,
+                ..
+            } => Some((*major, minor.unwrap_or(0), patch.unwrap_or(0))),
+            _ => None,
+        }
+    }
+
     /// Get the original string representation
     #[must_use]
     pub fn as_str(&self) -> &str {
@@ -552,6 +564,9 @@ impl Set {
     }
 
     /// Find the latest version that satisfies the given policy for a current version
+    ///
+    /// Prereleases count when `allow_prerelease` is set or when `current` is a
+    /// prerelease of the same `major.minor.patch`.
     #[must_use]
     pub fn find_latest_for(
         &self,
@@ -559,29 +574,23 @@ impl Set {
         allow_major: bool,
         allow_prerelease: bool,
     ) -> Option<&Arc<Info>> {
-        match current {
-            Version::Semver { major, .. } => {
-                if allow_major {
-                    // Return overall latest (filtered by prerelease if needed)
-                    self.latest
-                        .as_ref()
-                        .filter(|v| allow_prerelease || !v.version().is_prerelease())
+        let allows = |v: &Version| {
+            v.is_semver()
+                && (allow_major || v.major() == current.major())
+                && (!v.is_prerelease()
+                    || allow_prerelease
+                    || (current.is_prerelease() && v.release() == current.release()))
+        };
+        self.semver_tags
+            .iter()
+            .filter(|t| allows(t.version()))
+            .reduce(|best, t| {
+                if t.version() > best.version() {
+                    t
                 } else {
-                    // Return latest for this major
-                    self.latest_per_major
-                        .get(major)
-                        .filter(|v| allow_prerelease || !v.version().is_prerelease())
+                    best
                 }
-            }
-            _ => {
-                // For non-semver, just return latest if major updates allowed
-                if allow_major {
-                    self.latest.as_ref()
-                } else {
-                    None
-                }
-            }
-        }
+            })
     }
 
     /// Set the default branch information
@@ -1104,7 +1113,7 @@ mod tests {
         latest_per_major.insert(4, Arc::clone(&v4));
 
         let vs = Set {
-            semver_tags: vec![],
+            semver_tags: vec![Arc::clone(&v4), v3],
             latest_per_major,
             major_tags: HashMap::new(),
             latest: Some(v4),
@@ -1129,7 +1138,7 @@ mod tests {
         latest_per_major.insert(4, Arc::clone(&v4));
 
         let vs = Set {
-            semver_tags: vec![],
+            semver_tags: vec![Arc::clone(&v4), v3_1],
             latest_per_major,
             major_tags: HashMap::new(),
             latest: Some(v4),
@@ -1149,7 +1158,7 @@ mod tests {
         let v4 = Arc::new(Info::new(Version::parse("v4.0.0"), "bbb"));
 
         let vs = Set {
-            semver_tags: vec![],
+            semver_tags: vec![Arc::clone(&v4)],
             latest_per_major: HashMap::new(),
             major_tags: HashMap::new(),
             latest: Some(v4),
@@ -1178,7 +1187,7 @@ mod tests {
         latest_per_major.insert(4, Arc::clone(&beta));
 
         let vs = Set {
-            semver_tags: vec![],
+            semver_tags: vec![Arc::clone(&beta)],
             latest_per_major,
             major_tags: HashMap::new(),
             latest: Some(beta),
@@ -1196,6 +1205,40 @@ mod tests {
         // With allow_prerelease, includes beta
         let result = vs.find_latest_for(&current, false, true);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn find_latest_for_scans_unsorted_tags() -> Result<(), Box<dyn std::error::Error>> {
+        let tag = |name: &str, sha: &str| Arc::new(Info::new(Version::parse(name), sha));
+        let vs = Set::build(
+            vec![
+                tag("v1.0.0", "a"),
+                tag("nightly", "b"),
+                tag("v2.0.0-rc.1", "c"),
+                tag("v1.2.0", "d"),
+                tag("v1.2.0+build.1", "e"),
+                tag("v1.3.0-beta.1", "f"),
+            ],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        let pick = |current: &str, allow_major: bool, allow_prerelease: bool| {
+            vs.find_latest_for(&Version::parse(current), allow_major, allow_prerelease)
+                .map(|t| t.sha().to_string())
+        };
+
+        assert_eq!(pick("v1.0.0", true, false).as_deref(), Some("d"));
+        assert_eq!(pick("v1.0.0", false, true).as_deref(), Some("f"));
+        assert_eq!(pick("v1.0.0", true, true).as_deref(), Some("c"));
+        assert_eq!(pick("nightly", true, false).as_deref(), Some("d"));
+        assert_eq!(pick("nightly", false, true), None);
+        let Some(latest) = vs.find_latest_for(&Version::parse("v1.3.0-beta.1"), false, false)
+        else {
+            return Err("expected a target for a prerelease current".into());
+        };
+        assert_eq!(latest.version().as_str(), "v1.3.0-beta.1");
+        Ok(())
     }
 
     #[test]

@@ -1410,6 +1410,142 @@ mod tests {
         }
     }
 
+    fn prerelease_set(tags: &[&str]) -> version::Set {
+        make_version_set(
+            tags.iter()
+                .map(|t| make_version_info(t, &format!("sha-{t}")))
+                .collect(),
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    fn target_of(status: &CheckStatus) -> Result<Option<String>, String> {
+        match status {
+            CheckStatus::Outdated { target, .. } => Ok(Some(target.version().to_string())),
+            CheckStatus::UpToDate => Ok(None),
+            other => Err(format!("unexpected {other:?}")),
+        }
+    }
+
+    fn target_under(
+        toml_str: &str,
+        action: &ActionRef,
+        versions: &version::Set,
+    ) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        let config: Config = toml::from_str(toml_str)?;
+        Ok(target_of(check_action(action, versions, &config).status())?)
+    }
+
+    #[tokio::test]
+    async fn test_prerelease_flag_selects_newer_major_prerelease()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let versions = prerelease_set(&["v2.0.0", "v3.0.0-rc.1"]);
+        let action = make_action_ref("actions", "checkout", "v2");
+        let provider = ResolveMockProvider::new(true);
+        for (flag, want) in [(true, Some("v3.0.0-rc.1")), (false, None)] {
+            let config: Config = toml::from_str(&format!(
+                "[policy]\nbump = \"major\"\nbranch = \"ignore\"\nprerelease = {flag}"
+            ))?;
+            let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+            assert_eq!(
+                target_of(result.status())?.as_deref(),
+                want,
+                "prerelease = {flag}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_prerelease_current_takes_stable_release() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = prerelease_set(&["v2.0.0", "v3.0.0-rc.1", "v3.0.0"]);
+        let action = make_action_ref("actions", "checkout", "v3.0.0-rc.1");
+        for flag in [false, true] {
+            assert_eq!(
+                target_under(
+                    &format!("[policy]\nprerelease = {flag}"),
+                    &action,
+                    &versions
+                )?
+                .as_deref(),
+                Some("v3.0.0"),
+                "prerelease = {flag}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_prerelease_current_takes_newer_prerelease_of_same_version()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let versions = prerelease_set(&["v3.0.0-rc.1", "v3.0.0-rc.2", "v3.1.0-beta.1"]);
+        let rc1 = make_action_ref("actions", "checkout", "v3.0.0-rc.1");
+        let rc2 = make_action_ref("actions", "checkout", "v3.0.0-rc.2");
+        let off = "[policy]\nprerelease = false";
+        let on = "[policy]\nprerelease = true";
+
+        assert_eq!(
+            target_under(off, &rc1, &versions)?.as_deref(),
+            Some("v3.0.0-rc.2")
+        );
+        assert_eq!(target_under(off, &rc2, &versions)?, None);
+        assert_eq!(
+            target_under(on, &rc1, &versions)?.as_deref(),
+            Some("v3.1.0-beta.1")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_prerelease_flag_keeps_major_under_minor_bump() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let versions = prerelease_set(&["v2.0.0", "v2.1.0-rc.1", "v3.0.0", "v3.1.0-rc.1"]);
+        let action = make_action_ref("actions", "checkout", "v2.0.0");
+
+        assert_eq!(
+            target_under(
+                "[policy]\nbump = \"minor\"\nprerelease = true",
+                &action,
+                &versions
+            )?
+            .as_deref(),
+            Some("v2.1.0-rc.1")
+        );
+        assert_eq!(
+            target_under(
+                "[policy]\nbump = \"minor\"\nprerelease = false",
+                &action,
+                &versions
+            )?,
+            None
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_prerelease_from_override() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = prerelease_set(&["v2.0.0", "v2.1.0-rc.1"]);
+        let checkout = make_action_ref("actions", "checkout", "v2.0.0");
+        let other = make_action_ref("other", "tool", "v2.0.0");
+
+        let enable = "[policy]\nprerelease = false\n\n[[overrides]]\npattern = \"actions/*\"\npolicy = { prerelease = true }";
+        assert_eq!(
+            target_under(enable, &checkout, &versions)?.as_deref(),
+            Some("v2.1.0-rc.1")
+        );
+        assert_eq!(target_under(enable, &other, &versions)?, None);
+
+        let disable = "[policy]\nprerelease = true\n\n[[overrides]]\npattern = \"actions/*\"\npolicy = { prerelease = false }";
+        assert_eq!(target_under(disable, &checkout, &versions)?, None);
+        assert_eq!(
+            target_under(disable, &other, &versions)?.as_deref(),
+            Some("v2.1.0-rc.1")
+        );
+        Ok(())
+    }
+
     #[test]
     fn test_check_result_serde_round_trip_up_to_date() {
         let result = CheckResult::new(

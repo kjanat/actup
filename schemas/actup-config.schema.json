@@ -265,7 +265,7 @@
           "default": "preserve"
         },
         "prerelease": {
-          "description": "Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.\n\n```toml\nprerelease = false   # skip -rc/-beta tags unless already on one\n```",
+          "description": "Consider prerelease tags (e.g. `v2.0.0-rc.1`) when picking a target.\n\n```toml\nprerelease = false   # skip -rc/-beta tags unless already on one of that version\n```",
           "type": "boolean",
           "default": false
         },
