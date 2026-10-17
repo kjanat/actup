@@ -209,6 +209,21 @@ fn extract_uses_from_text(content: &str) -> Vec<UsesLocation> {
 
 const QUOTES: [char; 3] = ['"', '\'', '`'];
 
+fn value_len(text: &str) -> usize {
+    let mut chars = text.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        let escape = c == '\\'
+            && chars.peek().is_some_and(|&(_, next)| {
+                matches!(next, 'n' | 'r' | 't') || QUOTES.contains(&next)
+            });
+        if escape || c.is_whitespace() || QUOTES.contains(&c) || matches!(c, ',' | ';' | ')' | '}')
+        {
+            return i;
+        }
+    }
+    text.len()
+}
+
 fn uses_values(line: &str) -> Vec<Range<usize>> {
     let mut values = Vec::new();
     let mut from = 0;
@@ -230,13 +245,7 @@ fn uses_values(line: &str) -> Vec<Range<usize>> {
         let spaced = after_colon.trim_start();
         let quoted = spaced.strip_prefix(QUOTES).unwrap_or(spaced);
         let value_start = line.len() - quoted.len();
-        let value_len = quoted
-            .find(|c: char| {
-                c.is_whitespace()
-                    || QUOTES.contains(&c)
-                    || matches!(c, ',' | ';' | ')' | '}' | '\\')
-            })
-            .unwrap_or(quoted.len());
+        let value_len = value_len(quoted);
         let value = value_start..value_start + value_len;
         if line[value.clone()].contains('@') {
             values.push(value);
@@ -337,7 +346,8 @@ mod tests {
                   reuses: x/y@v1 houses:z/w@v1\n\
                   \"uses\":\"json/style@v3\",\n\
                   uses:\n\
-                  print(\"- uses: esc/aped@v5\\n\")\n";
+                  print(\"- uses: esc/aped@v5\\n\")\n\
+                  grep -q 'uses: a/b@v4\\.1\\.0' && x='uses: c/d@v\\d+'\n";
         assert_eq!(
             found(SourceFormat::Text, ts),
             [
@@ -347,6 +357,8 @@ mod tests {
                 (5, "c/d@v2".into(), Some("v2".into())),
                 (8, "json/style@v3".into(), Some("v3".into())),
                 (10, "esc/aped@v5".into(), Some("v5".into())),
+                (11, "a/b@v4\\.1\\.0".into(), Some("v4\\.1\\.0".into())),
+                (11, "c/d@v\\d+".into(), Some("v\\d+".into())),
             ]
         );
     }

@@ -943,6 +943,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_leaves_a_ref_with_a_regex_escape_invalid()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let script = dir.path().join("check.sh");
+        let content = "grep -q 'uses: actions/checkout@v4\\.1\\.0' ci.yml\n";
+        std::fs::write(&script, content)?;
+        let mut config = uncached();
+        config.scan.extra_paths = vec!["check.sh".parse()?];
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry("v4.2.0"),
+            &Arc::new(FileCache::disabled()),
+        )
+        .await
+        else {
+            panic!("no file found");
+        };
+
+        let errored: Vec<(&str, ErrorKind)> = result
+            .errored
+            .iter()
+            .map(|e| (e.site.reference.as_str(), e.kind))
+            .collect();
+        assert_eq!(errored, [("v4\\.1\\.0", ErrorKind::InvalidRef)]);
+        assert_eq!(result.edited, []);
+        assert_eq!(result.exit_code(false), CliExitCode::UserError);
+        assert_eq!(std::fs::read_to_string(&script)?, content);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_edit_ignores_refs_on_unserved_hosts() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let workflows = dir.path().join(".github/workflows");
