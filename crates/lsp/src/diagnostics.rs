@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
     check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
-    rewrite::{Labels, Rewrite, Trailing, after_value, closer, label_span},
+    rewrite::{Labels, Rewrite, Trailing, after_value, closer, labeled_head},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -134,15 +134,15 @@ pub struct LocatedAction {
     pub editable: bool,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
-    /// The [`closer`] of the value, read up to its [`label_span`] when the line takes no comment.
+    /// The [`closer`] of the value, read up to its [`label_span`](actup_core::rewrite::label_span) when the line takes no comment.
     pub closer: String,
     /// The comment after the value on its line, empty when the ref is not
-    /// editable, and only its [`label_span`] when the line takes no comment.
+    /// editable, and only its [`label_span`](actup_core::rewrite::label_span) when the line takes no comment.
     pub tail: String,
     /// Whether the line may take a version comment.
     takes_comment: bool,
     /// 0-indexed column (negotiated encoding) where a rewrite after the ref
-    /// ends: the line end, or the end of the [`label_span`] on a line that
+    /// ends: the line end, or the end of the [`label_span`](actup_core::rewrite::label_span) on a line that
     /// takes no comment.
     pub line_end_col: u32,
 }
@@ -231,7 +231,7 @@ struct LocatedUses {
 ///
 /// Column positions are converted from byte offsets to the negotiated
 /// LSP position encoding. A ref on a line outside
-/// [`SourceFormat::comment_lines`] reads only the [`label_span`] after its
+/// [`SourceFormat::comment_lines`] reads only the [`label_span`](actup_core::rewrite::label_span) after its
 /// value, so no edit appends a comment there and a rewrite of a label
 /// comment leaves the rest of the line alone.
 fn locate_uses(
@@ -298,9 +298,7 @@ fn locate_uses(
                 let read = if takes_comment {
                     raw_line
                 } else {
-                    raw_line
-                        .get(..r.end + label_span(format, raw_line.get(r.end..).unwrap_or("")))
-                        .unwrap_or(raw_line)
+                    labeled_head(format, raw_line, r.end)
                 };
                 (
                     col_start,

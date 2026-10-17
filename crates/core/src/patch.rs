@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Labels, Named, Rewrite, Trailing, after_value, closer, label_span},
+    rewrite::{Labels, Named, Rewrite, Trailing, after_value, closer, labeled_head},
     version,
 };
 
@@ -324,7 +324,7 @@ impl<L> FileEdits<L> {
         }
     }
 
-    /// Return `loc` with its line cut after the value and its [`label_span`] when that line takes no comment.
+    /// Return `loc` with its line cut after the value and its [`label_span`](crate::rewrite::label_span) when that line takes no comment.
     ///
     /// On a line outside [`SourceFormat::comment_lines`], an edit built from
     /// the result reads a label comment right after the value as a YAML
@@ -335,9 +335,7 @@ impl<L> FileEdits<L> {
         let head = loc
             .value_range()
             .filter(|_| !self.comment_lines.contains(&loc.line()))
-            .and_then(|range| {
-                raw.get(..range.end + label_span(self.format, raw.get(range.end..)?))
-            });
+            .map(|range| labeled_head(self.format, raw, range.end));
         head.map_or_else(
             || loc.clone(),
             |head| {

@@ -9,7 +9,7 @@ use actup_core::{
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, RefKind, check_action_fetched},
-    rewrite::{Labels, Rewrite, Trailing, after_value, closer, comment_label},
+    rewrite::{Labels, Rewrite, Trailing, after_value, closer, comment_label, labeled_head},
     version,
 };
 use serde::{Deserialize, Serialize};
@@ -250,6 +250,14 @@ struct LocatedCheckResult {
     label_listed: bool,
 }
 
+fn read_line(location: &UsesLocation, takes_comment: bool, ref_end: usize) -> &str {
+    if takes_comment {
+        location.raw_line()
+    } else {
+        labeled_head(SourceFormat::Yaml, location.raw_line(), ref_end)
+    }
+}
+
 impl LocatedCheckResult {
     fn new(
         location: &UsesLocation,
@@ -257,11 +265,13 @@ impl LocatedCheckResult {
         takes_comment: bool,
         versions: Option<&version::Set>,
     ) -> Self {
-        let label_listed = takes_comment
-            && location.ref_range().is_some_and(|range| {
-                comment_label(after_value(location.raw_line(), range.end))
-                    .is_some_and(|label| versions.is_some_and(|versions| versions.names_ref(label)))
-            });
+        let label_listed = location.ref_range().is_some_and(|range| {
+            comment_label(after_value(
+                read_line(location, takes_comment, range.end),
+                range.end,
+            ))
+            .is_some_and(|label| versions.is_some_and(|versions| versions.names_ref(label)))
+        });
         Self {
             location: location.clone(),
             action_ref: result.action_ref().clone(),
@@ -402,7 +412,9 @@ struct UpdateEdit {
 /// pin-branch result whose `location` has a ref range. `config.policy.pin`
 /// picks tag or SHA output, as in `actup update`. A pin-branch result pins
 /// the branch or non-semver tag to its commit with a `# <ref>` comment. A
-/// comment is written only for a result whose `takes_comment` is set.
+/// comment is added only for a result whose `takes_comment` is set. On other
+/// lines, a label comment right after the ref is rewritten and the rest of
+/// the line stays.
 ///
 /// This is a pure, synchronous function. The caller applies the edits.
 ///
@@ -427,16 +439,13 @@ pub fn plan_updates(
         .filter_map(|result| {
             let location = &result.location;
             let range = location.ref_range()?;
-            let raw_line = location.raw_line();
+            let read = read_line(location, result.takes_comment, range.end);
             let labels = Labels::checked(result.action_ref.ref_str(), result.label_listed);
-            let (trailing, closing) = if result.takes_comment {
-                (
-                    Trailing::after(raw_line, range.end, &labels),
-                    closer(raw_line, range.end),
-                )
-            } else {
-                (Trailing::Foreign, "")
+            let trailing = match Trailing::after(read, range.end, &labels) {
+                Trailing::None if !result.takes_comment => Trailing::Foreign,
+                trailing => trailing,
             };
+            let closing = closer(read, range.end);
             let rewrite = match &result.status {
                 CheckStatus::Outdated { target, .. } => Rewrite::outdated(
                     config.policy_for(&result.action_ref).pin,
@@ -452,11 +461,7 @@ pub fn plan_updates(
                 line: location.line(),
                 ref_start: range.start,
                 ref_end: range.end,
-                replace_end: if to_line_end {
-                    raw_line.len()
-                } else {
-                    range.end
-                },
+                replace_end: if to_line_end { read.len() } else { range.end },
                 original: location.value().to_owned(),
                 new_text,
                 new_ref: rewrite.new_ref,

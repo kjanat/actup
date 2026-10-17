@@ -415,6 +415,16 @@ assert.equal(
 	"a SHA target keeps a comment that names no version",
 );
 
+const sharedYaml =
+	`jobs:\n  build:\n    steps: [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@${oldSha} # v4.0.0 keep\n      }]\n`;
+const sharedResults = await checkRefs(sharedYaml, mockProvider);
+assert.deepEqual(sharedResults.map((r) => r.takes_comment), [false, false], "a line with two values takes no comment");
+assert.equal(
+	applyEdits(sharedYaml, planUpdates(sharedResults)),
+	sharedYaml.replace(`${oldSha} # v4.0.0 keep`, `${newSha} # v4.2.0 keep`),
+	"a label right after a ref on a line with two values is rewritten",
+);
+
 console.log("PASS: policy.pin picks tag or SHA output");
 
 // Test 16: a closing quote or flow bracket stays between the ref and the comment.

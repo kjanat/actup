@@ -171,6 +171,15 @@ pub fn label_span(format: SourceFormat, rest: &str) -> usize {
     }
 }
 
+/// `raw_line` up to the end of the value at byte offset `value_end` and its [`label_span`].
+#[must_use]
+pub fn labeled_head(format: SourceFormat, raw_line: &str, value_end: usize) -> &str {
+    raw_line
+        .get(value_end..)
+        .and_then(|rest| raw_line.get(..value_end + label_span(format, rest)))
+        .unwrap_or(raw_line)
+}
+
 /// The byte offset of the first `#` in `rest` that starts a YAML comment.
 ///
 /// `rest` starts right after a ref, so a leading quote closes the value. A
