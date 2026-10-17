@@ -22,12 +22,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("usage: gen_simple_upper <UnicodeData.txt> <simple_upper.rs>".into());
     };
     let data = fs::read_to_string(&input)?;
+    let table = table(&data).map_err(|e| format!("{input}: {e}"))?;
+    fs::write(output, table)?;
+    Ok(())
+}
+
+fn table(data: &str) -> Result<String, Box<dyn std::error::Error>> {
     let mut pairs = Vec::new();
     let mut codes = Vec::new();
     for line in data.lines() {
         let fields: Vec<&str> = line.split(';').collect();
         let (Some(code), Some(upper)) = (fields.first(), fields.get(12)) else {
-            return Err(format!("{input}: malformed line `{line}`").into());
+            return Err(format!("malformed line `{line}`").into());
         };
         let code = u32::from_str_radix(code, 16)?;
         codes.push(code);
@@ -37,7 +43,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         pairs.push((code, u32::from_str_radix(upper, 16)?));
     }
     if !codes.contains(&0x1E030) || codes.contains(&0x2FFC) || codes.contains(&0x10D50) {
-        return Err(format!("{input} is not UnicodeData.txt 15.0.0").into());
+        return Err("not UnicodeData.txt 15.0.0".into());
     }
     pairs.sort_unstable();
     let mut table = String::from(HEADER);
@@ -50,6 +56,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         writeln!(table, "    ('\\u{{{code:04X}}}', '\\u{{{upper:04X}}}'),")?;
     }
     table.push_str("];\n");
-    fs::write(output, table)?;
-    Ok(())
+    Ok(table)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::table;
+
+    const SMALL_A: &str = "0061;LATIN SMALL LETTER A;Ll;0;L;;;;;N;;;0041;;0041";
+    const DOTLESS_I: &str = "0131;LATIN SMALL LETTER DOTLESS I;Ll;0;L;;;;;N;;;0049;;0049";
+    const CYRILLIC_A: &str = "1E030;MODIFIER LETTER CYRILLIC SMALL A;Lm;0;L;<super> 0430;;;;N;;;;;";
+    const IDEOGRAPHIC: &str =
+        "2FFC;IDEOGRAPHIC DESCRIPTION CHARACTER SURROUND FROM RIGHT;So;0;ON;;;;;N;;;;;";
+    const GARAY: &str = "10D50;GARAY CAPITAL LETTER A;Lu;0;R;;;;;N;;;;10D70;";
+
+    #[test]
+    fn accepts_unicode_15_0_and_writes_the_table() -> Result<(), Box<dyn std::error::Error>> {
+        let written = table(&[CYRILLIC_A, DOTLESS_I, SMALL_A].join("\n"))?;
+        assert!(written.starts_with("// @generated"), "{written}");
+        assert!(
+            written.ends_with(
+                "pub(super) const SIMPLE_UPPER: [(char, char); 1] = [\n    ('\\u{0061}', '\\u{0041}'),\n];\n"
+            ),
+            "{written}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_files_from_other_unicode_versions() {
+        for lines in [
+            vec![SMALL_A],
+            vec![CYRILLIC_A, IDEOGRAPHIC, SMALL_A],
+            vec![CYRILLIC_A, GARAY, SMALL_A],
+        ] {
+            let Err(err) = table(&lines.join("\n")) else {
+                panic!("{lines:?} must be rejected");
+            };
+            assert_eq!(err.to_string(), "not UnicodeData.txt 15.0.0");
+        }
+        let Err(err) = table("0061;LATIN SMALL LETTER A") else {
+            panic!("a short line must be rejected");
+        };
+        assert_eq!(err.to_string(), "malformed line `0061;LATIN SMALL LETTER A`");
+    }
 }

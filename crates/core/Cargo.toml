@@ -12,6 +12,10 @@ publish.workspace      = true
 [package.metadata.cargo-machete]
 ignored = ["wasm-bindgen"]
 
+[[example]]
+name = "gen_simple_upper"
+test = true
+
 [dependencies]
 clap          = { workspace = true, optional = true }  # gated by `clap` feature
 dirs          = { workspace = true }  # Config discovery
