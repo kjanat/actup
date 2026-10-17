@@ -1333,8 +1333,11 @@ fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) ->
         "text line re-pinned with a fresh label",
     )?;
 
-    let script = "resource \"b\" {\n  step = { uses: \"actions/setup-node@v4\" }\n  note = { uses: \"actions/cache@v4 # v4 keep this\" }\n}\n";
-    ws.write("infra/tag.tf", script)?;
+    let script = format!(
+        "resource \"b\" {{\n  step = {{ uses: \"actions/setup-node@v4\" }}\n  note = {{ uses: \"actions/cache@v4 # v4 keep this\" }}\n  pin = {{ uses: \"actions/setup-go@{} # v4.0.0\" }}\n}}\n",
+        sha('a')
+    );
+    ws.write("infra/tag.tf", &script)?;
     let file = update_file(
         client,
         json!({
@@ -1342,6 +1345,7 @@ fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) ->
             "edits": [
                 { "line": 2, "action": "actions/setup-node", "ref": "v5" },
                 { "line": 3, "action": "actions/cache", "ref": "v5" },
+                { "line": 4, "action": "actions/setup-go", "ref": "v5" },
             ],
         }),
     )?;
@@ -1354,6 +1358,7 @@ fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) ->
             script
                 .replace("setup-node@v4", "setup-node@v5")
                 .replace("cache@v4 # v4 keep", "cache@v5 # v5 keep")
+                .replace(&format!("setup-go@{} # v4.0.0", sha('a')), "setup-go@v5")
         ),
         "text file written with a fresh label",
     )
