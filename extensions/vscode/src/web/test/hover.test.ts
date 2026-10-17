@@ -124,6 +124,55 @@ describe("hover status from computed diagnostics", () => {
 	});
 });
 
+describe("hover status like the LSP hover", () => {
+	const head = "d".repeat(40);
+	const branchProvider: wasm.ActupProvider = {
+		...provider,
+		getVersions: () => Promise.resolve({ semverTags: tags, defaultBranch: { name: "main", sha: head } }),
+	};
+
+	async function hoverRows(name: string, ref: string, policy = ""): Promise<string[]> {
+		const document = new FakeDocument(name, workflow(ref));
+		const config = wasm.parseConfig("actup.toml", policy);
+		await computeDiagnostics(
+			document.uri,
+			document.getText(),
+			branchProvider,
+			createDiagnosticCollection(),
+			() => Promise.resolve({ kind: "loaded", path: "actup.toml", config }),
+		);
+		return rows(await hoverAt(document, 3, 20));
+	}
+
+	test("names the tag of a SHA pin", async () => {
+		expect(await hoverRows("hover-pinned.yml", "b".repeat(40))).toContain("**Pinned** to `bbbbbbbbbbbb` (v1.2.0)");
+	});
+
+	test("names an unknown version for a SHA pin without a tag", async () => {
+		expect(await hoverRows("hover-pinned-unknown.yml", "9".repeat(40))).toContain(
+			"**Pinned** to `999999999999` (unknown version)",
+		);
+	});
+
+	test("names a floating branch under policy.branch = warn", async () => {
+		expect(await hoverRows("hover-floating.yml", "main", "[policy]\nbranch = \"warn\"\n")).toContain(
+			"**Floating branch** `main` — pin to a tag or SHA",
+		);
+	});
+
+	test("names the pin of a branch under policy.branch = update", async () => {
+		expect(await hoverRows("hover-pin-branch.yml", "main", "[policy]\nbranch = \"update\"\n")).toContain(
+			"**Pin branch** `main` -> `dddddddddddd` # main",
+		);
+	});
+
+	test("names an ignored ref", async () => {
+		expect(await hoverRows("hover-ignored.yml", "v1.0.0", "[scan]\nignore = [\"actions/checkout\"]\n")).toContain(
+			"Ignored by config",
+		);
+	});
+});
+
 describe("hover range", () => {
 	test("covers a quoted value without its quotes", async () => {
 		const document = new FakeDocument("hover-quoted.yml", "jobs:\n  build:\n    steps:\n      - uses: 'actions/checkout@v1.0.0'\n");

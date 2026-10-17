@@ -78,6 +78,18 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 				md.appendMarkdown(`$(warning) Outdated: \`${ref.ref_str}\` → \`${target}\`\n`);
 			} else if (typeof status === "object" && "Unresolvable" in status) {
 				md.appendMarkdown(`$(error) ${status.Unresolvable.reason}\n`);
+			} else if (status === "Ignored") {
+				md.appendMarkdown("Ignored by config\n");
+			} else if (typeof status === "object" && "Pinned" in status) {
+				const { sha, tag } = status.Pinned;
+				md.appendMarkdown(`**Pinned** to \`${sha.slice(0, 12)}\` (${tag ?? "unknown version"})\n`);
+			} else if (typeof status === "object" && "Floating" in status) {
+				const kind = matchingResult.ref_kind ?? "ref";
+				md.appendMarkdown(`**Floating ${kind}** \`${status.Floating.ref_name}\` — pin to a tag or SHA\n`);
+			} else if (typeof status === "object" && "PinBranch" in status) {
+				const kind = matchingResult.ref_kind ?? "ref";
+				const { ref_name: refName, sha } = status.PinBranch;
+				md.appendMarkdown(`**Pin ${kind}** \`${refName}\` -> \`${sha.slice(0, 12)}\` # ${refName}\n`);
 			}
 		}
 
