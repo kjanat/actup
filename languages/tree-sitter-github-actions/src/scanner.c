@@ -1615,12 +1615,19 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         return false;
     }
 
-    // Originally `return !valid_symbols[ERR_REC]` (upstream ikatyang grammar). That
-    // returns true with no committed symbol when ERR_REC isn't valid — relying on
-    // tree-sitter not to call internal lexing afterwards. Breaks our case where the
-    // expression body uses internal-lexed tokens (identifiers, literals, _expr_ws):
-    // the parser needs internal lexing to fire when external scanner has nothing
-    // to contribute. Returning false here lets internal lexing take over.
+    return false;
+}
+
+// Tree-sitter lexes every token during error recovery, and the internal expression tokens match YAML text.
+static bool scan_or_skip(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
+    if (scan(scanner, lexer, valid_symbols)) {
+        return true;
+    }
+    if (valid_symbols[ERR_REC] && lexer->lookahead != 0) {
+        adv(scanner, lexer);
+        mrk_end(scanner, lexer);
+        RET_SYM(ERR_REC);
+    }
     return false;
 }
 
@@ -1650,5 +1657,5 @@ void tree_sitter_github_actions_external_scanner_deserialize(void *payload, cons
 
 bool tree_sitter_github_actions_external_scanner_scan(void *payload, TSLexer *lexer, const bool *valid_symbols) {
     Scanner *scanner = (Scanner *)payload;
-    return scan(scanner, lexer, valid_symbols);
+    return scan_or_skip(scanner, lexer, valid_symbols);
 }

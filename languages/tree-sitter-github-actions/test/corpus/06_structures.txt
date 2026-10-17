@@ -699,11 +699,20 @@ Invalid Tag Shorthands
 
 ----------------------------------------------------------------------------||||
 
-(ERROR
+(stream
+(document
 (tag_directive
 (tag_handle)
 (tag_prefix))
-(block_sequence_item))
+(block_node
+(block_sequence
+(block_sequence_item)
+(ERROR)
+(block_sequence_item
+(flow_node
+(tag)
+(plain_scalar
+(string_scalar))))))))
 
 ============================================================================||||
 Non-Specific Tags
