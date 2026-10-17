@@ -1904,7 +1904,7 @@ mod tests {
             backend.documents.insert(uri.clone(), doc);
         };
 
-        open(fresh);
+        open(fresh.clone());
         assert_eq!(
             titles(3).await,
             ["Pin to major tag v4", "actup: unpin to `v4.1.0`"]
@@ -1915,13 +1915,22 @@ mod tests {
         assert_eq!(titles(4).await, Vec::<String>::new());
 
         *backend.registry.write().await = Some(Arc::new(crate::test_utils::mock_registry(
-            limited().with_versions("actions", "checkout", stale),
+            limited().with_versions("actions", "checkout", stale.clone()),
         )));
         backend
             .documents
             .insert(uri.clone(), DocumentState::new(text.clone(), 1));
         assert_eq!(titles(3).await, Vec::<String>::new());
         assert_eq!(titles(4).await, Vec::<String>::new());
+
+        *backend.registry.write().await = Some(Arc::new(crate::test_utils::mock_registry(
+            limited().with_versions("actions", "checkout", fresh),
+        )));
+        open(stale);
+        assert_eq!(
+            titles(3).await,
+            ["Pin to major tag v4", "actup: unpin to `v4.1.0`"]
+        );
         Ok(())
     }
 
