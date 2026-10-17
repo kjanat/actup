@@ -44,13 +44,3 @@ yielding.
 
 `worktree.read_text_file(path)` reads files by known path. The worktree API has
 no `readdir` or glob.
-
-### Binary size
-
-| Configuration                                       | WASM size |
-| --------------------------------------------------- | --------- |
-| `zed_extension_api` only                            | ~17 KB    |
-| With `actup-core`, `actup-providers` and serde_json | 371 KB    |
-
-Zed sets no explicit size limit; extensions like Biome and Ruff ship multi-MB
-WASM binaries.
