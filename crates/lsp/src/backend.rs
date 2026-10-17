@@ -1623,8 +1623,6 @@ fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
         || hosts_differ(&old.hosts, &new.hosts)
 }
 
-/// Compare host config maps by serialized form since [`config::Host`](actup_core::config::Host) may
-/// not implement `PartialEq`.
 fn hosts_differ(
     old: &std::collections::HashMap<String, actup_core::config::Host>,
     new: &std::collections::HashMap<String, actup_core::config::Host>,

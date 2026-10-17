@@ -248,7 +248,6 @@ mod tests {
 
     use super::*;
 
-    /// Construct a `config::Host` with only `kind` set (no Default impl available).
     fn host_config_with_kind(kind: HostKind) -> actup_core::config::Host {
         actup_core::config::Host {
             kind: Some(kind),
@@ -259,7 +258,6 @@ mod tests {
         }
     }
 
-    /// Construct an empty `config::Host` (all None).
     fn host_config_empty() -> actup_core::config::Host {
         actup_core::config::Host {
             kind: None,
