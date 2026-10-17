@@ -1848,6 +1848,32 @@ mod tests {
     }
 
     #[test]
+    fn test_from_contents_rejects_patterns_that_never_match() {
+        for (key, pattern) in [("ignore", "ghe:*/o/r"), ("ignore", "ghe.corp:*/o/r")] {
+            let (path, reason) = rejected(
+                Some(("actup.toml", &format!("[scan]\n{key} = [\"{pattern}\"]\n"))),
+                &[],
+            );
+            assert_eq!(path, "actup.toml");
+            assert!(
+                reason.contains(&format!("invalid action pattern `{pattern}`")),
+                "{reason}"
+            );
+        }
+        let (_, reason) = rejected(
+            Some((
+                "actup.toml",
+                "[[overrides]]\npattern = \"o/r~x\"\npolicy = { pin = \"sha\" }\n",
+            )),
+            &[],
+        );
+        assert!(
+            reason.contains("invalid action pattern `o/r~x`"),
+            "{reason}"
+        );
+    }
+
+    #[test]
     fn test_from_contents_syntax_error_names_the_file() {
         let Err(Error::InvalidConfig { path, .. }) = Config::from_contents(
             Some((Path::new("actup.toml"), "[policy\n")),

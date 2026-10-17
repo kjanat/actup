@@ -149,6 +149,10 @@ case-sensitively. `*` stays within one segment and `**` spans segments.
 In `uses:` refs, actup lower-cases the host. Owner and repo must match
 `[A-Za-z0-9._-]+` and must not be `.` or `..`.
 
+A pattern whose owner or repo holds any other character, glob characters aside,
+is an error at config load. So is a host with a glob port such as `ghe.corp:*`;
+write the port number.
+
 ### Pin Style
 
 `policy.pin` sets how `update`, the LSP quick fixes, fix-all and the wasm

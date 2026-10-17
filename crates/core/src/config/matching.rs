@@ -86,12 +86,29 @@ impl FromStr for ActionPattern {
         };
         if host.is_some() {
             segments.remove(0);
+        } else if let Some(first) = segments.first()
+            && has_glob_port(first, depth)
+        {
+            return Err(invalid(&format!(
+                "host `{first}` has a glob port; write the port number"
+            )));
         }
         let [owner, repo, subpath @ ..] = segments.as_slice() else {
             return Err(invalid("expected `[host/]owner/repo[/subpath][@ref]`"));
         };
         if owner.is_empty() || repo.is_empty() || subpath.iter().any(|s| s.is_empty()) {
             return Err(invalid("empty path segment"));
+        }
+        for (field, name) in [("owner", owner), ("repo", repo)] {
+            if let Some(c) = name.chars().find(|&c| {
+                !(c.is_ascii_alphanumeric()
+                    || matches!(c, '.' | '_' | '-')
+                    || GLOB_META.contains(&c))
+            }) {
+                return Err(invalid(&format!(
+                    "{field} `{name}` contains `{c}`, and names match `[A-Za-z0-9._-]+`"
+                )));
+            }
         }
 
         Ok(Self {
@@ -105,6 +122,21 @@ impl FromStr for ActionPattern {
             ref_name: ref_name.map(glob).transpose()?,
         })
     }
+}
+
+fn has_glob_port(first: &str, depth: usize) -> bool {
+    let (host, port) = if let Some(rest) = first.strip_prefix('[') {
+        let Some((addr, port)) = rest.split_once("]:") else {
+            return false;
+        };
+        (format!("[{addr}]"), port)
+    } else {
+        let Some((name, port)) = first.rsplit_once(':') else {
+            return false;
+        };
+        (name.replace(GLOB_META, "a"), port)
+    };
+    port.contains(GLOB_META) && names_host(&host, depth)
 }
 
 impl TryFrom<String> for ActionPattern {
@@ -251,6 +283,51 @@ mod tests {
                 "{raw}: {err:?}"
             );
         }
+    }
+
+    #[test]
+    fn rejects_glob_ports() {
+        for (raw, host) in [
+            ("ghe.corp:*/o/r", "ghe.corp:*"),
+            ("[::1]:*/o/r", "[::1]:*"),
+            ("*.corp.com:80?/o/*", "*.corp.com:80?"),
+        ] {
+            assert_eq!(
+                raw.parse::<ActionPattern>().err(),
+                Some(format!(
+                    "invalid action pattern `{raw}`: host `{host}` has a glob port; write the port number"
+                )),
+                "{raw}"
+            );
+        }
+        assert!("ghe.corp:8443/o/r".parse::<ActionPattern>().is_ok());
+    }
+
+    #[test]
+    fn rejects_owner_and_repo_characters_no_name_contains() -> Result<(), String> {
+        for (raw, field, name, c) in [
+            ("ghe:*/o/r", "owner", "ghe:*", ':'),
+            ("o/r~x", "repo", "r~x", '~'),
+            ("my org/r", "owner", "my org", ' '),
+            ("o/é*", "repo", "é*", 'é'),
+        ] {
+            assert_eq!(
+                raw.parse::<ActionPattern>().err(),
+                Some(format!(
+                    "invalid action pattern `{raw}`: {field} `{name}` contains `{c}`, and names match `[A-Za-z0-9._-]+`"
+                )),
+                "{raw}"
+            );
+        }
+        for raw in [
+            "*/se?up-[a-z]*",
+            "o-1/r_2.x",
+            "o/[!x]*",
+            "o/r/sub dir/x@ref~1",
+        ] {
+            raw.parse::<ActionPattern>()?;
+        }
+        Ok(())
     }
 
     #[test]
