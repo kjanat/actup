@@ -50,9 +50,11 @@ jobs:
 ============================================================================
 Bare if: function calls joined by && and !
 ============================================================================
-steps:
-  - if: success() && !cancelled()
-    run: echo ok
+jobs:
+  build:
+    steps:
+      - if: success() && !cancelled()
+        run: echo ok
 
 ----------------------------------------------------------------------------
 
@@ -65,249 +67,605 @@ steps:
             (plain_scalar
               (string_scalar)))
           value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
-                  (block_mapping
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (expression
-                          (function_call
-                            function: (identifier))
-                          (operator
-                            (and))
-                          (not)
-                          (function_call
-                            function: (identifier)))))
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))))))))))))
-
-============================================================================
-Bare if: || with an index, a quoted string and a trailing comment
-============================================================================
-steps:
-  - if: github.event_name != 'push' || contains(github.event.pull_request.labels.*.name, 'ok') # label
-    run: echo ok
-
-----------------------------------------------------------------------------
-
-(stream
-  (document
-    (block_node
-      (block_mapping
-        (block_mapping_pair
-          key: (flow_node
-            (plain_scalar
-              (string_scalar)))
-          value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
-                  (block_mapping
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (expression
-                          (context
-                            (identifier)
-                            (property
-                              (property_deref)
-                              (identifier)))
-                          (operator
-                            (ne))
-                          (string
-                            (string_content))
-                          (operator
-                            (or))
-                          (function_call
-                            function: (identifier)
-                            arguments: (arguments
-                              (context
-                                (identifier)
-                                (property
-                                  (property_deref)
-                                  (identifier))
-                                (property
-                                  (property_deref)
-                                  (identifier))
-                                (property
-                                  (property_deref)
-                                  (identifier))
-                                (property
-                                  (property_deref)
-                                  (asterisk))
-                                (property
-                                  (property_deref)
-                                  (identifier)))
-                              (string
-                                (string_content)))))))
-                    (comment)
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))))))))))))
-
-============================================================================
-Bare if: grouped comparison and literals
-============================================================================
-steps:
-  - if: (github.run_attempt > 1) && true
-    run: echo ok
-
-----------------------------------------------------------------------------
-
-(stream
-  (document
-    (block_node
-      (block_mapping
-        (block_mapping_pair
-          key: (flow_node
-            (plain_scalar
-              (string_scalar)))
-          value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
-                  (block_mapping
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (expression
-                          (logical_group
-                            (context
-                              (identifier)
-                              (property
-                                (property_deref)
-                                (identifier)))
-                            (operator
-                              (gt))
-                            (number))
-                          (operator
-                            (and))
-                          (boolean))))
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))))))))))))
-
-============================================================================
-Bare if: operators across continuation lines
-============================================================================
-steps:
-  - if: github.event_name == 'push' &&
-      github.ref == 'refs/heads/main'
-    run: echo ok
-
-----------------------------------------------------------------------------
-
-(stream
-  (document
-    (block_node
-      (block_mapping
-        (block_mapping_pair
-          key: (flow_node
-            (plain_scalar
-              (string_scalar)))
-          value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
-                  (block_mapping
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (expression
-                          (context
-                            (identifier)
-                            (property
-                              (property_deref)
-                              (identifier)))
-                          (operator
-                            (eq))
-                          (string
-                            (string_content))
-                          (operator
-                            (and))
-                          (context
-                            (identifier)
-                            (property
-                              (property_deref)
-                              (identifier)))
-                          (operator
-                            (eq))
-                          (string
-                            (string_content)))))
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))))))))))))
-
-============================================================================
-Bare if: block scalar value stays a block scalar
-============================================================================
-steps:
-  - if: |
-      github.ref == 'refs/heads/main'
-    run: echo ok
-
-----------------------------------------------------------------------------
-
-(stream
-  (document
-    (block_node
-      (block_mapping
-        (block_mapping_pair
-          key: (flow_node
-            (plain_scalar
-              (string_scalar)))
-          value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
                   (block_mapping
                     (block_mapping_pair
                       key: (flow_node
                         (plain_scalar
                           (string_scalar)))
                       value: (block_node
-                        (block_scalar)))
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (function_call
+                                        function: (identifier))
+                                      (operator
+                                        (and))
+                                      (not)
+                                      (function_call
+                                        function: (identifier)))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: || with an index, a quoted string and a trailing comment
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: github.event_name != 'push' || contains(github.event.pull_request.labels.*.name, 'ok') # label
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
                     (block_mapping_pair
                       key: (flow_node
                         (plain_scalar
                           (string_scalar)))
-                      value: (flow_node
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (context
+                                        (identifier)
+                                        (property
+                                          (property_deref)
+                                          (identifier)))
+                                      (operator
+                                        (ne))
+                                      (string
+                                        (string_content))
+                                      (operator
+                                        (or))
+                                      (function_call
+                                        function: (identifier)
+                                        arguments: (arguments
+                                          (context
+                                            (identifier)
+                                            (property
+                                              (property_deref)
+                                              (identifier))
+                                            (property
+                                              (property_deref)
+                                              (identifier))
+                                            (property
+                                              (property_deref)
+                                              (identifier))
+                                            (property
+                                              (property_deref)
+                                              (asterisk))
+                                            (property
+                                              (property_deref)
+                                              (identifier)))
+                                          (string
+                                            (string_content)))))))
+                                (comment)
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: grouped comparison and literals
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: (github.run_attempt > 1) && true
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
                         (plain_scalar
-                          (string_scalar))))))))))))))
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (logical_group
+                                        (context
+                                          (identifier)
+                                          (property
+                                            (property_deref)
+                                            (identifier)))
+                                        (operator
+                                          (gt))
+                                        (number))
+                                      (operator
+                                        (and))
+                                      (boolean))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: operators across continuation lines
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: github.event_name == 'push' &&
+          github.ref == 'refs/heads/main'
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (context
+                                        (identifier)
+                                        (property
+                                          (property_deref)
+                                          (identifier)))
+                                      (operator
+                                        (eq))
+                                      (string
+                                        (string_content))
+                                      (operator
+                                        (and))
+                                      (context
+                                        (identifier)
+                                        (property
+                                          (property_deref)
+                                          (identifier)))
+                                      (operator
+                                        (eq))
+                                      (string
+                                        (string_content)))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: line breaks inside a group and inside call arguments
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: success() && (github.ref == 'a' ||
+          github.ref == 'b')
+        run: echo ok
+      - if: contains(
+          github.ref, 'x')
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (function_call
+                                        function: (identifier))
+                                      (operator
+                                        (and))
+                                      (logical_group
+                                        (context
+                                          (identifier)
+                                          (property
+                                            (property_deref)
+                                            (identifier)))
+                                        (operator
+                                          (eq))
+                                        (string
+                                          (string_content))
+                                        (operator
+                                          (or))
+                                        (context
+                                          (identifier)
+                                          (property
+                                            (property_deref)
+                                            (identifier)))
+                                        (operator
+                                          (eq))
+                                        (string
+                                          (string_content))))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))))))
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (function_call
+                                        function: (identifier)
+                                        arguments: (arguments
+                                          (context
+                                            (identifier)
+                                            (property
+                                              (property_deref)
+                                              (identifier)))
+                                          (string
+                                            (string_content)))))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: short names, a call with an index, hex and negative numbers
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: a == 1 && matrix.n != -1
+        run: echo ok
+      - if: fromJSON(steps.x.outputs.y)[0] == 1.5 || inputs.mask == 0x1F
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (context
+                                        (identifier))
+                                      (operator
+                                        (eq))
+                                      (number)
+                                      (operator
+                                        (and))
+                                      (context
+                                        (identifier)
+                                        (property
+                                          (property_deref)
+                                          (identifier)))
+                                      (operator
+                                        (ne))
+                                      (number))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))))))
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (expression
+                                      (function_call
+                                        function: (identifier)
+                                        arguments: (arguments
+                                          (context
+                                            (identifier)
+                                            (property
+                                              (property_deref)
+                                              (identifier))
+                                            (property
+                                              (property_deref)
+                                              (identifier))
+                                            (property
+                                              (property_deref)
+                                              (identifier)))))
+                                      (property
+                                        (index
+                                          (number)))
+                                      (operator
+                                        (eq))
+                                      (number)
+                                      (operator
+                                        (or))
+                                      (context
+                                        (identifier)
+                                        (property
+                                          (property_deref)
+                                          (identifier)))
+                                      (operator
+                                        (eq))
+                                      (number))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: composite action step
+============================================================================
+runs:
+  using: composite
+  steps:
+    - if: runner.os == 'Linux'
+      run: echo ok
+      shell: bash
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (flow_node
+                  (plain_scalar
+                    (string_scalar))))
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_sequence
+                    (block_sequence_item
+                      (block_node
+                        (block_mapping
+                          (block_mapping_pair
+                            key: (flow_node
+                              (plain_scalar
+                                (string_scalar)))
+                            value: (flow_node
+                              (expression
+                                (context
+                                  (identifier)
+                                  (property
+                                    (property_deref)
+                                    (identifier)))
+                                (operator
+                                  (eq))
+                                (string
+                                  (string_content)))))
+                          (block_mapping_pair
+                            key: (flow_node
+                              (plain_scalar
+                                (string_scalar)))
+                            value: (flow_node
+                              (plain_scalar
+                                (string_scalar))))
+                          (block_mapping_pair
+                            key: (flow_node
+                              (plain_scalar
+                                (string_scalar)))
+                            value: (flow_node
+                              (plain_scalar
+                                (string_scalar)))))))))))))))))
+
+============================================================================
+Bare if: block scalar value stays a block scalar
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: |
+          github.ref == 'refs/heads/main'
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (block_node
+                                    (block_scalar)))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
 
 ============================================================================
 Bare if: delimited expression keeps its parse
 ============================================================================
-steps:
-  - run: echo ok
-    if: ${{ always() }}
+jobs:
+  build:
+    steps:
+      - run: echo ok
+        if: ${{ always() }}
 
 ----------------------------------------------------------------------------
 
@@ -320,34 +678,48 @@ steps:
             (plain_scalar
               (string_scalar)))
           value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
                   (block_mapping
                     (block_mapping_pair
                       key: (flow_node
                         (plain_scalar
                           (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (delimited_expression
-                            (expression_marker)
-                            (function_call
-                              function: (identifier))))))))))))))))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (delimited_expression
+                                        (expression_marker)
+                                        (function_call
+                                          function: (identifier))))))))))))))))))))))
 
 ============================================================================
 Bare if: double-quoted value stays a quoted scalar
 ============================================================================
-steps:
-  - if: "github.ref == 'refs/heads/main'"
-    run: echo ok
+jobs:
+  build:
+    steps:
+      - if: "github.ref == 'refs/heads/main'"
+        run: echo ok
 
 ----------------------------------------------------------------------------
 
@@ -360,30 +732,292 @@ steps:
             (plain_scalar
               (string_scalar)))
           value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
                   (block_mapping
                     (block_mapping_pair
                       key: (flow_node
                         (plain_scalar
                           (string_scalar)))
-                      value: (flow_node
-                        (double_quote_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (double_quote_scalar)))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: single-quoted value stays a quoted scalar
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: 'success()'
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
                     (block_mapping_pair
                       key: (flow_node
                         (plain_scalar
                           (string_scalar)))
-                      value: (flow_node
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (single_quote_scalar)))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: value on the next line stays a plain scalar
+============================================================================
+jobs:
+  build:
+    steps:
+      - if:
+          github.ref == 'refs/heads/main'
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
                         (plain_scalar
-                          (string_scalar))))))))))))))
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: leading ! is a YAML tag
+============================================================================
+jobs:
+  build:
+    steps:
+      - if: !cancelled()
+        run: echo ok
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (tag)))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))
+
+============================================================================
+Bare if: if keys outside jobs and steps stay plain scalars
+============================================================================
+env:
+  if: hello world
+  B: c
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          if: some words
+        env:
+          if: more words
+
+----------------------------------------------------------------------------
+
+(stream
+  (document
+    (block_node
+      (block_mapping
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (flow_node
+                  (plain_scalar
+                    (string_scalar))))
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (flow_node
+                  (plain_scalar
+                    (string_scalar)))))))
+        (block_mapping_pair
+          key: (flow_node
+            (plain_scalar
+              (string_scalar)))
+          value: (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
+                  (block_mapping
+                    (block_mapping_pair
+                      key: (flow_node
+                        (plain_scalar
+                          (string_scalar)))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (block_node
+                                    (block_mapping
+                                      (block_mapping_pair
+                                        key: (flow_node
+                                          (plain_scalar
+                                            (string_scalar)))
+                                        value: (flow_node
+                                          (plain_scalar
+                                            (string_scalar)))))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (block_node
+                                    (block_mapping
+                                      (block_mapping_pair
+                                        key: (flow_node
+                                          (plain_scalar
+                                            (string_scalar)))
+                                        value: (flow_node
+                                          (plain_scalar
+                                            (string_scalar)))))))))))))))))))))))
 
 ============================================================================
 Bare if: if as a value stays a plain scalar
 ============================================================================
-steps:
-  - name: if
-    run: echo ok
+jobs:
+  build:
+    steps:
+      - name: if
+        run: echo ok
 
 ----------------------------------------------------------------------------
 
@@ -396,21 +1030,33 @@ steps:
             (plain_scalar
               (string_scalar)))
           value: (block_node
-            (block_sequence
-              (block_sequence_item
-                (block_node
+            (block_mapping
+              (block_mapping_pair
+                key: (flow_node
+                  (plain_scalar
+                    (string_scalar)))
+                value: (block_node
                   (block_mapping
                     (block_mapping_pair
                       key: (flow_node
                         (plain_scalar
                           (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))
-                    (block_mapping_pair
-                      key: (flow_node
-                        (plain_scalar
-                          (string_scalar)))
-                      value: (flow_node
-                        (plain_scalar
-                          (string_scalar))))))))))))))
+                      value: (block_node
+                        (block_sequence
+                          (block_sequence_item
+                            (block_node
+                              (block_mapping
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))
+                                (block_mapping_pair
+                                  key: (flow_node
+                                    (plain_scalar
+                                      (string_scalar)))
+                                  value: (flow_node
+                                    (plain_scalar
+                                      (string_scalar))))))))))))))))))))

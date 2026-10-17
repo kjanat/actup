@@ -2194,13 +2194,8 @@
           "name": "_r_if_expr_bgn"
         },
         {
-          "type": "ALIAS",
-          "content": {
-            "type": "SYMBOL",
-            "name": "_if_expression"
-          },
-          "named": true,
-          "value": "expression"
+          "type": "SYMBOL",
+          "name": "expression"
         }
       ]
     },
@@ -6676,7 +6671,7 @@
       "type": "TOKEN",
       "content": {
         "type": "PATTERN",
-        "value": "[ \\t]+"
+        "value": "[ \\t\\r\\n]+"
       }
     },
     "_evaluation": {
@@ -6692,11 +6687,27 @@
         },
         {
           "type": "SYMBOL",
-          "name": "function_call"
+          "name": "_call"
         },
         {
           "type": "SYMBOL",
           "name": "logical_group"
+        }
+      ]
+    },
+    "_call": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "function_call"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SYMBOL",
+            "name": "property"
+          }
         }
       ]
     },
@@ -6758,104 +6769,6 @@
                   {
                     "type": "SYMBOL",
                     "name": "_expr_ws"
-                  },
-                  {
-                    "type": "BLANK"
-                  }
-                ]
-              },
-              {
-                "type": "SYMBOL",
-                "name": "_evaluation"
-              }
-            ]
-          }
-        }
-      ]
-    },
-    "_if_expr_sep": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "SYMBOL",
-          "name": "_expr_ws"
-        },
-        {
-          "type": "SYMBOL",
-          "name": "_if_expr_nwl"
-        }
-      ]
-    },
-    "_if_expr_nwl": {
-      "type": "TOKEN",
-      "content": {
-        "type": "PATTERN",
-        "value": "[ \\t]*(\\r?\\n[ \\t]*)+"
-      }
-    },
-    "_if_expression": {
-      "type": "SEQ",
-      "members": [
-        {
-          "type": "SYMBOL",
-          "name": "_evaluation"
-        },
-        {
-          "type": "REPEAT",
-          "content": {
-            "type": "SEQ",
-            "members": [
-              {
-                "type": "CHOICE",
-                "members": [
-                  {
-                    "type": "SYMBOL",
-                    "name": "_if_expr_sep"
-                  },
-                  {
-                    "type": "BLANK"
-                  }
-                ]
-              },
-              {
-                "type": "SYMBOL",
-                "name": "operator"
-              },
-              {
-                "type": "CHOICE",
-                "members": [
-                  {
-                    "type": "SYMBOL",
-                    "name": "_if_expr_sep"
-                  },
-                  {
-                    "type": "BLANK"
-                  }
-                ]
-              },
-              {
-                "type": "CHOICE",
-                "members": [
-                  {
-                    "type": "SEQ",
-                    "members": [
-                      {
-                        "type": "SYMBOL",
-                        "name": "not"
-                      },
-                      {
-                        "type": "CHOICE",
-                        "members": [
-                          {
-                            "type": "SYMBOL",
-                            "name": "_expr_ws"
-                          },
-                          {
-                            "type": "BLANK"
-                          }
-                        ]
-                      }
-                    ]
                   },
                   {
                     "type": "BLANK"
@@ -7051,8 +6964,25 @@
       "type": "CHOICE",
       "members": [
         {
-          "type": "SYMBOL",
-          "name": "_int"
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "-"
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            },
+            {
+              "type": "SYMBOL",
+              "name": "_int"
+            }
+          ]
         },
         {
           "type": "SYMBOL",
@@ -7110,7 +7040,7 @@
         },
         {
           "type": "PATTERN",
-          "value": "[0-9a-f]+"
+          "value": "[0-9a-fA-F]+"
         }
       ]
     },
@@ -7291,7 +7221,7 @@
     },
     "identifier": {
       "type": "PATTERN",
-      "value": "[_a-zA-Z][-_a-zA-Z0-9]+"
+      "value": "[_a-zA-Z][-_a-zA-Z0-9]*"
     },
     "property_deref": {
       "type": "SYMBOL",

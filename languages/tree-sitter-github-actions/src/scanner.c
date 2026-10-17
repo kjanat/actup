@@ -78,15 +78,26 @@ typedef enum {
 #define IND_SEQ 'q'
 #define IND_STR 's'
 
-#define IF_NONE 0
-#define IF_KEY 1
-#define IF_VAL 2
+#define KEY_OTHER 0
+#define KEY_IF 1
+#define KEY_JOBS 2
+#define KEY_STEPS 3
+#define KEY_RUNS 4
+
+#define MAP_OTHER 0
+#define MAP_ROOT 1
+#define MAP_JOBS 2
+#define MAP_JOB 3
+#define MAP_RUNS 4
+#define MAP_STEP 5
+
+#define REC_MAX 6
 
 #define RET_SYM(RESULT_SYMBOL)                                                                                         \
     {                                                                                                                  \
         flush(scanner);                                                                                                \
         lexer->result_symbol = RESULT_SYMBOL;                                                                          \
-        track_if(scanner, lexer->result_symbol);                                                                       \
+        track_key(scanner, lexer->result_symbol);                                                                      \
         return true;                                                                                                   \
     }
 
@@ -146,9 +157,11 @@ typedef struct {
     int16_t blk_imp_row;
     int16_t blk_imp_col;
     int16_t blk_imp_tab;
-    int16_t if_stt;
+    int16_t key_cls;
+    bool if_val;
     Array(int16_t) ind_typ_stk;
     Array(int16_t) ind_len_stk;
+    Array(int16_t) ind_key_stk;
 
     // temp
     int16_t end_row;
@@ -158,15 +171,16 @@ typedef struct {
     int32_t cur_chr;
     int8_t sch_stt;
     ResultSchema rlt_sch;
-    bool pln_if;
+    int16_t pln_key;
+    int8_t rec_len;
+    char rec_buf[REC_MAX];
 } Scanner;
 
-static inline void track_if(Scanner *scanner, TSSymbol symbol) {
-    if (symbol == R_BLK_IMP_BGN && scanner->if_stt == IF_KEY) {
-        scanner->if_stt = IF_VAL;
-    } else {
-        scanner->if_stt = scanner->pln_if ? IF_KEY : IF_NONE;
+static inline void track_key(Scanner *scanner, TSSymbol symbol) {
+    if (symbol != R_BLK_IMP_BGN) {
+        scanner->if_val = false;
     }
+    scanner->key_cls = scanner->pln_key;
 }
 
 static unsigned serialize(Scanner *scanner, char *buffer) {
@@ -181,15 +195,21 @@ static unsigned serialize(Scanner *scanner, char *buffer) {
     size += sizeof(int16_t);
     *(int16_t *)&buffer[size] = scanner->blk_imp_tab;
     size += sizeof(int16_t);
-    *(int16_t *)&buffer[size] = scanner->if_stt;
+    *(int16_t *)&buffer[size] = scanner->key_cls;
+    size += sizeof(int16_t);
+    *(int16_t *)&buffer[size] = scanner->if_val;
     size += sizeof(int16_t);
     int16_t *typ_itr = scanner->ind_typ_stk.contents + 1;
     int16_t *typ_end = scanner->ind_typ_stk.contents + scanner->ind_typ_stk.size;
     int16_t *len_itr = scanner->ind_len_stk.contents + 1;
-    for (; typ_itr != typ_end && size < TREE_SITTER_SERIALIZATION_BUFFER_SIZE; ++typ_itr, ++len_itr) {
+    int16_t *key_itr = scanner->ind_key_stk.contents + 1;
+    for (; typ_itr != typ_end && size + 3 * sizeof(int16_t) <= TREE_SITTER_SERIALIZATION_BUFFER_SIZE;
+         ++typ_itr, ++len_itr, ++key_itr) {
         *(int16_t *)&buffer[size] = *typ_itr;
         size += sizeof(int16_t);
         *(int16_t *)&buffer[size] = *len_itr;
+        size += sizeof(int16_t);
+        *(int16_t *)&buffer[size] = *key_itr;
         size += sizeof(int16_t);
     }
     return size;
@@ -201,11 +221,14 @@ static void deserialize(Scanner *scanner, const char *buffer, unsigned length) {
     scanner->blk_imp_row = -1;
     scanner->blk_imp_col = -1;
     scanner->blk_imp_tab = 0;
-    scanner->if_stt = IF_NONE;
+    scanner->key_cls = KEY_OTHER;
+    scanner->if_val = false;
     array_delete(&scanner->ind_typ_stk);
     array_push(&scanner->ind_typ_stk, IND_ROT);
     array_delete(&scanner->ind_len_stk);
     array_push(&scanner->ind_len_stk, -1);
+    array_delete(&scanner->ind_key_stk);
+    array_push(&scanner->ind_key_stk, MAP_OTHER);
     if (length > 0) {
         size_t size = 0;
         scanner->row = *(int16_t *)&buffer[size];
@@ -218,12 +241,16 @@ static void deserialize(Scanner *scanner, const char *buffer, unsigned length) {
         size += sizeof(int16_t);
         scanner->blk_imp_tab = *(int16_t *)&buffer[size];
         size += sizeof(int16_t);
-        scanner->if_stt = *(int16_t *)&buffer[size];
+        scanner->key_cls = *(int16_t *)&buffer[size];
+        size += sizeof(int16_t);
+        scanner->if_val = *(int16_t *)&buffer[size];
         size += sizeof(int16_t);
         while (size < length) {
             array_push(&scanner->ind_typ_stk, *(int16_t *)&buffer[size]);
             size += sizeof(int16_t);
             array_push(&scanner->ind_len_stk, *(int16_t *)&buffer[size]);
+            size += sizeof(int16_t);
+            array_push(&scanner->ind_key_stk, *(int16_t *)&buffer[size]);
             size += sizeof(int16_t);
         }
         assert(size == length);
@@ -231,6 +258,9 @@ static void deserialize(Scanner *scanner, const char *buffer, unsigned length) {
 }
 
 static inline void adv(Scanner *scanner, TSLexer *lexer) {
+    if (scanner->rec_len >= 0 && scanner->rec_len < REC_MAX) {
+        scanner->rec_buf[scanner->rec_len++] = (char)lexer->lookahead;
+    }
     scanner->cur_col++;
     scanner->cur_chr = lexer->lookahead;
     lexer->advance(lexer, false);
@@ -268,7 +298,8 @@ static inline void init(Scanner *scanner) {
     scanner->cur_chr = 0;
     scanner->sch_stt = 0;
     scanner->rlt_sch = RS_STR;
-    scanner->pln_if = false;
+    scanner->pln_key = KEY_OTHER;
+    scanner->rec_len = -1;
 }
 
 static inline void flush(Scanner *scanner) {
@@ -277,11 +308,40 @@ static inline void flush(Scanner *scanner) {
 }
 
 static inline void pop_ind(Scanner *scanner) {
+    (void)array_pop(&scanner->ind_key_stk);
     (void)array_pop(&scanner->ind_len_stk);
     (void)array_pop(&scanner->ind_typ_stk);
 }
 
+static int16_t map_kind(Scanner *scanner) {
+    uint32_t n = scanner->ind_typ_stk.size;
+    int16_t typ = scanner->ind_typ_stk.contents[n - 1];
+    int16_t kind = scanner->ind_key_stk.contents[n - 1] & 0xff;
+    int16_t key = scanner->ind_key_stk.contents[n - 1] >> 8;
+    if (typ == IND_ROT) {
+        return MAP_ROOT;
+    }
+    if (typ == IND_MAP) {
+        if (kind == MAP_ROOT && key == KEY_JOBS) {
+            return MAP_JOBS;
+        }
+        if (kind == MAP_ROOT && key == KEY_RUNS) {
+            return MAP_RUNS;
+        }
+        return kind == MAP_JOBS ? MAP_JOB : MAP_OTHER;
+    }
+    if (typ == IND_SEQ && n >= 2 && scanner->ind_typ_stk.contents[n - 2] == IND_MAP) {
+        kind = scanner->ind_key_stk.contents[n - 2] & 0xff;
+        key = scanner->ind_key_stk.contents[n - 2] >> 8;
+        if ((kind == MAP_JOB || kind == MAP_RUNS) && key == KEY_STEPS) {
+            return MAP_STEP;
+        }
+    }
+    return MAP_OTHER;
+}
+
 static inline void push_ind(Scanner *scanner, int16_t typ, int16_t len) {
+    array_push(&scanner->ind_key_stk, typ == IND_MAP ? map_kind(scanner) : MAP_OTHER);
     array_push(&scanner->ind_len_stk, len);
     array_push(&scanner->ind_typ_stk, typ);
 }
@@ -320,6 +380,27 @@ static inline bool is_c_indicator(int32_t c) {
 }
 
 static inline bool is_c_flow_indicator(int32_t c) { return c == ',' || c == '[' || c == ']' || c == '{' || c == '}'; }
+
+static bool rec_is(Scanner *scanner, int16_t len, const char *name) {
+    int16_t i = 0;
+    for (; i < len && name[i] != 0; i++) {
+        if (scanner->rec_buf[i] != name[i]) {
+            return false;
+        }
+    }
+    return i == len && name[i] == 0;
+}
+
+static int16_t key_of(Scanner *scanner, int16_t len) {
+    if (len < 0 || len > scanner->rec_len) {
+        return KEY_OTHER;
+    }
+    return rec_is(scanner, len, "if")      ? KEY_IF
+           : rec_is(scanner, len, "jobs")  ? KEY_JOBS
+           : rec_is(scanner, len, "steps") ? KEY_STEPS
+           : rec_is(scanner, len, "runs")  ? KEY_RUNS
+                                           : KEY_OTHER;
+}
 
 static inline bool is_if_expr_first(int32_t c) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '(';
@@ -1049,7 +1130,7 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         return true;
     }
 
-    if (valid_symbols[R_IF_EXPR_BGN] && !valid_symbols[ERR_REC] && is_r && scanner->if_stt == IF_VAL &&
+    if (valid_symbols[R_IF_EXPR_BGN] && !valid_symbols[ERR_REC] && is_r && scanner->if_val &&
         is_if_expr_first(lexer->lookahead)) {
         mrk_end(scanner, lexer);
         RET_SYM(R_IF_EXPR_BGN);
@@ -1339,6 +1420,10 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
                 }
                 if (is_r_blk_imp_bgn) {
                     MAY_PUSH_IMP_IND();
+                    int16_t *key = array_back(&scanner->ind_key_stk);
+                    int16_t kind = *key & 0xff;
+                    *key = (int16_t)(kind | (scanner->key_cls << 8));
+                    scanner->if_val = scanner->key_cls == KEY_IF && (kind == MAP_JOB || kind == MAP_STEP);
                     mrk_end(scanner, lexer);
                     RET_SYM(R_BLK_IMP_BGN);
                 }
@@ -1461,11 +1546,10 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         bool is_in_blk = maybe_sgl_pln_blk || maybe_mtl_pln_blk;
         bool (*is_plain_safe)(int32_t) = is_in_blk ? is_plain_safe_in_block : is_plain_safe_in_flow;
         if (scanner->cur_col - bgn_col == 0) {
+            scanner->rec_len = 0;
             adv(scanner, lexer);
         }
-        bool sec_f = false;
         if (scanner->cur_col - bgn_col == 1) {
-            sec_f = lexer->lookahead == 'f';
             bool is_plain_first =
                 (is_ns_char(bgn_chr) && !is_c_indicator(bgn_chr)) ||
                 ((bgn_chr == '-' || bgn_chr == '?' || bgn_chr == ':') && is_plain_safe(lexer->lookahead));
@@ -1514,7 +1598,7 @@ static bool scan(Scanner *scanner, TSLexer *lexer, const bool *valid_symbols) {
         if (scanner->end_row == bgn_row) {
             if (maybe_sgl_pln_blk) {
                 MAY_UPD_IMP_COL();
-                scanner->pln_if = bgn_chr == 'i' && sec_f && scanner->end_col - bgn_col == 2;
+                scanner->pln_key = key_of(scanner, scanner->end_col - bgn_col);
                 RET_SYM(is_r ? SGL_PLN_SYM(R, BLK) : is_br ? SGL_PLN_SYM(BR, BLK) : SGL_PLN_SYM(B, BLK));
             }
             if (maybe_sgl_pln_flw)
@@ -1548,6 +1632,7 @@ void *tree_sitter_github_actions_external_scanner_create() {
 
 void tree_sitter_github_actions_external_scanner_destroy(void *payload) {
     Scanner *scanner = (Scanner *)payload;
+    array_delete(&scanner->ind_key_stk);
     array_delete(&scanner->ind_len_stk);
     array_delete(&scanner->ind_typ_stk);
     ts_free(scanner);

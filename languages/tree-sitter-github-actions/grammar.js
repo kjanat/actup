@@ -420,7 +420,7 @@ const base = grammar({
 				),
 			),
 
-		_r_if_expr_val: $ => seq($._r_if_expr_bgn, alias($._if_expression, $.expression)),
+		_r_if_expr_val: $ => seq($._r_if_expr_bgn, $.expression),
 
 		// block scalar
 
@@ -741,9 +741,10 @@ const base = grammar({
 		// Optional horizontal whitespace inside expression bodies. Defined as a private
 		// rule (not via `extras`) so it's only valid where expression rules expect it,
 		// keeping YAML's structural whitespace handling untouched elsewhere.
-		_expr_ws: _ => token(/[ \t]+/),
+		_expr_ws: _ => token(/[ \t\r\n]+/),
 
-		_evaluation: $ => choice($._literal, $.context, $.function_call, $.logical_group),
+		_evaluation: $ => choice($._literal, $.context, $._call, $.logical_group),
+		_call: $ => seq($.function_call, repeat($.property)),
 
 		expression: $ =>
 			seq(
@@ -755,21 +756,6 @@ const base = grammar({
 						optional($._expr_ws),
 						optional($.not),
 						optional($._expr_ws),
-						$._evaluation,
-					),
-				),
-			),
-		_if_expr_sep: $ => choice($._expr_ws, $._if_expr_nwl),
-		_if_expr_nwl: _ => token(/[ \t]*(\r?\n[ \t]*)+/),
-		_if_expression: $ =>
-			seq(
-				$._evaluation,
-				repeat(
-					seq(
-						optional($._if_expr_sep),
-						$.operator,
-						optional($._if_expr_sep),
-						optional(seq($.not, optional($._expr_ws))),
 						$._evaluation,
 					),
 				),
@@ -803,10 +789,10 @@ const base = grammar({
 
 		_dot: () => ".",
 
-		number: $ => choice($._int, $._float, $._hex, $._exp),
+		number: $ => choice(seq(optional("-"), $._int), $._float, $._hex, $._exp),
 		_int: () => /\d+/,
 		_float: $ => seq(optional("-"), $._int, $._dot, $._int),
-		_hex: () => seq("0x", /[0-9a-f]+/),
+		_hex: () => seq("0x", /[0-9a-fA-F]+/),
 		_exp: $ => seq($._float, "e", optional("-"), $._int),
 
 		string: $ => seq("'", repeat(choice($.string_content, $.scape_sequence)), "'"),
@@ -830,7 +816,7 @@ const base = grammar({
 		format_index: $ => $._int,
 
 		asterisk: () => "*",
-		identifier: () => /[_a-zA-Z][-_a-zA-Z0-9]+/,
+		identifier: () => /[_a-zA-Z][-_a-zA-Z0-9]*/,
 		property_deref: $ => $._dot,
 
 		context: $ => seq($.identifier, repeat($.property)),

@@ -66,6 +66,10 @@
           "named": true
         },
         {
+          "type": "property",
+          "named": true
+        },
+        {
           "type": "string",
           "named": true
         }
@@ -270,6 +274,10 @@
           "named": true
         },
         {
+          "type": "property",
+          "named": true
+        },
+        {
           "type": "string",
           "named": true
         }
@@ -364,6 +372,10 @@
         },
         {
           "type": "operator",
+          "named": true
+        },
+        {
+          "type": "property",
           "named": true
         },
         {
@@ -610,6 +622,10 @@
         },
         {
           "type": "operator",
+          "named": true
+        },
+        {
+          "type": "property",
           "named": true
         },
         {
