@@ -1344,7 +1344,9 @@ mod cli_runs {
     fn actup(home: &Path) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_actup"));
         cmd.env("XDG_CONFIG_HOME", home)
+            .env("XDG_CACHE_HOME", home)
             .env("HOME", home)
+            .env_remove("GITHUB_TOKEN")
             .env_remove("NO_COLOR")
             .env_remove("CLICOLOR")
             .env_remove("CLICOLOR_FORCE");
@@ -1907,6 +1909,67 @@ mod cli_runs {
                 .and_then(serde_json::Value::as_str),
             Some("v1\u{1b}[2K\u{200b}")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn offline_check_without_a_cached_repo_exits_3() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        let workflows = repo.path().join(".github").join("workflows");
+        fs::create_dir_all(&workflows)?;
+        fs::write(workflows.join("ci.yml"), "steps:\n  - uses: o/r@v1\n")?;
+        let config = repo.path().join("explicit.toml");
+        let cache = repo.path().join("cache");
+        fs::write(
+            &config,
+            format!("[cache]\npath = {:?}\n", cache.display().to_string()),
+        )?;
+
+        let output = actup(repo.path())
+            .args(["--offline", "--config"])
+            .arg(&config)
+            .args(["check", "--format", "json"])
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+        let findings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            findings
+                .pointer("/0/status")
+                .and_then(serde_json::Value::as_str),
+            Some("error")
+        );
+        let reason = findings
+            .pointer("/0/reason")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("no reason")?;
+        assert!(reason.contains("o/r is not in the cache"), "{reason}");
+        assert!(!cache.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn no_cache_disables_the_cache_for_the_run() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        for (flag, enabled) in [(None, true), (Some("--no-cache"), false)] {
+            let mut cmd = actup(repo.path());
+            cmd.args(flag)
+                .args(["config", "--format", "json"])
+                .arg(repo.path());
+            let output = cmd.output()?;
+            assert_eq!(output.status.code(), Some(0), "{flag:?}");
+            let config: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+            assert_eq!(
+                config.pointer("/cache/enabled"),
+                Some(&serde_json::json!(enabled)),
+                "{flag:?}"
+            );
+        }
+        let output = actup(repo.path())
+            .args(["--offline", "--no-cache", "config"])
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
         Ok(())
     }
 

@@ -101,6 +101,12 @@ line and adds `suggestion` to the JSON and TOML entry. The LSP offers a
 of each repo that an unignored ref names, once per repo and in one batch through
 the version cache, before they report or edit.
 
+`--offline` reads versions only from the cache. A repo missing from the cache,
+or cached longer ago than `cache.ttl`, makes its refs environment errors (exit
+3), and no command touches the network. `--no-cache` neither reads nor writes
+the cache, the same as `cache.enabled = false`. The two flags cannot be
+combined. The quick lookup `actup owner/repo` uses the cache too.
+
 `update` and `pin` write each file to a temp file in its directory, flush it,
 give it the mode of the original and rename it over the original. A failed write
 leaves the original intact. A write through a symlink replaces the file it

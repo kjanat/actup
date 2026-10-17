@@ -45,6 +45,14 @@ pub struct Cli {
     )]
     pub color: ColorChoice,
 
+    /// Use only cached version data; a ref missing from the cache is an environment error
+    #[arg(long, global = true)]
+    pub offline: bool,
+
+    /// Neither read nor write the version cache
+    #[arg(long, global = true)]
+    pub no_cache: bool,
+
     #[command(flatten)]
     pub latest: LatestArgs,
 }
@@ -64,7 +72,7 @@ pub struct LatestArgs {
 }
 
 impl Cli {
-    /// Parse `args` and reject top-level arguments given on the command line next to a subcommand.
+    /// Parse `args` and reject top-level arguments given on the command line next to a subcommand, and `--offline` with `--no-cache`.
     ///
     /// An empty `ACTUP_*` flag variable counts as unset.
     pub fn try_parse_args<I, T>(args: I) -> Result<Self, Error>
@@ -91,7 +99,14 @@ impl Cli {
                 return Err(command.error(ErrorKind::ArgumentConflict, message));
             }
         }
-        Self::from_arg_matches_mut(&mut matches)
+        let cli = Self::from_arg_matches_mut(&mut matches)?;
+        if cli.offline && cli.no_cache {
+            return Err(command.error(
+                ErrorKind::ArgumentConflict,
+                "--offline reads only the cache and cannot be used with --no-cache",
+            ));
+        }
+        Ok(cli)
     }
 
     /// The colour choice `--color` selects for stdout and stderr.
@@ -321,6 +336,24 @@ mod tests {
             );
             assert!(cli.verbose, "{args:?}");
             assert_eq!(cli.config.as_deref(), Some(Path::new("x.toml")), "{args:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn offline_and_no_cache_parse_globally_and_conflict() -> Result<(), Error> {
+        let cli = parse(&["check", "--offline"])?;
+        assert!(cli.offline && !cli.no_cache);
+        let cli = parse(&["--no-cache", "update"])?;
+        assert!(cli.no_cache && !cli.offline);
+        for args in [
+            &["--offline", "check", "--no-cache"][..],
+            &["--offline", "--no-cache", "check"][..],
+        ] {
+            let Err(error) = parse(args) else {
+                panic!("{args:?} must be rejected");
+            };
+            assert_eq!(error.kind(), ErrorKind::ArgumentConflict, "{args:?}");
         }
         Ok(())
     }

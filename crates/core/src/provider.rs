@@ -732,6 +732,16 @@ impl Registry {
         &self.providers
     }
 
+    /// Replace every registered provider with the provider `wrap` returns for it.
+    #[must_use]
+    pub fn map_providers(
+        mut self,
+        wrap: impl FnMut(Box<dyn Provider>) -> Box<dyn Provider>,
+    ) -> Self {
+        self.providers = self.providers.into_iter().map(wrap).collect();
+        self
+    }
+
     /// Build a registry for `config` from the providers that `registrations` construct.
     ///
     /// Registers every `[hosts]` entry and the default host, each behind a
@@ -1004,6 +1014,25 @@ mod tests {
 
         let gitea = registry.find_by_kind(Kind::Gitea);
         assert!(gitea.is_none());
+    }
+
+    #[test]
+    fn test_registry_map_providers_keeps_hosts_and_default() {
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(MockProvider::new(Kind::GitHub, "github.com")));
+        registry.register(Box::new(MockProvider::new(Kind::GitLab, "gitlab.com")));
+
+        let mut seen = Vec::new();
+        let registry = registry.map_providers(|provider| {
+            seen.push(provider.host().to_string());
+            Box::new(MockProvider::new(provider.kind(), "wrapped.example"))
+        });
+
+        assert_eq!(seen, ["github.com", "gitlab.com"]);
+        assert_eq!(registry.default_host(), Some("github.com"));
+        let hosts: Vec<&str> = registry.providers().iter().map(Provider::host).collect();
+        assert_eq!(hosts, ["wrapped.example", "wrapped.example"]);
     }
 
     #[test]

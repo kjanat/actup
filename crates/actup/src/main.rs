@@ -6,6 +6,7 @@ mod cli;
 mod commands;
 mod common;
 mod file_cache;
+mod offline;
 mod output;
 mod scan;
 
@@ -109,20 +110,9 @@ async fn run(cli: Cli) -> i32 {
         Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
     };
 
-    let Some(config) = load_config(cli.config.as_deref(), &start_dir) else {
-        return CliExitCode::UserError.into();
-    };
-
-    // Build provider registry
-    let registry = match build_registry(&config) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!(
-                "Error initializing providers: {}",
-                sanitize_for_terminal(&e.to_string())
-            );
-            return CliExitCode::EnvironmentError.into();
-        }
+    let (config, registry) = match setup(&cli, &start_dir) {
+        Ok(setup) => setup,
+        Err(code) => return code.into(),
     };
 
     match cli.command {
@@ -164,6 +154,30 @@ async fn run(cli: Cli) -> i32 {
         }
         None => commands::latest::run(&cli.latest, &config, &registry).await,
     }
+}
+
+/// Load the config for `start_dir` and build the registry the global flags select.
+fn setup(
+    cli: &Cli,
+    start_dir: &std::path::Path,
+) -> Result<(Config, provider::Registry), CliExitCode> {
+    let mut config = load_config(cli.config.as_deref(), start_dir).ok_or(CliExitCode::UserError)?;
+    if cli.no_cache {
+        config.cache.enabled = false;
+    }
+    let registry = build_registry(&config).map_err(|e| {
+        eprintln!(
+            "Error initializing providers: {}",
+            sanitize_for_terminal(&e.to_string())
+        );
+        CliExitCode::EnvironmentError
+    })?;
+    let registry = if cli.offline {
+        registry.map_providers(offline::Offline::wrap)
+    } else {
+        registry
+    };
+    Ok((config, registry))
 }
 
 /// Returns all compiled-in provider registrations.

@@ -9,7 +9,10 @@ use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
-use crate::cli::{CliExitCode, LatestArgs, OutputFormat};
+use crate::{
+    cli::{CliExitCode, LatestArgs, OutputFormat},
+    scan::{batch_fetch_versions, versions_for},
+};
 
 /// Parsed action query from the positional argument.
 struct ActionQuery {
@@ -100,7 +103,7 @@ fn full_tag_on(versions: &version::Set, major_tag: &version::Info) -> Option<Str
 }
 
 /// Run the latest-version lookup.
-pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Registry) -> i32 {
+pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Registry) -> i32 {
     let Some(action_str) = args.action.as_deref() else {
         // No action provided — caller should have printed help already
         return CliExitCode::Success.into();
@@ -129,7 +132,8 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
     };
 
     let repo_id = action_ref.to_repo_id().without_subpath();
-    let versions = match provider.get_versions(&repo_id).await {
+    let fetched = batch_fetch_versions(std::slice::from_ref(&repo_id), config, registry).await;
+    let versions = match versions_for(&fetched, &repo_id) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{}", sanitize_for_terminal(&e.to_string()));
@@ -141,7 +145,7 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
         }
     };
 
-    let Some((best, exact_version)) = pick_best(&versions, query.constraint.as_deref()) else {
+    let Some((best, exact_version)) = pick_best(versions, query.constraint.as_deref()) else {
         let context = query
             .constraint
             .as_ref()
