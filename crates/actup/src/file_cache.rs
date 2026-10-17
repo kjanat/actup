@@ -104,12 +104,16 @@ impl Cache for FileCache {
                 Err(e) => return Err(cache::Error::Io(e.to_string())),
             };
 
-            let entry: cache::Entry = match serde_json::from_str(&content) {
-                Ok(entry) => entry,
+            let record: cache::Record = match serde_json::from_str(&content) {
+                Ok(record) => record,
                 Err(e) => {
                     debug!(key = %key, error = %e, "unreadable cache entry");
                     return Err(cache::Error::NotFound);
                 }
+            };
+            let Some(entry) = record.entry_for(&key) else {
+                debug!(key = %key, path = %path.display(), "cache entry stored under another key");
+                return Err(cache::Error::NotFound);
             };
 
             // Check TTL
@@ -142,8 +146,8 @@ impl Cache for FileCache {
             self.ensure_dir().await?;
 
             let path = self.key_to_path(&key);
-            let content =
-                serde_json::to_string(&entry).map_err(|e| cache::Error::Serde(e.to_string()))?;
+            let content = serde_json::to_string(&cache::Record::new(&key, entry))
+                .map_err(|e| cache::Error::Serde(e.to_string()))?;
 
             let target = path.clone();
             tokio::task::spawn_blocking(move || write_atomic(&target, content.as_bytes()))
@@ -347,6 +351,27 @@ mod tests {
             cache.key_to_path(key),
             temp.path().join(cache::entry_file_name(key))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn entry_stored_under_another_key_is_a_miss() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
+        let (stored, colliding) = (
+            "github::github.com/evil/repo",
+            "github::github.com/actions/checkout",
+        );
+        cache
+            .set(stored, cache::Entry::new(version::Set::default()))
+            .await?;
+        std::fs::copy(cache.key_to_path(stored), cache.key_to_path(colliding))?;
+
+        assert!(matches!(
+            cache.get(colliding).await,
+            Err(cache::Error::NotFound)
+        ));
+        assert!(cache.get(stored).await.is_ok());
         Ok(())
     }
 

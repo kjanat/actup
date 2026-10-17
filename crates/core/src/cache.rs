@@ -104,6 +104,30 @@ impl Entry {
     }
 }
 
+/// An [`Entry`] with the key it is stored under, as a disk cache writes it.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Record {
+    key: String,
+    entry: Entry,
+}
+
+impl Record {
+    /// Pair `entry` with the `key` it is stored under.
+    #[must_use]
+    pub fn new(key: &str, entry: Entry) -> Self {
+        Self {
+            key: key.to_owned(),
+            entry,
+        }
+    }
+
+    /// Return the entry when the record was stored under `key`.
+    #[must_use]
+    pub fn entry_for(self, key: &str) -> Option<Entry> {
+        (self.key == key).then_some(self.entry)
+    }
+}
+
 /// Result type for cache operations
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -247,6 +271,20 @@ mod tests {
         ] {
             assert!(!is_entry_file_name(foreign), "{foreign}");
         }
+    }
+
+    #[test]
+    fn record_returns_its_entry_only_for_its_key() -> serde_json::Result<()> {
+        let record = Record::new(
+            "github::github.com/a/b",
+            Entry::new(version::Set::default()),
+        );
+        let json = serde_json::to_string(&record)?;
+        let stored: Record = serde_json::from_str(&json)?;
+        assert!(stored.entry_for("github::github.com/a/b").is_some());
+        let stored: Record = serde_json::from_str(&json)?;
+        assert!(stored.entry_for("github::github.com/a/c").is_none());
+        Ok(())
     }
 
     #[test]
