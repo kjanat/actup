@@ -69,14 +69,13 @@ actup check --format human  # Default, colored output
 With `--format json` or `toml`, `check` prints one entry per finding and
 `update` and `pin` print a report with `dry_run` and the lists `edited`,
 `skipped` and `errors`. Every entry names the file, line, action, owner, repo,
-host, provider and `reference` (the ref as found). `host` is the host of the
-provider serving the ref, or the default host when the ref names none. An
-`edited` entry adds `to` (the ref written) and `comment` when the line gets a
-version comment. A `skipped` entry adds `reason` (`unplaceable`, `overlap` or
-`out_of_bounds`). An `errors` entry adds `kind` (such as `not_found`,
-`rate_limited`, `provider_not_found`, `write`, `changed` or `invalid_edit`) and
-`message`. With no workflow files, the report has empty lists and `check` prints
-no findings.
+host, provider and `reference` (the ref as found). `host` is the ref's own host,
+or the default host for a ref without one. An `edited` entry adds `to` (the ref
+written) and `comment` when the line gets a version comment. A `skipped` entry
+adds `reason` (`unplaceable`, `overlap` or `out_of_bounds`). An `errors` entry
+adds `kind` (such as `not_found`, `rate_limited`, `provider_not_found`, `write`,
+`changed` or `invalid_edit`) and `message`. With no workflow files, the report
+has empty lists and `check` prints no findings.
 
 `update` and `pin` write each file to a temp file in its directory, flush it,
 give it the mode of the original and rename it over the original. A failed write

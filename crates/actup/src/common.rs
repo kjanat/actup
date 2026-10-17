@@ -827,7 +827,7 @@ impl<'a> WorkflowScanner<'a> {
         self.registry.find(action.host())
     }
 
-    /// The host an action resolves to: its written host, else the default host.
+    /// The host an action resolves to: its written host, else the default host, else `github.com`.
     #[must_use]
     pub fn host_for(&self, action: &ActionRef) -> String {
         action
@@ -1938,6 +1938,48 @@ mod tests {
         let file = DiscoveredFile::new(path.clone(), FileKind::Workflow);
 
         assert_eq!(scanner.relative_path(&file), path.display().to_string());
+        Ok(())
+    }
+
+    #[test]
+    fn test_host_for_falls_back_to_the_default_host_then_github()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::default();
+        let bare = ActionRef::simple("o", "r", "v1");
+        let hosted = parse_uses("ghe.corp.example/o/r@v1")?.ok_or("no action ref")?;
+
+        let mut with_default = provider::Registry::new();
+        with_default.set_default_host("git.example.org");
+        let scanner = WorkflowScanner::new(
+            Path::new("/repo"),
+            &config,
+            &with_default,
+            OutputFormat::Json,
+        );
+        assert!(scanner.provider_for(&bare).is_none());
+        assert_eq!(scanner.host_for(&bare), "git.example.org");
+        assert_eq!(scanner.host_for(&hosted), "ghe.corp.example");
+        let mut result = EditResult::default();
+        report_unserved(&scanner, "ci.yml", 3, &bare, &mut result);
+        let hosts: Vec<(&str, &str, ErrorKind)> = result
+            .errored
+            .iter()
+            .map(|e| (e.site.host.as_str(), e.site.provider.as_str(), e.kind))
+            .collect();
+        assert_eq!(
+            hosts,
+            [("git.example.org", "unknown", ErrorKind::ProviderNotFound)]
+        );
+
+        let without_default = provider::Registry::new();
+        let scanner = WorkflowScanner::new(
+            Path::new("/repo"),
+            &config,
+            &without_default,
+            OutputFormat::Json,
+        );
+        assert_eq!(scanner.host_for(&bare), "github.com");
+        assert_eq!(scanner.host_for(&hosted), "ghe.corp.example");
         Ok(())
     }
 
