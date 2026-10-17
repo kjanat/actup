@@ -47,8 +47,8 @@ Model Context Protocol server for AI agents, served over stdio with
   `main.rs` builds `FileCache::from_config` and passes it to `Server::new`;
   `getVersions` and `getLatest` read version sets through `FileCache::versions`,
   the disk cache the CLI and LSP use. `updateAllUsesToVersion` resolves
-  `targetRef` with `refresh_ref_to_sha` on every call unless `scan.ignore`
-  matches every matching ref.
+  `targetRef` with `refresh_ref_to_sha` on every call unless at least one ref
+  matches and `scan.ignore` matches all of them.
 
 ## Tests
 
