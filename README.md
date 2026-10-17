@@ -333,12 +333,12 @@ writes each ref in its `policy.pin` style, as `update` does.
 
 ## Exit Codes
 
-| Code | Meaning                                                          |
-| ---- | ---------------------------------------------------------------- |
-| 0    | Success / all up-to-date                                         |
-| 1    | Outdated refs found, or `update`/`pin` skipped a ref             |
-| 2    | User error: unresolvable refs, invalid config, invalid CLI input |
-| 3    | Network/auth/rate-limit error, or no provider for a ref's host   |
+| Code | Meaning                                                             |
+| ---- | ------------------------------------------------------------------- |
+| 0    | Success / all up-to-date                                            |
+| 1    | Outdated refs found, or `update`/`pin` skipped a ref it cannot edit |
+| 2    | User error: unresolvable refs, invalid config, invalid CLI input    |
+| 3    | Network/auth/rate-limit error, or no provider for a ref's host      |
 
 ## Files Scanned
 
