@@ -1,6 +1,6 @@
-; Note: ${{ ... }} expressions are no longer injected as a separate language —
-; they are parsed natively by tree-sitter-github-actions as `delimited_expression`
-; nodes. See highlights.scm for the captures.
+; Note: ${{ ... }} expressions and bare `if:` values are parsed natively by
+; tree-sitter-github-actions as `delimited_expression` and `expression` nodes.
+; See highlights.scm for the captures.
 
 ; Inject JavaScript into `script:` values when the step uses `actions/github-script`.
 ; Both `uses:` and `with.script:` must exist as siblings within the same step mapping.
@@ -181,7 +181,3 @@
     ]))
   (#eq? @_run_key "run")
   (#set! injection.language "bash"))
-
-; Bare `if:` expressions (without ${{ }} delimiters) are no longer injected as a
-; separate language; they will be parsed natively once plain-scalar expression
-; support lands in the grammar (see Phase B follow-up).
