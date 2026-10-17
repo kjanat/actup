@@ -2198,6 +2198,37 @@ mod tests {
     }
 
     #[test]
+    fn test_from_contents_rejects_unknown_policy_key_naming_the_file() {
+        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+            Some((Path::new("actup.toml"), "[policy]\ntracking = \"exact\"\n")),
+            EnvOverrides::default(),
+        ) else {
+            panic!("unknown policy key must be rejected");
+        };
+        assert_eq!(path, "actup.toml");
+        assert!(
+            reason.contains("unknown field: found `tracking`"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn test_from_contents_rejects_unknown_policy_env_key_naming_the_variable() {
+        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+            None,
+            EnvOverrides::from_vars([("ACTUP_POLICY__TRACKING", "exact")]),
+        ) else {
+            panic!("unknown policy env key must be rejected");
+        };
+        assert_eq!(path, "`ACTUP_` environment variable(s)");
+        assert!(
+            reason.contains("unknown field: found `tracking`"),
+            "{reason}"
+        );
+        assert!(reason.contains("ACTUP_POLICY__TRACKING"), "{reason}");
+    }
+
+    #[test]
     fn test_from_contents_env_error_names_the_environment() {
         let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
             Some((Path::new("actup.toml"), "[policy]\nbump = \"minor\"\n")),
