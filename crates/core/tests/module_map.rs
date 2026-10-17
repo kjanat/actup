@@ -179,12 +179,39 @@ fn module_map_check_skips_fenced_code_blocks() -> TestResult<()> {
     for file in ["lib.rs", "a.rs", "b.rs", "config/mod.rs"] {
         fs::write(src.join(file), "")?;
     }
-    let agents = "## Module Map\n\n| Module | Purpose |\n| --- | --- |\n| `a` | A |\n| `config/` | Config |\n\n```markdown\n| `b` | B |\n### Config (`config/`)\n| `mod.rs` | Mod |\n```\n";
+    let agents = "## Module Map\n\n| Module | Purpose |\n| --- | --- |\n| `a` | A |\n| `config/` | Config |\n\n```markdown\n| Module | Purpose |\n| --- | --- |\n| `b` | B |\n### Config (`config/`)\n| Module | Purpose |\n| --- | --- |\n| `mod.rs` | Mod |\n```\n";
 
     assert_eq!(
         missing_rows(agents, src)?,
         ["src/b.rs", "src/config/ has no table", "src/config/mod.rs"]
     );
+    Ok(())
+}
+
+#[test]
+fn module_map_check_reads_the_first_body_cell_under_an_h2() -> TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let src = temp.path();
+    for file in ["lib.rs", "a.rs", "b.rs"] {
+        fs::write(src.join(file), "")?;
+    }
+    let cases: [(&str, &[&str]); 3] = [
+        (
+            "## Module Map\n\n| `b` | Purpose |\n| --- | --- |\n| `a` | A |\n",
+            &["src/b.rs"],
+        ),
+        (
+            "## Module Map\n\n| Module | Purpose |\n| --- | --- |\n| `a` | `b` |\n",
+            &["src/b.rs"],
+        ),
+        (
+            "### Module Map\n\n| Module | Purpose |\n| --- | --- |\n| `a` | A |\n| `b` | B |\n",
+            &["src/ has no table", "src/a.rs", "src/b.rs"],
+        ),
+    ];
+    for (agents, expected) in cases {
+        assert_eq!(missing_rows(agents, src)?, expected, "{agents}");
+    }
     Ok(())
 }
 
