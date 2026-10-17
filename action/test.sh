@@ -142,8 +142,9 @@ else
 fi
 
 for ref in main v1 v1.2; do
-	if install ACTUP_ACTION_REF="${ref}" RUNNER_OS=Linux RUNNER_ARCH=X64 \
-		|| ! grep -q "is not a release tag" "${work}/install.log" || [[ -s "${work}/output" ]]; then
+	if install ACTUP_ACTION_REF="${ref}" ACTUP_REPOSITORY=kjanat/actup-v2 RUNNER_OS=Linux RUNNER_ARCH=X64 \
+		|| ! grep -q "the action ref '${ref}' of 'kjanat/actup-v2' is not a release tag" "${work}/install.log" \
+		|| [[ -s "${work}/output" || -s "${work}/curl.log" ]]; then
 		fail "ref ${ref} without a version input fails"
 	else
 		pass "ref ${ref} without a version input fails"
