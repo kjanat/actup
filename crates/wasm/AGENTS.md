@@ -13,7 +13,7 @@ native builds see an empty crate.
 | `bridge.rs`   | JS provider → Rust `Provider` trait adapter | `JsProvider`, `JsProviderAdapter`                                                                                                                                                                           |
 | `clock.rs`    | `Date.now()` → `SystemTime` for `Clock`     | `JsClock`                                                                                                                                                                                                   |
 
-## WASM API (10 exports)
+## WASM API (11 exports)
 
 | Export                       | Sync/Async | Purpose                                             |
 | ---------------------------- | ---------- | --------------------------------------------------- |
