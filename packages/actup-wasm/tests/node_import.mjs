@@ -264,4 +264,20 @@ assert.equal(hostEdits[0].newRef, "v4.2.0", "edit targets v4.2.0");
 
 console.log("PASS: mixed-case host resolves and plans its edit");
 
+// Test 13: a value the line does not hold verbatim gets no ranges and no edit.
+const escapedYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: "actions/checkout@v4.0.\\x30"
+`;
+const [escapedLoc] = parseUsesRefs(escapedYaml);
+assert.equal(escapedLoc.value, "actions/checkout@v4.0.0", "escape is decoded");
+assert.equal(escapedLoc.ref_range ?? null, null, "no ref range for an escaped value");
+const escapedResults = await checkRefs(escapedYaml, mockProvider);
+assert.equal(statusName(escapedResults[0].status), "Outdated", "escaped ref is still checked");
+assert.deepEqual(planUpdates(escapedYaml, escapedResults), [], "no edit for an escaped value");
+
+console.log("PASS: escaped value is checked but gets no edit");
+
 console.log("\nAll npm package integration tests PASSED");

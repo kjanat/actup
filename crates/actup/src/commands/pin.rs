@@ -9,7 +9,10 @@ use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
-    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, repin_sha_edit},
+    common::{
+        EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, repin_sha_edit,
+        report_unplaceable,
+    },
 };
 
 /// Resolve the SHA for an action reference.
@@ -83,13 +86,21 @@ async fn pin_action_edit(
         };
         let short = &target.sha()[..7.min(target.sha().len())];
         let display = format!("{} ({short})", target.version());
-        Some((repin_sha_edit(loc, action_ref, target), display))
+        let Some(edit) = repin_sha_edit(loc, target) else {
+            report_unplaceable(action_ref, loc, errors);
+            return None;
+        };
+        Some((edit, display))
     } else {
-        let (prefix, _) = loc.value().split_once('@')?;
+        let (Some(range), Some((prefix, _))) = (loc.value_range(), loc.value().split_once('@'))
+        else {
+            report_unplaceable(action_ref, loc, errors);
+            return None;
+        };
         let sha = resolve_sha(provider, action_ref, errors).await?;
         let new_uses = format!("{prefix}@{sha}");
         let comment = format!(" # {}", action_ref.ref_str());
-        let edit = PendingEdit::replace_range(loc.line(), loc.value_range(), new_uses.clone())
+        let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
             .with_comment(comment.clone());
         Some((edit, format!("{new_uses}{comment}")))
     }
@@ -205,6 +216,7 @@ mod tests {
 
     struct FixedShaProvider {
         sha: Sha40,
+        versions: version::Set,
     }
 
     impl Provider for FixedShaProvider {
@@ -220,7 +232,8 @@ mod tests {
             &self,
             _repo: &ActionRepoId,
         ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
-            Box::pin(async { Ok(version::Set::new()) })
+            let versions = self.versions.clone();
+            Box::pin(async move { Ok(versions) })
         }
 
         fn resolve_ref_to_sha(
@@ -262,7 +275,10 @@ mod tests {
         let Some(sha40) = Sha40::new(sha.clone()) else {
             panic!("fixture SHA must be valid");
         };
-        let provider = FixedShaProvider { sha: sha40 };
+        let provider = FixedShaProvider {
+            sha: sha40,
+            versions: version::Set::new(),
+        };
         let content = [
             "steps:",
             "  - { uses: actions/upload-pages-artifact@v4, with: { path: dist } }",
@@ -312,7 +328,10 @@ mod tests {
     async fn test_pin_keeps_the_host_as_written() -> Result<(), Box<dyn std::error::Error>> {
         let sha = "d".repeat(40);
         let sha40 = Sha40::new(sha.clone()).ok_or("fixture SHA must be valid")?;
-        let provider = FixedShaProvider { sha: sha40 };
+        let provider = FixedShaProvider {
+            sha: sha40,
+            versions: version::Set::new(),
+        };
         let content = "steps:\n  - uses: GitHub.COM/actions/checkout@v4\n".to_string();
 
         let config = Config::default();
@@ -337,6 +356,56 @@ mod tests {
                 .map_err(|line| format!("edit on line {line} did not apply"))?,
             format!("steps:\n  - uses: GitHub.COM/actions/checkout@{sha} # v4\n")
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_pin_reports_values_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let old = "a".repeat(40);
+        let new = "b".repeat(40);
+        let versions = version::Set::build(
+            vec![
+                std::sync::Arc::new(version::Info::new(version::Version::parse("v4.0.0"), &old)),
+                std::sync::Arc::new(version::Info::new(version::Version::parse("v4.2.0"), &new)),
+            ],
+            std::collections::HashMap::from([(
+                4,
+                std::sync::Arc::new(version::Info::new(version::Version::parse("v4.2.0"), &new)),
+            )]),
+            std::collections::HashMap::new(),
+            Some(std::sync::Arc::new(version::Info::new(
+                version::Version::parse("v4.2.0"),
+                &new,
+            ))),
+        );
+        let sha40 = Sha40::new("c".repeat(40)).ok_or("fixture SHA must be valid")?;
+        let provider = FixedShaProvider {
+            sha: sha40,
+            versions,
+        };
+        let content = format!(
+            "steps:\n  - uses: \"actions/checkout@v\\x34\"\n  - uses: \"actions/cache@\\x61{}\"\n",
+            &old[1..]
+        );
+
+        let config = Config::default();
+        let mut errors = ErrorTally::default();
+        let mut refs = Vec::new();
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+            refs.push(action_ref.to_string());
+            let edit = pin_action_edit(&provider, &action_ref, &loc, &config, &mut errors).await;
+            assert!(edit.is_none(), "{action_ref}");
+        }
+
+        assert_eq!(
+            refs,
+            [
+                "actions/checkout@v4".to_string(),
+                format!("actions/cache@{old}")
+            ]
+        );
+        assert_eq!(errors.total(), 2);
         Ok(())
     }
 }

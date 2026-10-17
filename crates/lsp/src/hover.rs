@@ -120,7 +120,9 @@ fn find_action_at_position(
 
         // Convert byte offsets to the negotiated LSP encoding.
         let raw_line = loc.raw_line();
-        let value_range = loc.value_range();
+        let Some(value_range) = loc.value_range() else {
+            continue;
+        };
         let col_start = crate::position::byte_to_col(raw_line, value_range.start, encoding);
         let col_end = crate::position::byte_to_col(raw_line, value_range.end, encoding);
 
@@ -464,6 +466,24 @@ mod tests {
         assert_eq!(located.action_ref.owner(), "actions");
         assert_eq!(located.action_ref.repo(), "checkout");
         assert_eq!(located.action_ref.ref_str(), "v4");
+    }
+
+    #[test]
+    fn find_action_skips_value_not_written_verbatim() {
+        let pos = Position {
+            line: 1,
+            character: 20,
+        };
+        for yaml in [
+            "steps:\n  - uses: \"actions/checkout@v\\x34\"\n",
+            "steps:\n  - uses: \"a/b@\\\n      v4\"\n",
+        ] {
+            assert!(
+                find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16)
+                    .is_none(),
+                "{yaml:?}"
+            );
+        }
     }
 
     #[test]

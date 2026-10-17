@@ -9,39 +9,34 @@ use owo_colors::OwoColorize;
 
 use crate::{
     cli::OutputFormat,
-    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner},
+    common::{EditResult, ErrorTally, FileEdits, PendingEdit, WorkflowScanner, report_unplaceable},
 };
 
-/// Create an edit for updating an action ref.
-fn create_edit(loc: &UsesLocation, action_ref: &ActionRef, new_ref: &str) -> PendingEdit {
-    loc.ref_range().map_or_else(
-        || {
-            PendingEdit::replace_ref(
-                loc.line(),
-                action_ref.ref_str().to_string(),
-                new_ref.to_string(),
-            )
-        },
-        |range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()),
-    )
+/// Create an edit that replaces the ref of `loc` with `new_ref`.
+fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
+    loc.ref_range()
+        .map(|range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()))
 }
 
 /// Build the edit for an outdated action, preserving its reference style.
 ///
 /// Tag refs update to the new tag. SHA pins re-pin to the target's commit SHA
 /// (never unpin to a tag) and keep a `# vX.Y.Z` version comment accurate.
-fn build_edit(loc: &UsesLocation, action_ref: &ActionRef, target: &version::Info) -> PendingEdit {
+fn build_edit(
+    loc: &UsesLocation,
+    action_ref: &ActionRef,
+    target: &version::Info,
+) -> Option<PendingEdit> {
     if action_ref.is_sha() {
-        crate::common::repin_sha_edit(loc, action_ref, target)
+        crate::common::repin_sha_edit(loc, target)
     } else {
-        create_edit(loc, action_ref, &target.version().to_string())
+        ref_edit(loc, &target.version().to_string())
     }
 }
 
 /// Pin a floating branch ref to its HEAD SHA, tagging it with a `# branch` comment.
-fn pin_branch_edit(loc: &UsesLocation, ref_name: &str, sha: &str) -> PendingEdit {
-    PendingEdit::replace_ref(loc.line(), ref_name.to_string(), sha.to_string())
-        .with_comment(format!(" # {ref_name}"))
+fn pin_branch_edit(loc: &UsesLocation, ref_name: &str, sha: &str) -> Option<PendingEdit> {
+    ref_edit(loc, sha).map(|edit| edit.with_comment(format!(" # {ref_name}")))
 }
 
 /// Write accumulated file edits, recording errors.
@@ -114,6 +109,10 @@ pub async fn run(
                 ),
                 _ => continue, // Not actionable, skip
             };
+            let Some(edit) = edit else {
+                report_unplaceable(&action_ref, &loc, &mut errors);
+                continue;
+            };
 
             if !file_edits.add(edit) {
                 eprintln!(
@@ -157,7 +156,110 @@ pub async fn run(
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::{collections::HashMap, sync::Arc};
+
+    use actup_core::{
+        ActionRepoId, BoxFuture,
+        provider::{ActionYml, Kind, Provider, Sha40},
+    };
+
     use super::*;
+    use crate::cli::CliExitCode;
+
+    struct TagProvider;
+
+    impl Provider for TagProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            let old = Arc::new(version::Info::new(
+                version::Version::parse("v4.0.0"),
+                sha40('a'),
+            ));
+            let new = Arc::new(version::Info::new(
+                version::Version::parse("v4.2.0"),
+                sha40('b'),
+            ));
+            let set = version::Set::build(
+                vec![Arc::clone(&old), Arc::clone(&new)],
+                HashMap::from([(4, Arc::clone(&new))]),
+                HashMap::new(),
+                Some(new),
+            );
+            Box::pin(async move { Ok(set) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            let sha = Sha40::new(sha40('a')).unwrap_or_else(|| unreachable!());
+            Box::pin(async move { Ok(sha) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_run_reports_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        let content = "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: \"actions/checkout@v4.0.\\x30\"\n      - uses: actions/checkout@v4.0.0\n";
+        std::fs::write(&file, content)?;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(TagProvider));
+
+        let code = run(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &Config::default(),
+            &registry,
+        )
+        .await;
+
+        assert_eq!(code, i32::from(CliExitCode::UserError));
+        assert_eq!(
+            std::fs::read_to_string(&file)?,
+            content.replace("checkout@v4.0.0\n", "checkout@v4.2.0\n")
+        );
+        Ok(())
+    }
 
     fn make_action_ref(owner: &str, repo: &str, ref_str: &str) -> ActionRef {
         ActionRef::simple(owner, repo, ref_str)
@@ -165,21 +267,40 @@ mod tests {
 
     // Version resolution tests now live in actup-core::resolution module.
 
-    // create_edit tests
+    #[test]
+    fn test_ref_edit_replaces_only_the_ref() {
+        let line = "      - uses: actions/checkout@v4";
+        let loc = UsesLocation::new(10, 15, "actions/checkout@v4".to_string(), line.to_string());
+        let edit = ref_edit(&loc, "v5").unwrap();
+        assert_eq!(edit.line, 10);
+        assert_eq!(
+            edit.apply(line).unwrap(),
+            "      - uses: actions/checkout@v5"
+        );
+    }
 
     #[test]
-    fn test_create_edit_with_ref_range() {
-        let loc = UsesLocation::new(
-            10,
-            15,
-            "actions/checkout@v4".to_string(),
-            "      - uses: actions/checkout@v4".to_string(),
+    fn test_pin_branch_edit_pins_with_branch_comment() {
+        let sha = sha40('c');
+        let line = "      - uses: a/b@main";
+        let loc = sha_loc(line);
+        let edit = pin_branch_edit(&loc, "main", &sha).unwrap();
+        assert_eq!(
+            edit.apply(line).unwrap(),
+            format!("      - uses: a/b@{sha} # main")
         );
-        let action_ref = make_action_ref("actions", "checkout", "v4");
-        let edit = create_edit(&loc, &action_ref, "v5");
+    }
 
-        // Should use replace_range when ref_range is available
-        assert_eq!(edit.line, 10);
+    #[test]
+    fn test_edits_skip_value_not_written_verbatim() {
+        let line = "      - uses: \"actions/checkout@v\\x34\"";
+        let loc = UsesLocation::new(1, 16, "actions/checkout@v4".to_string(), line.to_string());
+        let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
+        let tag = make_action_ref("actions", "checkout", "v4");
+        let pinned = make_action_ref("actions", "checkout", &sha40('b'));
+        assert!(build_edit(&loc, &tag, &target).is_none());
+        assert!(build_edit(&loc, &pinned, &target).is_none());
+        assert!(pin_branch_edit(&loc, "v4", &sha40('c')).is_none());
     }
 
     fn sha40(byte: char) -> String {
@@ -208,7 +329,10 @@ mod tests {
             actup_core::version::Version::parse("v5.0.0"),
             sha40('a'),
         );
-        let result = build_edit(&loc, &action_ref, &target).apply(line).unwrap();
+        let result = build_edit(&loc, &action_ref, &target)
+            .unwrap()
+            .apply(line)
+            .unwrap();
         assert_eq!(result, "      - uses: actions/checkout@v5.0.0");
     }
 
@@ -221,7 +345,10 @@ mod tests {
         let action_ref = make_action_ref("actions", "checkout", &old);
         let target =
             actup_core::version::Info::new(actup_core::version::Version::parse("v7.0.1"), &new);
-        let result = build_edit(&loc, &action_ref, &target).apply(&line).unwrap();
+        let result = build_edit(&loc, &action_ref, &target)
+            .unwrap()
+            .apply(&line)
+            .unwrap();
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -261,7 +388,7 @@ mod tests {
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content.clone());
         let mut seen = 0;
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
-            assert!(file_edits.add(build_edit(&loc, &action_ref, &target)));
+            assert!(file_edits.add(build_edit(&loc, &action_ref, &target).unwrap()));
             seen += 1;
         }
         assert_eq!(seen, 6);
@@ -285,20 +412,5 @@ mod tests {
                 new_sha.as_str()
             ]
         );
-    }
-
-    #[test]
-    fn test_create_edit_fallback_replace_ref() {
-        // When ref_range returns None (no @), falls back to replace_ref
-        let loc = UsesLocation::new(
-            5,
-            15,
-            "./local-action".to_string(),
-            "      - uses: ./local-action".to_string(),
-        );
-        let action_ref = make_action_ref(".", "local-action", "");
-        let edit = create_edit(&loc, &action_ref, "v1.0.0");
-
-        assert_eq!(edit.line, 5);
     }
 }

@@ -98,13 +98,6 @@ pub enum EditKind {
         /// New content to insert.
         new: String,
     },
-    /// Replace the ref portion only (after @).
-    ReplaceRef {
-        /// Old ref string (for validation).
-        old_ref: String,
-        /// New ref string.
-        new_ref: String,
-    },
 }
 
 /// A pending edit to a specific line.
@@ -125,16 +118,6 @@ impl PendingEdit {
         Self {
             line,
             kind: EditKind::ReplaceRange { range, new },
-            comment: None,
-        }
-    }
-
-    /// Create an edit that replaces the ref portion.
-    #[must_use]
-    pub const fn replace_ref(line: usize, old_ref: String, new_ref: String) -> Self {
-        Self {
-            line,
-            kind: EditKind::ReplaceRef { old_ref, new_ref },
             comment: None,
         }
     }
@@ -162,14 +145,6 @@ impl PendingEdit {
                 s.push_str(&line[range.end..]);
                 s
             }
-            EditKind::ReplaceRef { old_ref, new_ref } => {
-                let pattern = format!("@{old_ref}");
-                if !line.contains(&pattern) {
-                    return None;
-                }
-                let new_pattern = format!("@{new_ref}");
-                line.replacen(&pattern, &new_pattern, 1)
-            }
         };
 
         // Append comment if specified and line doesn't already have one
@@ -188,25 +163,14 @@ impl PendingEdit {
 /// Re-pins to the SHA (never unpins to a tag) and keeps a `# vX.Y.Z` version
 /// comment accurate: a stale version comment is refreshed, a missing one is
 /// added, and a foreign comment is left untouched. Shared by `update` and `pin`.
-pub fn repin_sha_edit(
-    loc: &UsesLocation,
-    action_ref: &ActionRef,
-    target: &version::Info,
-) -> PendingEdit {
+pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<PendingEdit> {
     let new_sha = target.sha();
     let version_comment = format!(" # {}", target.version());
-
-    let Some(range) = loc.ref_range() else {
-        return PendingEdit::replace_ref(
-            loc.line(),
-            action_ref.ref_str().to_string(),
-            new_sha.to_string(),
-        );
-    };
+    let range = loc.ref_range()?;
 
     let raw = loc.raw_line();
     let tail = raw.get(range.end..).unwrap_or("").trim_start();
-    if is_version_comment(tail) {
+    Some(if is_version_comment(tail) {
         // Overwrite the SHA and the stale version comment together.
         PendingEdit::replace_range(
             loc.line(),
@@ -218,7 +182,17 @@ pub fn repin_sha_edit(
         // foreign comment is preserved.
         PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
             .with_comment(version_comment)
-    }
+    })
+}
+
+/// Warn that the `uses:` value at `loc` has no in-place edit and record a user error.
+pub fn report_unplaceable(action_ref: &ActionRef, loc: &UsesLocation, errors: &mut ErrorTally) {
+    eprintln!(
+        "{}: {action_ref} (line {}) - `uses:` value is escaped or spans lines; edit it by hand",
+        "Warning".yellow(),
+        loc.line()
+    );
+    errors.record_user();
 }
 
 /// Whether a trailing line fragment is a version comment like `# v1.2.3` or `# 1.2`.
@@ -578,23 +552,8 @@ mod tests {
     }
 
     #[test]
-    fn test_pending_edit_replace_ref() {
-        let edit = PendingEdit::replace_ref(1, "v1".to_string(), "v2".to_string());
-        let line = "  - uses: actions/checkout@v1";
-        let result = edit.apply(line).unwrap();
-        assert_eq!(result, "  - uses: actions/checkout@v2");
-    }
-
-    #[test]
-    fn test_pending_edit_replace_ref_not_found() {
-        let edit = PendingEdit::replace_ref(1, "v3".to_string(), "v4".to_string());
-        let line = "  - uses: actions/checkout@v1";
-        assert!(edit.apply(line).is_none());
-    }
-
-    #[test]
     fn test_pending_edit_with_comment() {
-        let edit = PendingEdit::replace_ref(1, "v1".to_string(), "abc123".to_string())
+        let edit = PendingEdit::replace_range(1, 27..29, "abc123".to_string())
             .with_comment(" # v1".to_string());
         let line = "  - uses: actions/checkout@v1";
         let result = edit.apply(line).unwrap();
@@ -603,7 +562,7 @@ mod tests {
 
     #[test]
     fn test_pending_edit_comment_not_added_if_exists() {
-        let edit = PendingEdit::replace_ref(1, "v1".to_string(), "v2".to_string())
+        let edit = PendingEdit::replace_range(1, 27..29, "v2".to_string())
             .with_comment(" # pinned".to_string());
         let line = "  - uses: actions/checkout@v1 # existing comment";
         let result = edit.apply(line).unwrap();
@@ -635,11 +594,8 @@ mod tests {
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old}");
         let loc = sha_loc(&line);
-        let action_ref = ActionRef::simple("actions", "checkout", &old);
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = repin_sha_edit(&loc, &action_ref, &target)
-            .apply(&line)
-            .unwrap();
+        let result = repin_sha_edit(&loc, &target).unwrap().apply(&line).unwrap();
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -652,11 +608,8 @@ mod tests {
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old} # v7.0.0");
         let loc = sha_loc(&line);
-        let action_ref = ActionRef::simple("actions", "checkout", &old);
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = repin_sha_edit(&loc, &action_ref, &target)
-            .apply(&line)
-            .unwrap();
+        let result = repin_sha_edit(&loc, &target).unwrap().apply(&line).unwrap();
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -669,15 +622,30 @@ mod tests {
         let new = sha40('b');
         let line = format!("      - uses: actions/checkout@{old} # managed by bot");
         let loc = sha_loc(&line);
-        let action_ref = ActionRef::simple("actions", "checkout", &old);
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let result = repin_sha_edit(&loc, &action_ref, &target)
-            .apply(&line)
-            .unwrap();
+        let result = repin_sha_edit(&loc, &target).unwrap().apply(&line).unwrap();
         assert_eq!(
             result,
             format!("      - uses: actions/checkout@{new} # managed by bot")
         );
+    }
+
+    #[test]
+    fn test_repin_sha_skips_value_not_written_verbatim() {
+        let old = sha40('a');
+        let line = format!("      - uses: \"actions/checkout@\\x61{}\"", &old[1..]);
+        let loc = UsesLocation::new(1, 16, format!("actions/checkout@{old}"), line);
+        let target = version::Info::new(version::Version::parse("v7.0.1"), sha40('b'));
+        assert!(repin_sha_edit(&loc, &target).is_none());
+    }
+
+    #[test]
+    fn test_report_unplaceable_records_a_user_error() {
+        let loc = UsesLocation::new(3, 1, "a/b@v4".to_string(), "x".to_string());
+        let mut errors = ErrorTally::default();
+        report_unplaceable(&ActionRef::simple("a", "b", "v4"), &loc, &mut errors);
+        assert_eq!(errors.total(), 1);
+        assert_eq!(errors.exit_code(), CliExitCode::UserError);
     }
 
     // FileEdits tests
@@ -693,7 +661,7 @@ mod tests {
         let content = "line1\nuses: foo@v1\nline3\n";
         let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
 
-        let edit = PendingEdit::replace_ref(2, "v1".to_string(), "v2".to_string());
+        let edit = PendingEdit::replace_range(2, 10..12, "v2".to_string());
         assert!(fe.add(edit));
         assert!(!fe.is_empty());
 
@@ -705,8 +673,8 @@ mod tests {
     fn test_file_edits_collision() {
         let mut fe = FileEdits::new(PathBuf::from("/test"), "line1\nline2\n".to_string());
 
-        let edit1 = PendingEdit::replace_ref(1, "1".to_string(), "ONE".to_string());
-        let edit2 = PendingEdit::replace_ref(1, "1".to_string(), "UNO".to_string());
+        let edit1 = PendingEdit::replace_range(1, 4..5, "ONE".to_string());
+        let edit2 = PendingEdit::replace_range(1, 4..5, "UNO".to_string());
 
         assert!(fe.add(edit1));
         assert!(!fe.add(edit2)); // Collision
@@ -744,16 +712,8 @@ mod tests {
         let content = "  - uses: actions/checkout@v1\n  - uses: actions/setup-node@v2\n";
         let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
 
-        fe.add(PendingEdit::replace_ref(
-            1,
-            "v1".to_string(),
-            "v4".to_string(),
-        ));
-        fe.add(PendingEdit::replace_ref(
-            2,
-            "v2".to_string(),
-            "v5".to_string(),
-        ));
+        fe.add(PendingEdit::replace_range(1, 27..29, "v4".to_string()));
+        fe.add(PendingEdit::replace_range(2, 29..31, "v5".to_string()));
 
         let result = fe.apply().unwrap();
         assert_eq!(

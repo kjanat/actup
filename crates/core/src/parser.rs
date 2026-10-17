@@ -282,7 +282,7 @@ pub struct UsesLocation {
     /// The full line (for context)
     raw_line: String,
     /// Byte range of the ref portion (after `@`) within the line. Present
-    /// only if the value contains `@`. Computed at construction.
+    /// only if the value contains `@` and `raw_line` holds the value verbatim.
     ref_range: Option<RefRange>,
 }
 
@@ -290,17 +290,21 @@ impl UsesLocation {
     /// Create a new `UsesLocation`
     #[must_use]
     pub fn new(line: usize, column: usize, value: String, raw_line: String) -> Self {
-        let ref_range = value.find('@').map(|at_pos| RefRange {
-            start: column - 1 + at_pos + 1,
-            end: column - 1 + value.len(),
-        });
-        Self {
+        let mut loc = Self {
             line,
             column,
             value,
             raw_line,
-            ref_range,
-        }
+            ref_range: None,
+        };
+        loc.ref_range = loc.value_range().and_then(|range| {
+            let at_pos = loc.value.find('@')?;
+            Some(RefRange {
+                start: range.start + at_pos + 1,
+                end: range.end,
+            })
+        });
+        loc
     }
 
     /// Get the line number
@@ -329,11 +333,12 @@ impl UsesLocation {
 }
 
 impl UsesLocation {
-    /// Get the byte range of the uses value in the line
+    /// Get the byte range of the uses value in the line, if the line holds it verbatim.
     #[must_use]
-    pub const fn value_range(&self) -> std::ops::Range<usize> {
-        let start = self.column - 1;
-        start..start + self.value.len()
+    pub fn value_range(&self) -> Option<std::ops::Range<usize>> {
+        let start = self.column.checked_sub(1)?;
+        let range = start..start.checked_add(self.value.len())?;
+        (self.raw_line.get(range.clone()) == Some(self.value.as_str())).then_some(range)
     }
 
     /// Get just the ref portion range (after @)
@@ -558,7 +563,10 @@ jobs:
             .iter()
             .map(|loc| {
                 let raw = loc.raw_line();
-                let value_text = raw.get(loc.value_range()).unwrap_or("<out of range>");
+                let value_text = loc
+                    .value_range()
+                    .and_then(|r| raw.get(r))
+                    .unwrap_or("<no value range>");
                 let ref_text = loc
                     .ref_range()
                     .and_then(|r| raw.get(r))
@@ -643,6 +651,53 @@ jobs:
             "steps:\n  - { name: \"déploiement ✓\", uses: a/b@v4 }\n",
             &[(2, "a/b@v4", "v4")],
         );
+    }
+
+    #[test]
+    fn test_flow_sequence_entry_ends_at_bracket() {
+        assert_exact_ranges(
+            "steps: [uses: a/b@v4]\njobs: [uses: c/d@v1, uses: e/f@v2]\n",
+            &[
+                (1, "a/b@v4", "v4"),
+                (2, "c/d@v1", "v1"),
+                (2, "e/f@v2", "v2"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_no_ranges_when_line_differs_from_value() {
+        for (yaml, value) in [
+            (
+                "steps:\n  - uses: \"actions/checkout@v\\x34\"\n",
+                "actions/checkout@v4",
+            ),
+            ("steps:\n  - uses: 'a/b@v''4'\n", "a/b@v'4"),
+            ("steps:\n  - uses: |\n      a/b@v4\n", "a/b@v4\n"),
+            ("steps:\n  - uses: a/b@v4\n      more\n", "a/b@v4 more"),
+            ("steps:\n  - uses: \"a/b@\\\n      v4\"\n", "a/b@v4"),
+        ] {
+            let locations = extract_uses_from_yaml(yaml);
+            let [loc] = locations.as_slice() else {
+                panic!("expected one location in {yaml:?}: {locations:?}");
+            };
+            assert_eq!(loc.value(), value, "{yaml:?}");
+            assert_eq!(loc.value_range(), None, "{yaml:?}");
+            assert_eq!(loc.ref_range(), None, "{yaml:?}");
+        }
+    }
+
+    #[test]
+    fn test_no_ranges_when_column_is_outside_the_line() {
+        let raw = "  - uses: a/b@v4".to_string();
+        for column in [0, 12, 40] {
+            let loc = UsesLocation::new(1, column, "a/b@v4".to_string(), raw.clone());
+            assert_eq!(loc.value_range(), None, "column {column}");
+            assert_eq!(loc.ref_range(), None, "column {column}");
+        }
+        let loc = UsesLocation::new(1, 11, "a/b@v4".to_string(), raw);
+        assert_eq!(loc.value_range(), Some(10..16));
+        assert_eq!(loc.ref_range(), Some(14..16));
     }
 
     #[test]

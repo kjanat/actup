@@ -134,10 +134,12 @@ pub struct LocatedAction {
     pub action_ref: ActionRef,
     /// 0-indexed line in the document.
     pub line: u32,
-    /// Byte range of the ref portion (after `@`) within the line.
-    /// Falls back to the full value range if no `@` is present.
+    /// Range of the ref portion (after `@`) within the line, or the whole line
+    /// when the line does not hold the value verbatim.
     pub col_start: u32,
     pub col_end: u32,
+    /// Whether `col_start..col_end` covers the ref text, so edits may target it.
+    pub editable: bool,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
     /// What follows the ref on its line (only meaningful for SHA pins).
@@ -159,7 +161,9 @@ pub fn locate_action_at(
     extract_located_actions(text, encoding)
         .into_iter()
         .find(|a| {
-            a.line == position.line && (a.col_start..=a.col_end).contains(&position.character)
+            a.editable
+                && a.line == position.line
+                && (a.col_start..=a.col_end).contains(&position.character)
         })
 }
 
@@ -181,19 +185,25 @@ fn extract_located_actions(
     for loc in locations {
         match parse_uses(loc.value()) {
             Ok(Some(action_ref)) => {
-                // ref_range gives byte range of just the ref after @; fall back to full value.
                 // Convert byte offsets to the negotiated LSP encoding.
                 let raw_line = loc.raw_line();
-                let r = loc.ref_range().unwrap_or_else(|| loc.value_range());
-                let col_start = crate::position::byte_to_col(raw_line, r.start, encoding);
-                let col_end = crate::position::byte_to_col(raw_line, r.end, encoding);
                 let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
-                // Only SHA pins carry a `# vX.Y.Z` comment we maintain on re-pin.
-                let trailing = if action_ref.is_sha() {
-                    classify_trailing(raw_line, r.end)
-                } else {
-                    TrailingComment::None
-                };
+                let (col_start, col_end, editable, trailing) =
+                    loc.ref_range()
+                        .map_or((0, line_end_col, false, TrailingComment::None), |r| {
+                            // Only SHA pins carry a `# vX.Y.Z` comment we maintain on re-pin.
+                            let trailing = if action_ref.is_sha() {
+                                classify_trailing(raw_line, r.end)
+                            } else {
+                                TrailingComment::None
+                            };
+                            (
+                                crate::position::byte_to_col(raw_line, r.start, encoding),
+                                crate::position::byte_to_col(raw_line, r.end, encoding),
+                                true,
+                                trailing,
+                            )
+                        });
 
                 #[allow(clippy::cast_possible_truncation)]
                 let line = (loc.line() - 1) as u32; // 1-indexed -> 0-indexed
@@ -202,6 +212,7 @@ fn extract_located_actions(
                     line,
                     col_start,
                     col_end,
+                    editable,
                     uses_value: loc.value().to_string(),
                     trailing,
                     line_end_col,
@@ -328,7 +339,12 @@ async fn compute_diagnostics_for_actions(
             _ => None,
         };
 
-        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value, edit) {
+        if let Some(mut diag) =
+            status_to_diagnostic(result.status(), range, &action.uses_value, edit)
+        {
+            if !action.editable {
+                diag.data = None;
+            }
             diagnostics.push(diag);
         }
     }
@@ -931,6 +947,46 @@ jobs:
     }
 
     #[test]
+    fn extract_located_actions_without_verbatim_value_cover_the_line() {
+        for yaml in [
+            "steps:\n  - uses: \"actions/checkout@v\\x34\"\n",
+            "steps:\n  - uses: 'a/b@v''4'\n",
+            "steps:\n  - uses: |\n      a/b@v4\n",
+            "steps:\n  - uses: a/b@v4\n      more\n",
+            "steps:\n  - uses: \"a/b@\\\n      v4\"\n",
+            "steps:\n  - name: \"✓\"\n    uses: \"a/b@v\\x34\"\n",
+        ] {
+            let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+            let [action] = actions.as_slice() else {
+                panic!("expected one action in {yaml:?}");
+            };
+            let Some(line) = yaml.lines().nth(action.line as usize) else {
+                panic!("line {} missing in {yaml:?}", action.line);
+            };
+            let line_len = line.encode_utf16().count();
+            assert!(!action.editable, "{yaml:?}");
+            assert_eq!(
+                (action.col_start, action.col_end, action.trailing),
+                (0, u32::try_from(line_len).unwrap(), TrailingComment::None),
+                "{yaml:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn locate_action_at_skips_value_not_written_verbatim() {
+        let yaml = "steps:\n  - uses: \"actions/checkout@v\\x34\"\n  - uses: a/b@v4\n";
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let at = |line, character| locate_action_at(yaml, Position { line, character }, encoding);
+        assert!(at(1, 0).is_none());
+        assert!(at(1, 28).is_none());
+        let Some(action) = at(2, 15) else {
+            panic!("verbatim ref not located");
+        };
+        assert_eq!(action.action_ref.repo(), "b");
+    }
+
+    #[test]
     fn extract_located_actions_skips_docker_and_local() {
         let yaml = r"
       - uses: docker://node:16
@@ -1265,6 +1321,49 @@ jobs:
         );
         assert!(result.diagnostics[0].message.contains("check failed"));
         assert!(result.errors.has_errors());
+    }
+
+    #[tokio::test]
+    async fn compute_diagnostics_drops_edits_for_value_not_written_verbatim() {
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::default();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let yaml = "    - uses: \"actions/checkout@v\\x33\"\n    - uses: actions/checkout@v3\n";
+        let result = compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        let [escaped, plain] = result.diagnostics.as_slice() else {
+            panic!("expected two diagnostics: {:?}", result.diagnostics);
+        };
+        assert_eq!(escaped.code, plain.code);
+        assert_eq!(escaped.range, test_utils::make_range(0, 0, 36));
+        assert!(escaped.data.is_none());
+        assert_eq!(plain.range, test_utils::make_range(1, 29, 31));
+        assert!(plain.data.is_some());
+
+        let actions = crate::code_actions::code_actions_for_diagnostics(
+            &uri,
+            Some(1),
+            &result.diagnostics,
+            true,
+        );
+        assert_eq!(actions.len(), 1);
+        assert!(
+            crate::code_actions::fix_all_in_file(&uri, Some(1), &result.diagnostics, true)
+                .is_none()
+        );
     }
 
     #[tokio::test]
