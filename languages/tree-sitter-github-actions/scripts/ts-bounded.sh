@@ -227,6 +227,15 @@ fi
 
 cap_bytes=$((cap_mb * 1024 * 1024))
 
+# An unprivileged process cannot raise a hard limit it inherited from an outer prlimit.
+for resource in as rss; do
+	hard="$(prlimit --pid "$$" --"$resource" --output HARD --noheadings --raw)"
+	if [ "$hard" != unlimited ] && [ "$hard" -lt "$cap_bytes" ]; then
+		cap_bytes="$hard"
+	fi
+done
+cap_mb=$((cap_bytes / 1024 / 1024))
+
 printf 'ts-bounded: MemTotal=%s MemAvailable=%s headroom=%s ceiling=%s cap=%s cmd=%s\n' \
 	"$(fmt_mb "$total_mb")" "$(fmt_mb "$avail_mb")" "$(fmt_mb "$headroom_mb")" "$(fmt_mb "$ceiling_mb")" "$(fmt_mb "$cap_mb")" "$*" >&2
 
