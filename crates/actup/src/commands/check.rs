@@ -442,13 +442,12 @@ mod tests {
 
         let finding_status = to_finding_status(status, Some(&versions));
 
-        // Verify exact_version is v6.0.2 (major 6's latest), NOT v8.0.0 (global)
         match finding_status {
             FindingStatus::Outdated { exact_version, .. } => {
                 assert_eq!(
                     exact_version,
                     Some("v6.0.2".to_string()),
-                    "exact_version should be latest for major 6, not global latest"
+                    "exact_version should be the full tag on the target commit"
                 );
             }
             _ => panic!("expected Outdated status"),
@@ -536,7 +535,7 @@ mod tests {
 
     /// Test that `exact_version` is None when no full tag shares the target commit.
     #[test]
-    fn test_exact_version_none_when_major_not_in_map() {
+    fn test_exact_version_none_without_full_tag_on_target_commit() {
         let v8_0_0 = make_version_info("v8.0.0", "bbb");
 
         let mut latest_per_major = HashMap::new();
@@ -549,7 +548,6 @@ mod tests {
             Some(v8_0_0),
         );
 
-        // Target is major-only v6, but v6 is not in latest_per_major
         let status = CheckStatus::Outdated {
             current: "v4".to_string(),
             target: make_version_info("v6", "ccc"), // major-only tag
@@ -561,7 +559,7 @@ mod tests {
             FindingStatus::Outdated { exact_version, .. } => {
                 assert_eq!(
                     exact_version, None,
-                    "exact_version should be None when target major is not in latest_per_major"
+                    "exact_version should be None when no full tag is on the target commit"
                 );
             }
             _ => panic!("expected Outdated status"),
