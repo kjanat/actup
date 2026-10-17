@@ -28,7 +28,7 @@ jobs:
           - { os: windows-11-arm, target: aarch64-pc-windows-msvc, archive: .zip, ext: .exe }
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust
         shell: bash
@@ -41,7 +41,9 @@ jobs:
 
       - name: Install cross
         if: matrix.cross
-        uses: taiki-e/install-action@cross
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cross
 
       - name: Build (cross)
         if: matrix.cross
@@ -74,7 +76,7 @@ jobs:
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ matrix.package }}-${{ matrix.target }}
           path: ${{ matrix.package }}-${{ github.ref_name }}-${{ matrix.target }}${{ matrix.archive }}
@@ -87,7 +89,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
           merge-multiple: true
@@ -99,7 +101,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Upload checksums
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: checksums
           path: artifacts/SHA256SUMS.txt
@@ -109,13 +111,13 @@ jobs:
     needs: [build, checksums]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with: { path: artifacts, merge-multiple: true }
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: artifacts/*
           generate_release_notes: true
@@ -187,7 +189,7 @@ jobs:
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         env: { CARGO_REGISTRY_TOKEN: "" }
 
       - run: rustup toolchain install
@@ -206,12 +208,12 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: wasm-pack@0.15.0
       - name: Install deps
@@ -230,7 +232,7 @@ jobs:
       - name: Smoke test
         working-directory: packages/actup-wasm
         run: node tests/node_import.mjs
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"

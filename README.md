@@ -463,6 +463,7 @@ just lint           # Format + clippy
 # Run
 just run check      # Run CLI
 just self-check     # Run actup on this repo
+just self-check-pins # Fail on a uses: ref not pinned to a commit SHA
 
 # CI
 just ci             # Full CI checks locally

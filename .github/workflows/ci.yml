@@ -33,32 +33,34 @@ jobs:
     name: Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
       - run: cargo fmt --all -- --check
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
   test:
     name: Test
     runs-on: ubuntu-latest
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: nextest
       - run: cargo nextest run --workspace --all-features --profile ci
       - run: cargo nextest run --workspace --no-default-features --profile ci
       - run: cargo test --doc --workspace --all-features
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: target/nextest/ci/junit.xml
           report_type: test_results
@@ -74,16 +76,18 @@ jobs:
         os: ${{ fromJSON((github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'ci:full')) && '["macos-latest", "windows-latest"]' || '["windows-latest"]') }}
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: nextest
       - run: cargo nextest run --workspace --all-features --profile ci
       - run: cargo nextest run --workspace --no-default-features --profile ci
       - run: cargo test --doc --workspace --all-features
       - name: Upload test results to Codecov
         if: ${{ !cancelled() && env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: target/nextest/ci/junit.xml
           report_type: test_results
@@ -94,29 +98,31 @@ jobs:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo doc --workspace --all-features --no-deps
   shear:
     name: Unused Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: taiki-e/install-action@cargo-shear
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-shear
       - run: cargo shear
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
       - id: msrv
         shell: bash
@@ -126,7 +132,7 @@ jobs:
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
       - run: rustup toolchain install "${MSRV}" --profile minimal
         env: { MSRV: "${{ steps.msrv.outputs.version }}" }
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo "+${MSRV}" check --workspace --all-targets --all-features
         env: { MSRV: "${{ steps.msrv.outputs.version }}" }
   coverage:
@@ -134,14 +140,16 @@ jobs:
     runs-on: ubuntu-latest
     env: { CODECOV_TOKEN: "${{ secrets.CODECOV_TOKEN }}" }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@cargo-llvm-cov
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: lcov.info
           fail_ci_if_error: true
@@ -151,12 +159,12 @@ jobs:
     name: Extensions
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
-      - uses: oven-sh/setup-bun@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: wasm-pack@0.15.0
       - name: Zed — clippy
@@ -182,14 +190,14 @@ jobs:
     name: WASM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Clippy (wasm32)
         run: cargo clippy -p actup-wasm --target wasm32-unknown-unknown -- -D warnings
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
       - name: Install wasm-pack
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: wasm-pack@0.15.0
       - name: Install npm deps
@@ -204,7 +212,7 @@ jobs:
       - name: Test
         working-directory: packages/actup-wasm
         run: bun run test
-      - uses: extractions/setup-just@v4
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Crate node tests
         run: just wasm-node-test
 
@@ -216,11 +224,22 @@ jobs:
       - run: shellcheck action/*.sh
       - run: action/test.sh
 
+  self-check:
+    name: Self-check pins
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - run: just self-check-pins
+        env: { GITHUB_TOKEN: "${{ github.token }}" }
+
   # Final status check for branch protection
   ci-success:
     name: CI Success
     if: always()
-    needs: [fmt, clippy, test, test-platforms, doc, shear, deny, msrv, coverage, check-extensions, wasm, action]
+    needs: [fmt, clippy, test, test-platforms, doc, shear, deny, msrv, coverage, check-extensions, wasm, action, self-check]
     runs-on: ubuntu-latest
     steps:
       - name: Check all jobs passed
@@ -237,6 +256,7 @@ jobs:
           CHECK_EXTENSIONS: ${{ needs.check-extensions.result }}
           WASM: ${{ needs.wasm.result }}
           ACTION: ${{ needs.action.result }}
+          SELF_CHECK: ${{ needs.self-check.result }}
         run: |
           if [[ "${FMT}" != "success" ]] || \
              [[ "${CLIPPY}" != "success" ]] || \
@@ -249,7 +269,8 @@ jobs:
              [[ "${COVERAGE}" != "success" ]] || \
              [[ "${CHECK_EXTENSIONS}" != "success" ]] || \
              [[ "${WASM}" != "success" ]] || \
-             [[ "${ACTION}" != "success" ]]; then
+             [[ "${ACTION}" != "success" ]] || \
+             [[ "${SELF_CHECK}" != "success" ]]; then
             echo "One or more jobs failed"
             exit 1
           fi

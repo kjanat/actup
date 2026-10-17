@@ -235,6 +235,14 @@ ci: fmt-check clippy-strict clippy-wasm test wasm-node-test action-test
 self-check:
     cargo run --release --package actup -- check
 
+# Fail when a workflow or action ref in this repo is not pinned to a commit SHA
+[group('ci')]
+self-check-pins:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cargo run --package actup -- check --format json . \
+        | jq -e 'map(select(.reference | test("^[0-9a-f]{40}$") | not)) | if length == 0 then true else map("\(.file):\(.line): \(.action) is not pinned to a commit SHA") | join("\n") + "\n" | halt_error(1) end'
+
 # Run actup on this repo (verbose)
 [group('ci')]
 self-check-verbose:

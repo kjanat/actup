@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download artifact
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             let allArtifacts = await github.rest.actions.listWorkflowRunArtifacts({
@@ -37,7 +37,7 @@ jobs:
         run: unzip "${RUNNER_TEMP}/artifacts/pr_number.zip" -d "${RUNNER_TEMP}/artifacts"
 
       - name: "Comment on PR"
-        uses: actions/github-script@v9
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
