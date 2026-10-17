@@ -40,11 +40,34 @@ ghcr.io/o/i:v0.2.0
 ghcr.io/o/i:latest
 EOF'
 
+expect v1.0.0+build-5 'prerelease=false
+dist-tag=latest
+image-tags<<EOF
+ghcr.io/o/i:v1.0.0_build-5
+ghcr.io/o/i:latest
+EOF'
+
 expect v1.0.0-beta+exp 'prerelease=true
 dist-tag=next
 image-tags<<EOF
-ghcr.io/o/i:v1.0.0-beta+exp
+ghcr.io/o/i:v1.0.0-beta_exp
 EOF'
+
+long="v1.0.0-$(printf 'a%.0s' {1..122})"
+for tag in "v1.0.0~x" "release/v1" ".v1" "${long}"; do
+	if ! decide "${tag}" && grep -q "::error::tag ${tag} gives the invalid image tag" "${work}/out" \
+		&& [[ ! -s "${work}/output" ]]; then
+		pass "${tag:0:20} fails before any output"
+	else
+		fail "${tag:0:20} fails before any output"
+	fi
+done
+
+if decide "${long%a}" && grep -q "image-tags<<EOF" "${work}/output"; then
+	pass "a 128-character image tag passes"
+else
+	fail "a 128-character image tag passes"
+fi
 
 if ((failures > 0)); then
 	echo "${failures} failed"

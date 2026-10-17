@@ -58,8 +58,9 @@ release, `just examples-pin <tag>` pins both examples to the tag's commit.
 ### Container Image
 
 Each release publishes `ghcr.io/kjanat/actup:<tag>` for `linux/amd64` and
-`linux/arm64`, and `:latest` for releases without a prerelease suffix. The image
-runs actup in `/work` as a non-root user.
+`linux/arm64`, and `:latest` for releases without a prerelease suffix. A `+` in
+the tag becomes `_` in the image tag, so `v1.0.0+build-5` publishes
+`:v1.0.0_build-5`. The image runs actup in `/work` as a non-root user.
 
 ```sh
 docker run --rm -v "$PWD:/work" -e GITHUB_TOKEN ghcr.io/kjanat/actup:v1.2.3 check
