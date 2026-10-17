@@ -845,8 +845,6 @@ ignore = ["internal/*", "deprecated/action"]
 }
 
 mod new_config_format_tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used)]
-
     use std::{fs, num::NonZeroU8};
 
     use actup_core::{ApiMode, Config, FetchSettings, HostConfig, HostKind};
@@ -893,7 +891,7 @@ max_tags_per_repo = 50
     }
 
     #[test]
-    fn hosts_section_loads_correctly() {
+    fn hosts_section_loads_correctly() -> Result<(), Box<dyn std::error::Error>> {
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
             fs::write(
@@ -914,13 +912,14 @@ token_env = "GHE_TOKEN"
             "load config",
         );
         assert_eq!(config.hosts.len(), 1);
-        let host = config.hosts.get("ghe.corp.com").expect("ghe host present");
+        let host = config.hosts.get("ghe.corp.com").ok_or("ghe host present")?;
         assert_eq!(host.kind, Some(HostKind::GitHub));
         assert_eq!(
             host.api_base.as_deref(),
             Some("https://ghe.corp.com/api/v3")
         );
         assert_eq!(host.token_env.as_deref(), Some("GHE_TOKEN"));
+        Ok(())
     }
 
     #[test]
@@ -943,7 +942,7 @@ token_env = "GHE_TOKEN"
     }
 
     #[test]
-    fn multiple_hosts_load_correctly() {
+    fn multiple_hosts_load_correctly() -> Result<(), Box<dyn std::error::Error>> {
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
             fs::write(
@@ -966,12 +965,16 @@ token_env = "GITLAB_TOKEN"
         assert!(config.hosts.contains_key("ghe.corp.com"));
         assert!(config.hosts.contains_key("gitlab.corp.com"));
 
-        let gitlab = config.hosts.get("gitlab.corp.com").unwrap();
+        let gitlab = config
+            .hosts
+            .get("gitlab.corp.com")
+            .ok_or("gitlab host present")?;
         assert_eq!(gitlab.kind, Some(HostKind::GitLab));
+        Ok(())
     }
 
     #[test]
-    fn hosts_with_fetch_overrides() {
+    fn hosts_with_fetch_overrides() -> Result<(), Box<dyn std::error::Error>> {
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         ok_or_panic(
             fs::write(
@@ -987,9 +990,10 @@ max_tags_per_repo = 25
         );
 
         let config = ok_or_panic(Config::load(None, None, temp.path(), None), "load config");
-        let host = config.hosts.get("ghe.corp.com").unwrap();
+        let host = config.hosts.get("ghe.corp.com").ok_or("ghe host present")?;
         assert_eq!(host.api_mode, Some(ApiMode::Rest));
         assert_eq!(host.max_tags_per_repo.map(NonZeroU8::get), Some(25));
+        Ok(())
     }
 
     #[test]
@@ -1041,12 +1045,12 @@ token_env = "GHE_TOKEN"
     }
 
     #[test]
-    fn json_serialize_roundtrip() {
+    fn json_serialize_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             default_host: Some("github.com".to_string()),
             fetch: FetchSettings {
                 api_mode: ApiMode::Rest,
-                max_tags_per_repo: NonZeroU8::new(42).unwrap(),
+                max_tags_per_repo: NonZeroU8::new(42).ok_or("zero tag limit")?,
             },
             hosts: {
                 let mut m = std::collections::HashMap::new();
@@ -1065,8 +1069,8 @@ token_env = "GHE_TOKEN"
             ..Default::default()
         };
 
-        let json = serde_json::to_string_pretty(&config).expect("serialize to JSON");
-        let roundtripped: Config = serde_json::from_str(&json).expect("deserialize from JSON");
+        let json = serde_json::to_string_pretty(&config)?;
+        let roundtripped: Config = serde_json::from_str(&json)?;
 
         assert_eq!(roundtripped.default_host, config.default_host);
         assert_eq!(roundtripped.fetch.api_mode, config.fetch.api_mode);
@@ -1075,23 +1079,27 @@ token_env = "GHE_TOKEN"
             config.fetch.max_tags_per_repo
         );
         assert_eq!(roundtripped.hosts.len(), 1);
-        let host = roundtripped.hosts.get("ghe.corp.com").unwrap();
+        let host = roundtripped
+            .hosts
+            .get("ghe.corp.com")
+            .ok_or("ghe host present")?;
         assert_eq!(host.kind, Some(HostKind::GitHub));
+        Ok(())
     }
 
     #[test]
-    fn toml_serialize_roundtrip() {
+    fn toml_serialize_roundtrip() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             default_host: Some("github.com".to_string()),
             fetch: FetchSettings {
                 api_mode: ApiMode::Graphql,
-                max_tags_per_repo: NonZeroU8::new(30).unwrap(),
+                max_tags_per_repo: NonZeroU8::new(30).ok_or("zero tag limit")?,
             },
             ..Default::default()
         };
 
-        let toml_str = toml::to_string_pretty(&config).expect("serialize to TOML");
-        let roundtripped: Config = toml::from_str(&toml_str).expect("deserialize from TOML");
+        let toml_str = toml::to_string_pretty(&config)?;
+        let roundtripped: Config = toml::from_str(&toml_str)?;
 
         assert_eq!(roundtripped.default_host, config.default_host);
         assert_eq!(roundtripped.fetch.api_mode, config.fetch.api_mode);
@@ -1099,10 +1107,11 @@ token_env = "GHE_TOKEN"
             roundtripped.fetch.max_tags_per_repo,
             config.fetch.max_tags_per_repo
         );
+        Ok(())
     }
 
     #[test]
-    fn config_command_json_output_contains_new_fields() {
+    fn config_command_json_output_contains_new_fields() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             default_host: Some("github.com".to_string()),
             fetch: FetchSettings::default(),
@@ -1123,7 +1132,7 @@ token_env = "GHE_TOKEN"
             ..Default::default()
         };
 
-        let json = serde_json::to_string_pretty(&config).expect("serialize");
+        let json = serde_json::to_string_pretty(&config)?;
         assert!(
             json.contains("default_host"),
             "JSON must include default_host"
@@ -1138,20 +1147,21 @@ token_env = "GHE_TOKEN"
             json.contains("api_mode"),
             "JSON must include api_mode in fetch"
         );
+        Ok(())
     }
 
     #[test]
-    fn config_command_toml_output_contains_new_fields() {
+    fn config_command_toml_output_contains_new_fields() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             default_host: Some("github.com".to_string()),
             fetch: FetchSettings {
                 api_mode: ApiMode::Rest,
-                max_tags_per_repo: NonZeroU8::new(20).unwrap(),
+                max_tags_per_repo: NonZeroU8::new(20).ok_or("zero tag limit")?,
             },
             ..Default::default()
         };
 
-        let toml_str = toml::to_string_pretty(&config).expect("serialize");
+        let toml_str = toml::to_string_pretty(&config)?;
         assert!(
             toml_str.contains("default_host"),
             "TOML must include default_host"
@@ -1164,6 +1174,7 @@ token_env = "GHE_TOKEN"
             toml_str.contains("max_tags_per_repo"),
             "TOML must include max_tags_per_repo"
         );
+        Ok(())
     }
 
     #[test]
@@ -1311,32 +1322,32 @@ mod version_tests {
     }
 }
 
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod schema_tests {
     use actup_core::Config;
     use schemars::schema_for;
 
-    fn generated_schema() -> serde_json::Value {
+    fn generated_schema() -> serde_json::Result<serde_json::Value> {
         let schema = schema_for!(Config);
-        let json = serde_json::to_string_pretty(&schema).unwrap();
-        serde_json::from_str(&json).unwrap()
+        let json = serde_json::to_string_pretty(&schema)?;
+        serde_json::from_str(&json)
     }
 
     #[test]
-    fn schema_file_matches_generated() {
+    fn schema_file_matches_generated() -> Result<(), Box<dyn std::error::Error>> {
         let on_disk = include_str!("../../../schemas/actup-config.schema.json");
-        let on_disk: serde_json::Value = serde_json::from_str(on_disk).unwrap();
-        let generated = generated_schema();
+        let on_disk: serde_json::Value = serde_json::from_str(on_disk)?;
+        let generated = generated_schema()?;
         assert_eq!(
             on_disk, generated,
             "schemas/actup-config.schema.json is stale — run `just schema` to regenerate"
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_has_new_config_types() {
-        let schema = generated_schema();
-        let defs = schema.get("$defs").expect("$defs missing");
+    fn schema_has_new_config_types() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
+        let defs = schema.get("$defs").ok_or("$defs missing")?;
 
         // New types from config-refactor must be present
         assert!(
@@ -1351,12 +1362,13 @@ mod schema_tests {
             defs.get("HostKind").is_some(),
             "HostKind missing from $defs"
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_has_no_old_provider_types() {
-        let schema = generated_schema();
-        let defs = schema.get("$defs").expect("$defs missing");
+    fn schema_has_no_old_provider_types() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
+        let defs = schema.get("$defs").ok_or("$defs missing")?;
 
         // Old types removed during config-refactor must be absent
         assert!(
@@ -1367,12 +1379,13 @@ mod schema_tests {
             defs.get("ProviderInstance").is_none(),
             "ProviderInstance still in $defs — old type not removed"
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_top_level_properties() {
-        let schema = generated_schema();
-        let props = schema.get("properties").expect("properties missing");
+    fn schema_top_level_properties() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
+        let props = schema.get("properties").ok_or("properties missing")?;
 
         // New fields
         assert!(
@@ -1405,11 +1418,12 @@ mod schema_tests {
         ] {
             assert!(props.get(old).is_none(), "{old} property still present");
         }
+        Ok(())
     }
 
     #[test]
     fn schema_lists_the_schema_key_and_denies_others() -> Result<(), Box<dyn std::error::Error>> {
-        let schema = generated_schema();
+        let schema = generated_schema()?;
         let key = schema
             .get("properties")
             .and_then(|props| props.get("$schema"))
@@ -1426,44 +1440,47 @@ mod schema_tests {
     }
 
     #[test]
-    fn schema_fetch_settings_has_deny_unknown() {
-        let schema = generated_schema();
+    fn schema_fetch_settings_has_deny_unknown() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
         let fetch = &schema["$defs"]["FetchSettings"];
         assert_eq!(
             fetch.get("additionalProperties"),
             Some(&serde_json::Value::Bool(false)),
             "FetchSettings should deny unknown fields"
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_host_config_has_deny_unknown() {
-        let schema = generated_schema();
+    fn schema_host_config_has_deny_unknown() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
         let host = &schema["$defs"]["HostConfig"];
         assert_eq!(
             host.get("additionalProperties"),
             Some(&serde_json::Value::Bool(false)),
             "HostConfig should deny unknown fields"
         );
+        Ok(())
     }
 
     #[test]
-    fn schema_hostkind_variants() {
-        let schema = generated_schema();
+    fn schema_hostkind_variants() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
         let hk = &schema["$defs"]["HostKind"];
-        let variants = hk.get("oneOf").expect("HostKind missing oneOf");
+        let variants = hk.get("oneOf").ok_or("HostKind missing oneOf")?;
         let consts: Vec<&str> = variants
             .as_array()
-            .unwrap()
+            .ok_or("oneOf must be an array")?
             .iter()
             .filter_map(|v| v.get("const").and_then(serde_json::Value::as_str))
             .collect();
         assert_eq!(consts, vec!["github", "gitlab", "gitea"]);
+        Ok(())
     }
 
     #[test]
-    fn schema_hosts_keyed_by_hostname() {
-        let schema = generated_schema();
+    fn schema_hosts_keyed_by_hostname() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema()?;
         let hosts = &schema["properties"]["hosts"];
         // hosts should be an object with additionalProperties referencing HostConfig
         assert_eq!(
@@ -1472,9 +1489,10 @@ mod schema_tests {
         );
         let additional = hosts
             .get("additionalProperties")
-            .expect("hosts missing additionalProperties");
+            .ok_or("hosts missing additionalProperties")?;
         let ref_str = additional.get("$ref").and_then(serde_json::Value::as_str);
         assert_eq!(ref_str, Some("#/$defs/HostConfig"));
+        Ok(())
     }
 }
 

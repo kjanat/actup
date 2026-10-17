@@ -757,7 +757,6 @@ pub fn determine_exit_code(findings: &[Finding], fail_on: &[FailOn]) -> CliExitC
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -1628,7 +1627,7 @@ mod tests {
     // JSON output tests
 
     #[test]
-    fn test_json_output_up_to_date() {
+    fn test_json_output_up_to_date() -> Result<(), Box<dyn std::error::Error>> {
         let finding = make_finding(
             "test.yml",
             1,
@@ -1637,20 +1636,21 @@ mod tests {
         );
 
         let json_finding = JsonFinding::from(&finding);
-        let json = serde_json::to_string_pretty(&[&json_finding]).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&[&json_finding])?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
 
         assert!(parsed.is_array());
-        let arr = parsed.as_array().unwrap();
+        let arr = parsed.as_array().ok_or("JSON output must be an array")?;
         assert_eq!(arr.len(), 1);
         assert_eq!(arr[0]["status"], "up_to_date");
         assert_eq!(arr[0]["file"], "test.yml");
         assert_eq!(arr[0]["owner"], "actions");
         assert_eq!(arr[0]["repo"], "checkout");
+        Ok(())
     }
 
     #[test]
-    fn test_json_output_outdated_with_exact_version() {
+    fn test_json_output_outdated_with_exact_version() -> Result<(), Box<dyn std::error::Error>> {
         let finding = make_finding(
             "ci.yml",
             15,
@@ -1663,17 +1663,18 @@ mod tests {
         );
 
         let json_finding = JsonFinding::from(&finding);
-        let json = serde_json::to_string_pretty(&json_finding).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&json_finding)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
 
         assert_eq!(parsed["status"], "outdated");
         assert_eq!(parsed["current_version"], "v3");
         assert_eq!(parsed["latest_version"], "v4");
         assert_eq!(parsed["exact_version"], "v4.2.1");
+        Ok(())
     }
 
     #[test]
-    fn test_json_output_pinned() {
+    fn test_json_output_pinned() -> Result<(), Box<dyn std::error::Error>> {
         let finding = make_finding(
             "secure.yml",
             20,
@@ -1685,8 +1686,8 @@ mod tests {
         );
 
         let json_finding = JsonFinding::from(&finding);
-        let json = serde_json::to_string_pretty(&json_finding).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&json_finding)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
 
         assert_eq!(parsed["status"], "pinned");
         assert_eq!(
@@ -1694,10 +1695,11 @@ mod tests {
             "abc123def456abc123def456abc123def456abc1"
         );
         assert_eq!(parsed["pinned_tag"], "v4.1.0");
+        Ok(())
     }
 
     #[test]
-    fn test_json_output_unresolvable_env_error() {
+    fn test_json_output_unresolvable_env_error() -> Result<(), Box<dyn std::error::Error>> {
         let finding = make_finding(
             "test.yml",
             5,
@@ -1709,15 +1711,16 @@ mod tests {
         );
 
         let json_finding = JsonFinding::from(&finding);
-        let json = serde_json::to_string_pretty(&json_finding).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&json_finding)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
 
         assert_eq!(parsed["status"], "error"); // is_environment_error = true -> "error"
         assert_eq!(parsed["reason"], "rate limit exceeded");
+        Ok(())
     }
 
     #[test]
-    fn test_json_output_with_host() {
+    fn test_json_output_with_host() -> Result<(), Box<dyn std::error::Error>> {
         let action_ref = ActionRef::new(
             Some("github.enterprise.com".to_string()),
             "myorg",
@@ -1729,24 +1732,26 @@ mod tests {
         let finding = make_finding("workflow.yml", 10, action_ref, FindingStatus::UpToDate);
 
         let json_finding = JsonFinding::from(&finding);
-        let json = serde_json::to_string_pretty(&json_finding).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&json_finding)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
 
         assert_eq!(parsed["host"], "github.enterprise.com");
         assert_eq!(parsed["owner"], "myorg");
         assert_eq!(parsed["repo"], "action");
+        Ok(())
     }
 
     #[test]
-    fn test_json_output_empty_findings() {
+    fn test_json_output_empty_findings() -> Result<(), Box<dyn std::error::Error>> {
         let findings: [Finding; 0] = [];
 
         let json_findings: Vec<JsonFinding> = findings.iter().map(JsonFinding::from).collect();
-        let json = serde_json::to_string_pretty(&json_findings).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string_pretty(&json_findings)?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)?;
 
         assert!(parsed.is_array());
         assert_eq!(parsed, serde_json::json!([]));
+        Ok(())
     }
 
     // Summary tests
@@ -2369,7 +2374,7 @@ mod tests {
 
     /// Test that `pinned_tag` is correctly serialized in JSON output.
     #[test]
-    fn test_json_serialization_pinned_tag_present() {
+    fn test_json_serialization_pinned_tag_present() -> Result<(), Box<dyn std::error::Error>> {
         let finding = Finding {
             file: "test.yml".to_string(),
             line: 1,
@@ -2388,17 +2393,18 @@ mod tests {
         };
 
         let json_finding = JsonFinding::from(&finding);
-        let serialized = serde_json::to_string(&json_finding).unwrap();
+        let serialized = serde_json::to_string(&json_finding)?;
 
         assert!(
             serialized.contains("\"pinned_tag\":\"v4.2.0\""),
             "JSON should contain pinned_tag field: {serialized}"
         );
+        Ok(())
     }
 
     /// Test that `pinned_tag` is omitted from JSON when None (`skip_serializing_if`).
     #[test]
-    fn test_json_serialization_pinned_tag_omitted() {
+    fn test_json_serialization_pinned_tag_omitted() -> Result<(), Box<dyn std::error::Error>> {
         let finding = Finding {
             file: "test.yml".to_string(),
             line: 1,
@@ -2414,11 +2420,12 @@ mod tests {
         };
 
         let json_finding = JsonFinding::from(&finding);
-        let serialized = serde_json::to_string(&json_finding).unwrap();
+        let serialized = serde_json::to_string(&json_finding)?;
 
         assert!(
             !serialized.contains("pinned_tag"),
             "JSON should not contain pinned_tag field for non-pinned: {serialized}"
         );
+        Ok(())
     }
 }

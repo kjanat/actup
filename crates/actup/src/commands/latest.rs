@@ -213,32 +213,34 @@ pub async fn run(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parse_simple() {
-        let q = parse_action_query("actions/checkout").unwrap();
+    fn parse_simple() -> Result<(), Box<dyn std::error::Error>> {
+        let q = parse_action_query("actions/checkout").ok_or("query must parse")?;
         assert_eq!(q.owner, "actions");
         assert_eq!(q.repo, "checkout");
         assert!(q.constraint.is_none());
+        Ok(())
     }
 
     #[test]
-    fn parse_with_ref() {
-        let q = parse_action_query("actions/checkout@v4").unwrap();
+    fn parse_with_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let q = parse_action_query("actions/checkout@v4").ok_or("query must parse")?;
         assert_eq!(q.owner, "actions");
         assert_eq!(q.repo, "checkout");
         assert_eq!(q.constraint.as_deref(), Some("v4"));
+        Ok(())
     }
 
     #[test]
-    fn parse_with_semver_ref() {
-        let q = parse_action_query("actions/setup-node@v4.2.1").unwrap();
+    fn parse_with_semver_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let q = parse_action_query("actions/setup-node@v4.2.1").ok_or("query must parse")?;
         assert_eq!(q.owner, "actions");
         assert_eq!(q.repo, "setup-node");
         assert_eq!(q.constraint.as_deref(), Some("v4.2.1"));
+        Ok(())
     }
 
     #[test]
@@ -379,14 +381,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_at_sign_no_ref() {
+    fn parse_at_sign_no_ref() -> Result<(), Box<dyn std::error::Error>> {
         // "actions/checkout@" — trailing @ with empty ref is treated as no constraint
-        let q = parse_action_query("actions/checkout@").unwrap();
+        let q = parse_action_query("actions/checkout@").ok_or("query must parse")?;
         assert!(q.constraint.is_none());
+        Ok(())
     }
 
     #[test]
-    fn pick_best_global_latest() {
+    fn pick_best_global_latest() -> Result<(), Box<dyn std::error::Error>> {
         use std::{collections::HashMap, sync::Arc};
 
         let info = Arc::new(version::Info::new(version::Version::parse("v6.0.2"), "abc"));
@@ -397,13 +400,14 @@ mod tests {
             Some(info),
         );
 
-        let (best, exact) = pick_best(&set, None).unwrap();
+        let (best, exact) = pick_best(&set, None).ok_or("no best version")?;
         assert_eq!(best.version().to_string(), "v6.0.2");
         assert!(exact.is_none());
+        Ok(())
     }
 
     #[test]
-    fn pick_best_with_major_tag() {
+    fn pick_best_with_major_tag() -> Result<(), Box<dyn std::error::Error>> {
         use std::{collections::HashMap, sync::Arc};
 
         let full = Arc::new(version::Info::new(version::Version::parse("v6.0.2"), "abc"));
@@ -422,13 +426,14 @@ mod tests {
         );
 
         // Global latest should prefer major tag and show exact
-        let (best, exact) = pick_best(&set, None).unwrap();
+        let (best, exact) = pick_best(&set, None).ok_or("no best version")?;
         assert_eq!(best.version().to_string(), "v6");
         assert_eq!(exact.as_deref(), Some("v6.0.2"));
+        Ok(())
     }
 
     #[test]
-    fn pick_best_constrained_major() {
+    fn pick_best_constrained_major() -> Result<(), Box<dyn std::error::Error>> {
         use std::{collections::HashMap, sync::Arc};
 
         let v4 = Arc::new(version::Info::new(version::Version::parse("v4"), "sha4"));
@@ -455,9 +460,10 @@ mod tests {
         );
 
         // Constrained to v4 should return major tag v4 with exact v4.2.1
-        let (best, exact) = pick_best(&set, Some("v4")).unwrap();
+        let (best, exact) = pick_best(&set, Some("v4")).ok_or("no best version")?;
         assert_eq!(best.version().to_string(), "v4");
         assert_eq!(exact.as_deref(), Some("v4.2.1"));
+        Ok(())
     }
 
     #[test]

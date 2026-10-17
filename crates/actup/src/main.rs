@@ -244,8 +244,6 @@ fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used)]
-
     use actup_core::HostKind;
 
     use super::*;
@@ -318,13 +316,17 @@ mod tests {
     }
 
     #[test]
-    fn available_registrations_github_preset_host() {
+    fn available_registrations_github_preset_host() -> Result<(), Box<dyn std::error::Error>> {
         let regs = available_registrations();
-        let github = regs.iter().find(|r| r.kind == HostKind::GitHub).unwrap();
+        let github = regs
+            .iter()
+            .find(|r| r.kind == HostKind::GitHub)
+            .ok_or("no GitHub registration")?;
         assert!(
             github.presets.iter().any(|p| p.host == "github.com"),
             "GitHub preset must include github.com"
         );
+        Ok(())
     }
 
     #[test]
@@ -419,9 +421,9 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_empty_config_uses_github_preset() {
+    fn build_registry_empty_config_uses_github_preset() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::default();
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert_eq!(
             registry.default_host(),
             Some("github.com"),
@@ -431,40 +433,45 @@ mod tests {
             registry.find(Some("github.com")).is_some(),
             "github.com provider must be registered"
         );
+        Ok(())
     }
 
     #[test]
-    fn build_registry_explicit_default_host_github() {
+    fn build_registry_explicit_default_host_github() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config {
             default_host: Some("github.com".to_string()),
             ..Default::default()
         };
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert_eq!(registry.default_host(), Some("github.com"));
         assert!(registry.find(Some("github.com")).is_some());
+        Ok(())
     }
 
     #[test]
-    fn build_registry_default_host_always_registered_even_without_hosts_entry() {
+    fn build_registry_default_host_always_registered_even_without_hosts_entry()
+    -> Result<(), Box<dyn std::error::Error>> {
         // default_host = github.com, no [hosts."github.com"] entry
         let config = Config::default();
         assert!(config.hosts.is_empty());
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(
             registry.find(Some("github.com")).is_some(),
             "default host must be registered even without explicit hosts entry"
         );
+        Ok(())
     }
 
     #[test]
-    fn build_registry_hosts_entry_for_default_host_no_duplicate() {
+    fn build_registry_hosts_entry_for_default_host_no_duplicate()
+    -> Result<(), Box<dyn std::error::Error>> {
         // explicit [hosts."github.com"] should not cause double-registration
         let mut config = Config::default();
         config.hosts.insert(
             "github.com".to_string(),
             host_config_with_kind(HostKind::GitHub),
         );
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(registry.find(Some("github.com")).is_some());
         // Registry allows duplicates in Vec but build_registry skips re-registering
         // default_host if already in config.hosts
@@ -477,10 +484,11 @@ mod tests {
             1,
             "github.com should be registered exactly once"
         );
+        Ok(())
     }
 
     #[test]
-    fn build_registry_ghe_host_requires_kind() {
+    fn build_registry_ghe_host_requires_kind() -> Result<(), Box<dyn std::error::Error>> {
         // [hosts."ghe.corp.com"] without kind should error
         let mut config = Config::default();
         config
@@ -488,15 +496,16 @@ mod tests {
             .insert("ghe.corp.com".to_string(), host_config_empty());
         let result = build_registry(&config);
         assert!(result.is_err(), "GHE host without kind must error");
-        let err = result.unwrap_err().to_string();
+        let err = result.err().ok_or("expected an error")?.to_string();
         assert!(
             err.contains("kind"),
             "error must mention missing kind: {err}"
         );
+        Ok(())
     }
 
     #[test]
-    fn build_registry_ghe_host_with_github_kind() {
+    fn build_registry_ghe_host_with_github_kind() -> Result<(), Box<dyn std::error::Error>> {
         // [hosts."ghe.corp.com"] with kind = "github" should succeed
         // (api_base inferred, token_env defaults)
         let mut config = Config::default();
@@ -504,17 +513,18 @@ mod tests {
             "ghe.corp.com".to_string(),
             host_config_with_kind(HostKind::GitHub),
         );
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(
             registry.find(Some("ghe.corp.com")).is_some(),
             "GHE host with github kind must be registered"
         );
         // github.com should also be registered (default)
         assert!(registry.find(Some("github.com")).is_some());
+        Ok(())
     }
 
     #[test]
-    fn build_registry_invalid_hostname_errors() {
+    fn build_registry_invalid_hostname_errors() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config::default();
         config.hosts.insert(
             "UPPERCASE.COM".to_string(),
@@ -522,11 +532,12 @@ mod tests {
         );
         let result = build_registry(&config);
         assert!(result.is_err(), "uppercase hostname must error");
-        let err = result.unwrap_err().to_string();
+        let err = result.err().ok_or("expected an error")?.to_string();
         assert!(
             err.contains("lowercase") || err.contains("case"),
             "error must mention case: {err}"
         );
+        Ok(())
     }
 
     #[test]
@@ -543,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_invalid_api_base_in_hosts_errors() {
+    fn build_registry_invalid_api_base_in_hosts_errors() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".to_string(),
@@ -557,15 +568,16 @@ mod tests {
         );
         let result = build_registry(&config);
         assert!(result.is_err(), "api_base without scheme must error");
-        let err = result.unwrap_err().to_string();
+        let err = result.err().ok_or("expected an error")?.to_string();
         assert!(
             err.contains("scheme") || err.contains("http"),
             "error must mention scheme: {err}"
         );
+        Ok(())
     }
 
     #[test]
-    fn build_registry_fetch_settings_propagated() {
+    fn build_registry_fetch_settings_propagated() -> Result<(), Box<dyn std::error::Error>> {
         use std::num::NonZeroU8;
 
         use actup_core::{ApiMode, FetchSettings};
@@ -573,17 +585,18 @@ mod tests {
         let config = Config {
             fetch: FetchSettings {
                 api_mode: ApiMode::Rest,
-                max_tags_per_repo: NonZeroU8::new(50).unwrap(),
+                max_tags_per_repo: NonZeroU8::new(50).ok_or("zero tag limit")?,
             },
             ..Default::default()
         };
         // Should succeed — github provider supports both graphql and rest
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(registry.find(Some("github.com")).is_some());
+        Ok(())
     }
 
     #[test]
-    fn build_registry_multiple_hosts() {
+    fn build_registry_multiple_hosts() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe1.corp.com".to_string(),
@@ -593,9 +606,10 @@ mod tests {
             "ghe2.corp.com".to_string(),
             host_config_with_kind(HostKind::GitHub),
         );
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(registry.find(Some("ghe1.corp.com")).is_some());
         assert!(registry.find(Some("ghe2.corp.com")).is_some());
         assert!(registry.find(Some("github.com")).is_some());
+        Ok(())
     }
 }
