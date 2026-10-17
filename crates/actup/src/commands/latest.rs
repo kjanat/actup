@@ -5,7 +5,8 @@
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
 use actup_core::{
-    ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_for_terminal, sanitize_line, version,
+    ActionRef, Config, check_ref_name, parse_action_path, provider, sanitize_for_terminal,
+    sanitize_line, version,
 };
 use anstream::{eprintln, println};
 use owo_colors::OwoColorize;

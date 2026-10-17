@@ -263,10 +263,7 @@ impl GitHubClient {
         let max_tags = max_tags.get();
         let per_page = max_tags.min(MAX_PER_PAGE);
 
-        let first_url = format!(
-            "{}/tags?per_page={per_page}",
-            self.repo_url(owner, repo)?
-        );
+        let first_url = format!("{}/tags?per_page={per_page}", self.repo_url(owner, repo)?);
         debug!(url = %first_url, max_tags, "fetching first tags page");
         let response = self.get_if_none_match(&first_url, etag).await?;
         let mut url = Self::parse_next_link(&response);

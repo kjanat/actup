@@ -838,12 +838,24 @@ impl Registry {
             .chain(std::iter::once(default_host.as_str()));
         for hostname in named {
             if registered.insert(hostname.to_string()) {
-                registry.register_host(hostname, config, registrations, retention, Creation::Eager)?;
+                registry.register_host(
+                    hostname,
+                    config,
+                    registrations,
+                    retention,
+                    Creation::Eager,
+                )?;
             }
         }
         for hostname in presets {
             if registered.insert(hostname.to_string()) {
-                registry.register_host(hostname, config, registrations, retention, Creation::OnFirstUse)?;
+                registry.register_host(
+                    hostname,
+                    config,
+                    registrations,
+                    retention,
+                    Creation::OnFirstUse,
+                )?;
             }
         }
         Ok(registry)
