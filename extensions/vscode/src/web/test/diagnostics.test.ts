@@ -410,3 +410,38 @@ describe("floating and pin-branch refs", () => {
 		]);
 	});
 });
+
+describe("SHA-pinned refs", () => {
+	const known = "b".repeat(40);
+	const unknown = "9".repeat(40);
+	const text = [
+		"jobs:",
+		"  build:",
+		"    steps:",
+		`      - uses: acme/workflows@${known}`,
+		`      - uses: acme/workflows@${unknown}`,
+		"",
+	].join("\n");
+
+	test("get a pinned hint naming the tag, or an unknown version, and no edit", async () => {
+		const { document, diagnostics } = await diagnose("pinned.yml", text);
+		const [tagged, untagged] = diagnostics;
+
+		expect(diagnostics).toHaveLength(2);
+		expect(tagged?.range).toEqual(rangeOf(document, 3, known));
+		expect(tagged?.severity).toBe(vscode.DiagnosticSeverity.Hint);
+		expect(tagged?.code).toBe("pinned");
+		expect(tagged?.message).toBe(`acme/workflows@${known}: pinned to bbbbbbb (= v1.2.0)`);
+		expect(untagged?.range).toEqual(rangeOf(document, 4, unknown));
+		expect(untagged?.severity).toBe(vscode.DiagnosticSeverity.Hint);
+		expect(untagged?.code).toBe("pinned");
+		expect(untagged?.message).toBe(`acme/workflows@${unknown}: pinned to 9999999 (unknown version)`);
+		expect(diagnosticDataByUri.get(document.uri.toString())?.size).toBe(0);
+		const actions = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(0).range,
+			codeActionContext(diagnostics),
+		);
+		expect(actions).toEqual([]);
+	});
+});

@@ -195,6 +195,19 @@ function statusToDiagnostic(result: LocatedCheckResult, edit: UpdateEdit | undef
 		};
 	}
 
+	if (typeof status === "object" && "Pinned" in status) {
+		const { sha, tag } = status.Pinned;
+		const tagInfo = tag === null ? "unknown version" : `= ${tag}`;
+		const diag = new vscode.Diagnostic(
+			range,
+			`${loc.value}: pinned to ${sha.slice(0, 7)} (${tagInfo})`,
+			vscode.DiagnosticSeverity.Hint,
+		);
+		diag.source = DIAGNOSTIC_SOURCE;
+		diag.code = "pinned";
+		return { diagnostic: diag };
+	}
+
 	if (typeof status === "object" && "Floating" in status) {
 		const diag = new vscode.Diagnostic(
 			range,
