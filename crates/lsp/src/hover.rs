@@ -399,14 +399,23 @@ pub async fn compute_hover(
     let located = find_action_at_position(text, position, ctx.encoding)?;
     let repo_id = located.action_ref.to_repo_id().without_subpath();
 
-    let versions = resolve_hover_versions(&repo_id, document_versions, ctx).await;
-    let result = compute_hover_status(
-        &located.action_ref,
-        &repo_id,
-        versions.as_ref().map(Option::as_ref),
-        ctx,
-    )
-    .await;
+    let ignored = ctx.config.should_ignore(&located.action_ref);
+    let versions = if ignored {
+        Ok(None)
+    } else {
+        resolve_hover_versions(&repo_id, document_versions, ctx).await
+    };
+    let result = if ignored {
+        CheckResult::new(located.action_ref.clone(), CheckStatus::Ignored)
+    } else {
+        compute_hover_status(
+            &located.action_ref,
+            &repo_id,
+            versions.as_ref().map(Option::as_ref),
+            ctx,
+        )
+        .await
+    };
 
     let latest_version = versions
         .as_ref()
@@ -1095,6 +1104,42 @@ mod tests {
             let quiet = archived_hover(state, uses, config).await?;
             assert!(!quiet.contains("Warning"), "{uses}: {quiet}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_hover_marks_an_ignored_ref_on_an_unserved_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry =
+            crate::test_utils::mock_registry(crate::test_utils::MockProvider::new("github.com"));
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[scan]\nignore = [\"ghe.corp.example/o/skip\"]\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let text =
+            "      - uses: ghe.corp.example/o/skip@v1\n      - uses: ghe.corp.example/o/kept@v1\n";
+
+        let markdown = |hover: Option<Hover>| match hover.map(|h| h.contents) {
+            Some(HoverContents::Markup(mc)) => Ok(mc.value),
+            other => Err(format!("expected Markup hover contents, got: {other:?}")),
+        };
+        let ignored = markdown(compute_hover(text, Position::new(0, 20), None, &ctx).await)?;
+        assert!(ignored.contains("Ignored by config"), "{ignored}");
+        assert!(!ignored.contains("no provider available"), "{ignored}");
+        let kept = markdown(compute_hover(text, Position::new(1, 20), None, &ctx).await)?;
+        assert!(kept.contains("no provider available"), "{kept}");
         Ok(())
     }
 

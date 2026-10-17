@@ -1,6 +1,10 @@
 //! Mutating tools: `updateFile` and `updateAllUsesToVersion`.
 
-use std::{fs, io, ops::Range, path::Path};
+use std::{
+    fs, io,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use actup_core::{
     ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, SourceFormat, Uses,
@@ -563,24 +567,30 @@ struct Job<'a> {
     config: &'a Config,
     root: &'a Root,
     wanted: &'a ActionRepoId,
-    target: Info,
     default_host: &'a str,
 }
 
+struct Scanned {
+    path: PathBuf,
+    shown: String,
+    original: String,
+    format: SourceFormat,
+    wanted: Vec<(UsesLocation, ActionRef, Site)>,
+}
+
 impl Job<'_> {
-    fn update(&self, file: &Path, outcome: &mut Outcome) -> Result<(), FileError> {
+    fn scan(&self, file: &Path, outcome: &mut Outcome) -> Result<Scanned, FileError> {
         let path = self.root.contain(file).map_err(|refusal| FileError {
             path: file.display().to_string(),
             error: refusal.to_string(),
         })?;
         let shown = self.root.relative(&path);
-        let fail = |error: String| FileError {
+        let original = fs::read_to_string(&path).map_err(|e| FileError {
             path: shown.clone(),
-            error,
-        };
-        let original = fs::read_to_string(&path).map_err(|e| fail(e.to_string()))?;
+            error: e.to_string(),
+        })?;
         let format = SourceFormat::from_path(&path);
-        let mut edits = FileEdits::new(path.clone(), original.clone(), format);
+        let mut wanted = Vec::new();
         for loc in format.extract_uses(&original) {
             let (action, error) = match loc.classify() {
                 None | Some(Uses::Local) => continue,
@@ -609,20 +619,52 @@ impl Job<'_> {
                     site,
                     reason: SkipCause::Ignored,
                 });
-                continue;
+            } else {
+                wanted.push((loc, action, site));
             }
-            let style = self.config.policy_for(&action).pin;
-            let Some((pending, to)) = retarget(&edits.writable(&loc), &action, &self.target, style)
-            else {
-                outcome.skipped.push(Skipped {
-                    site,
-                    reason: SkipCause::Unplaceable,
-                });
-                continue;
-            };
-            let label = label(site, &pending, &loc, action.ref_str(), &to);
-            edits.add(pending, label);
         }
+        Ok(Scanned {
+            path,
+            shown,
+            original,
+            format,
+            wanted,
+        })
+    }
+
+    fn update(
+        &self,
+        scanned: Scanned,
+        target: Option<&Info>,
+        outcome: &mut Outcome,
+    ) -> Result<(), FileError> {
+        let Scanned {
+            path,
+            shown,
+            original,
+            format,
+            wanted,
+        } = scanned;
+        let mut edits = FileEdits::new(path.clone(), original.clone(), format);
+        if let Some(target) = target {
+            for (loc, action, site) in wanted {
+                let style = self.config.policy_for(&action).pin;
+                let Some((pending, to)) = retarget(&edits.writable(&loc), &action, target, style)
+                else {
+                    outcome.skipped.push(Skipped {
+                        site,
+                        reason: SkipCause::Unplaceable,
+                    });
+                    continue;
+                };
+                let label = label(site, &pending, &loc, action.ref_str(), &to);
+                edits.add(pending, label);
+            }
+        }
+        let fail = |error: String| FileError {
+            path: shown.clone(),
+            error,
+        };
         let planned = plan(&original, edits).map_err(fail)?;
         if !planned.changes.is_empty() {
             format
@@ -672,37 +714,52 @@ pub async fn update_all(
     let workspace = root.dir(&args.workspace_root).map_err(refused)?;
 
     let default_host = registry.default_host().unwrap_or_default();
-    let Some(provider) = registry.find(wanted.host()) else {
-        let host = wanted.host().unwrap_or(default_host).to_string();
-        return Ok(Reply::failure(
-            &Served::unserved(&host),
-            &actup_core::Error::ProviderNotFound { host },
-        ));
-    };
-    let served = Served::by(provider);
-    let sha = match provider
-        .refresh_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
-        .await
-    {
-        Ok(sha) => sha,
-        Err(e) => return Ok(Reply::failure(&served, &e)),
-    };
     let job = Job {
         registry,
         config,
         root,
         wanted: &wanted,
-        target: Info::new(version::Version::parse(&args.target_ref), sha.as_str()),
         default_host,
     };
     let mut outcome = Outcome {
         dry_run: args.dry_run,
         ..Outcome::default()
     };
+    let mut scanned = Vec::new();
     for file in discover_files(&workspace, &config.scan.extra_paths) {
-        if scans(file.kind(), args)
-            && let Err(error) = job.update(file.path(), &mut outcome)
+        if scans(file.kind(), args) {
+            match job.scan(file.path(), &mut outcome) {
+                Ok(file) => scanned.push(file),
+                Err(error) => outcome.errors.push(error),
+            }
+        }
+    }
+
+    let host = wanted.host().unwrap_or(default_host).to_string();
+    let provider = registry.find(wanted.host());
+    let served = provider.map_or_else(|| Served::unserved(&host), Served::by);
+    let target = if scanned.iter().any(|file| !file.wanted.is_empty()) {
+        let Some(provider) = provider else {
+            return Ok(Reply::failure(
+                &served,
+                &actup_core::Error::ProviderNotFound { host },
+            ));
+        };
+        match provider
+            .refresh_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
+            .await
         {
+            Ok(sha) => Some(Info::new(
+                version::Version::parse(&args.target_ref),
+                sha.as_str(),
+            )),
+            Err(e) => return Ok(Reply::failure(&served, &e)),
+        }
+    } else {
+        None
+    };
+    for file in scanned {
+        if let Err(error) = job.update(file, target.as_ref(), &mut outcome) {
             outcome.errors.push(error);
         }
     }
@@ -1339,18 +1396,25 @@ mod tests {
     #[tokio::test]
     async fn update_all_reports_an_unserved_host() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
+        fs::create_dir_all(dir.path().join(".github/workflows"))?;
+        let workflow = dir.path().join(".github/workflows/ci.yml");
+        let content = "steps:\n  - uses: ghe.corp.com/actions/checkout@v3\n  - uses: ghe.corp.com/actions/checkout@v4\n";
+        fs::write(&workflow, content)?;
         let root = Root::new(dir.path())?;
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(Resolving));
         let args = update_all_args(Some("ghe.corp.com"))?;
-        let reply = update_all("t", &registry, &Config::default(), &root, &args)
+        let mut config = Config::default();
+        config.scan.ignore = vec!["ghe.corp.com/actions/checkout@v3".parse()?];
+
+        let reply = update_all("t", &registry, &config, &root, &args)
             .await
             .map_err(|e| e.to_string())?;
-        let (is_error, body) = body(reply)?;
+        let (is_error, failed) = body(reply)?;
         assert_eq!(is_error, Some(true));
         assert_eq!(
-            body,
+            failed,
             json!({
                 "provider": "unknown",
                 "host": "ghe.corp.com",
@@ -1358,6 +1422,31 @@ mod tests {
                 "error": "no provider configured for host: ghe.corp.com",
             })
         );
+
+        config.scan.ignore = vec!["ghe.corp.com/actions/*".parse()?];
+        let reply = update_all("t", &registry, &config, &root, &args)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (is_error, ignored) = body(reply)?;
+        assert_ne!(is_error, Some(true));
+        assert_eq!(ignored["provider"], json!("unknown"));
+        assert_eq!(ignored["host"], json!("ghe.corp.com"));
+        assert_eq!(ignored["changes"], json!([]));
+        assert_eq!(ignored["errors"], json!([]));
+        let skipped: Vec<(&Value, &Value)> = ignored["skipped"]
+            .as_array()
+            .ok_or("skipped is not an array")?
+            .iter()
+            .map(|s| (&s["line"], &s["reason"]))
+            .collect();
+        assert_eq!(
+            skipped,
+            [
+                (&json!(2), &json!("ignored")),
+                (&json!(3), &json!("ignored"))
+            ]
+        );
+        assert_eq!(fs::read_to_string(&workflow)?, content);
         Ok(())
     }
 }

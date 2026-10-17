@@ -32,16 +32,19 @@ fn lookup(registry: &Registry, repo: ActionRepoId) -> Result<Lookup<'_>, Reply> 
             served,
         });
     }
-    let host = repo
-        .host()
-        .or_else(|| registry.default_host())
-        .unwrap_or_default()
-        .to_string();
+    let host = unserved_host(registry, &repo);
     let served = Served::unserved(&host);
     Err(Reply::failure(
         &served,
         &actup_core::Error::ProviderNotFound { host },
     ))
+}
+
+fn unserved_host(registry: &Registry, repo: &ActionRepoId) -> String {
+    repo.host()
+        .or_else(|| registry.default_host())
+        .unwrap_or_default()
+        .to_string()
 }
 
 fn invalid(tool: &str, message: String) -> CallToolError {
@@ -272,6 +275,35 @@ pub async fn latest(
     let repo = repo_id(args.host.as_deref(), &args.owner, &args.repo, None)
         .map_err(|e| invalid(tool, e))?;
     check_ref("currentRef", &args.current_ref).map_err(|e| invalid(tool, e))?;
+    let current = ActionRef::new(
+        repo.host().map(str::to_owned),
+        repo.owner(),
+        repo.repo(),
+        None,
+        args.current_ref.as_str(),
+    );
+    if config.should_ignore(&current) {
+        let served = registry.find(repo.host()).map_or_else(
+            || Served::unserved(&unserved_host(registry, &repo)),
+            Served::by,
+        );
+        return Reply::new(
+            Some(&served),
+            Status::of_check(&CheckStatus::Ignored),
+            LatestBody {
+                owner: &args.owner,
+                repo: &args.repo,
+                current_ref: &args.current_ref,
+                check: describe(&CheckStatus::Ignored).0,
+                target: None,
+                reason: None,
+                ref_kind: None,
+                same_commit: None,
+                latest: None,
+                stale: None,
+            },
+        );
+    }
     let found = match lookup(registry, repo) {
         Ok(found) => found,
         Err(reply) => return Ok(reply),
@@ -345,6 +377,52 @@ fn describe(status: &CheckStatus) -> (&'static str, Option<Info>, Option<&str>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn latest_args(current_ref: &str) -> args::Latest {
+        args::Latest {
+            host: Some("ghe.corp.example".to_owned()),
+            owner: "o".to_owned(),
+            repo: "r".to_owned(),
+            current_ref: current_ref.to_owned(),
+            policy_override: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn latest_reports_an_ignored_ref_on_an_unserved_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[scan]\nignore = [\"ghe.corp.example/o/r@v1\"]\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = Registry::new();
+
+        let reply = latest("getLatest", &registry, &config, &latest_args("v1"))
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        assert!(reply.succeeded());
+        let body = reply
+            .into_result()
+            .structured_content
+            .ok_or("no structured content")?;
+        for (key, value) in [
+            ("check", "ignored"),
+            ("status", "upToDate"),
+            ("provider", "unknown"),
+            ("host", "ghe.corp.example"),
+        ] {
+            assert_eq!(body.get(key), Some(&serde_json::json!(value)), "{key}");
+        }
+
+        let reply = latest("getLatest", &registry, &config, &latest_args("v2"))
+            .await
+            .map_err(|e| format!("{e:?}"))?;
+        assert!(!reply.succeeded());
+        Ok(())
+    }
 
     #[test]
     fn with_bump_overrides_every_action_last() {
