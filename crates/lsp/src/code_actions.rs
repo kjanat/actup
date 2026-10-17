@@ -536,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_sha_diagnostic_produces_quickfix() {
+    fn expand_sha_diagnostic_produces_quickfix() -> Result<(), Box<dyn std::error::Error>> {
         let mut diag = make_unresolvable_diagnostic(make_range(6, 31, 38), None);
         diag.data = serde_json::to_value(DiagnosticData::ExpandSha {
             target_ref: test_utils::DUMMY_SHA.to_string(),
@@ -544,16 +544,17 @@ mod tests {
             replace_end_col: Some(48),
         })
         .ok();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
-            panic!("expected one code action, got {actions:?}");
+            return Err(format!("expected one code action, got {actions:?}").into());
         };
         assert_eq!(action.title, "Expand to full SHA");
         assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
         assert_eq!(action.is_preferred, Some(true));
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edit = action.edit.as_ref().ok_or("expected a workspace edit")?;
+        let edits = extract_text_edits(edit, &uri, TEST_VERSION);
         assert_eq!(
             edits,
             [&TextEdit {
@@ -561,6 +562,7 @@ mod tests {
                 new_text: format!("{} # v4.2.0", test_utils::DUMMY_SHA),
             }]
         );
+        Ok(())
     }
 
     #[test]

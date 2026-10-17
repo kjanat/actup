@@ -743,7 +743,10 @@ mod tests {
             self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let result = match self.lookup {
                 Resolve::Found => Ok(Sha40::new("a".repeat(40)).unwrap()),
-                Resolve::To(sha) => Ok(Sha40::new(sha).unwrap()),
+                Resolve::To(sha) => Sha40::new(sha).ok_or_else(|| Error::Internal {
+                    context: "mock resolve".to_string(),
+                    message: format!("invalid SHA {sha}"),
+                }),
                 Resolve::Missing => Err(Error::RefNotFound {
                     owner: repo.owner().to_string(),
                     repo: repo.repo().to_string(),

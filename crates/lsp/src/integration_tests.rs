@@ -577,11 +577,11 @@ async fn code_action_returns_quickfix_for_outdated() {
 }
 
 #[tokio::test]
-async fn code_action_expands_short_sha() {
+async fn code_action_expands_short_sha() -> Result<(), Box<dyn std::error::Error>> {
     let mut harness = TestHarness::new();
     harness.initialize(None).await;
 
-    let uri = Uri::from_file_path("/test/shortsha.yml").unwrap();
+    let uri = Uri::from_file_path("/test/shortsha.yml").ok_or("bad uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@abc1234\n";
     harness.notify(did_open_notification(&uri, text, 1)).await;
     tokio::time::sleep(Duration::from_millis(200)).await;
@@ -598,14 +598,15 @@ async fn code_action_expands_short_sha() {
     let resp = harness
         .request(code_action_request(11, &uri, diag.range, vec![diag]))
         .await
-        .expect("codeAction should return a response");
+        .ok_or("codeAction should return a response")?;
     let (_, body) = resp.into_parts();
-    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(body.unwrap()).unwrap();
+    let actions: Vec<CodeActionOrCommand> =
+        serde_json::from_value(body.map_err(|e| e.to_string())?)?;
     let Some(CodeActionOrCommand::CodeAction(action)) = actions
         .iter()
         .find(|a| matches!(a, CodeActionOrCommand::CodeAction(c) if c.kind == Some(CodeActionKind::QUICKFIX)))
     else {
-        panic!("expected a quickfix, got {actions:?}");
+        return Err(format!("expected a quickfix, got {actions:?}").into());
     };
     assert_eq!(action.title, "Expand to full SHA");
     let Some(DocumentChanges::Edits(doc_edits)) = action
@@ -613,10 +614,10 @@ async fn code_action_expands_short_sha() {
         .as_ref()
         .and_then(|e| e.document_changes.as_ref())
     else {
-        panic!("expected document changes");
+        return Err("expected document changes".into());
     };
     let [OneOf::Left(edit)] = doc_edits[0].edits.as_slice() else {
-        panic!("expected one text edit");
+        return Err("expected one text edit".into());
     };
     assert_eq!(
         apply_text_edit(text, edit),
@@ -627,6 +628,7 @@ async fn code_action_expands_short_sha() {
     );
 
     harness.shutdown().await;
+    Ok(())
 }
 
 #[tokio::test]

@@ -1796,18 +1796,10 @@ jobs:
         let versions = test_utils::simple_version_set("v4.2.0", tag_sha);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
-        let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path(path).unwrap();
-        compute_diagnostics(
-            text,
-            &uri,
-            &Config::default(),
-            &registry,
-            &crate::file_cache::FileCache::disabled(),
-            crate::position::PositionEncoding::Utf16,
-        )
-        .await
-        .diagnostics
+        match diagnostics_at(provider, path, text).await {
+            Ok(diagnostics) => diagnostics,
+            Err(e) => panic!("diagnostics for {text:?}: {e}"),
+        }
     }
 
     fn expand_data(diag: &Diagnostic) -> Option<DiagnosticData> {
@@ -1945,10 +1937,18 @@ jobs:
         provider: test_utils::MockProvider,
         yaml: &str,
     ) -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
+        diagnostics_at(provider, "/test/ci.yml", yaml).await
+    }
+
+    async fn diagnostics_at(
+        provider: test_utils::MockProvider,
+        path: &str,
+        text: &str,
+    ) -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = Uri::from_file_path(path).ok_or("bad uri")?;
         Ok(compute_diagnostics(
-            yaml,
+            text,
             &uri,
             &Config::default(),
             &registry,
