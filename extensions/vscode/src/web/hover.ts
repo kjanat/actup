@@ -1,6 +1,7 @@
 import { parseUses, parseUsesRefs } from "actup-wasm";
 import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from "actup-wasm";
 import * as vscode from "vscode";
+import { sameCommitDescription } from "./diagnostics.ts";
 import { byteToColumn } from "./position.ts";
 
 const DEFAULT_HOST = "github.com";
@@ -66,7 +67,10 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		// Version status
 		if (matchingResult !== undefined) {
 			const status = matchingResult.status;
-			if (status === "UpToDate") {
+			const sameCommit = sameCommitDescription(matchingResult);
+			if (sameCommit !== undefined) {
+				md.appendMarkdown(`$(info) Pin available, ${sameCommit}\n`);
+			} else if (status === "UpToDate") {
 				md.appendMarkdown(`$(check) Up to date at \`${ref.ref_str}\`\n`);
 			} else if (typeof status === "object" && "Outdated" in status) {
 				const target = status.Outdated.target.version;

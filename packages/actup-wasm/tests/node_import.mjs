@@ -222,8 +222,9 @@ console.log("PASS: config policy.bump = minor keeps v4.0.0 up to date");
 
 // Test 8: unknown config keys are rejected.
 await assert.rejects(checkRefs(outdatedYaml, majorProvider, { update_policy: "patch" }), /update_policy/);
-await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { track: "exact" } }), /track/);
-assert.throws(() => planUpdates(outdatedResults, { policy: { track: "exact" } }), /track/);
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { tracking: "exact" } }), /tracking/);
+assert.throws(() => planUpdates(outdatedResults, { policy: { tracking: "exact" } }), /tracking/);
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { track: "nearest" } }), /nearest/);
 
 console.log("PASS: unknown config keys are rejected");
 
@@ -553,5 +554,33 @@ assert.deepEqual(await githubWith(() => reply(403, { "x-ratelimit-remaining": "0
 assert.match((await githubWith(() => reply(502))).reason, /^network error during js provider call: GitHub API error: 502/);
 
 console.log("PASS: GitHub provider statuses map to error classes");
+
+// Test 20: `policy.track` reaches core, and results name a same-commit target.
+const twinTags = {
+	...mockProvider,
+	async getVersions() {
+		return {
+			semverTags: [
+				{ version: "v1", sha: "e".repeat(40) },
+				{ version: "v1.0.4", sha: "f".repeat(40) },
+				{ version: "v1.0.5", sha: "e".repeat(40) },
+			],
+		};
+	},
+};
+const twinYaml = "steps:\n  - uses: o/r@v1\n";
+const [kept] = await checkRefs(twinYaml, twinTags);
+assert.equal(kept.status, "UpToDate", "track keep leaves v1 alone");
+assert.equal(kept.ref_kind, "tag", "v1 names a tag");
+assert.equal(kept.same_commit, null, "no same-commit target without an update");
+const [exact] = await checkRefs(twinYaml, twinTags, { policy: { track: "exact" } });
+assert.deepEqual(exact.status, { Outdated: { current: "v1", target: { version: "v1.0.5", sha: "e".repeat(40) } } });
+assert.equal(exact.ref_kind, "tag", "v1 names a tag");
+assert.deepEqual(exact.same_commit, { version: "v1.0.5", sha: "e".repeat(40) }, "target sits on the v1 commit");
+const [behind] = await checkRefs("steps:\n  - uses: o/r@v1.0.4\n", twinTags, { policy: { track: "exact" } });
+assert.equal(behind.same_commit, null, "a real bump has no same-commit target");
+assert.equal(planUpdates([exact], { policy: { track: "exact" } })[0].newText, "v1.0.5", "planUpdates reads the new fields");
+
+console.log("PASS: policy.track reaches core and same-commit targets serialize");
 
 console.log("\nAll npm package integration tests PASSED");

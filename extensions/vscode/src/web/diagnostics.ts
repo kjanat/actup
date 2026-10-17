@@ -75,9 +75,10 @@ export async function computeDiagnostics(
 			continue;
 		}
 
-		diagnostics.push(diag.diagnostic);
+		const diagnostic = sameCommitDiagnostic(diag.diagnostic, result);
+		diagnostics.push(diagnostic);
 		if (diag.data !== undefined) {
-			dataMap.set(diagnosticKey(diag.diagnostic), diag.data);
+			dataMap.set(diagnosticKey(diagnostic), diag.data);
 		}
 	}
 
@@ -97,6 +98,31 @@ export function clearDiagnosticData(uri: vscode.Uri): void {
 /** Unique key for a diagnostic (for data lookup). */
 export function diagnosticKey(d: vscode.Diagnostic): string {
 	return `${d.range.start.line}:${d.range.start.character}:${d.range.end.character}`;
+}
+
+/** Describe the result's target as a pin of the commit the ref already names, when it is one. */
+export function sameCommitDescription(result: LocatedCheckResult): string | undefined {
+	const target = result.same_commit;
+	if (target === null) {
+		return undefined;
+	}
+	const kind = result.ref_kind === null ? "" : `${result.ref_kind} `;
+	return `same commit: ${kind}${result.action_ref.ref_str} = ${target.version} (${target.sha.slice(0, 7)})`;
+}
+
+function sameCommitDiagnostic(diag: vscode.Diagnostic, result: LocatedCheckResult): vscode.Diagnostic {
+	const description = sameCommitDescription(result);
+	if (description === undefined) {
+		return diag;
+	}
+	const sameCommit = new vscode.Diagnostic(
+		diag.range,
+		`${result.location.value}: pin available, ${description}`,
+		vscode.DiagnosticSeverity.Information,
+	);
+	sameCommit.source = DIAGNOSTIC_SOURCE;
+	sameCommit.code = "same-commit";
+	return sameCommit;
 }
 
 interface DiagResult {

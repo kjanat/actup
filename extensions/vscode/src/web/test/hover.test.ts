@@ -48,6 +48,28 @@ describe("hover status from computed diagnostics", () => {
 		expect(await statusRows(current)).toEqual(["$(check) Up to date at `v1.2.0`"]);
 	});
 
+	test("shows a pin of the same commit like the LSP", async () => {
+		const twins = fakeProvider({
+			"actions/checkout": [
+				{ version: "v1", sha: "e".repeat(40) },
+				{ version: "v1.0.5", sha: "e".repeat(40) },
+			],
+		});
+		const document = new FakeDocument("hover-same-commit.yml", workflow("v1"));
+		const real = { ...wasm };
+		await mock.module("actup-wasm", () => ({
+			...real,
+			checkRefs: (text: string, p: wasm.ActupProvider) => real.checkRefs(text, p, { policy: { track: "exact" } }),
+		}));
+		try {
+			await computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection());
+		} finally {
+			await mock.module("actup-wasm", () => real);
+		}
+
+		expect(await statusRows(document)).toEqual(["$(info) Pin available, same commit: tag v1 = v1.0.5 (eeeeeee)"]);
+	});
+
 	test("shows no status for a ref edited since the last computation", async () => {
 		const document = new FakeDocument("hover-edited.yml", workflow("v1.0.0"));
 		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());

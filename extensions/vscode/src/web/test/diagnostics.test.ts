@@ -270,3 +270,50 @@ describe("an outdated SHA pin with a version comment", () => {
 		]);
 	});
 });
+
+describe("a target on the commit the ref already names", () => {
+	const twins = fakeProvider({
+		"o/r": [
+			{ version: "v1", sha: "e".repeat(40) },
+			{ version: "v1.0.4", sha: "f".repeat(40) },
+			{ version: "v1.0.5", sha: "e".repeat(40) },
+		],
+	});
+
+	async function withExactTrack<T>(run: () => Promise<T>): Promise<T> {
+		const real = { ...wasm };
+		await mock.module("actup-wasm", () => ({
+			...real,
+			checkRefs: (text: string, p: wasm.ActupProvider) => real.checkRefs(text, p, { policy: { track: "exact" } }),
+		}));
+		try {
+			return await run();
+		} finally {
+			await mock.module("actup-wasm", () => real);
+		}
+	}
+
+	test("gets an information diagnostic like the LSP, with its pin fix", async () => {
+		const document = new FakeDocument("same-commit.yml", "jobs:\n  ci:\n    steps:\n      - uses: o/r@v1\n");
+		await withExactTrack(() => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
+		const [same] = vscode.languages.getDiagnostics(document.uri);
+		if (same === undefined) {
+			throw new Error("no diagnostic for the same-commit ref");
+		}
+
+		expect(same.severity).toBe(vscode.DiagnosticSeverity.Information);
+		expect(same.code).toBe("same-commit");
+		expect(same.message).toBe("o/r@v1: pin available, same commit: tag v1 = v1.0.5 (eeeeeee)");
+		expect(same.range).toEqual(rangeOf(document, 3, "v1"));
+		expect(diagnosticDataByUri.get(document.uri.toString())?.get(diagnosticKey(same))?.newText).toBe("v1.0.5");
+	});
+
+	test("keeps a real bump a warning", async () => {
+		const document = new FakeDocument("real-bump.yml", "jobs:\n  ci:\n    steps:\n      - uses: o/r@v1.0.4\n");
+		await withExactTrack(() => computeDiagnostics(document.uri, document.getText(), twins, createDiagnosticCollection()));
+		const [bump] = vscode.languages.getDiagnostics(document.uri);
+
+		expect(bump?.severity).toBe(vscode.DiagnosticSeverity.Warning);
+		expect(bump?.code).toBe("outdated");
+	});
+});

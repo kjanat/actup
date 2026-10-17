@@ -272,6 +272,7 @@ impl std::fmt::Display for Source {
 
 /// The `[policy]` table.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
     /// How far to bump outdated version refs.

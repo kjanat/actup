@@ -1,12 +1,15 @@
 //! Public WASM-facing API. Compiled only on `wasm32` targets.
 
+use std::sync::Arc;
+
 use actup_core::{
     ActionRef, UsesLocation,
-    config::Config,
-    extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses, policy,
+    config::{Config, Policy},
+    extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
-    resolution::{CheckResult, CheckStatus, check_action_remote},
+    resolution::{CheckResult, CheckStatus, RefKind, check_action_remote},
     rewrite::{Rewrite, Trailing},
+    version,
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -16,9 +19,9 @@ use crate::bridge::{self, JsProvider, JsProviderAdapter, VersionTag};
 /// Subset of [`Config`] passable from JS callers.
 ///
 /// JS code passes an object matching this shape, and `checkRefs` and
-/// `planUpdates` reject unknown keys. Wider config knobs ([`Cache`],
-/// [`HostConfig`], `[[overrides]]`) are repo-config concerns and stay out of
-/// the WASM surface.
+/// `planUpdates` reject unknown keys. `policy` is the full `[policy]` table
+/// with its defaults. Wider config knobs ([`Cache`], [`HostConfig`],
+/// `[[overrides]]`) are repo-config concerns and stay out of the WASM surface.
 ///
 /// [`Cache`]: actup_core::config::Cache
 /// [`HostConfig`]: actup_core::config::HostConfig
@@ -28,36 +31,18 @@ pub struct ActupConfig {
     /// Default host for bare `owner/repo` refs (e.g. `"github.com"`).
     #[serde(default)]
     pub default_host: Option<String>,
-    /// Subset of the `[policy]` table.
+    /// The `[policy]` table.
     #[serde(default)]
-    pub policy: ActupPolicy,
-}
-
-/// Subset of the `[policy]` table passable from JS callers.
-#[derive(Debug, Default, Deserialize, tsify_next::Tsify)]
-#[serde(deny_unknown_fields)]
-pub struct ActupPolicy {
-    /// How far to bump outdated version refs (`policy.bump`).
-    #[serde(default)]
-    pub bump: Option<policy::Update>,
-    /// How `planUpdates` writes an outdated ref (`policy.pin`). `tag` unpins SHA pins.
-    #[serde(default)]
-    pub pin: Option<policy::Style>,
+    pub policy: Policy,
 }
 
 impl From<ActupConfig> for Config {
     fn from(value: ActupConfig) -> Self {
-        let mut config = Self::default();
-        if let Some(host) = value.default_host {
-            config.default_host = Some(host);
+        Self {
+            default_host: value.default_host,
+            policy: value.policy,
+            ..Self::default()
         }
-        if let Some(bump) = value.policy.bump {
-            config.policy.bump = bump;
-        }
-        if let Some(pin) = value.policy.pin {
-            config.policy.pin = pin;
-        }
-        config
     }
 }
 
@@ -154,6 +139,10 @@ struct LocatedCheckResult {
     action_ref: ActionRef,
     /// The check status
     status: CheckStatus,
+    /// What the ref names, when the version set lists it
+    ref_kind: Option<RefKind>,
+    /// The suggested target, when it sits on the commit the ref already names
+    same_commit: Option<Arc<version::Info>>,
 }
 
 impl LocatedCheckResult {
@@ -162,6 +151,8 @@ impl LocatedCheckResult {
             location: location.clone(),
             action_ref: result.action_ref().clone(),
             status: result.status().clone(),
+            ref_kind: result.ref_kind(),
+            same_commit: result.same_commit().cloned(),
         }
     }
 }

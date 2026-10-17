@@ -264,6 +264,7 @@ impl<'de> Deserialize<'de> for Style {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub enum Track {
     /// Write the major-only tag for a major-only ref when it points at the target commit,
     /// else the full version.
@@ -344,6 +345,7 @@ impl<'de> Deserialize<'de> for Track {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub enum Branch {
     /// Ignore branch refs (don't flag as outdated).
     ///

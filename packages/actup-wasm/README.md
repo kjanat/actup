@@ -105,11 +105,16 @@ Check `uses:` references against a provider. Async.
 Parses the YAML, resolves each non-local ref through the provider, and returns
 `LocatedCheckResult[]`. Each entry has the `location` (`UsesLocation`) of the
 value it checked, the parsed `action_ref`, and a status: `"UpToDate"`,
-`{ Outdated: ... }`, or `{ Unresolvable: ... }`.
+`{ Outdated: ... }`, or `{ Unresolvable: ... }`. `ref_kind` says whether the ref
+names a `"tag"`, `"branch"` or `"sha"` (or `null` when the version list lacks
+it). `same_commit` holds the target (`{ version, sha }`) when the suggested
+update sits on the commit the ref already names, and `null` otherwise.
 
-Optional `config` accepts `{ default_host?, policy?: { bump?, pin? } }` where
-`bump` is `"patch"` | `"minor"` | `"major"` | `"latest"` and `pin` is
-`"preserve"` | `"tag"` | `"sha"`. Unknown keys reject the call.
+Optional `config` accepts `{ default_host?, policy? }`. `policy` is the
+`[policy]` table of `actup.toml` with the same defaults: `bump` is `"patch"` |
+`"minor"` | `"major"` | `"latest"`, `pin` is `"preserve"` | `"tag"` | `"sha"`,
+`track` is `"keep"` | `"major"` | `"exact"`, `branch` is `"ignore"` | `"warn"` |
+`"update"`, and `prerelease` is a boolean. Unknown keys reject the call.
 
 ### `planUpdates(results, config?)`
 
