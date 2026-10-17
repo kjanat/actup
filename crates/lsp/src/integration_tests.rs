@@ -653,6 +653,63 @@ async fn code_action_returns_quickfix_in_a_markdown_file() -> Result<(), Box<dyn
 }
 
 #[tokio::test]
+async fn pin_action_edits_the_ref_in_a_markdown_file() -> Result<(), Box<dyn std::error::Error>> {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/USAGE.md").ok_or("bad uri")?;
+    let text = "# Usage\n\n```yaml\nsteps:\n  - uses: actions/checkout@v4.2.0\n```\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .wait_for_diagnostics(&uri, Duration::from_secs(5))
+        .await;
+
+    let at_ref = test_utils::make_range(4, 30, 30);
+    let value = harness
+        .request(code_action_request(15, &uri, at_ref, vec![]))
+        .await
+        .ok_or("codeAction should return a response")?
+        .into_parts()
+        .1?;
+
+    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value)?;
+    let pin = actions
+        .iter()
+        .find_map(|action| match action {
+            CodeActionOrCommand::CodeAction(action)
+                if action.kind == Some(CodeActionKind::REFACTOR) =>
+            {
+                Some(action)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| format!("no refactor action in {actions:?}"))?;
+    let Some(DocumentChanges::Edits(doc_edits)) = pin
+        .edit
+        .as_ref()
+        .and_then(|edit| edit.document_changes.as_ref())
+    else {
+        panic!("expected document edits, got {:?}", pin.edit);
+    };
+    let edits: Vec<(Position, &str)> = doc_edits
+        .iter()
+        .flat_map(|doc| &doc.edits)
+        .filter_map(|edit| match edit {
+            OneOf::Left(te) => Some((te.range.start, te.new_text.as_str())),
+            OneOf::Right(_) => None,
+        })
+        .collect();
+    let [(start, new_text)] = edits.as_slice() else {
+        panic!("expected one edit, got {edits:?}");
+    };
+    assert_eq!(*start, Position::new(4, 27));
+    assert!(new_text.starts_with(test_utils::DUMMY_SHA), "{new_text}");
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut harness = TestHarness::new();
