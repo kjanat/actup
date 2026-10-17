@@ -405,7 +405,6 @@ migration.
 ## Out of Scope
 
 - Host aliasing (e.g., `ghe` → `ghe.corp.com`)
-- Per-host policy overrides (`update_policy`, `ref_style`)
 - Backward compatibility shim for old `[providers]` format
 - Runtime plugin loading (dynamic libraries). Compile-time feature gating only.
 

@@ -212,7 +212,7 @@ Helix, Zed).
 
 **Acceptance:**
 
-- Changing `ignore_actions` in config updates diagnostics
+- Changing `scan.ignore` in config updates diagnostics
 - Adding workspace folder triggers scan
 
 ### D11. Hover Information

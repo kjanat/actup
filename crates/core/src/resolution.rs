@@ -366,33 +366,27 @@ fn status_for_non_semver(
 /// Find the best target version, respecting [`Policy::track`].
 ///
 /// Returns the major-only tag for the target's major (v6) when the track asks
-/// for one and the repo has it. Otherwise returns the full version.
+/// for one and the repo has it. [`policy::Track::Major`] takes that tag only
+/// when it points at the latest version's commit. Otherwise returns the full
+/// version.
 fn find_best_target(
     versions: &version::Set,
     current: &version::Version,
     policy: Policy,
 ) -> Option<Arc<version::Info>> {
-    // First, find the latest version according to policy
     let latest =
         versions.find_latest_for(current, policy.bump.allows_major(), policy.prerelease)?;
+    let major_tag = latest
+        .version()
+        .major()
+        .and_then(|major| versions.major_tags().get(&major));
 
-    let wants_major_tag = match policy.track {
-        policy::Track::Keep => current.is_major_only(),
-        policy::Track::Major => true,
-        policy::Track::Exact => false,
+    let target = match (policy.track, major_tag) {
+        (policy::Track::Keep, Some(tag)) if current.is_major_only() => tag,
+        (policy::Track::Major, Some(tag)) if tag.sha() == latest.sha() => tag,
+        _ => latest,
     };
-
-    if wants_major_tag {
-        // Try to find a major-only tag for the target's major version
-        if let Some(target_major) = latest.version().major()
-            && let Some(major_tag) = versions.major_tags().get(&target_major)
-        {
-            return Some(Arc::clone(major_tag));
-        }
-    }
-
-    // Fall back to the full version
-    Some(Arc::clone(latest))
+    Some(Arc::clone(target))
 }
 
 /// Fetch versions and check for CLI/LSP/MCP use.
@@ -1284,6 +1278,64 @@ mod tests {
             Some("v6.0.2")
         );
         assert_eq!(target_for("v6.0.2", policy::Track::Major, &versions), None);
+    }
+
+    fn stale_major_tag_versions() -> version::Set {
+        let v4_1 = make_version_info("v4.1.0", "4444444444444444444444444444444444444444");
+        let v6_0_0 = make_version_info("v6.0.0", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let v6_major = make_version_info("v6", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+        let v6_0_2 = make_version_info("v6.0.2", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        make_version_set(
+            vec![v4_1.clone(), v6_0_0, v6_major.clone(), v6_0_2.clone()],
+            Some(v6_0_2.clone()),
+            HashMap::from([(4, v4_1), (6, v6_0_2)]),
+            HashMap::from([(6, v6_major)]),
+        )
+    }
+
+    #[test]
+    fn test_track_major_skips_stale_major_tag_on_tag_ref() {
+        let versions = stale_major_tag_versions();
+        assert_eq!(target_for("v6.0.2", policy::Track::Major, &versions), None);
+        assert_eq!(
+            target_for("v4.1.0", policy::Track::Major, &versions).as_deref(),
+            Some("v6.0.2")
+        );
+    }
+
+    #[test]
+    fn test_track_major_skips_stale_major_tag_on_sha_pin() {
+        let versions = stale_major_tag_versions();
+        let config = track_config(policy::Track::Major);
+
+        let latest = make_action_ref(
+            "actions",
+            "checkout",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let result = check_action(&latest, &versions, &config);
+        assert!(
+            matches!(result.status(), CheckStatus::Pinned { tag: Some(tag), .. } if tag == "v6.0.2"),
+            "got {:?}",
+            result.status()
+        );
+
+        let older = make_action_ref(
+            "actions",
+            "checkout",
+            "4444444444444444444444444444444444444444",
+        );
+        let result = check_action(&older, &versions, &config);
+        assert!(
+            matches!(
+                result.status(),
+                CheckStatus::Outdated { target, .. }
+                    if target.version().to_string() == "v6.0.2"
+                        && target.sha() == "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ),
+            "got {:?}",
+            result.status()
+        );
     }
 
     #[test]

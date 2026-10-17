@@ -256,24 +256,37 @@ impl<'de> Deserialize<'de> for Style {
 /// - uses: actions/checkout@v4      # -> v6
 /// - uses: actions/checkout@v4.1.0  # -> v6.0.2
 ///
-/// # With track = "major" - major-only tag when the repo has one
+/// # With track = "major" - major-only tag when it points at the target commit
 /// - uses: actions/checkout@v4.1.0  # -> v6
 ///
 /// # With track = "exact" - always the full version
 /// - uses: actions/checkout@v4      # -> v6.0.2
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Track {
     /// Write a major-only tag for a major-only ref and a full version otherwise.
     #[default]
     Keep,
 
-    /// Write the major-only tag (`v6`) when the repo has one, else the full version.
+    /// Write the major-only tag (`v6`) when it points at the target commit, else the full version.
     Major,
 
     /// Write the full version (`v6.0.2`).
     Exact,
+}
+
+impl Track {
+    /// Parse from string (case-insensitive)
+    #[must_use]
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "keep" => Some(Self::Keep),
+            "major" => Some(Self::Major),
+            "exact" => Some(Self::Exact),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Track {
@@ -283,6 +296,33 @@ impl fmt::Display for Track {
             Self::Major => write!(f, "major"),
             Self::Exact => write!(f, "exact"),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Track {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct TrackVisitor;
+
+        impl Visitor<'_> for TrackVisitor {
+            type Value = Track;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+                formatter.write_str("one of: keep, major, exact")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Track, E>
+            where
+                E: de::Error,
+            {
+                Track::from_str_loose(value)
+                    .ok_or_else(|| de::Error::invalid_value(de::Unexpected::Str(value), &self))
+            }
+        }
+
+        deserializer.deserialize_str(TrackVisitor)
     }
 }
 
@@ -533,6 +573,20 @@ mod tests {
         }
         assert_eq!(Track::default(), Track::Keep);
         assert!(serde_json::from_str::<Track>("\"minor\"").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_track_deserialize_ignores_case() -> Result<(), Box<dyn std::error::Error>> {
+        for (name, track) in [
+            ("KEEP", Track::Keep),
+            ("Major", Track::Major),
+            ("eXaCt", Track::Exact),
+        ] {
+            let parsed: Track = serde_json::from_str(&format!("\"{name}\""))?;
+            assert_eq!(parsed, track);
+        }
+        assert_eq!(Track::from_str_loose("sideways"), None);
         Ok(())
     }
 

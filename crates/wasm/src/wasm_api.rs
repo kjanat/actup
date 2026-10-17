@@ -13,15 +13,14 @@ use crate::bridge::{JsProvider, JsProviderAdapter};
 
 /// Subset of [`Config`] passable from JS callers.
 ///
-/// JS code constructs an object matching this shape; `serde_wasm_bindgen`
-/// deserializes it directly. Wider config knobs ([`Cache`], [`HostConfig`],
-/// `[[overrides]]`) aren't part of the WASM surface — those are
-/// repo-config concerns, not runtime arguments.
+/// JS code passes an object matching this shape, and `checkRefs` rejects
+/// unknown keys. Wider config knobs ([`Cache`], [`HostConfig`],
+/// `[[overrides]]`) are repo-config concerns and stay out of the WASM surface.
 ///
 /// [`Cache`]: actup_core::config::Cache
 /// [`HostConfig`]: actup_core::config::HostConfig
 #[derive(Debug, Default, Deserialize, tsify_next::Tsify)]
-#[tsify(from_wasm_abi)]
+#[serde(deny_unknown_fields)]
 pub struct ActupConfig {
     /// Default host for bare `owner/repo` refs (e.g. `"github.com"`).
     #[serde(default)]
@@ -33,6 +32,7 @@ pub struct ActupConfig {
 
 /// Subset of the `[policy]` table passable from JS callers.
 #[derive(Debug, Default, Deserialize, tsify_next::Tsify)]
+#[serde(deny_unknown_fields)]
 pub struct ActupPolicy {
     /// How far to bump outdated version refs (`policy.bump`).
     #[serde(default)]
@@ -50,6 +50,13 @@ impl From<ActupConfig> for Config {
         }
         config
     }
+}
+
+fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
+    let json = String::from(js_sys::JSON::stringify(value)?);
+    serde_json::from_str::<ActupConfig>(&json)
+        .map(Config::from)
+        .map_err(|e| JsValue::from_str(&format!("invalid config: {e}")))
 }
 
 /// Parse `uses:` references from workflow YAML content.
@@ -82,14 +89,20 @@ pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
 ///
 /// # Errors
 ///
-/// Returns `JsValue` error on serde failures or if the provider throws.
+/// Returns `JsValue` error when `config` does not match [`ActupConfig`], on
+/// serde failures, or if the provider throws.
 #[wasm_bindgen(js_name = "checkRefs", unchecked_return_type = "CheckResult[]")]
 pub async fn check_refs(
     yaml: &str,
     provider: JsProvider,
-    config: Option<ActupConfig>,
+    #[wasm_bindgen(unchecked_param_type = "ActupConfig | null | undefined")] config: Option<
+        JsValue,
+    >,
 ) -> Result<JsValue, JsValue> {
-    let config: Config = config.map(Config::from).unwrap_or_default();
+    let config = match config {
+        Some(value) => parse_config(&value)?,
+        None => Config::default(),
+    };
 
     let host = config
         .default_host

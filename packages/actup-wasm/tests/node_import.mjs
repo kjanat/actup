@@ -210,4 +210,10 @@ assert.equal(statusName(minorResult.status), "UpToDate", "policy.bump = minor st
 
 console.log("PASS: config policy.bump = minor keeps v4.0.0 up to date");
 
+// Test 8: unknown config keys are rejected.
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, { update_policy: "patch" }), /update_policy/);
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { pin: "sha" } }), /pin/);
+
+console.log("PASS: unknown config keys are rejected");
+
 console.log("\nAll npm package integration tests PASSED");

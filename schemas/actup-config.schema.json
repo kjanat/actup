@@ -270,7 +270,7 @@
           "default": false
         },
         "track": {
-          "description": "Version granularity of an updated tag ref.\n\n`keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),\n`major` writes the major-only tag when the repo has one, `exact`\nalways writes the full version.\n\n```toml\ntrack = \"exact\"   # actions/checkout@v4 -> @v6.0.2\n```",
+          "description": "Version granularity of an updated tag ref.\n\n`keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),\n`major` writes the major-only tag when it points at the target commit,\n`exact` always writes the full version.\n\n```toml\ntrack = \"exact\"   # actions/checkout@v4 -> @v6.0.2\n```",
           "$ref": "#/$defs/Track",
           "default": "keep"
         }
@@ -382,7 +382,7 @@
       ]
     },
     "Track": {
-      "description": "Version granularity written for an updated tag ref.\n\n# Workflow Examples\n\n```yaml\n# With track = \"keep\" - granularity follows the current ref\n- uses: actions/checkout@v4      # -> v6\n- uses: actions/checkout@v4.1.0  # -> v6.0.2\n\n# With track = \"major\" - major-only tag when the repo has one\n- uses: actions/checkout@v4.1.0  # -> v6\n\n# With track = \"exact\" - always the full version\n- uses: actions/checkout@v4      # -> v6.0.2\n```",
+      "description": "Version granularity written for an updated tag ref.\n\n# Workflow Examples\n\n```yaml\n# With track = \"keep\" - granularity follows the current ref\n- uses: actions/checkout@v4      # -> v6\n- uses: actions/checkout@v4.1.0  # -> v6.0.2\n\n# With track = \"major\" - major-only tag when it points at the target commit\n- uses: actions/checkout@v4.1.0  # -> v6\n\n# With track = \"exact\" - always the full version\n- uses: actions/checkout@v4      # -> v6.0.2\n```",
       "oneOf": [
         {
           "description": "Write a major-only tag for a major-only ref and a full version otherwise.",
@@ -390,7 +390,7 @@
           "const": "keep"
         },
         {
-          "description": "Write the major-only tag (`v6`) when the repo has one, else the full version.",
+          "description": "Write the major-only tag (`v6`) when it points at the target commit, else the full version.",
           "type": "string",
           "const": "major"
         },

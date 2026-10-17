@@ -789,6 +789,39 @@ async fn config_turning_invalid_clears_diagnostics() -> Result<(), Box<dyn std::
     Ok(())
 }
 
+#[tokio::test]
+async fn config_reload_rejects_renamed_key() -> Result<(), Box<dyn std::error::Error>> {
+    let temp = tempfile::tempdir()?;
+    let config_file = temp.path().join("actup.toml");
+    std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+    let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
+
+    let mut harness = TestHarness::new();
+    harness.initialize(Some(root)).await;
+
+    std::fs::write(&config_file, "update_policy = \"patch\"\n")?;
+    let config_uri = Uri::from_file_path(&config_file).ok_or("bad config uri")?;
+    harness
+        .notify(did_change_watched_files_notification(&config_uri))
+        .await;
+
+    let config_path = config_file.display().to_string();
+    let shown = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            c.messages.iter().any(|m| {
+                m.typ == MessageType::ERROR
+                    && m.message.contains(&config_path)
+                    && m.message
+                        .contains("`update_policy` is no longer supported; use `policy.bump`")
+            })
+        })
+        .await;
+    assert!(shown, "expected an error showMessage naming the new key");
+
+    harness.shutdown().await;
+    Ok(())
+}
+
 // Hover protocol tests
 
 #[tokio::test]

@@ -104,7 +104,7 @@ Parses the YAML, resolves each non-local ref through the provider, and returns
 `{ Unresolvable: ... }`.
 
 Optional `config` accepts `{ default_host?, policy?: { bump? } }` where `bump`
-is `"patch"` | `"minor"` | `"major"` | `"latest"`.
+is `"patch"` | `"minor"` | `"major"` | `"latest"`. Unknown keys reject the call.
 
 ### `planUpdates(yaml, results)`
 

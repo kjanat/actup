@@ -15,6 +15,7 @@ pub mod validation;
 
 use std::{
     collections::HashMap,
+    convert::Infallible,
     io::Read,
     num::NonZeroU8,
     path::{Path, PathBuf},
@@ -29,7 +30,7 @@ use figment::{
     providers::{Env, Format, Json, Serialized, Toml, Yaml},
 };
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 
 pub use matching::ActionPattern;
 
@@ -163,6 +164,41 @@ pub struct Config {
     /// Path this config was loaded from (if any)
     #[serde(skip)]
     pub loaded_from: Option<PathBuf>,
+
+    /// Rejects the renamed `update_policy` key.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 0>")]
+    #[schemars(skip)]
+    pub update_policy: Option<Infallible>,
+
+    /// Rejects the renamed `ref_style` key.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 1>")]
+    #[schemars(skip)]
+    pub ref_style: Option<Infallible>,
+
+    /// Rejects the renamed `branch_policy` key.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 2>")]
+    #[schemars(skip)]
+    pub branch_policy: Option<Infallible>,
+
+    /// Rejects the renamed `allow_prerelease` key.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 3>")]
+    #[schemars(skip)]
+    pub allow_prerelease: Option<Infallible>,
+
+    /// Rejects the renamed top-level `ignore` key.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 4>")]
+    #[schemars(skip)]
+    pub ignore: Option<Infallible>,
+
+    /// Rejects the renamed top-level `extra_paths` key.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 5>")]
+    #[schemars(skip)]
+    pub extra_paths: Option<Infallible>,
+
+    /// Rejects the renamed `[actions]` table.
+    #[serde(skip_serializing, deserialize_with = "renamed::<_, 6>")]
+    #[schemars(skip)]
+    pub actions: Option<Infallible>,
 }
 
 /// The `[policy]` table.
@@ -193,8 +229,8 @@ pub struct Policy {
     /// Version granularity of an updated tag ref.
     ///
     /// `keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),
-    /// `major` writes the major-only tag when the repo has one, `exact`
-    /// always writes the full version.
+    /// `major` writes the major-only tag when it points at the target commit,
+    /// `exact` always writes the full version.
     ///
     /// ```toml
     /// track = "exact"   # actions/checkout@v4 -> @v6.0.2
@@ -314,6 +350,16 @@ const RENAMED_KEYS: [(&str, &str); 7] = [
     ("extra_paths", "scan.extra_paths"),
     ("actions", "[[overrides]]"),
 ];
+
+fn renamed<'de, D, const KEY: usize>(_: D) -> Result<Option<Infallible>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let (old, new) = RENAMED_KEYS[KEY];
+    Err(de::Error::custom(format_args!(
+        "`{old}` is no longer supported; use `{new}`"
+    )))
+}
 
 /// Cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -524,12 +570,8 @@ impl Config {
         // Environment variables (highest precedence)
         figment = figment.merge(Env::prefixed("ACTUP_").split("_"));
 
-        reject_renamed_keys(&figment, loaded_from.as_deref())?;
-
         let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
-            path: loaded_from
-                .as_ref()
-                .map_or_else(|| "config".into(), |p| p.display().to_string()),
+            path: error_origin(&e, loaded_from.as_deref()),
             reason: e.to_string(),
         })?;
 
@@ -559,7 +601,10 @@ impl Config {
                         reason: format!("failed to strip comments: {e}"),
                     })?;
 
-                figment.merge(Json::string(&stripped))
+                figment.merge(JsoncFile {
+                    path: path.to_path_buf(),
+                    json: stripped,
+                })
             }
             // Default to TOML for .toml or unknown extensions
             _ => figment.merge(Toml::file(path)),
@@ -593,23 +638,29 @@ impl Config {
     }
 }
 
-fn reject_renamed_keys(figment: &Figment, loaded_from: Option<&Path>) -> Result<(), Error> {
-    let Some((old, new)) = RENAMED_KEYS
-        .into_iter()
-        .find(|(old, _)| figment.contains(old))
-    else {
-        return Ok(());
-    };
-    let path = figment
-        .find_metadata(old)
-        .and_then(|m| m.source.as_ref())
-        .map(ToString::to_string)
-        .or_else(|| loaded_from.map(|p| p.display().to_string()))
-        .unwrap_or_else(|| "config".into());
-    Err(Error::InvalidConfig {
-        path,
-        reason: format!("`{old}` is no longer supported; use `{new}`"),
-    })
+struct JsoncFile {
+    path: PathBuf,
+    json: String,
+}
+
+impl figment::Provider for JsoncFile {
+    fn metadata(&self) -> figment::Metadata {
+        figment::Metadata::from("JSONC file", self.path.as_path())
+    }
+
+    fn data(
+        &self,
+    ) -> Result<figment::value::Map<figment::Profile, figment::value::Dict>, figment::Error> {
+        figment::Provider::data(&Json::string(&self.json))
+    }
+}
+
+fn error_origin(error: &figment::Error, loaded_from: Option<&Path>) -> String {
+    match error.metadata.as_ref().map(|md| (&md.source, &md.name)) {
+        Some((Some(figment::Source::File(path)), _)) => path.display().to_string(),
+        Some((None, name)) => name.to_string(),
+        _ => loaded_from.map_or_else(|| "config".into(), |p| p.display().to_string()),
+    }
 }
 
 #[cfg(test)]
@@ -1356,47 +1407,83 @@ mod tests {
         Ok(())
     }
 
+    const RENAMED_KEY_SAMPLES: [(&str, &str, &str); 7] = [
+        ("update_policy", "policy.bump", "update_policy = \"minor\""),
+        ("ref_style", "policy.pin", "ref_style = \"sha\""),
+        ("branch_policy", "policy.branch", "branch_policy = \"warn\""),
+        (
+            "allow_prerelease",
+            "policy.prerelease",
+            "allow_prerelease = true",
+        ),
+        ("ignore", "scan.ignore", "ignore = [\"a/b\"]"),
+        ("extra_paths", "scan.extra_paths", "extra_paths = []"),
+        (
+            "actions",
+            "[[overrides]]",
+            "[actions.\"a/b\"]\nignore = true",
+        ),
+    ];
+
     #[test]
-    fn test_reject_renamed_keys_names_the_new_key() {
-        for (old, new, toml_str) in [
-            ("update_policy", "policy.bump", "update_policy = \"minor\""),
-            ("ref_style", "policy.pin", "ref_style = \"sha\""),
-            ("branch_policy", "policy.branch", "branch_policy = \"warn\""),
-            (
-                "allow_prerelease",
-                "policy.prerelease",
-                "allow_prerelease = true",
-            ),
-            ("ignore", "scan.ignore", "ignore = [\"a/b\"]"),
-            ("extra_paths", "scan.extra_paths", "extra_paths = []"),
-            (
-                "actions",
-                "[[overrides]]",
-                "[actions.\"a/b\"]\nignore = true",
-            ),
-        ] {
+    fn test_deserialize_rejects_renamed_keys_naming_the_new_key()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (old, new, toml_str) in RENAMED_KEY_SAMPLES {
+            let message = format!("`{old}` is no longer supported; use `{new}`");
+
+            let Err(error) = toml::from_str::<Config>(toml_str) else {
+                panic!("{old}: toml must reject it");
+            };
+            assert!(error.to_string().contains(&message), "{old}: {error}");
+
+            let json = serde_json::to_string(&toml::from_str::<toml::Table>(toml_str)?)?;
+            let Err(error) = serde_json::from_str::<Config>(&json) else {
+                panic!("{old}: json must reject it");
+            };
+            assert!(error.to_string().contains(&message), "{old}: {error}");
+
             let figment = Figment::new()
                 .merge(Serialized::defaults(Config::default()))
                 .merge(Toml::string(toml_str));
-            match reject_renamed_keys(&figment, Some(Path::new("/repo/actup.toml"))) {
-                Err(Error::InvalidConfig { reason, .. }) => {
-                    assert_eq!(
-                        reason,
-                        format!("`{old}` is no longer supported; use `{new}`")
-                    );
-                }
-                other => panic!("{old}: expected InvalidConfig, got {other:?}"),
-            }
+            let Err(error) = figment.extract::<Config>() else {
+                panic!("{old}: figment must reject it");
+            };
+            assert_eq!(error.kind.to_string(), message);
+            assert_eq!(error.path, [old]);
         }
+        assert_eq!(
+            RENAMED_KEYS,
+            RENAMED_KEY_SAMPLES.map(|(old, new, _)| (old, new))
+        );
+        Ok(())
     }
 
     #[test]
-    fn test_reject_renamed_keys_accepts_new_shape() {
-        let figment = Figment::new()
+    fn test_error_origin_falls_back_for_sources_without_a_file() {
+        let Err(error) = Figment::new()
             .merge(Serialized::defaults(Config::default()))
-            .merge(Toml::string(
-                "[policy]\nbump = \"minor\"\n[scan]\nignore = [\"a/b\"]\nextra_paths = []",
-            ));
-        assert!(reject_renamed_keys(&figment, None).is_ok());
+            .merge(Serialized::default("policy.bump", "sideways"))
+            .extract::<Config>()
+        else {
+            panic!("invalid bump must be rejected");
+        };
+        assert_eq!(
+            error_origin(&error, Some(Path::new("/repo/actup.toml"))),
+            "/repo/actup.toml"
+        );
+        assert_eq!(error_origin(&error, None), "config");
+    }
+
+    #[test]
+    fn test_deserialize_accepts_new_shape_without_renamed_keys() -> Result<(), toml::de::Error> {
+        let config: Config = toml::from_str(
+            "[policy]\nbump = \"minor\"\ntrack = \"MAJOR\"\n[scan]\nignore = [\"a/b\"]\nextra_paths = []",
+        )?;
+        assert_eq!(config.policy.bump, policy::Update::Minor);
+        assert_eq!(config.policy.track, policy::Track::Major);
+        assert!(config.update_policy.is_none());
+        assert!(config.ignore.is_none());
+        assert!(config.actions.is_none());
+        Ok(())
     }
 }

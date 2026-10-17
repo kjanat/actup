@@ -587,6 +587,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_config_rejects_renamed_key() {
+        let Err(error) = parse_config("actup.toml", "update_policy = \"patch\"\n") else {
+            panic!("renamed key must not parse");
+        };
+        assert!(error.contains("actup.toml"), "{error}");
+        assert!(
+            error.contains("`update_policy` is no longer supported; use `policy.bump`"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn parse_config_reads_policy() -> Result<(), String> {
         let config = parse_config("actup.toml", "[policy]\nbump = \"minor\"\n")?;
         assert_eq!(config.policy.bump, actup_core::policy::Update::Minor);

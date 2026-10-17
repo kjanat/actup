@@ -294,14 +294,71 @@ policy  = { bump = "patch" }
 
         match Config::load(None, temp.path()) {
             Err(actup_core::Error::InvalidConfig { path, reason }) => {
-                assert!(path.ends_with("actup.toml"), "{path}");
-                assert_eq!(
-                    reason,
-                    "`actions` is no longer supported; use `[[overrides]]`"
+                assert_eq!(path, temp.path().join("actup.toml").display().to_string());
+                assert!(
+                    reason.starts_with("`actions` is no longer supported; use `[[overrides]]`"),
+                    "{reason}"
                 );
             }
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_config_load_renamed_key_names_the_file_holding_it()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let explicit = temp.path().join("explicit.toml");
+        fs::write(&explicit, "[policy]\nbump = \"minor\"\n")?;
+        fs::write(temp.path().join("actup.toml"), "ref_style = \"sha\"\n")?;
+
+        match Config::load(Some(&explicit), temp.path()) {
+            Err(actup_core::Error::InvalidConfig { path, reason }) => {
+                assert_eq!(path, temp.path().join("actup.toml").display().to_string());
+                assert!(
+                    reason.starts_with("`ref_style` is no longer supported; use `policy.pin`"),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_syntax_error_names_the_file() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        fs::write(temp.path().join("actup.toml"), "[policy\n")?;
+
+        match Config::load(None, temp.path()) {
+            Err(actup_core::Error::InvalidConfig { path, .. }) => {
+                assert_eq!(path, temp.path().join("actup.toml").display().to_string());
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_config_load_renamed_key_in_jsonc_names_the_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let explicit = temp.path().join("actup.jsonc");
+        fs::write(&explicit, "{\n  // old key\n  \"extra_paths\": []\n}\n")?;
+
+        match Config::load(Some(&explicit), temp.path()) {
+            Err(actup_core::Error::InvalidConfig { path, reason }) => {
+                assert_eq!(path, explicit.display().to_string());
+                assert!(
+                    reason.starts_with(
+                        "`extra_paths` is no longer supported; use `scan.extra_paths`"
+                    ),
+                    "{reason}"
+                );
+            }
+            other => panic!("expected InvalidConfig, got {other:?}"),
+        }
+        Ok(())
     }
 
     #[test]
@@ -926,7 +983,7 @@ mod schema_tests {
     }
 }
 
-mod invalid_config_exit {
+mod cli_runs {
     use std::{fs, path::Path, process::Command};
 
     use tempfile::TempDir;
@@ -956,6 +1013,56 @@ mod invalid_config_exit {
         let config_path = repo.path().join("actup.toml").display().to_string();
         assert!(stderr.contains(&config_path), "stderr: {stderr}");
         assert!(stderr.contains("sideways"), "stderr: {stderr}");
+        Ok(())
+    }
+
+    #[test]
+    fn config_human_shows_track_and_overrides() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::write(
+            repo.path().join("actup.toml"),
+            "[policy]\ntrack = \"exact\"\n\n[[overrides]]\npattern = \"my-org/*\"\npolicy = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"ghe.example.com/platform/*\"\npolicy = { bump = \"patch\" }\n",
+        )?;
+        let output = actup(repo.path())
+            .env_remove("ACTUP_FORMAT")
+            .arg("config")
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0));
+        let stdout = String::from_utf8(output.stdout)?;
+        assert!(
+            stdout.contains("  track:       exact\n"),
+            "stdout: {stdout}"
+        );
+        let overrides = stdout
+            .split_once("Overrides")
+            .map(|(_, rest)| rest)
+            .ok_or("no Overrides section")?;
+        assert!(
+            overrides.contains("  - my-org/*\n  - ghe.example.com/platform/*\n"),
+            "stdout: {stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn check_with_renamed_key_in_env_names_the_env() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        let output = actup(repo.path())
+            .env("ACTUP_IGNORE", "a/b")
+            .arg("check")
+            .arg(repo.path())
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains(
+                "invalid config at '`ACTUP_` environment variable(s)': `ignore` is no longer supported; use `scan.ignore`"
+            ),
+            "stderr: {stderr}"
+        );
         Ok(())
     }
 

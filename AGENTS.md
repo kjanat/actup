@@ -291,7 +291,7 @@ If no newer semver tags exist but branch head is newer:
 
 ### Pinning
 
-If `ref_style = sha`:
+If `policy.pin = "sha"`:
 
 - Convert selected target tag/branch to full 40-char SHA.
 - Optional comment `# vX.Y.Z` where safe.
