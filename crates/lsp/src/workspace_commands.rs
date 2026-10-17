@@ -32,12 +32,7 @@ use tower_lsp_server::{
     },
 };
 
-use crate::{
-    backend::DocumentState,
-    diagnostics::{self, DIAGNOSTIC_SOURCE, DiagnosticData},
-    file_cache::FileCache,
-    position::col_to_byte,
-};
+use crate::{backend::DocumentState, diagnostics, file_cache::FileCache, position::col_to_byte};
 
 /// Command identifier registered in server capabilities.
 pub const FIX_ALL_IN_WORKSPACE: &str = "actup-lsp/fixAllInWorkspace";
@@ -188,35 +183,12 @@ impl FixAllResult {
     }
 }
 
-/// Extract [`TextEdit`]s for outdated refs from a set of diagnostics.
+/// Extract the [`TextEdit`]s CLI `update` makes from a set of diagnostics.
 fn edits_from_diagnostics(diags: &[Diagnostic]) -> Vec<TextEdit> {
-    let mut edits = Vec::new();
-    for diag in diags {
-        if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE) {
-            continue;
-        }
-        let Some(data) = diag
-            .data
-            .as_ref()
-            .and_then(|v| serde_json::from_value::<DiagnosticData>(v.clone()).ok())
-        else {
-            continue;
-        };
-        if let DiagnosticData::Outdated {
-            target_ref,
-            repin_comment,
-            replace_end_col,
-        } = data
-        {
-            edits.push(crate::code_actions::outdated_text_edit(
-                diag.range,
-                &target_ref,
-                repin_comment.as_deref(),
-                replace_end_col,
-            ));
-        }
-    }
-    edits
+    diags
+        .iter()
+        .filter_map(crate::code_actions::update_text_edit)
+        .collect()
 }
 
 /// Outcome of processing a single file.
@@ -704,7 +676,10 @@ mod tests {
     use dashmap::DashMap;
 
     use super::*;
-    use crate::test_utils;
+    use crate::{
+        diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData},
+        test_utils,
+    };
 
     fn make_range(line: u32, col_start: u32, col_end: u32) -> tower_lsp_server::ls_types::Range {
         test_utils::make_range(line, col_start, col_end)
@@ -758,6 +733,30 @@ mod tests {
         assert_eq!(edits.len(), 2);
         assert_eq!(edits[0].new_text, "v4.2.0");
         assert_eq!(edits[1].new_text, "v3.1.0");
+    }
+
+    #[test]
+    fn edits_from_diagnostics_extracts_pin_branch() {
+        let sha = "c".repeat(40);
+        let data = DiagnosticData::PinBranch {
+            sha: sha.clone(),
+            ref_name: "main".into(),
+            repin_comment: Some(" # main".into()),
+            replace_end_col: None,
+        };
+        let diag = Diagnostic {
+            range: make_range(3, 15, 19),
+            source: Some(DIAGNOSTIC_SOURCE.into()),
+            data: serde_json::to_value(data).ok(),
+            ..Default::default()
+        };
+        assert_eq!(
+            edits_from_diagnostics(&[diag]),
+            [TextEdit {
+                range: make_range(3, 15, 19),
+                new_text: format!("{sha} # main"),
+            }]
+        );
     }
 
     #[test]

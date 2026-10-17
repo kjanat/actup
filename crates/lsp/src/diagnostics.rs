@@ -61,6 +61,21 @@ pub enum DiagnosticData {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         replace_end_col: Option<u32>,
     },
+    /// The ref is a branch or non-semver tag to pin to the commit it names.
+    #[serde(rename = "pin-branch")]
+    PinBranch {
+        /// The full commit SHA the ref names.
+        sha: String,
+        /// The ref as written, named in the `# <ref>` comment.
+        ref_name: String,
+        /// The comment written after the SHA, absent when other text follows the ref.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repin_comment: Option<String>,
+        /// When set, extend the replacement to this column to overwrite a
+        /// version comment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace_end_col: Option<u32>,
+    },
     /// The ref is unresolvable — includes a suggested ref if available.
     #[serde(rename = "unresolvable")]
     Unresolvable {
@@ -331,6 +346,10 @@ async fn compute_diagnostics_for_actions(
                 ),
                 action.line_end_col,
             )),
+            CheckStatus::PinBranch { ref_name, sha } => Some(OutdatedEdit::new(
+                Rewrite::pin(sha, ref_name, action.trailing()),
+                action.line_end_col,
+            )),
             CheckStatus::Unresolvable {
                 reason,
                 is_environment_error: false,
@@ -516,6 +535,7 @@ fn status_to_diagnostic(
                 "{uses_value}: pin {kind} '{ref_name}' to {} # {ref_name}",
                 sha.get(..7).unwrap_or(sha)
             ),
+            data: edit.and_then(|e| pin_branch_data(ref_name, e)),
             ..Default::default()
         }),
 
@@ -536,6 +556,16 @@ fn status_to_diagnostic(
             Some(diag)
         }
     }
+}
+
+fn pin_branch_data(ref_name: &str, edit: OutdatedEdit) -> Option<serde_json::Value> {
+    serde_json::to_value(DiagnosticData::PinBranch {
+        sha: edit.target_ref,
+        ref_name: ref_name.to_string(),
+        repin_comment: edit.repin_comment,
+        replace_end_col: edit.replace_end_col,
+    })
+    .ok()
 }
 
 fn same_commit_diagnostic(diag: Diagnostic, result: &CheckResult, uses_value: &str) -> Diagnostic {
@@ -731,7 +761,9 @@ mod tests {
         let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
         match data {
             DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v4.0.0"),
-            DiagnosticData::Unresolvable { .. } | DiagnosticData::ExpandSha { .. } => {
+            DiagnosticData::Unresolvable { .. }
+            | DiagnosticData::ExpandSha { .. }
+            | DiagnosticData::PinBranch { .. } => {
                 panic!("expected Outdated variant")
             }
         }
@@ -1190,7 +1222,9 @@ jobs:
         let back: DiagnosticData = serde_json::from_value(json).unwrap();
         match back {
             DiagnosticData::Unresolvable { suggested_ref } => assert!(suggested_ref.is_none()),
-            DiagnosticData::Outdated { .. } | DiagnosticData::ExpandSha { .. } => {
+            DiagnosticData::Outdated { .. }
+            | DiagnosticData::ExpandSha { .. }
+            | DiagnosticData::PinBranch { .. } => {
                 panic!("wrong variant")
             }
         }

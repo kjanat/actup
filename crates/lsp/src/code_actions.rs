@@ -3,11 +3,12 @@
 //! Produces [`CodeAction`]s from diagnostics, enabling:
 //! - Single-ref quick fixes (e.g. "Update to vX.Y.Z") for outdated refs
 //! - "Expand to full SHA" quick fixes for short SHA refs
-//! - Fix-all-in-file source action that updates every outdated ref at once
+//! - "Pin to <sha> # <ref>" quick fixes for branch and non-semver tag refs
+//! - Fix-all-in-file source action that applies every edit CLI `update` makes
 //!
 //! Entry points:
 //! - [`code_actions_for_diagnostics`]: per-diagnostic quickfixes
-//! - [`fix_all_in_file`]: aggregated source action for all outdated refs
+//! - [`fix_all_in_file`]: aggregated source action for every `update` edit
 
 use std::collections::HashMap;
 
@@ -64,11 +65,11 @@ impl<'a> DocumentText<'a> {
             .collect()
     }
 
-    /// Keep the `Outdated` diagnostics whose own edit the text accepts.
+    /// Keep the diagnostics whose own [`update_text_edit`] the text accepts.
     pub fn fixable(&self, diagnostics: &[Diagnostic]) -> Vec<Diagnostic> {
         diagnostics
             .iter()
-            .filter(|diag| outdated_edit(diag).is_some_and(|edit| self.accepts(&[edit])))
+            .filter(|diag| update_text_edit(diag).is_some_and(|edit| self.accepts(&[edit])))
             .cloned()
             .collect()
     }
@@ -90,27 +91,6 @@ fn text_edits(edit: &WorkspaceEdit) -> Vec<TextEdit> {
         })
     });
     changed.chain(versioned).collect()
-}
-
-fn outdated_edit(diag: &Diagnostic) -> Option<TextEdit> {
-    if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE) {
-        return None;
-    }
-    let data = serde_json::from_value::<DiagnosticData>(diag.data.clone()?).ok()?;
-    let DiagnosticData::Outdated {
-        target_ref,
-        repin_comment,
-        replace_end_col,
-    } = data
-    else {
-        return None;
-    };
-    Some(outdated_text_edit(
-        diag.range,
-        &target_ref,
-        repin_comment.as_deref(),
-        replace_end_col,
-    ))
 }
 
 /// Custom [`CodeActionKind`] for actup's fix-all source action.
@@ -195,6 +175,9 @@ fn display_ref(target_ref: &str) -> String {
 /// For each `Outdated` diagnostic, produces a quickfix "Update to vX.Y.Z"
 /// action with a [`WorkspaceEdit`] that replaces only the ref portion.
 ///
+/// For each `PinBranch` diagnostic, produces a quickfix "Pin to <sha> # <ref>"
+/// action.
+///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
 ///
@@ -228,87 +211,85 @@ pub fn code_actions_for_diagnostics(
             continue;
         };
 
-        match data {
-            DiagnosticData::Outdated {
-                target_ref,
-                repin_comment,
-                replace_end_col,
-            } => {
-                let edit = outdated_text_edit(
-                    diag.range,
-                    &target_ref,
-                    repin_comment.as_deref(),
-                    replace_end_col,
-                );
-
-                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title: format!("Update to {}", display_ref(&target_ref)),
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(vec![diag.clone()]),
-                    edit: Some(make_edit(
-                        uri,
-                        version,
-                        vec![edit],
-                        supports_document_changes,
-                    )),
-                    is_preferred: Some(true),
-                    ..Default::default()
-                }));
-            }
-            DiagnosticData::ExpandSha {
-                target_ref,
-                repin_comment,
-                replace_end_col,
-            } => {
-                let edit = outdated_text_edit(
-                    diag.range,
-                    &target_ref,
-                    repin_comment.as_deref(),
-                    replace_end_col,
-                );
-                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title: "Expand to full SHA".to_string(),
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(vec![diag.clone()]),
-                    edit: Some(make_edit(
-                        uri,
-                        version,
-                        vec![edit],
-                        supports_document_changes,
-                    )),
-                    is_preferred: Some(true),
-                    ..Default::default()
-                }));
-            }
-            DiagnosticData::Unresolvable {
-                suggested_ref: Some(suggested),
-            } => {
-                let edit = TextEdit {
-                    range: diag.range,
-                    new_text: suggested.clone(),
-                };
-
-                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
-                    title: format!("Change to {suggested}"),
-                    kind: Some(CodeActionKind::QUICKFIX),
-                    diagnostics: Some(vec![diag.clone()]),
-                    edit: Some(make_edit(
-                        uri,
-                        version,
-                        vec![edit],
-                        supports_document_changes,
-                    )),
-                    is_preferred: Some(false),
-                    ..Default::default()
-                }));
-            }
-            DiagnosticData::Unresolvable {
-                suggested_ref: None,
-            } => {}
-        }
+        let Some((title, edit, preferred)) = quick_fix(diag.range, data) else {
+            continue;
+        };
+        actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+            title,
+            kind: Some(CodeActionKind::QUICKFIX),
+            diagnostics: Some(vec![diag.clone()]),
+            edit: Some(make_edit(
+                uri,
+                version,
+                vec![edit],
+                supports_document_changes,
+            )),
+            is_preferred: Some(preferred),
+            ..Default::default()
+        }));
     }
 
     actions
+}
+
+fn quick_fix(range: Range, data: DiagnosticData) -> Option<(String, TextEdit, bool)> {
+    match data {
+        DiagnosticData::Outdated {
+            target_ref,
+            repin_comment,
+            replace_end_col,
+        } => {
+            let edit = outdated_text_edit(
+                range,
+                &target_ref,
+                repin_comment.as_deref(),
+                replace_end_col,
+            );
+            Some((
+                format!("Update to {}", display_ref(&target_ref)),
+                edit,
+                true,
+            ))
+        }
+        DiagnosticData::ExpandSha {
+            target_ref,
+            repin_comment,
+            replace_end_col,
+        } => {
+            let edit = outdated_text_edit(
+                range,
+                &target_ref,
+                repin_comment.as_deref(),
+                replace_end_col,
+            );
+            Some(("Expand to full SHA".to_string(), edit, true))
+        }
+        DiagnosticData::PinBranch {
+            sha,
+            ref_name,
+            repin_comment,
+            replace_end_col,
+        } => {
+            let edit = outdated_text_edit(range, &sha, repin_comment.as_deref(), replace_end_col);
+            Some((
+                format!("Pin to {} # {ref_name}", display_ref(&sha)),
+                edit,
+                true,
+            ))
+        }
+        DiagnosticData::Unresolvable {
+            suggested_ref: Some(suggested),
+        } => {
+            let edit = TextEdit {
+                range,
+                new_text: suggested.clone(),
+            };
+            Some((format!("Change to {suggested}"), edit, false))
+        }
+        DiagnosticData::Unresolvable {
+            suggested_ref: None,
+        } => None,
+    }
 }
 
 /// Resolved targets for the "Pin to …" and unpin code actions. Each is `None`
@@ -422,10 +403,37 @@ fn pin_action(
     })
 }
 
+/// The edit CLI `update` makes for an actup diagnostic: an outdated ref or a ref to pin.
+pub fn update_text_edit(diag: &Diagnostic) -> Option<TextEdit> {
+    if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE) {
+        return None;
+    }
+    let data = serde_json::from_value::<DiagnosticData>(diag.data.clone()?).ok()?;
+    match data {
+        DiagnosticData::Outdated {
+            target_ref: new_ref,
+            repin_comment,
+            replace_end_col,
+        }
+        | DiagnosticData::PinBranch {
+            sha: new_ref,
+            repin_comment,
+            replace_end_col,
+            ..
+        } => Some(outdated_text_edit(
+            diag.range,
+            &new_ref,
+            repin_comment.as_deref(),
+            replace_end_col,
+        )),
+        DiagnosticData::ExpandSha { .. } | DiagnosticData::Unresolvable { .. } => None,
+    }
+}
+
 /// Build a single "Fix all outdated actions" source action for the file.
 ///
-/// Aggregates all `Outdated` diagnostics into one [`WorkspaceEdit`] with
-/// multiple [`TextEdit`]s. Returns `None` if there are fewer than 2
+/// Aggregates the [`update_text_edit`] of every diagnostic into one
+/// [`WorkspaceEdit`] with multiple [`TextEdit`]s. Returns `None` if there are fewer than 2
 /// actionable diagnostics (single-ref quickfixes already cover that case).
 ///
 /// The action uses [`SOURCE_FIX_ALL_ACTUP`] kind so it appears in the
@@ -446,7 +454,7 @@ pub fn fix_all_in_file(
     let mut fixed_diagnostics = Vec::new();
 
     for diag in diagnostics {
-        if let Some(edit) = outdated_edit(diag) {
+        if let Some(edit) = update_text_edit(diag) {
             edits.push(edit);
             fixed_diagnostics.push(diag.clone());
         }
@@ -936,7 +944,9 @@ mod tests {
 
         match back {
             DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v5.0.0"),
-            DiagnosticData::Unresolvable { .. } | DiagnosticData::ExpandSha { .. } => {
+            DiagnosticData::Unresolvable { .. }
+            | DiagnosticData::ExpandSha { .. }
+            | DiagnosticData::PinBranch { .. } => {
                 panic!("wrong variant")
             }
         }
@@ -954,7 +964,9 @@ mod tests {
             DiagnosticData::Unresolvable { suggested_ref } => {
                 assert_eq!(suggested_ref.as_deref(), Some("v3.1.0"));
             }
-            DiagnosticData::Outdated { .. } | DiagnosticData::ExpandSha { .. } => {
+            DiagnosticData::Outdated { .. }
+            | DiagnosticData::ExpandSha { .. }
+            | DiagnosticData::PinBranch { .. } => {
                 panic!("wrong variant")
             }
         }
@@ -1621,6 +1633,116 @@ mod tests {
                 "  - uses: o/r@v4.2.0 # mine",
                 "  - uses: pinned/x@NEW # v4.2.0",
             ])
+        );
+        Ok(())
+    }
+
+    const PIN_BRANCH_WORKFLOW: &str = "steps:\n  - uses: o/b@main\n  - uses: o/t@nightly # keep me\n  - uses: o/v@main # v1.0.0\n  - uses: \"o/e@ma\\x69n\"\n";
+
+    fn pin_branch_versions() -> actup_core::version::Set {
+        let v1 = test_utils::make_version_info("v1.0.0", &"a".repeat(40));
+        let mut versions = actup_core::version::Set::build(
+            vec![std::sync::Arc::clone(&v1)],
+            HashMap::from([(1, std::sync::Arc::clone(&v1))]),
+            HashMap::new(),
+            Some(v1),
+        );
+        versions.set_branches(HashMap::from([("main".to_string(), "c".repeat(40))]));
+        versions.set_other_tags(HashMap::from([("nightly".to_string(), "d".repeat(40))]));
+        versions
+    }
+
+    #[tokio::test]
+    async fn pin_branch_quick_fixes_and_fix_all_agree() -> Result<(), Box<dyn std::error::Error>> {
+        let mut provider = test_utils::MockProvider::new("github.com");
+        for repo in ["b", "t", "v", "e"] {
+            provider = provider.with_versions("o", repo, pin_branch_versions());
+        }
+        let registry = test_utils::mock_registry(provider);
+        let config = actup_core::Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[policy]\nbranch = \"update\"\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let diagnostics = crate::diagnostics::compute_diagnostics(
+            PIN_BRANCH_WORKFLOW,
+            &uri,
+            &config,
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            encoding,
+        )
+        .await
+        .diagnostics;
+        let codes: Vec<(u32, bool)> = diagnostics
+            .iter()
+            .filter(|d| {
+                d.code
+                    == Some(tower_lsp_server::ls_types::NumberOrString::String(
+                        "pin-branch".into(),
+                    ))
+            })
+            .map(|d| (d.range.start.line, d.data.is_some()))
+            .collect();
+        assert_eq!(codes, [(1, true), (2, true), (3, true), (4, false)]);
+        let fixable: Vec<u32> =
+            DocumentText::new(PIN_BRANCH_WORKFLOW, SourceFormat::Yaml, encoding)
+                .fixable(&diagnostics)
+                .iter()
+                .map(|d| d.range.start.line)
+                .collect();
+        assert_eq!(fixable, [1, 2, 3]);
+
+        let quick = code_actions_for_diagnostics(&uri, None, &diagnostics, false);
+        let titles: Vec<&str> = quick
+            .iter()
+            .filter_map(|action| match action {
+                CodeActionOrCommand::CodeAction(c) => Some(c.title.as_str()),
+                CodeActionOrCommand::Command(_) => None,
+            })
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Pin to ccccccc # main",
+                "Pin to ddddddd # nightly",
+                "Pin to ccccccc # main"
+            ]
+        );
+        let quick_edits: Vec<TextEdit> = quick
+            .iter()
+            .flat_map(|action| edits_of(action, &uri))
+            .collect();
+
+        let fix_all = fix_all_in_file(&uri, None, &diagnostics, false).ok_or("no fix-all")?;
+        let CodeActionOrCommand::CodeAction(action) = &fix_all else {
+            return Err("expected a code action".into());
+        };
+        assert_eq!(action.kind, Some(SOURCE_FIX_ALL_ACTUP));
+        let fixed = crate::workspace_commands::apply_text_edits(
+            PIN_BRANCH_WORKFLOW,
+            &edits_of(&fix_all, &uri),
+            encoding,
+        )
+        .ok_or("fix-all edits do not fit")?;
+        let quickfixed = crate::workspace_commands::apply_text_edits(
+            PIN_BRANCH_WORKFLOW,
+            &quick_edits,
+            encoding,
+        )
+        .ok_or("quickfix edits do not fit")?;
+        assert_eq!(quickfixed, fixed);
+        assert_eq!(
+            fixed,
+            format!(
+                "steps:\n  - uses: o/b@{c} # main\n  - uses: o/t@{d} # keep me\n  - uses: o/v@{c} # main\n  - uses: \"o/e@ma\\x69n\"\n",
+                c = "c".repeat(40),
+                d = "d".repeat(40),
+            )
         );
         Ok(())
     }
