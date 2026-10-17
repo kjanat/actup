@@ -542,7 +542,6 @@ pub struct WorkflowScanner<'a> {
     format: OutputFormat,
 }
 
-/// `value / divisor` in tenths, rounded half to even.
 fn tenths(value: u64, divisor: u64) -> u128 {
     let (scaled, divisor) = (u128::from(value) * 10, u128::from(divisor));
     let (quotient, remainder) = (scaled / divisor, scaled % divisor);
