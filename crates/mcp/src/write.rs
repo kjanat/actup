@@ -738,14 +738,21 @@ pub async fn update_all(
     let host = wanted.host().unwrap_or(default_host).to_string();
     let provider = registry.find(wanted.host());
     let served = provider.map_or_else(|| Served::unserved(&host), Served::by);
-    let target = if scanned.iter().any(|file| !file.wanted.is_empty()) {
-        let Some(provider) = provider else {
+    let any_wanted = scanned.iter().any(|file| !file.wanted.is_empty());
+    let all_ignored = !any_wanted
+        && outcome
+            .skipped
+            .iter()
+            .any(|skipped| matches!(skipped.reason, SkipCause::Ignored));
+    let target = match provider {
+        _ if all_ignored => None,
+        None => {
             return Ok(Reply::failure(
                 &served,
                 &actup_core::Error::ProviderNotFound { host },
             ));
-        };
-        match provider
+        }
+        Some(provider) => match provider
             .refresh_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
             .await
         {
@@ -754,9 +761,7 @@ pub async fn update_all(
                 sha.as_str(),
             )),
             Err(e) => return Ok(Reply::failure(&served, &e)),
-        }
-    } else {
-        None
+        },
     };
     for file in scanned {
         if let Err(error) = job.update(file, target.as_ref(), &mut outcome) {
@@ -1295,14 +1300,23 @@ mod tests {
 
         fn resolve_ref_to_sha(
             &self,
-            _repo: &ActionRepoId,
-            _ref_name: &str,
+            repo: &ActionRepoId,
+            ref_name: &str,
         ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
-            let sha = Sha40::new("b".repeat(40)).ok_or_else(|| actup_core::Error::Internal {
-                context: "test".into(),
-                message: "sha".into(),
-                source: None,
-            });
+            let sha = if ref_name == "v9.9.9" {
+                Err(actup_core::Error::RefNotFound {
+                    owner: repo.owner().to_owned(),
+                    repo: repo.repo().to_owned(),
+                    ref_name: ref_name.to_owned(),
+                    host: None,
+                })
+            } else {
+                Sha40::new("b".repeat(40)).ok_or_else(|| actup_core::Error::Internal {
+                    context: "test".into(),
+                    message: "sha".into(),
+                    source: None,
+                })
+            };
             Box::pin(async move { sha })
         }
 
@@ -1390,6 +1404,66 @@ mod tests {
         assert_eq!(body["errors"], json!([]));
         assert_eq!(body["changes"].as_array().map(Vec::len), Some(1));
         assert_eq!(fs::read_to_string(dir.path().join("outside.yml"))?, outside);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_all_without_matches_still_needs_a_provider_and_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        fs::create_dir_all(dir.path().join(".github/workflows"))?;
+        fs::write(
+            dir.path().join(".github/workflows/ci.yml"),
+            "steps:\n  - uses: other/action@v1\n",
+        )?;
+        let root = Root::new(dir.path())?;
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(Resolving));
+
+        let reply = update_all(
+            "t",
+            &registry,
+            &Config::default(),
+            &root,
+            &update_all_args(Some("ghe.corp.com"))?,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let (is_error, unserved) = body(reply)?;
+        assert_eq!(is_error, Some(true));
+        assert_eq!(
+            unserved,
+            json!({
+                "provider": "unknown",
+                "host": "ghe.corp.com",
+                "status": "unknown",
+                "error": "no provider configured for host: ghe.corp.com",
+            })
+        );
+
+        let mut args = update_all_args(None)?;
+        args.target_ref = "v9.9.9".to_owned();
+        let reply = update_all("t", &registry, &Config::default(), &root, &args)
+            .await
+            .map_err(|e| e.to_string())?;
+        let (is_error, missing) = body(reply)?;
+        assert_eq!(is_error, Some(true));
+        assert_eq!(missing["provider"], json!("github"));
+        assert_eq!(missing["status"], json!("unresolvable"));
+
+        let reply = update_all(
+            "t",
+            &registry,
+            &Config::default(),
+            &root,
+            &update_all_args(None)?,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let (is_error, served) = body(reply)?;
+        assert_ne!(is_error, Some(true));
+        assert_eq!(served["changes"], json!([]));
         Ok(())
     }
 
