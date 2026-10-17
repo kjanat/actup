@@ -36,6 +36,17 @@ extension source to pick up changes.
 
 ## Configuration
 
+### actup config for `/actions:update`
+
+The `/actions:update` slash command reads actup config from the worktree root
+only. It takes the first repo config candidate in `actup-core` discovery order
+(`actup.*`, `.actup.*`, `.config/actup.*`, `.github/actup.*`; TOML, JSON, JSONC
+or YAML) and applies `ACTUP_*` variables from the worktree shell environment on
+top. Parent-directory configs and the user config do not apply. The first line
+of the output names the config it used, or `defaults`.
+
+`actup-lsp` resolves config the same way as the `actup` CLI.
+
 ### Binary path override
 
 If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings

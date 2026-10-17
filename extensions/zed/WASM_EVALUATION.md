@@ -60,6 +60,7 @@ Biome/Ruff ship multi-MB WASM binaries).
 ```txt
 Slash command (/actions:update)
   |
+  +-> read_config()              [worktree-root config + ACTUP_* shell env]
   +-> discover_workflow_files()  [probes known paths via worktree API]
   +-> extract_uses_from_yaml()   [actup-core parser, sync]
   +-> parse_uses()               [actup-core, sync]
@@ -79,8 +80,11 @@ embedded WASM path only powers the slash command.
    `worktree.read_text_file` on a manifest or parse `.github/` structure via
    heuristics.
 
-2. **Config loading** — spike uses `Config::default()`. Full config parsing (via
-   figment/TOML) needs investigation for WASM compat.
+2. **Config scope** — the slash command reads the first repo config candidate at
+   the worktree root, in `actup-core` discovery order, and applies `ACTUP_*`
+   variables from the worktree shell environment. Parent-directory configs and
+   the user config do not apply. The output names the config it used, or
+   `defaults`.
 
 3. **GitHub-only** — the HTTP provider is GitHub REST only. GitLab/Gitea would
    need additional provider implementations using Zed's `fetch()`.
@@ -93,7 +97,6 @@ embedded WASM path only powers the slash command.
 
 ## Follow-up work
 
-- [ ] Full config loading from `actup.toml` in WASM
 - [ ] GitLab/Gitea provider implementations for Zed
 - [ ] Context server integration (`[context_servers.actup-mcp]`)
 - [ ] Move version fetching into LSP (native) and cache results for slash cmd

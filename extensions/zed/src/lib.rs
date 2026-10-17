@@ -7,7 +7,8 @@ mod provider;
 use std::{env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
-    ActionRef, CheckResult, CheckStatus, Config, UsesLocation, config::repo_candidates,
+    ActionRef, CheckResult, CheckStatus, Config, UsesLocation,
+    config::{EnvOverrides, repo_candidates},
     extract_uses_from_yaml,
 };
 use zed::{SlashCommand, SlashCommandOutput, SlashCommandOutputSection, settings::LspSettings};
@@ -216,20 +217,13 @@ fn actions_language_server_bin_path() -> zed::Result<String> {
 fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOutput, String> {
     let worktree = worktree.ok_or("no worktree available")?;
 
-    let config = read_config(|path| worktree.read_text_file(path))?;
+    let shell_env = worktree.shell_env();
+    let config = read_config(|path| worktree.read_text_file(path), &shell_env)?;
 
     // Discover and read workflow files
     let files = discover_workflow_files(worktree);
     if files.is_empty() {
-        let text = "No workflow or action files found in this workspace.\n\
-                    Looked for `.github/workflows/*.yml` and `action.yml`.\n";
-        return Ok(SlashCommandOutput {
-            sections: vec![SlashCommandOutputSection {
-                range: (0..text.len()).into(),
-                label: "actup: No files found".to_string(),
-            }],
-            text: text.to_string(),
-        });
+        return Ok(no_files_output(&config));
     }
 
     // Collect all uses refs across all files
@@ -245,17 +239,7 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     }
 
     if all_refs.is_empty() {
-        let text = format!(
-            "Found {} workflow file(s), but no remote `uses:` references.\n",
-            files.len()
-        );
-        return Ok(SlashCommandOutput {
-            sections: vec![SlashCommandOutputSection {
-                range: (0..text.len()).into(),
-                label: "actup: No refs found".to_string(),
-            }],
-            text,
-        });
+        return Ok(no_refs_output(&config, files.len()));
     }
 
     // Deduplicate repos to minimize API calls. Key by (host, owner, repo) so the
@@ -275,7 +259,6 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     }
 
     // Resolve GitHub token from shell environment
-    let shell_env = worktree.shell_env();
     let token = shell_env
         .iter()
         .find(|(k, _)| k == "GITHUB_TOKEN")
@@ -315,15 +298,49 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     }
 
     // Format output
-    let text = format_check_output(&results, &fetch_errors, files.len(), all_refs.len());
+    let text = format_check_output(
+        &config,
+        &results,
+        &fetch_errors,
+        files.len(),
+        all_refs.len(),
+    );
+    Ok(slash_output(text, "actup: Check Results"))
+}
 
-    Ok(SlashCommandOutput {
+fn slash_output(text: String, label: &str) -> SlashCommandOutput {
+    SlashCommandOutput {
         sections: vec![SlashCommandOutputSection {
             range: (0..text.len()).into(),
-            label: "actup: Check Results".to_string(),
+            label: label.to_string(),
         }],
         text,
-    })
+    }
+}
+
+fn config_note(config: &Config) -> String {
+    let source = config.loaded_from.as_deref().map_or_else(
+        || "defaults".to_string(),
+        |path| format!("`{}`", path.display()),
+    );
+    format!("Config: {source}. Parent-directory configs and the user config are not applied.\n\n")
+}
+
+fn no_files_output(config: &Config) -> SlashCommandOutput {
+    let text = format!(
+        "{}No workflow or action files found in this workspace.\n\
+         Looked for `.github/workflows/*.yml` and `action.yml`.\n",
+        config_note(config)
+    );
+    slash_output(text, "actup: No files found")
+}
+
+fn no_refs_output(config: &Config, file_count: usize) -> SlashCommandOutput {
+    let text = format!(
+        "{}Found {file_count} workflow file(s), but no remote `uses:` references.\n",
+        config_note(config)
+    );
+    slash_output(text, "actup: No refs found")
 }
 
 /// Map a host to a GitHub-compatible REST API base URL.
@@ -341,14 +358,19 @@ fn api_base_for_host(host: &str) -> String {
     }
 }
 
-fn read_config(read: impl Fn(&str) -> Result<String, String>) -> Result<Config, String> {
-    for candidate in repo_candidates() {
+fn read_config(
+    read: impl Fn(&str) -> Result<String, String>,
+    shell_env: &[(String, String)],
+) -> Result<Config, String> {
+    let env = EnvOverrides::from_vars(shell_env.iter().map(|(name, value)| (name, value)));
+    let file = repo_candidates().find_map(|candidate| {
         let path = candidate.relative();
-        if let Ok(contents) = read(&path) {
-            return Config::from_contents(Path::new(&path), &contents).map_err(|e| e.to_string());
-        }
-    }
-    Ok(Config::default())
+        read(&path).ok().map(|contents| (path, contents))
+    });
+    let file = file
+        .as_ref()
+        .map(|(path, contents)| (Path::new(path), contents.as_str()));
+    Config::from_contents(file, env).map_err(|e| e.to_string())
 }
 
 /// Discover workflow and action files from the worktree.
@@ -452,12 +474,13 @@ fn write_pin_branch_section(out: &mut String, pin_branch: &[&(String, UsesLocati
 
 /// Format check results into human-readable output for the slash command.
 fn format_check_output(
+    config: &Config,
     results: &[(String, UsesLocation, CheckResult)],
     fetch_errors: &[(String, String)],
     file_count: usize,
     ref_count: usize,
 ) -> String {
-    let mut out = String::new();
+    let mut out = config_note(config);
 
     let _ = writeln!(
         out,
@@ -593,7 +616,7 @@ mod tests {
     fn read_config_rejects_invalid_policy() {
         let files = HashMap::from([("actup.toml", "[policy]\nbump = \"sideways\"\n")]);
         let requested = RefCell::new(Vec::new());
-        let Err(error) = read_config(read_from(&files, &requested)) else {
+        let Err(error) = read_config(read_from(&files, &requested), &[]) else {
             panic!("invalid config must not parse");
         };
         assert!(error.contains("actup.toml"), "{error}");
@@ -604,7 +627,7 @@ mod tests {
     fn read_config_rejects_renamed_key() {
         let files = HashMap::from([(".github/actup.yaml", "update_policy: patch\n")]);
         let requested = RefCell::new(Vec::new());
-        let Err(error) = read_config(read_from(&files, &requested)) else {
+        let Err(error) = read_config(read_from(&files, &requested), &[]) else {
             panic!("renamed key must not parse");
         };
         assert!(error.contains(".github/actup.yaml"), "{error}");
@@ -618,7 +641,7 @@ mod tests {
     fn read_config_reads_github_yaml() -> Result<(), String> {
         let files = HashMap::from([(".github/actup.yaml", "policy:\n  bump: minor\n")]);
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested))?;
+        let config = read_config(read_from(&files, &requested), &[])?;
         assert_eq!(config.policy.bump, policy::Update::Minor);
         assert_eq!(
             config.loaded_from.as_deref(),
@@ -634,7 +657,7 @@ mod tests {
             (".github/actup.yaml", "policy:\n  bump: minor\n"),
         ]);
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested))?;
+        let config = read_config(read_from(&files, &requested), &[])?;
         assert_eq!(config.policy.bump, policy::Update::Patch);
         assert_eq!(*requested.borrow(), ["actup.toml"]);
         Ok(())
@@ -644,12 +667,114 @@ mod tests {
     fn read_config_tries_core_candidates_in_order() -> Result<(), String> {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested))?;
+        let config = read_config(read_from(&files, &requested), &[])?;
         assert!(config.loaded_from.is_none());
         let requested: Vec<PathBuf> = requested.borrow().iter().map(PathBuf::from).collect();
         let core: Vec<PathBuf> = iter_config_candidates(Path::new("")).collect();
         assert_eq!(requested, core);
         assert_eq!(requested.len(), 20);
         Ok(())
+    }
+
+    fn shell_env(vars: &[(&str, &str)]) -> Vec<(String, String)> {
+        vars.iter()
+            .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn read_config_applies_shell_env_over_the_file() -> Result<(), String> {
+        let files = HashMap::from([("actup.toml", "[policy]\nbump = \"minor\"\npin = \"sha\"\n")]);
+        let requested = RefCell::new(Vec::new());
+        let env = shell_env(&[("ACTUP_POLICY_BUMP", "patch"), ("GITHUB_TOKEN", "t")]);
+        let config = read_config(read_from(&files, &requested), &env)?;
+        assert_eq!(config.policy.bump, policy::Update::Patch);
+        assert_eq!(config.policy.pin, policy::Style::Sha);
+        assert_eq!(config.loaded_from.as_deref(), Some(Path::new("actup.toml")));
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_applies_shell_env_without_a_file() -> Result<(), String> {
+        let files = HashMap::new();
+        let requested = RefCell::new(Vec::new());
+        let env = shell_env(&[("actup_policy_branch", "warn")]);
+        let config = read_config(read_from(&files, &requested), &env)?;
+        assert_eq!(config.policy.branch, policy::Branch::Warn);
+        assert!(config.loaded_from.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_rejects_invalid_shell_env() {
+        let files = HashMap::new();
+        let requested = RefCell::new(Vec::new());
+        let env = shell_env(&[("ACTUP_POLICY_BUMP", "sideways")]);
+        let Err(error) = read_config(read_from(&files, &requested), &env) else {
+            panic!("invalid env value must not parse");
+        };
+        assert!(
+            error.contains("`ACTUP_` environment variable(s)"),
+            "{error}"
+        );
+        assert!(error.contains("sideways"), "{error}");
+    }
+
+    const SCOPE: &str = "Parent-directory configs and the user config are not applied.";
+
+    fn loaded(path: &str) -> Config {
+        Config {
+            loaded_from: Some(PathBuf::from(path)),
+            ..Config::default()
+        }
+    }
+
+    #[test]
+    fn config_note_names_the_loaded_file() {
+        assert_eq!(
+            config_note(&loaded(".github/actup.yaml")),
+            format!("Config: `.github/actup.yaml`. {SCOPE}\n\n")
+        );
+    }
+
+    #[test]
+    fn config_note_names_defaults_without_a_file() {
+        assert_eq!(
+            config_note(&Config::default()),
+            format!("Config: defaults. {SCOPE}\n\n")
+        );
+    }
+
+    #[test]
+    fn no_files_output_starts_with_the_config_note() {
+        let output = no_files_output(&loaded("actup.toml"));
+        assert!(
+            output.text.starts_with(&config_note(&loaded("actup.toml"))),
+            "{}",
+            output.text
+        );
+        assert!(output.text.contains("No workflow or action files found"));
+        assert_eq!(output.sections.len(), 1);
+        assert_eq!(output.sections[0].label, "actup: No files found");
+    }
+
+    #[test]
+    fn no_refs_output_starts_with_the_config_note() {
+        let output = no_refs_output(&Config::default(), 3);
+        assert!(
+            output.text.starts_with(&config_note(&Config::default())),
+            "{}",
+            output.text
+        );
+        assert!(output.text.contains("Found 3 workflow file(s)"));
+        assert_eq!(output.sections[0].label, "actup: No refs found");
+    }
+
+    #[test]
+    fn format_check_output_starts_with_the_config_note() {
+        let config = loaded(".config/actup.toml");
+        let text = format_check_output(&config, &[], &[], 2, 0);
+        assert!(text.starts_with(&config_note(&config)), "{text}");
+        assert!(text.contains("Scanned 2 file(s), found 0 remote `uses:` ref(s)."));
     }
 }

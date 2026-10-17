@@ -8,6 +8,7 @@
 //! 5. Defaults (lowest)
 
 pub mod discovery;
+mod env;
 pub mod matching;
 pub mod registration;
 pub mod resolution;
@@ -28,9 +29,10 @@ pub use discovery::find_repo_config;
 pub use discovery::{
     CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, user_config_path,
 };
+pub use env::EnvOverrides;
 use figment::{
     Figment,
-    providers::{Env, Format as _, Json, Serialized, Toml, Yaml},
+    providers::{Format as _, Json, Serialized, Toml, Yaml},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -573,34 +575,38 @@ impl Config {
             loaded_from
         };
 
-        // Environment variables (highest precedence)
-        figment = figment.merge(Env::prefixed("ACTUP_").split("_"));
+        let env = EnvOverrides::from_vars(std::env::vars_os().map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        }));
+        Self::extract(&figment.merge(env), loaded_from)
+    }
 
+    /// Parse one config `file` as path and contents, or the defaults for `None`, then apply `env`.
+    ///
+    /// `path` chooses the format. Defaults, formats and `env` behave as in
+    /// [`Config::load`], without the upward search or the user config.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidConfig`] naming the file or the environment
+    /// that holds the invalid value.
+    pub fn from_contents(file: Option<(&Path, &str)>, env: EnvOverrides) -> Result<Self, Error> {
+        let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
+        if let Some((path, contents)) = file {
+            figment = figment.merge(FileContents::new(path, contents)?);
+        }
+        let loaded_from = file.map(|(path, _)| path.to_path_buf());
+        Self::extract(&figment.merge(env), loaded_from)
+    }
+
+    fn extract(figment: &Figment, loaded_from: Option<PathBuf>) -> Result<Self, Error> {
         let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
             path: error_origin(&e, loaded_from.as_deref()),
             reason: e.to_string(),
         })?;
-
         config.loaded_from = loaded_from;
-        Ok(config)
-    }
-
-    /// Parse one config file from its contents, with `path` choosing the format.
-    ///
-    /// Applies the same defaults and format handling as a repo config read by
-    /// [`Config::load`], without environment variables or a user config.
-    ///
-    /// # Errors
-    /// Returns [`Error::InvalidConfig`] naming `path` if `contents` is invalid.
-    pub fn from_contents(path: &Path, contents: &str) -> Result<Self, Error> {
-        let figment = Figment::new()
-            .merge(Serialized::defaults(Self::default()))
-            .merge(FileContents::new(path, contents)?);
-        let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
-            path: error_origin(&e, Some(path)),
-            reason: e.to_string(),
-        })?;
-        config.loaded_from = Some(path.to_path_buf());
         Ok(config)
     }
 
@@ -1544,7 +1550,8 @@ mod tests {
             (".config/actup.yml", "policy:\n  bump: minor\n"),
         ];
         for (name, contents) in samples {
-            let config = Config::from_contents(Path::new(name), contents)?;
+            let config =
+                Config::from_contents(Some((Path::new(name), contents)), EnvOverrides::default())?;
             assert_eq!(config.policy.bump, policy::Update::Minor, "{name}");
             assert_eq!(config.policy.pin, Policy::default().pin, "{name}");
             assert_eq!(config.loaded_from.as_deref(), Some(Path::new(name)));
@@ -1554,9 +1561,10 @@ mod tests {
 
     #[test]
     fn test_from_contents_rejects_renamed_key_naming_the_file() {
-        let Err(Error::InvalidConfig { path, reason }) =
-            Config::from_contents(Path::new(".github/actup.yaml"), "update_policy: patch\n")
-        else {
+        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+            Some((Path::new(".github/actup.yaml"), "update_policy: patch\n")),
+            EnvOverrides::default(),
+        ) else {
             panic!("renamed key must be rejected");
         };
         assert_eq!(path, ".github/actup.yaml");
@@ -1568,11 +1576,59 @@ mod tests {
 
     #[test]
     fn test_from_contents_syntax_error_names_the_file() {
-        let Err(Error::InvalidConfig { path, .. }) =
-            Config::from_contents(Path::new("actup.toml"), "[policy\n")
-        else {
+        let Err(Error::InvalidConfig { path, .. }) = Config::from_contents(
+            Some((Path::new("actup.toml"), "[policy\n")),
+            EnvOverrides::default(),
+        ) else {
             panic!("invalid TOML must be rejected");
         };
         assert_eq!(path, "actup.toml");
+    }
+
+    #[test]
+    fn test_from_contents_applies_env_over_the_file() -> Result<(), Error> {
+        let env = EnvOverrides::from_vars([
+            ("ACTUP_POLICY_BUMP", "patch"),
+            ("ACTUP_VERBOSE", "true"),
+            ("GITHUB_TOKEN", "t"),
+        ]);
+        let config = Config::from_contents(
+            Some((
+                Path::new("actup.toml"),
+                "[policy]\nbump = \"minor\"\npin = \"sha\"\n",
+            )),
+            env,
+        )?;
+        assert_eq!(config.policy.bump, policy::Update::Patch);
+        assert_eq!(config.policy.pin, policy::Style::Sha);
+        assert_eq!(config.loaded_from.as_deref(), Some(Path::new("actup.toml")));
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_contents_without_file_applies_env_over_defaults() -> Result<(), Error> {
+        let config = Config::from_contents(
+            None,
+            EnvOverrides::from_vars([("ACTUP_POLICY_BRANCH", "warn")]),
+        )?;
+        assert_eq!(config.policy.branch, policy::Branch::Warn);
+        assert_eq!(config.policy.bump, Policy::default().bump);
+        assert!(config.loaded_from.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_contents_env_error_names_the_environment() {
+        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+            Some((Path::new("actup.toml"), "[policy]\nbump = \"minor\"\n")),
+            EnvOverrides::from_vars([("ACTUP_IGNORE", "a/b")]),
+        ) else {
+            panic!("renamed env key must be rejected");
+        };
+        assert_eq!(path, "`ACTUP_` environment variable(s)");
+        assert!(
+            reason.contains("`ignore` is no longer supported; use `scan.ignore`"),
+            "{reason}"
+        );
     }
 }
