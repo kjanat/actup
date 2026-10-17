@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn stripped_output_opens_no_command() -> Result<(), Box<dyn std::error::Error>> {
         let mut opened = Vec::new();
-        for c in (0u32..=0x2070).filter_map(char::from_u32) {
+        for c in (0u32..=0xFFFF).filter_map(char::from_u32) {
             let value = format!("#{c}#[error]x");
             let reference = format!("v\n{c}::error::x");
             let report = Report {
