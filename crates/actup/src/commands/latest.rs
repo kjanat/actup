@@ -307,6 +307,7 @@ mod tests {
                 .await;
         }
         let mut config = Config::default();
+        config.cache.enabled = false;
         config.hosts.insert(
             "gitlab.com".to_string(),
             actup_core::config::HostConfig {
