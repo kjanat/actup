@@ -1,8 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import * as wasm from "actup-wasm";
+import { describe, expect, mock, test } from "bun:test";
 import * as vscode from "vscode";
 import { ActupCodeActionProvider } from "../codeActions.ts";
-import { computeDiagnostics, createDiagnosticCollection, diagnosticDataByUri, diagnosticKey } from "../diagnostics.ts";
-import { codeActionContext, editsOf, FakeDocument, fakeProvider, rangeOf } from "./fixtures.ts";
+import {
+	checkResultsByUri,
+	clearDiagnosticData,
+	computeDiagnostics,
+	createDiagnosticCollection,
+	diagnosticDataByUri,
+	diagnosticKey,
+} from "../diagnostics.ts";
+import { codeActionContext, editsOf, FakeDocument, fakeProvider, gate, gatedProvider, rangeOf } from "./fixtures.ts";
 
 const provider = fakeProvider({
 	"acme/workflows": [
@@ -131,5 +139,70 @@ describe("an outdated value the line holds escaped", () => {
 			{ range: rangeOf(document, 2, "v1.0.0"), newText: "v1.2.0" },
 			{ range: rangeOf(document, 4, "v1.0.0"), newText: "v1.2.0" },
 		]);
+	});
+});
+
+describe("a check that finishes after a newer computation or a close", () => {
+	function reusable(ref: string): string {
+		return `jobs:\n  ci:\n    uses: acme/workflows/.github/workflows/ci.yml@${ref}\n`;
+	}
+
+	function storedValues(uri: vscode.Uri): string[] | undefined {
+		return checkResultsByUri.get(uri.toString())?.map(result => result.location.value);
+	}
+
+	test("leaves the newer results in place", async () => {
+		const uri = vscode.Uri.parse("file:///stale-success.yml");
+		const collection = createDiagnosticCollection();
+		const held = gate();
+		const older = computeDiagnostics(uri, reusable("v1.0.0"), gatedProvider(provider, held), collection);
+		await computeDiagnostics(uri, reusable("v1.2.0"), provider, collection);
+		held.open();
+		await older;
+
+		expect(collection.get(uri)).toEqual([]);
+		expect(storedValues(uri)).toEqual(["acme/workflows/.github/workflows/ci.yml@v1.2.0"]);
+		expect(diagnosticDataByUri.get(uri.toString())?.size).toBe(0);
+	});
+
+	test("leaves the newer results in place when the older check fails", async () => {
+		const uri = vscode.Uri.parse("file:///stale-failure.yml");
+		const collection = createDiagnosticCollection();
+		const held = gate();
+		const real = { ...wasm };
+		let calls = 0;
+		await mock.module("actup-wasm", () => ({
+			...real,
+			checkRefs: (text: string, p: wasm.ActupProvider) =>
+				calls++ === 0
+					? held.opened.then(() => Promise.reject(new Error("offline")))
+					: real.checkRefs(text, p),
+		}));
+		try {
+			const older = computeDiagnostics(uri, reusable("v1.0.0"), provider, collection);
+			await computeDiagnostics(uri, reusable("v1.0.0"), provider, collection);
+			held.open();
+			await older;
+		} finally {
+			await mock.module("actup-wasm", () => real);
+		}
+
+		expect(collection.get(uri)?.map(diagnostic => diagnostic.code)).toEqual(["outdated"]);
+		expect(storedValues(uri)).toEqual(["acme/workflows/.github/workflows/ci.yml@v1.0.0"]);
+		expect(diagnosticDataByUri.get(uri.toString())?.size).toBe(1);
+	});
+
+	test("writes nothing once the document has closed", async () => {
+		const uri = vscode.Uri.parse("file:///stale-closed.yml");
+		const collection = createDiagnosticCollection();
+		const held = gate();
+		const older = computeDiagnostics(uri, reusable("v1.0.0"), gatedProvider(provider, held), collection);
+		clearDiagnosticData(uri);
+		held.open();
+		await older;
+
+		expect(collection.get(uri)).toBeUndefined();
+		expect(checkResultsByUri.has(uri.toString())).toBe(false);
+		expect(diagnosticDataByUri.has(uri.toString())).toBe(false);
 	});
 });

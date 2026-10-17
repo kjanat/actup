@@ -17,6 +17,9 @@ export const diagnosticDataByUri = new Map<string, Map<string, DiagnosticData>>(
 /** Per-document check results for the hover to consume. */
 export const checkResultsByUri = new Map<string, LocatedCheckResult[]>();
 
+const latestComputeByUri = new Map<string, number>();
+let computeCount = 0;
+
 /** Create a `DiagnosticCollection` for actup. */
 export function createDiagnosticCollection(): vscode.DiagnosticCollection {
 	return vscode.languages.createDiagnosticCollection("actup");
@@ -29,16 +32,27 @@ export async function computeDiagnostics(
 	provider: ActupProvider,
 	collection: vscode.DiagnosticCollection,
 ): Promise<void> {
+	const key = uri.toString();
+	const compute = ++computeCount;
+	latestComputeByUri.set(key, compute);
+
 	if (!text.includes("uses:")) {
 		collection.set(uri, []);
 		clearDiagnosticData(uri);
 		return;
 	}
 
-	let results: LocatedCheckResult[];
+	let results: LocatedCheckResult[] | undefined;
 	try {
 		results = await checkRefs(text, provider);
 	} catch {
+		results = undefined;
+	}
+
+	if (latestComputeByUri.get(key) !== compute) {
+		return;
+	}
+	if (results === undefined) {
 		// Network/provider error — clear diagnostics rather than show stale data
 		collection.set(uri, []);
 		clearDiagnosticData(uri);
@@ -61,14 +75,16 @@ export async function computeDiagnostics(
 	}
 
 	collection.set(uri, diagnostics);
-	diagnosticDataByUri.set(uri.toString(), dataMap);
-	checkResultsByUri.set(uri.toString(), results);
+	diagnosticDataByUri.set(key, dataMap);
+	checkResultsByUri.set(key, results);
 }
 
 /** Clear diagnostic data and check results when a document closes. */
 export function clearDiagnosticData(uri: vscode.Uri): void {
-	diagnosticDataByUri.delete(uri.toString());
-	checkResultsByUri.delete(uri.toString());
+	const key = uri.toString();
+	latestComputeByUri.delete(key);
+	diagnosticDataByUri.delete(key);
+	checkResultsByUri.delete(key);
 }
 
 /** Unique key for a diagnostic (for data lookup). */

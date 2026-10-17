@@ -167,6 +167,29 @@ export function fakeProvider(tagsByRepo: Readonly<Record<string, VersionTag[]>>)
 	};
 }
 
+export interface Gate {
+	readonly opened: Promise<void>;
+	open(): void;
+}
+
+export function gate(): Gate {
+	let open = (): void => {};
+	const opened = new Promise<void>(resolve => {
+		open = resolve;
+	});
+	return { opened, open: () => open() };
+}
+
+export function gatedProvider(inner: ActupProvider, held: Gate): ActupProvider {
+	return {
+		...inner,
+		getVersions: async (host, owner, repo) => {
+			await held.opened;
+			return inner.getVersions(host, owner, repo);
+		},
+	};
+}
+
 export function rangeOf(document: vscode.TextDocument, line: number, needle: string): vscode.Range {
 	const start = document.lineAt(line).text.indexOf(needle);
 	if (start === -1) {

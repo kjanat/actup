@@ -48,6 +48,14 @@ describe("hover status from computed diagnostics", () => {
 		expect(await statusRows(current)).toEqual(["$(check) Up to date at `v1.2.0`"]);
 	});
 
+	test("shows no status for a ref edited since the last computation", async () => {
+		const document = new FakeDocument("hover-edited.yml", workflow("v1.0.0"));
+		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());
+		const edited = new FakeDocument("hover-edited.yml", workflow("v1.2.0"));
+
+		expect(await statusRows(edited)).toEqual([]);
+	});
+
 	test("drops the stored results when the document closes", async () => {
 		const document = new FakeDocument("hover-closed.yml", workflow("v1.0.0"));
 		await computeDiagnostics(document.uri, document.getText(), provider, createDiagnosticCollection());

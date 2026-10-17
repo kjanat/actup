@@ -29,7 +29,9 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		}
 
 		const results = this.resultCache.get(document.uri.toString());
-		const matchingResult = results?.find(r => r.location.line === loc.line && r.location.column === loc.column);
+		const matchingResult = results?.find(r =>
+			r.location.line === loc.line && r.location.column === loc.column && r.location.value === loc.value
+		);
 
 		// isTrusted=false: action.yml content is remote and untrusted; trusted Markdown
 		// would let it execute commands or render unsafe links.
