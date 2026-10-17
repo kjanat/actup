@@ -298,9 +298,9 @@ reversal plan, and change nothing when called again with the same arguments.
 They write like `update`: atomically, after a re-read that refuses a file whose
 edited lines changed since the scan. `updateAllUsesToVersion` and `updateFile`
 refuse an edited text that is not valid YAML or holds a different number of
-`uses:` values. `updateFile` skips that check with `validateYaml: false`.
-`updateAllUsesToVersion` writes each ref in its `policy.pin` style, as `update`
-does.
+`uses:` values. `updateFile` skips that check with `validateYaml: false`, and
+refuses edits that name actions on more than one host. `updateAllUsesToVersion`
+writes each ref in its `policy.pin` style, as `update` does.
 
 ## Exit Codes
 

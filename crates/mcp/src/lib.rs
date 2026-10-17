@@ -47,7 +47,8 @@ Read tools (no side effects, results reused for `cache.ttl` seconds):
 - actionGetReadme / actionGetActionYml: README and action.yml at a ref (default branch when omitted).
 
 Mutators (write files; pass dryRun: true to plan without writing):
-- updateFile: replace the ref of named `uses:` values in one file. Every edit applies or none does. \
+- updateFile: replace the ref of named `uses:` values in one file. Every edit applies or none does, \
+and every edit names an action on the same host. \
 Only the text after `@` changes; a trailing comment stays as written.
 - updateAllUsesToVersion: move every reference to one action under workspaceRoot to targetRef. \
 SHA-pinned references stay pinned: the provider resolves targetRef to its current commit on every call \

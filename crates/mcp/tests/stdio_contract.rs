@@ -610,6 +610,8 @@ fn update_file_returns_ranges_diff_and_reversal(client: &mut Client, ws: &Worksp
     })?;
     let b = body(&result);
     expect_eq(&b["status"], &json!("outdated"), "status")?;
+    expect_eq(&b["provider"], &json!("github"), "provider")?;
+    expect_eq(&b["host"], &json!("github.com"), "host")?;
     expect_eq(
         &b["written"],
         &json!([".github/workflows/ci.yml"]),
@@ -764,7 +766,7 @@ fn update_file_dry_run_and_refusals_write_nothing(
     )
 }
 
-fn update_file_refuses_escaped_values_and_overlapping_edits(
+fn update_file_refuses_escaped_values_overlaps_and_mixed_hosts(
     client: &mut Client,
     ws: &Workspace,
 ) -> TestResult {
@@ -806,6 +808,30 @@ fn update_file_refuses_escaped_values_and_overlapping_edits(
     })?;
     expect(ws.read(".github/workflows/ci.yml")? == WORKFLOW, || {
         "overlapping edits wrote the file".into()
+    })?;
+
+    let mixed = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.0.0\n      - uses: ghe.corp.com/actions/checkout@v4.0.0\n";
+    ws.write(".github/workflows/mixed.yml", mixed)?;
+    let hosts = update_file(
+        client,
+        json!({
+            "path": ".github/workflows/mixed.yml",
+            "edits": [
+                { "line": 4, "action": "actions/checkout", "ref": "v4.2.0" },
+                { "line": 5, "action": "ghe.corp.com/actions/checkout", "ref": "v4.2.0" },
+            ],
+        }),
+    )?;
+    expect(is_error(&hosts), || {
+        format!("edits on two hosts must be refused: {hosts}")
+    })?;
+    expect(
+        error_text(&hosts)
+            .contains("edits name actions on more than one host (github.com, ghe.corp.com)"),
+        || error_text(&hosts),
+    )?;
+    expect(ws.read(".github/workflows/mixed.yml")? == mixed, || {
+        "edits on two hosts wrote the file".into()
     })
 }
 
@@ -1178,8 +1204,8 @@ const CASES: [(&str, Case); 10] = [
         update_file_dry_run_and_refusals_write_nothing,
     ),
     (
-        "update_file_refuses_escaped_values_and_overlapping_edits",
-        update_file_refuses_escaped_values_and_overlapping_edits,
+        "update_file_refuses_escaped_values_overlaps_and_mixed_hosts",
+        update_file_refuses_escaped_values_overlaps_and_mixed_hosts,
     ),
     (
         "mutators_refuse_paths_outside_the_root",

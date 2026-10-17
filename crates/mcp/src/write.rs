@@ -369,7 +369,8 @@ fn refused(message: impl std::fmt::Display) -> CallToolError {
 /// # Errors
 ///
 /// Returns an error result when an argument is invalid, the path leaves the
-/// root, an edit names no single `uses:` value, or the edited file fails validation.
+/// root, an edit names no single `uses:` value, the edits span more than one
+/// host, or the edited file fails validation.
 pub fn update_file(
     tool: &str,
     registry: &Registry,
@@ -397,6 +398,7 @@ pub fn update_file(
     let mut edits = FileEdits::new(path.clone(), original.clone(), format);
     let mut unchanged = Vec::new();
     let mut problems = Vec::new();
+    let mut servers: Vec<Served> = Vec::new();
     for edit in &args.edits {
         let named = parse_action_path(&edit.action)
             .map_err(|e| invalid(format!("action `{}`: {e}", edit.action)))?;
@@ -419,7 +421,11 @@ pub fn update_file(
             ));
             continue;
         };
-        let site = site(&shown, loc, served_for(registry, action));
+        let served = served_for(registry, action);
+        if !servers.contains(&served) {
+            servers.push(served.clone());
+        }
+        let site = site(&shown, loc, served);
         if action.ref_str() == edit.reference {
             unchanged.push(Unchanged {
                 site,
@@ -441,6 +447,13 @@ pub fn update_file(
     if !problems.is_empty() {
         return Err(refused(problems.join("; ")));
     }
+    let [served] = servers.as_slice() else {
+        let hosts: Vec<&str> = servers.iter().map(|s| s.host.as_str()).collect();
+        return Err(invalid(format!(
+            "edits name actions on more than one host ({}); call updateFile once per host",
+            hosts.join(", ")
+        )));
+    };
 
     let mut planned = plan(&original, edits).map_err(refused)?;
     if !planned.skipped.is_empty() {
@@ -473,7 +486,7 @@ pub fn update_file(
         planned,
         args.validate_yaml,
     );
-    outcome.reply(None)
+    outcome.reply(Some(served))
 }
 
 fn retarget(

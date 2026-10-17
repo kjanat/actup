@@ -36,9 +36,10 @@ Model Context Protocol server for AI agents, served over stdio with
   symlinks that leave the root.
 - Mutators are `destructiveHint: true`, honour `dryRun`, and report a change
   only when a line's text differs, so a repeated call changes nothing.
-- `updateFile` is all or nothing. `updateAllUsesToVersion` skips refs it cannot
-  place or that `scan.ignore` matches, and reports them in `skipped`. When two
-  edits of a file overlap, `FileEdits::plan` skips every edit of that file.
+- `updateFile` is all or nothing and refuses edits that name actions on more
+  than one host. `updateAllUsesToVersion` skips refs it cannot place or that
+  `scan.ignore` matches, and reports them in `skipped`. When two edits of a file
+  overlap, `FileEdits::plan` skips every edit of that file.
 - Every result carries `provider`, `host` and `status`. Argument and path errors
   are tool errors (`isError`) without a status.
 - Read results are memoized for `cache.ttl` when the provider answered.
