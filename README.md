@@ -188,6 +188,10 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
    is an absolute path, otherwise `actup/config.toml` in the OS config dir
    (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)
 
+An unknown key in a config file or in an `ACTUP_*` variable is an error (exit
+code 2). The message names the file or the variable and suggests the closest
+known key.
+
 The CLI and the LSP log every config source at `info`: the user file, the repo
 file, the explicit file and the `ACTUP_*` variables that set config keys.
 `actup config` lists the same sources from lowest to highest precedence, under

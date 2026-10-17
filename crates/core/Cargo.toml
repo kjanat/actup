@@ -17,6 +17,7 @@ json_comments = { workspace = true }  # JSONC parsing
 saphyr-parser = { workspace = true }  # YAML parsing
 schemars      = { workspace = true }  # Schema generation
 serde         = { workspace = true }  # Serialization
+strsim        = { workspace = true }  # Did-you-mean hints
 tracing       = { workspace = true }  # Logging
 tsify-next    = { workspace = true, optional = true }  # gated by `tsify` feature
 wasm-bindgen  = { workspace = true, optional = true }  # required by tsify-next for `typescript_custom_section`

@@ -56,6 +56,7 @@ schemars_derive            = "1"  # schema
 serde_json                 = "1"  # json
 serde-wasm-bindgen         = "0.6"  # wasm serde bridge
 serde_yaml_ng              = "0.10"  # yaml
+strsim                     = "0.11"  # did-you-mean hints
 tempfile                   = "3"  # testing
 toml                       = "1"  # config
 tower                      = "0.5"  # service

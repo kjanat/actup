@@ -65,6 +65,7 @@
       }
     }
   },
+  "additionalProperties": false,
   "$defs": {
     "ApiMode": {
       "description": "API mode for fetching versions",
@@ -125,7 +126,8 @@
           "default": 86400,
           "minimum": 0
         }
-      }
+      },
+      "additionalProperties": false
     },
     "FetchSettings": {
       "description": "Global fetch settings applied to all providers unless overridden per-host.\n\nVersions come from the git wire protocol, which needs no API and lists every\ntag. These settings govern the HTTP API fallback used when a host refuses a\ngit connection. Per-host overrides in `HostConfig` take precedence.",
@@ -274,7 +276,8 @@
           "$ref": "#/$defs/Track",
           "default": "keep"
         }
-      }
+      },
+      "additionalProperties": false
     },
     "PolicyOverride": {
       "description": "A partial `[policy]` table used by `[[overrides]]`.",
@@ -359,7 +362,8 @@
             "type": "string"
           }
         }
-      }
+      },
+      "additionalProperties": false
     },
     "Style": {
       "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With pin = \"preserve\" - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With pin = \"tag\" - writes version tags, unpinning SHA pins\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With pin = \"sha\" - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",

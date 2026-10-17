@@ -94,7 +94,7 @@ use crate::{ActionRef, Error, discovery::ExtraPath, policy};
 /// # Result: dtolnay/rust-toolchain@stable is checked, @1.91.0 is ignored
 /// ```
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Update policy applied to every action unless an override matches.
     ///
@@ -257,7 +257,7 @@ impl std::fmt::Display for Source {
 
 /// The `[policy]` table.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Policy {
     /// How far to bump outdated version refs.
     ///
@@ -346,7 +346,7 @@ pub struct PolicyOverride {
 
 /// The `[scan]` table.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Scan {
     /// Actions to skip, as `[host/]owner/repo[/subpath][@ref]` globs.
     ///
@@ -433,7 +433,7 @@ where
 
 /// Cache configuration
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Cache {
     /// Cache time-to-live in seconds
     #[serde(
@@ -674,7 +674,7 @@ impl Config {
         let figment = figment.merge(env);
         let mut config: Self = figment.extract().map_err(|e| Error::InvalidConfig {
             path: error_origin(&e, sources.iter().rev().find_map(Source::path)),
-            reason: e.to_string(),
+            reason: format!("{e}{}", unknown_key_hint(&e).unwrap_or_default()),
         })?;
         if !vars.is_empty() {
             sources.push(Source::Env { vars });
@@ -775,6 +775,44 @@ impl figment::Provider for FileContents {
             Format::Yaml => figment::Provider::data(&Yaml::string(&self.contents)),
         }
     }
+}
+
+fn unknown_key_hint(error: &figment::Error) -> Option<String> {
+    let figment::error::Kind::UnknownField(found, expected) = &error.kind else {
+        return None;
+    };
+    let parent = error.path.get(..error.path.len().checked_sub(1)?)?;
+    let threshold = (found.chars().count() / 3).max(1);
+    let near = expected
+        .iter()
+        .map(|key| (strsim::levenshtein(found, key), *key))
+        .filter(|(distance, _)| *distance <= threshold)
+        .min_by_key(|(distance, _)| *distance)
+        .map(|(_, key)| key);
+    if let Some(key) = near
+        && let Some((_, new)) = RENAMED_KEYS.iter().find(|(old, _)| *old == key)
+    {
+        return Some(format!("; did you mean `{new}`?"));
+    }
+    let leaf: Vec<&str> = if let Some(key) = near {
+        vec![key]
+    } else {
+        found
+            .char_indices()
+            .filter(|(_, c)| *c == '_')
+            .find_map(|(i, _)| {
+                let (head, tail) = (&found[..i], &found[i + 1..]);
+                (!tail.is_empty() && expected.contains(&head)).then(|| vec![head, tail])
+            })?
+    };
+    let suggestion: Vec<&str> = parent.iter().map(String::as_str).chain(leaf).collect();
+    let rendered = match (&error.metadata, &error.profile) {
+        (Some(metadata), Some(profile)) if metadata.source.is_none() => {
+            metadata.interpolate(profile, &suggestion)
+        }
+        _ => suggestion.join("."),
+    };
+    Some(format!("; did you mean `{rendered}`?"))
 }
 
 fn error_origin(error: &figment::Error, loaded_from: Option<&Path>) -> String {
@@ -1740,6 +1778,92 @@ mod tests {
         let config = Config::from_contents(None, EnvOverrides::default())?;
         assert_eq!(config.sources, []);
         Ok(())
+    }
+
+    fn rejected(file: Option<(&str, &str)>, env: &[(&str, &str)]) -> (String, String) {
+        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+            file.map(|(path, contents)| (Path::new(path), contents)),
+            EnvOverrides::from_vars(env.iter().copied()),
+        ) else {
+            panic!("{file:?} {env:?} must be rejected");
+        };
+        (path, reason)
+    }
+
+    #[test]
+    fn test_unknown_keys_are_rejected_in_every_table_and_format() {
+        for (name, contents, found, hint) in [
+            (
+                "actup.toml",
+                "update-policy = \"patch\"\n",
+                "update-policy",
+                Some("policy.bump"),
+            ),
+            (
+                "actup.toml",
+                "[policy]\nbumpp = \"minor\"\n",
+                "bumpp",
+                Some("policy.bump"),
+            ),
+            (
+                "actup.toml",
+                "[scan]\nignores = []\n",
+                "ignores",
+                Some("scan.ignore"),
+            ),
+            (
+                "actup.toml",
+                "[cache]\nttll = 1\n",
+                "ttll",
+                Some("cache.ttl"),
+            ),
+            ("actup.toml", "zzz = 1\n", "zzz", None),
+            ("actup.json", r#"{"polcy": {}}"#, "polcy", Some("policy")),
+            (
+                "actup.jsonc",
+                "{ /* c */ \"cache\": { \"enable\": true } }",
+                "enable",
+                Some("cache.enabled"),
+            ),
+            (
+                ".github/actup.yaml",
+                "scan:\n  extra_path: []\n",
+                "extra_path",
+                Some("scan.extra_paths"),
+            ),
+        ] {
+            let (path, reason) = rejected(Some((name, contents)), &[]);
+            assert_eq!(path, name);
+            assert!(reason.contains(&format!("found `{found}`")), "{reason}");
+            match hint {
+                Some(hint) => assert!(
+                    reason.ends_with(&format!("; did you mean `{hint}`?")),
+                    "{reason}"
+                ),
+                None => assert!(!reason.contains("did you mean"), "{reason}"),
+            }
+        }
+    }
+
+    #[test]
+    fn test_unknown_env_keys_name_the_variable() {
+        for (var, hint) in [
+            ("ACTUP_POLICY_PIN", Some("ACTUP_POLICY__PIN")),
+            ("ACTUP_POLICY__PINN", Some("ACTUP_POLICY__PIN")),
+            ("ACTUP_UPDATE_POLICYY", Some("policy.bump")),
+            ("ACTUP_ZZZ", None),
+        ] {
+            let (path, reason) = rejected(None, &[(var, "x")]);
+            assert_eq!(path, "`ACTUP_` environment variable(s)");
+            assert!(reason.contains(&format!("for key \"{var}\"")), "{reason}");
+            match hint {
+                Some(hint) => assert!(
+                    reason.ends_with(&format!("; did you mean `{hint}`?")),
+                    "{reason}"
+                ),
+                None => assert!(!reason.contains("did you mean"), "{reason}"),
+            }
+        }
     }
 
     #[test]

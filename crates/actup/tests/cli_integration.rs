@@ -1565,7 +1565,6 @@ mod cli_runs {
             .env("ACTUP_POLICY__BUMP", "patch")
             .env("ACTUP_CACHE__TTL", "60")
             .env("ACTUP_FETCH__MAX_TAGS_PER_REPO", "7")
-            .env("ACTUP_POLICY_PIN", "sha")
             .arg("config")
             .arg(repo.path())
             .output()?;
@@ -1580,6 +1579,44 @@ mod cli_runs {
         ] {
             assert!(stdout.contains(line), "{line:?}: {stdout}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_keys_exit_2_with_a_hint() -> Result<(), Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        fs::create_dir(repo.path().join(".git"))?;
+        let config = repo.path().join("actup.toml");
+        fs::write(&config, "update-policy = \"patch\"\n")?;
+        let output = actup(repo.path()).arg("config").arg(repo.path()).output()?;
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains(&config.display().to_string()),
+            "stderr: {stderr}"
+        );
+        assert!(stderr.contains("found `update-policy`"), "stderr: {stderr}");
+        assert!(
+            stderr.contains("did you mean `policy.bump`?"),
+            "stderr: {stderr}"
+        );
+
+        fs::remove_file(&config)?;
+        let output = actup(repo.path())
+            .env("ACTUP_POLICY_PIN", "sha")
+            .arg("config")
+            .arg(repo.path())
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains("for key \"ACTUP_POLICY_PIN\""),
+            "stderr: {stderr}"
+        );
+        assert!(
+            stderr.contains("did you mean `ACTUP_POLICY__PIN`?"),
+            "stderr: {stderr}"
+        );
         Ok(())
     }
 
