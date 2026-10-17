@@ -1727,18 +1727,21 @@ mod tests {
         line: &str,
         versions: &actup_core::version::Set,
     ) -> std::result::Result<Option<String>, Box<dyn std::error::Error>> {
+        unpinned_in(actup_core::SourceFormat::Yaml, line, versions).await
+    }
+
+    async fn unpinned_in(
+        format: actup_core::SourceFormat,
+        line: &str,
+        versions: &actup_core::version::Set,
+    ) -> std::result::Result<Option<String>, Box<dyn std::error::Error>> {
         let encoding = crate::position::PositionEncoding::Utf16;
         let at = tower_lsp_server::ls_types::Position {
             line: 0,
             character: 30,
         };
-        let action = crate::diagnostics::locate_action_at(
-            line,
-            actup_core::SourceFormat::Yaml,
-            at,
-            encoding,
-        )
-        .ok_or("no action under the cursor")?;
+        let action = crate::diagnostics::locate_action_at(line, format, at, encoding)
+            .ok_or("no action under the cursor")?;
         let provider = crate::test_utils::MockProvider::new("github.com");
         let targets = compute_pin_targets(&action, Some(versions), &provider).await;
         if targets.unpin.is_none() {
@@ -1991,6 +1994,21 @@ mod tests {
         assert_eq!(unpinned(&line(" # main"), &versions).await?, None);
         assert_eq!(unpinned(&line(" # mine"), &versions).await?, None);
         assert_eq!(unpinned(&line(""), &versions).await?, None);
+        let text = |tail: &str| format!("run(\"uses: actions/checkout@{a}{tail}\");");
+        assert_eq!(
+            unpinned_in(
+                actup_core::SourceFormat::Text,
+                &text(" # v4.1.0 keep this"),
+                &versions
+            )
+            .await?
+            .as_deref(),
+            Some("actup: unpin to `v4.1.0`: run(\"uses: actions/checkout@v4.1.0 # keep this\");")
+        );
+        assert_eq!(
+            unpinned_in(actup_core::SourceFormat::Text, &text(""), &versions).await?,
+            None
+        );
         assert_eq!(
             unpinned("  - uses: actions/checkout@v4.1.0 # v4.1.0", &versions).await?,
             None
