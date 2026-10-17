@@ -13,7 +13,7 @@ use std::{sync::Arc, time::Duration};
 
 use futures::{SinkExt as _, StreamExt as _};
 use serde_json::json;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, Notify};
 use tower::Service as _;
 use tower_lsp_server::{
     ClientSocket, LspService,
@@ -28,12 +28,16 @@ use tower_lsp_server::{
         OneOf, PartialResultParams, Position, PublishDiagnosticsParams, Range, ShowMessageParams,
         TextDocumentContentChangeEvent, TextDocumentIdentifier, TextDocumentItem,
         TextDocumentPositionParams, TextEdit, Uri, VersionedTextDocumentIdentifier,
-        WorkDoneProgressCancelParams, WorkDoneProgressParams, WorkspaceClientCapabilities,
-        WorkspaceEditClientCapabilities, WorkspaceFolder, WorkspaceFoldersChangeEvent,
+        WorkDoneProgressCancelParams, WorkDoneProgressCreateParams, WorkDoneProgressParams,
+        WorkspaceClientCapabilities, WorkspaceEditClientCapabilities, WorkspaceFolder,
+        WorkspaceFoldersChangeEvent,
     },
 };
 
-use crate::{backend::LspBackend, diagnostics::DIAGNOSTIC_SOURCE, test_utils};
+use crate::{
+    backend::LspBackend, diagnostics::DIAGNOSTIC_SOURCE, test_utils,
+    workspace_commands::FIX_ALL_IN_WORKSPACE,
+};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -237,6 +241,15 @@ impl TestHarness {
     }
 
     fn with_user_config(user_config: Option<std::path::PathBuf>) -> Self {
+        Self::build(user_config, None)
+    }
+
+    /// Hold every `window/workDoneProgress/create` reply until `gate` is notified.
+    fn with_progress_gate(gate: Arc<Notify>) -> Self {
+        Self::build(None, Some(gate))
+    }
+
+    fn build(user_config: Option<std::path::PathBuf>, progress_gate: Option<Arc<Notify>>) -> Self {
         let (service, socket) = crate::backend::service(move |client| {
             LspBackend::with_providers(client, user_config, test_utils::MOCK_PROVIDERS)
         });
@@ -245,7 +258,7 @@ impl TestHarness {
 
         // Spawn a background task to drain the client socket.
         let socket_task = tokio::spawn(async move {
-            drain_socket(socket, collected_clone).await;
+            drain_socket(socket, collected_clone, progress_gate).await;
         });
 
         Self {
@@ -355,8 +368,14 @@ impl TestHarness {
 
 /// Background task: drain the `ClientSocket`, auto-respond to requests,
 /// and collect `publishDiagnostics` notifications.
-async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMessages>>) {
-    while let Some(req) = socket.next().await {
+async fn drain_socket(
+    socket: ClientSocket,
+    collected: Arc<Mutex<CollectedMessages>>,
+    progress_gate: Option<Arc<Notify>>,
+) {
+    let (mut stream, sink) = socket.split();
+    let sink = Arc::new(Mutex::new(sink));
+    while let Some(req) = stream.next().await {
         let parsed = match serde_json::to_value(&req) {
             Ok(parsed) => parsed,
             Err(error) => panic!("server message must serialize: {error}"),
@@ -374,8 +393,22 @@ async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMe
                 .requests
                 .push((method.to_owned(), params));
             let resp = Response::from_ok(id, json!(null));
-            if socket.send(resp).await.is_err() {
-                break;
+            match progress_gate
+                .as_ref()
+                .filter(|_| method == "window/workDoneProgress/create")
+            {
+                Some(gate) => {
+                    let (gate, sink) = (Arc::clone(gate), Arc::clone(&sink));
+                    tokio::spawn(async move {
+                        gate.notified().await;
+                        sink.lock().await.send(resp).await
+                    });
+                }
+                None => {
+                    if sink.lock().await.send(resp).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
 
@@ -1860,26 +1893,72 @@ async fn execute_command_unknown_command_returns_null() -> TestResult {
 }
 
 #[tokio::test]
-async fn work_done_progress_cancel_cancels_the_running_command() -> TestResult {
-    let mut harness = TestHarness::new();
-    harness.initialize(None).await?;
-    let running = harness.service.inner().progress.start();
-    let other = harness.service.inner().progress.start();
+async fn work_done_progress_cancel_stops_fix_all_in_workspace() -> TestResult {
+    let temp = tempfile::tempdir()?;
+    let workflows = temp.path().join(".github/workflows");
+    std::fs::create_dir_all(&workflows)?;
+    std::fs::write(
+        workflows.join("ci.yml"),
+        "jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4.1.0\n",
+    )?;
+    let root = temp.path().to_str().ok_or("temp dir path is not UTF-8")?;
+    let fix_all = || execute_command_request(30, FIX_ALL_IN_WORKSPACE, vec![]);
+    let sent = |c: &CollectedMessages, method: &str| c.requests.iter().any(|(m, _)| m == method);
+
+    let mut uncancelled = TestHarness::new();
+    uncancelled.initialize(Some(root)).await?;
+    uncancelled.request(fix_all()?).await?;
+    assert!(
+        sent(&*uncancelled.collected.lock().await, "workspace/applyEdit"),
+        "the workspace must have an outdated ref to fix"
+    );
+    uncancelled.shutdown().await?;
+
+    let gate = Arc::new(Notify::new());
+    let mut harness = TestHarness::with_progress_gate(Arc::clone(&gate));
+    harness.initialize(Some(root)).await?;
+    let command = tokio::spawn(harness.service.call(fix_all()?));
+    let created = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            sent(c, "window/workDoneProgress/create")
+        })
+        .await;
+    assert!(created, "fixAllInWorkspace must create its progress");
+    let create = harness
+        .collected
+        .lock()
+        .await
+        .requests
+        .iter()
+        .find(|(m, _)| m == "window/workDoneProgress/create")
+        .map(|(_, params)| params.clone())
+        .ok_or("no progress create request")?;
+    let token = serde_json::from_value::<WorkDoneProgressCreateParams>(create)?.token;
 
     harness
         .notify(
             Request::build("window/workDoneProgress/cancel")
                 .params(serde_json::to_value(WorkDoneProgressCancelParams {
-                    token: running.token.clone(),
+                    token,
                 })?)
                 .finish(),
         )
         .await?;
+    gate.notify_one();
+    command.await??;
 
-    assert!(running.cancelled.is_cancelled());
-    assert!(!other.cancelled.is_cancelled());
-    harness.shutdown().await?;
-    Ok(())
+    let cancelled = harness
+        .wait_until(Duration::from_secs(2), |c| {
+            c.messages
+                .iter()
+                .any(|m| m.message.starts_with("actup: cancelled (0/1 files scanned"))
+        })
+        .await;
+    let collected = harness.collected.lock().await;
+    assert!(cancelled, "{:?}", collected.messages);
+    assert!(!sent(&collected, "workspace/applyEdit"));
+    drop(collected);
+    harness.shutdown().await
 }
 
 // Snapshot tests: YAML before/after edits
