@@ -576,3 +576,58 @@ async fn test_registry_fetch_reports_each_repo_once() {
         ["Api", "Cache", "Cache", "Failed", "Failed", "Provider"]
     );
 }
+
+#[tokio::test]
+async fn batch_fetch_asks_rest_once_when_graphql_fails() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+
+    use actup_core::cache;
+    use actup_provider_github::BatchFetcher;
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/graphql"))
+        .respond_with(ResponseTemplate::new(502).set_body_string("bad gateway"))
+        .mount(&server)
+        .await;
+    for repo in ["one", "two"] {
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/o/{repo}/tags")))
+            .respond_with(ResponseTemplate::new(404).set_body_string(r#"{"message": "Not Found"}"#))
+            .expect(1)
+            .mount(&server)
+            .await;
+    }
+    let provider = GitHubProvider::with_host(&server.uri(), "ghe.invalid", Some("token"))?;
+    let fetcher = BatchFetcher::with_graphql(provider, Arc::new(cache::Noop), Some("token"), 10);
+    let repos: Vec<ActionRepoId> = ["one", "two"]
+        .into_iter()
+        .map(|repo| ActionRepoId::new(Some("ghe.invalid".to_string()), "o", repo, None))
+        .collect();
+
+    let results = fetcher
+        .fetch_versions(&repos, &actup_core::fetch::Silent)
+        .await;
+
+    for repo in &repos {
+        assert!(
+            matches!(
+                results.get(repo),
+                Some(Err(actup_core::Error::NotFound { .. }))
+            ),
+            "{:?}",
+            results.get(repo)
+        );
+    }
+    let requests = server.received_requests().await.unwrap_or_default();
+    let rest = requests
+        .iter()
+        .filter(|request| request.url.path().ends_with("/tags"))
+        .count();
+    let graphql = requests
+        .iter()
+        .filter(|request| request.url.path() == "/api/graphql")
+        .count();
+    assert_eq!((graphql, rest), (1, 2));
+    Ok(())
+}
