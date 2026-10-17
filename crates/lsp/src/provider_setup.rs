@@ -13,22 +13,12 @@ use actup_core::{
 
 /// Returns all compiled-in provider registrations.
 ///
-/// Currently only GitHub is available. GitLab/Gitea will be added
-/// behind feature gates once their provider crates export `REGISTRATION`.
-///
 /// # Panics
 ///
 /// Panics if two registrations share a preset hostname (programmer invariant).
 #[must_use]
 pub fn available_registrations() -> Vec<&'static Registration> {
-    let registrations = vec![
-        &actup_provider_github::REGISTRATION,
-        // Future:
-        // #[cfg(feature = "gitlab")]
-        // &actup_provider_gitlab::REGISTRATION,
-        // #[cfg(feature = "gitea")]
-        // &actup_provider_gitea::REGISTRATION,
-    ];
+    let registrations = vec![&actup_provider_github::REGISTRATION];
     validate_no_duplicate_presets(&registrations);
     registrations
 }

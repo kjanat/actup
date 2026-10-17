@@ -213,7 +213,7 @@ use actup_providers::{filename_label, parse_action_yml, process_tags};
 
 use crate::client::YourClient;
 
-/// YourPlatform implementation of [`Provider`].
+/// `YourPlatform` implementation of [`Provider`].
 pub struct YourProvider {
     client: YourClient,
     host: String,
@@ -406,7 +406,7 @@ function. This enables zero-config for preset hosts and automatic `api_base`
 inference for self-hosted instances.
 
 ```rust
-//! YourPlatform provider for actup.
+//! `YourPlatform` provider for actup.
 
 mod client;
 mod provider;
@@ -415,7 +415,7 @@ mod types;
 use actup_core::{Capabilities, HostKind, Preset, Provider, ProviderConfig, Registration};
 pub use provider::YourProvider;
 
-/// Provider registration for YourPlatform.
+/// Provider registration for `YourPlatform`.
 pub static REGISTRATION: Registration = Registration {
     kind: HostKind::YourPlatform,
     presets: &[Preset {
@@ -456,7 +456,13 @@ fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provide
 Add `YourPlatform` variants to `actup_core::HostKind` and
 `actup_core::provider::Kind`, with arms in their `Display` impls and in
 `Kind::cache_namespace`. Run `just schema` to regenerate
-`schemas/actup-config.schema.json`, which lists every `HostKind`.
+`schemas/actup-config.schema.json`, which lists every `HostKind`. The test
+`schema_hostkind_variants` in `crates/actup/tests/cli_integration.rs` asserts
+the exact list of `HostKind` names. Append the new name to its expected list:
+
+```rust
+assert_eq!(consts, vec!["github", "gitlab", "gitea", "yourplatform"]);
+```
 
 In the workspace `Cargo.toml`, add the crate to `default-members` and to
 `[workspace.dependencies]`. `members` already matches it through the `crates/*`
@@ -608,7 +614,7 @@ tag list and are filtered at query time. Version processing lives only in
 Create `tests/integration.rs` with tests for your provider:
 
 ```rust
-//! Integration tests for the YourPlatform provider.
+//! Integration tests for the `YourPlatform` provider.
 
 use actup_core::provider::{Kind, Provider};
 use actup_provider_yourplatform::YourProvider;
@@ -696,6 +702,8 @@ if encoding == "base64" {
 - [ ] `src/lib.rs` declares the modules and re-exports `YourProvider`
 - [ ] `HostKind` and `provider::Kind` variants added, schema regenerated with
       `just schema`
+- [ ] New `HostKind` name appended to the expected list in
+      `schema_hostkind_variants`
 - [ ] Crate added to `default-members` and `[workspace.dependencies]` in the
       workspace `Cargo.toml`
 - [ ] Optional dependency and feature added to `crates/actup/Cargo.toml`

@@ -154,17 +154,7 @@ async fn run(cli: Cli) -> i32 {
 /// Panics if two or more registrations share the same preset hostname.
 #[must_use]
 pub(crate) fn available_registrations() -> Vec<&'static Registration> {
-    let registrations = vec![
-        &actup_provider_github::REGISTRATION,
-        // GitLab and Gitea providers will be added here once they export
-        // `REGISTRATION`. The feature gates are ready:
-        //
-        // #[cfg(feature = "gitlab")]
-        // &actup_provider_gitlab::REGISTRATION,
-        //
-        // #[cfg(feature = "gitea")]
-        // &actup_provider_gitea::REGISTRATION,
-    ];
+    let registrations = vec![&actup_provider_github::REGISTRATION];
     validate_no_duplicate_presets(&registrations);
     registrations
 }
@@ -312,21 +302,22 @@ mod tests {
 
     #[test]
     fn available_registrations_expected_count() {
-        let regs = available_registrations();
-        // Currently only GitHub exports REGISTRATION.
-        // When GitLab/Gitea add theirs, update expected count
-        // based on default features (github + gitlab + gitea = 3).
-        let mut expected = 1; // GitHub is always present
+        assert_eq!(available_registrations().len(), 1);
+    }
 
-        // GitLab/Gitea registrations not yet exported by provider crates.
-        // When they are, uncomment:
-        // #[cfg(feature = "gitlab")]
-        // { expected += 1; }
-        // #[cfg(feature = "gitea")]
-        // { expected += 1; }
-        let _ = &mut expected; // suppress unused_assignments
-
-        assert_eq!(regs.len(), expected);
+    #[test]
+    fn build_registry_loads_multi_provider_example() -> Result<(), Box<dyn std::error::Error>> {
+        let path = std::path::Path::new("examples/multi-provider.actup.toml");
+        let contents = include_str!("../../../examples/multi-provider.actup.toml");
+        let config = Config::from_contents(
+            Some((path, contents)),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = build_registry(&config)?;
+        assert_eq!(registry.default_host(), Some("github.com"));
+        assert!(registry.find(Some("github.com")).is_some());
+        assert!(registry.find(Some("github.enterprise.com")).is_some());
+        Ok(())
     }
 
     #[test]

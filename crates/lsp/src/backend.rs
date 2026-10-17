@@ -216,8 +216,7 @@ pub struct LspBackend {
     /// Provider registry for version lookups (set during `initialize`).
     ///
     /// `None` until `initialize` completes. Providers are created from config
-    /// and static registrations (GitHub always present, GitLab/Gitea behind
-    /// feature gates).
+    /// and static registrations.
     registry: Arc<RwLock<Option<Arc<provider::Registry>>>>,
     /// Persistent file-based cache shared with the CLI (set during `initialize`).
     ///

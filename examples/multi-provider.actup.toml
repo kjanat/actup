@@ -1,7 +1,8 @@
 #:schema ../schemas/actup-config.schema.json
 #
-# Example configuration showing multi-provider setup
-# This demonstrates using GitHub, GitLab, and Gitea providers together
+# Example configuration for github.com plus a GitHub Enterprise host.
+# GitLab and Gitea hosts are planned (#48). docs/providers.md shows their
+# planned configuration.
 
 default_host = "github.com"
 
@@ -33,29 +34,6 @@ kind      = "github"
 api_base  = "https://github.enterprise.com/api/v3"
 token_env = "GHE_TOKEN"
 
-# GitLab.com (requires gitlab feature)
-[hosts."gitlab.com"]
-kind      = "gitlab"
-token_env = "GITLAB_TOKEN"
-
-# Self-hosted GitLab instance
-[hosts."gitlab.example.com"]
-kind      = "gitlab"
-api_base  = "https://gitlab.example.com"
-token_env = "GITLAB_PRIVATE_TOKEN"
-
-# Gitea instance (requires gitea feature)
-[hosts."gitea.example.com"]
-kind      = "gitea"
-api_base  = "https://gitea.example.com"
-token_env = "GITEA_TOKEN"
-
-# Forgejo instance (uses Gitea provider - same API)
-[hosts."forgejo.example.com"]
-kind      = "gitea"
-api_base  = "https://forgejo.example.com"
-token_env = "FORGEJO_TOKEN"
-
 # Example workflow references this config would handle:
 #
 # GitHub.com:
@@ -64,15 +42,3 @@ token_env = "FORGEJO_TOKEN"
 #
 # GitHub Enterprise:
 #   - uses: github.enterprise.com/internal/action@v1
-#
-# GitLab.com:
-#   - uses: gitlab.com/my-org/my-action@v2
-#
-# Self-hosted GitLab:
-#   - uses: gitlab.example.com/team/ci-action@v1.5
-#
-# Gitea:
-#   - uses: gitea.example.com/community/action@v3
-#
-# Forgejo:
-#   - uses: forgejo.example.com/tools/deploy@v2
