@@ -41,10 +41,10 @@ install-actup:
 install-actup-lsp:
     cargo +stable install-lsp
 
-# Install actup-mcp server (stub)
+# Install actup-mcp server
 [group('install')]
 install-actup-mcp:
-    -cargo +stable install-mcp
+    cargo +stable install-mcp
 
 # Uninstall binary from ~/.cargo/bin
 [group('install')]
