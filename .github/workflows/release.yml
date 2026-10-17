@@ -110,7 +110,7 @@ jobs:
 
   release:
     name: Create Release
-    needs: [build, checksums]
+    needs: [build, checksums, crates-verify]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -188,7 +188,6 @@ jobs:
   crates-verify:
     name: Verify crates.io packages
     runs-on: ubuntu-latest
-    if: ${{ !github.event.repository.private }}
     outputs:
       crates: ${{ steps.package.outputs.crates }}
     steps:
@@ -197,13 +196,26 @@ jobs:
 
       - run: rustup toolchain install
 
-      - name: Package and build every crate in publish order
+      - name: Check the tag, then package and build every crate in publish order
         id: package
         env:
           CRATES: tree-sitter-github-actions actup-core actup-providers actup-provider-github actup-provider-gitlab actup-provider-gitea actup actup-lsp actup-mcp
+          TAG: ${{ github.ref_name }}
         run: |
           read -ra crates <<<"${CRATES}"
           echo "crates=$(jq -cn '$ARGS.positional' --args "${crates[@]}")" >>"${GITHUB_OUTPUT}"
+          metadata="$(cargo metadata --no-deps --locked --format-version 1)"
+          mismatched=0
+          for crate in "${crates[@]}"; do
+            version="$(jq -r --arg name "${crate}" '.packages[] | select(.name == $name) | .version' <<<"${metadata}")"
+            if [[ "${TAG}" != "v${version}" ]]; then
+              echo "::error::tag ${TAG} does not match ${crate} ${version:-(no such crate)}"
+              mismatched=1
+            fi
+          done
+          if ((mismatched)); then
+            exit 1
+          fi
           args=()
           for crate in "${crates[@]}"; do
             args+=(-p "${crate}")
