@@ -44,11 +44,7 @@ impl<'a> Trailing<'a> {
     }
 }
 
-/// The refs that the first word of a comment after a ref may name.
-///
-/// A writer rewrites a comment whose first word is a version token like
-/// `v4.2.0`, the ref it replaces, or a tag or branch that its fetched
-/// version set lists. It keeps any other comment.
+/// The version tokens, current ref and fetched tags or branches that the first word of a label comment may name.
 #[derive(Debug, Clone, Copy)]
 pub struct Labels<'a> {
     current: &'a str,
@@ -81,9 +77,7 @@ impl<'a> Labels<'a> {
         }
     }
 
-    /// The labels for the ref `current` and, when `listed` holds, the [`comment_label`] after it.
-    ///
-    /// `listed` records whether a version set listed that label when the ref was checked.
+    /// The labels for the ref `current`, plus its [`comment_label`] when `listed` records that a version set listed it.
     #[must_use]
     pub const fn checked(current: &'a str, listed: bool) -> Self {
         Self {
@@ -346,11 +340,7 @@ impl Rewrite {
         }
     }
 
-    /// Write the tag or branch `new_ref` over a ref followed by `trailing`.
-    ///
-    /// A label comment keeps its note. A tag written over a tag or branch
-    /// gets ` # <new_ref> <note>`. A branch, or a tag written over a SHA pin,
-    /// gets ` # <note>` or no comment.
+    /// Write the tag or branch `new_ref` over a ref followed by `trailing`, keeping the note of a label comment.
     #[must_use]
     pub fn named(new_ref: &str, kind: Named, current_is_sha: bool, trailing: Trailing<'_>) -> Self {
         match trailing {

@@ -663,9 +663,7 @@ fn find_best_target(
     Some(Arc::clone(target))
 }
 
-/// Find the provider, fetch versions and check, returning the fetched versions too.
-///
-/// The versions are `None` for an ignored action.
+/// Find the provider, fetch versions and check, returning the fetched versions or `None` for an ignored action.
 ///
 /// # Errors
 /// Returns error if provider not found or version fetch fails.
