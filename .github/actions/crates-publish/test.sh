@@ -21,6 +21,8 @@ case "$1" in
 			429) echo "error: the remote server responded with an error (status 429 Too Many Requests)"; exit 101 ;;
 			missing) echo "error: no matching package named \`actup-core\` found"; exit 101 ;;
 			exists) echo "error: crate version \`1.2.3\` is already uploaded"; exit 101 ;;
+			indexed) echo "error: crate actup-core@1.2.3 already exists on crates.io index"; exit 101 ;;
+			lookalike) echo "Packaged 12 files, 429.1KiB"; echo "error[E0429]: \`self\` imports are only allowed within a { } list"; exit 101 ;;
 			*) echo "error: failed to verify package tarball"; exit 101 ;;
 		esac
 		;;
@@ -87,10 +89,20 @@ else
 	fail "a rate limit and a missing dependency are retried after their waits"
 fi
 
-if publish "exists" "" && grep -q "skip actup-core@1.2.3: already published" "${work}/out"; then
-	pass "an upload that lost a race is skipped"
+for answer in exists indexed; do
+	if publish "${answer}" "" && grep -q "skip actup-core@1.2.3: already published" "${work}/out"; then
+		pass "an upload that lost a race is skipped (${answer})"
+	else
+		fail "an upload that lost a race is skipped (${answer})"
+	fi
+done
+
+if ! publish "lookalike ok" "" \
+	&& grep -q "publishing actup-core@1.2.3 failed" "${work}/out" \
+	&& [[ "$(grep -c '^publish' "${work}/calls")" -eq 1 ]]; then
+	pass "a build error that mentions 429 fails at once"
 else
-	fail "an upload that lost a race is skipped"
+	fail "a build error that mentions 429 fails at once"
 fi
 
 if ! publish "429 429 429 ok" "" \

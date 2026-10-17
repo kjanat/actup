@@ -29,46 +29,46 @@ categories   = ["command-line-utilities", "development-tools"]
 publish      = true
 
 [workspace.dependencies]
-actup-core.path            = "crates/core"
-actup-provider-gitea.path  = "crates/provider-gitea"
-actup-provider-github.path = "crates/provider-github"
-actup-provider-gitlab.path = "crates/provider-gitlab"
-actup-providers.path       = "crates/providers"
-anstream                   = "1"  # colour-aware streams
-async-trait                = "0.1"  # async trait impls
-base64                     = "0.22"  # encoding
-bstr                       = "1"  # byte strings (git refs)
-cc                         = "1.2"
-clap_complete              = "4.5"  # completions
-dashmap                    = "6"  # concurrency
-dirs                       = "6"  # paths
-futures                    = "0.3"  # async
-glob                       = "0.3"  # patterns
-indicatif                  = "0.18"  # progress
-itertools                  = "0.14"  # iterator utilities
-js-sys                     = "0.3.95"  # wasm js interop
-json_comments              = "0.2"  # jsonc
-owo-colors                 = "4"  # colors
-rust-mcp-sdk               = "0.9"  # mcp
-saphyr-parser              = "0.0.6"  # yaml
-schemars                   = "1"  # schema
-serde_json                 = "1"  # json
-serde-wasm-bindgen         = "0.6"  # wasm serde bridge
-serde_yaml_ng              = "0.10"  # yaml
-strsim                     = "0.11"  # did-you-mean hints, closest-tag suggestions
-tempfile                   = "3"  # testing
-thiserror                  = "2"  # error derive
-toml                       = "1"  # config
-tower                      = "0.5"  # service
-tower-lsp-server           = "0.23"  # lsp
-tracing                    = "0.1"  # logging
-tree-sitter                = "0.26.8"
-tree-sitter-language       = "0.1"
-tsify-next                 = "0.5"  # rust→ts type emission for wasm-bindgen
-wasm-bindgen               = "0.2.118"  # wasm bindings
-wasm-bindgen-futures       = "0.4.68"  # async wasm-bindgen exports
-wiremock                   = "0.6"  # mocking
-zed_extension_api          = "0.7.0"  # zed extension
+actup-core            = { path = "crates/core", version = "0.1.0" }
+actup-provider-gitea  = { path = "crates/provider-gitea", version = "0.1.0" }
+actup-provider-github = { path = "crates/provider-github", version = "0.1.0" }
+actup-provider-gitlab = { path = "crates/provider-gitlab", version = "0.1.0" }
+actup-providers       = { path = "crates/providers", version = "0.1.0" }
+anstream              = "1"  # colour-aware streams
+async-trait           = "0.1"  # async trait impls
+base64                = "0.22"  # encoding
+bstr                  = "1"  # byte strings (git refs)
+cc                    = "1.2"
+clap_complete         = "4.5"  # completions
+dashmap               = "6"  # concurrency
+dirs                  = "6"  # paths
+futures               = "0.3"  # async
+glob                  = "0.3"  # patterns
+indicatif             = "0.18"  # progress
+itertools             = "0.14"  # iterator utilities
+js-sys                = "0.3.95"  # wasm js interop
+json_comments         = "0.2"  # jsonc
+owo-colors            = "4"  # colors
+rust-mcp-sdk          = "0.9"  # mcp
+saphyr-parser         = "0.0.6"  # yaml
+schemars              = "1"  # schema
+serde_json            = "1"  # json
+serde-wasm-bindgen    = "0.6"  # wasm serde bridge
+serde_yaml_ng         = "0.10"  # yaml
+strsim                = "0.11"  # did-you-mean hints, closest-tag suggestions
+tempfile              = "3"  # testing
+thiserror             = "2"  # error derive
+toml                  = "1"  # config
+tower                 = "0.5"  # service
+tower-lsp-server      = "0.23"  # lsp
+tracing               = "0.1"  # logging
+tree-sitter           = "0.26.8"
+tree-sitter-language  = "0.1"
+tsify-next            = "0.5"  # rust→ts type emission for wasm-bindgen
+wasm-bindgen          = "0.2.118"  # wasm bindings
+wasm-bindgen-futures  = "0.4.68"  # async wasm-bindgen exports
+wiremock              = "0.6"  # mocking
+zed_extension_api     = "0.7.0"  # zed extension
 
 [workspace.dependencies.clap]  # CLI
 version  = "4.5"

@@ -53,11 +53,11 @@ while true; do
 		echo "published ${crate}@${version}"
 		exit 0
 	fi
-	if grep -Eiq 'already uploaded|already exists' <<<"${output}"; then
+	if grep -Eq 'is already uploaded|already exists on crates\.io index' <<<"${output}"; then
 		echo "skip ${crate}@${version}: already published"
 		exit 0
 	fi
-	if grep -Eiq '429|too many|rate limit' <<<"${output}"; then
+	if grep -Eq 'status 429 Too Many Requests' <<<"${output}"; then
 		wait="${retry_wait}"
 		reason="rate limited"
 	elif grep -Eiq 'no matching package named' <<<"${output}"; then

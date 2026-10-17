@@ -1,5 +1,5 @@
 name: crates publish
-description: >-
+description: |
   Publish one workspace crate to crates.io. A version already in the sparse
   index is skipped, and a rate limit or a dependency still missing from the
   index is retried after a wait.
