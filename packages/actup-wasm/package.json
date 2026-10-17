@@ -27,7 +27,7 @@
 		"prepack": "cp ../../LICENSE* .",
 		"postpack": "rm -f LICENSE*",
 		"prepublishOnly": "bun bd && bun run test",
-		"test": "node --test tests/node_import.mjs tests/provider.mjs",
+		"test": "node --test tests/node_import.mjs tests/provider.mjs tests/types.mjs",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": { "@types/node": "catalog:", "typescript": "catalog:" },

@@ -42,6 +42,7 @@ export type {
 	ActionStep,
 	ActionYml,
 	ActupConfig,
+	Archived as ArchivedPolicy,
 	Branch as BranchPolicy,
 	BranchInfo,
 	CheckResult,
