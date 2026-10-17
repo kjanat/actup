@@ -122,8 +122,6 @@ impl zed::Extension for ActupExtension {
 }
 
 mod extension_entrypoint {
-    #![allow(missing_docs)]
-
     use zed_extension_api as zed;
 
     use super::ActupExtension;
