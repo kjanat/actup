@@ -65,7 +65,9 @@ fn find_registration_by_kind<'a>(
 /// 7. Validate `api_mode` compatibility with `registration.capabilities`.
 ///
 /// `fetch` provides the global `[fetch]` settings for `api_mode` and
-/// `max_tags_per_repo` fallbacks.
+/// `max_tags_per_repo` fallbacks. The global `api_mode` is a preference: a
+/// provider that lacks it uses the mode it supports. Only a host's own
+/// `api_mode` can name a mode its provider lacks, and that is an error.
 ///
 /// # Errors
 ///
@@ -75,7 +77,7 @@ fn find_registration_by_kind<'a>(
 /// - the provider for `kind` is not compiled in
 /// - required fields (`api_base`, `token_env`) are missing after merge+inference
 /// - `api_base` URL shape is invalid
-/// - `api_mode` is unsupported by the provider's capabilities
+/// - the host's own `api_mode` is unsupported by the provider's capabilities
 pub fn effective_host(
     hostname: &str,
     config: &Config,
@@ -100,7 +102,7 @@ pub fn effective_host(
 
     let api_mode = host_config
         .and_then(|hc| hc.api_mode)
-        .unwrap_or(fetch.api_mode);
+        .unwrap_or_else(|| preferred_api_mode(fetch.api_mode, registration.capabilities));
     let max_tags_per_repo = host_config
         .and_then(|hc| hc.max_tags_per_repo)
         .unwrap_or(fetch.max_tags_per_repo);
@@ -281,6 +283,22 @@ fn build_and_validate(
     validate_api_mode_capability(hostname, kind, api_mode, registration.capabilities)?;
 
     Ok(provider_config)
+}
+
+/// The global `[fetch] api_mode` when the provider supports it, else the mode it supports.
+const fn preferred_api_mode(
+    preferred: ApiMode,
+    capabilities: super::registration::Capabilities,
+) -> ApiMode {
+    match preferred {
+        ApiMode::Graphql if !capabilities.supports_graphql && capabilities.supports_rest => {
+            ApiMode::Rest
+        }
+        ApiMode::Rest if !capabilities.supports_rest && capabilities.supports_graphql => {
+            ApiMode::Graphql
+        }
+        ApiMode::Graphql | ApiMode::Rest => preferred,
+    }
 }
 
 /// Check that the requested `api_mode` is supported by the provider.
@@ -713,14 +731,37 @@ mod tests {
     fn error_invalid_api_mode_graphql_on_rest_only() {
         let gl = gitlab_rest_only_registration();
         let regs: Vec<&Registration> = vec![&gl];
-        let config = Config::default();
+        let mut config = Config::default();
+        config.hosts.insert(
+            "gitlab.com".into(),
+            HostConfig {
+                kind: None,
+                api_base: None,
+                token_env: None,
+                api_mode: Some(ApiMode::Graphql),
+                max_tags_per_repo: None,
+            },
+        );
 
-        // Global fetch uses graphql (default), but GitLab is REST-only
         let err = effective_host("gitlab.com", &config, &regs, &default_fetch()).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("graphql"), "{msg}");
         assert!(msg.contains("not supported"), "{msg}");
         assert!(msg.contains("rest"), "{msg}");
+    }
+
+    #[test]
+    fn global_graphql_is_a_preference_a_rest_only_provider_skips() {
+        let gh = github_registration();
+        let gl = gitlab_rest_only_registration();
+        let regs: Vec<&Registration> = vec![&gh, &gl];
+        let config = Config::default();
+
+        let gitlab = effective_host("gitlab.com", &config, &regs, &default_fetch()).unwrap();
+        let github = effective_host("github.com", &config, &regs, &default_fetch()).unwrap();
+
+        assert_eq!(gitlab.api_mode, ApiMode::Rest);
+        assert_eq!(github.api_mode, ApiMode::Graphql);
     }
 
     #[test]
@@ -1513,12 +1554,24 @@ mod tests {
             create: mock_create,
         };
         let regs: Vec<&Registration> = vec![&graphql_only];
-        let config = Config::default();
+        let mut config = Config::default();
         let fetch = FetchSettings {
             api_mode: ApiMode::Rest,
             ..Default::default()
         };
+        let preferred = effective_host("graphql-only.example.com", &config, &regs, &fetch).unwrap();
+        assert_eq!(preferred.api_mode, ApiMode::Graphql);
 
+        config.hosts.insert(
+            "graphql-only.example.com".into(),
+            HostConfig {
+                kind: None,
+                api_base: None,
+                token_env: None,
+                api_mode: Some(ApiMode::Rest),
+                max_tags_per_repo: None,
+            },
+        );
         let err = effective_host("graphql-only.example.com", &config, &regs, &fetch).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("rest"), "{msg}");

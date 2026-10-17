@@ -195,7 +195,7 @@ mod tests {
                 kind: None,
                 api_base: Some(format!("{}/api/v4", server.uri())),
                 token_env: Some("_ACTUP_TEST_UNSET_GITLAB_TOKEN".to_string()),
-                api_mode: Some(actup_core::config::ApiMode::Rest),
+                api_mode: None,
                 max_tags_per_repo: None,
             },
         );

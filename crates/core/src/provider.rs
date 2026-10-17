@@ -794,8 +794,9 @@ impl Registry {
 
     /// Build a registry for `config` from the providers that `registrations` construct.
     ///
-    /// Registers every `[hosts]` entry and the default host, each behind a
-    /// [`CachingProvider`] that reuses answers as long as `retention` allows.
+    /// Registers every `[hosts]` entry, the default host and every preset host
+    /// of `registrations`, each behind a [`CachingProvider`] that reuses
+    /// answers as long as `retention` allows.
     ///
     /// # Errors
     ///
@@ -813,11 +814,20 @@ impl Registry {
         let mut registry = Self::new();
         let default_host = resolve_default_host(config, registrations)?;
         registry.set_default_host(&default_host);
-        for hostname in config.hosts.keys() {
-            registry.register_host(hostname, config, registrations, retention)?;
-        }
-        if !config.hosts.contains_key(&default_host) {
-            registry.register_host(&default_host, config, registrations, retention)?;
+        let presets = registrations
+            .iter()
+            .flat_map(|registration| registration.presets.iter().map(|preset| preset.host));
+        let mut registered = std::collections::HashSet::new();
+        for hostname in config
+            .hosts
+            .keys()
+            .map(String::as_str)
+            .chain(std::iter::once(default_host.as_str()))
+            .chain(presets)
+        {
+            if registered.insert(hostname.to_string()) {
+                registry.register_host(hostname, config, registrations, retention)?;
+            }
         }
         Ok(registry)
     }
@@ -1199,6 +1209,111 @@ mod tests {
         },
         create: create_mock,
     };
+
+    fn create_rest_only(config: crate::ProviderConfig) -> Result<Box<dyn Provider>> {
+        if config.api_mode != crate::ApiMode::Rest {
+            return Err(Error::InvalidConfig {
+                path: config.host,
+                reason: format!("REST-only mock got {:?}", config.api_mode),
+                hint: None,
+                source: None,
+            });
+        }
+        let kind = match config.kind {
+            crate::HostKind::GitHub => Kind::GitHub,
+            crate::HostKind::GitLab => Kind::GitLab,
+            crate::HostKind::Gitea => Kind::Gitea,
+        };
+        Ok(Box::new(MockProvider {
+            kind,
+            host: config.host,
+        }))
+    }
+
+    static REST_ONLY_REGISTRATION: Registration = Registration {
+        kind: crate::HostKind::GitLab,
+        presets: &[crate::Preset {
+            host: "gitlab.com",
+            api_base: "https://gitlab.com/api/v4",
+            token_env: "GITLAB_TOKEN",
+        }],
+        default_token_env: Some("GITLAB_TOKEN"),
+        infer_api_base: |host| Some(format!("https://{host}/api/v4")),
+        capabilities: crate::Capabilities {
+            supports_graphql: false,
+            supports_rest: true,
+        },
+        create: create_rest_only,
+    };
+
+    static GITEA_REST_ONLY_REGISTRATION: Registration = Registration {
+        kind: crate::HostKind::Gitea,
+        presets: &[crate::Preset {
+            host: "codeberg.org",
+            api_base: "https://codeberg.org/api/v1",
+            token_env: "CODEBERG_TOKEN",
+        }],
+        default_token_env: Some("GITEA_TOKEN"),
+        infer_api_base: |host| Some(format!("https://{host}/api/v1")),
+        capabilities: crate::Capabilities {
+            supports_graphql: false,
+            supports_rest: true,
+        },
+        create: create_rest_only,
+    };
+
+    #[test]
+    fn from_config_registers_every_preset_host() -> std::result::Result<(), Error> {
+        let registry = Registry::from_config(
+            &Config::default(),
+            &[
+                &MOCK_REGISTRATION,
+                &REST_ONLY_REGISTRATION,
+                &GITEA_REST_ONLY_REGISTRATION,
+            ],
+            &Retention::Run,
+        )?;
+        let mut hosts: Vec<&str> = registry.providers().iter().map(Provider::host).collect();
+        hosts.sort_unstable();
+        assert_eq!(hosts, ["codeberg.org", "github.com", "gitlab.com"]);
+        for (uses, kind) in [
+            ("gitlab.com/group/project@v1", Kind::GitLab),
+            ("codeberg.org/o/r@v1", Kind::Gitea),
+            ("actions/checkout@v4", Kind::GitHub),
+        ] {
+            let action = crate::parse_uses(uses)?.ok_or_else(|| Error::InvalidRef {
+                input: uses.into(),
+                reason: "local".into(),
+            })?;
+            let provider = registry.find_for_repo(&action.to_repo_id());
+            assert_eq!(provider.map(Provider::kind), Some(kind), "{uses}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn from_config_rejects_a_preset_host_set_to_an_unsupported_mode() {
+        let mut config = Config::default();
+        config.hosts.insert(
+            "gitlab.com".into(),
+            crate::HostConfig {
+                kind: None,
+                api_base: None,
+                token_env: None,
+                api_mode: Some(crate::ApiMode::Graphql),
+                max_tags_per_repo: None,
+            },
+        );
+        let result = Registry::from_config(
+            &config,
+            &[&MOCK_REGISTRATION, &REST_ONLY_REGISTRATION],
+            &Retention::Run,
+        );
+        assert!(
+            matches!(&result, Err(Error::InvalidConfig { reason, .. }) if reason.contains("graphql")),
+            "{result:?}"
+        );
+    }
 
     fn host_of_kind(kind: crate::HostKind) -> crate::HostConfig {
         crate::HostConfig {

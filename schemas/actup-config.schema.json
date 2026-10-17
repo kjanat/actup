@@ -158,7 +158,7 @@
       "type": "object",
       "properties": {
         "api_mode": {
-          "description": "API fallback mode: `\"graphql\"` (batched, requires auth) or `\"rest\"` (parallel)",
+          "description": "Preferred API fallback mode: `\"graphql\"` (batched, requires auth) or `\"rest\"` (parallel).\n\nA provider that lacks the preferred mode, such as REST-only GitLab and\nGitea, uses the mode it supports.",
           "$ref": "#/$defs/ApiMode",
           "default": "graphql"
         },
@@ -185,7 +185,7 @@
           ]
         },
         "api_mode": {
-          "description": "Override global `[fetch].api_mode` for this host.",
+          "description": "Override global `[fetch].api_mode` for this host.\n\nA mode the host's provider does not support is a config error.",
           "anyOf": [
             {
               "$ref": "#/$defs/ApiMode"

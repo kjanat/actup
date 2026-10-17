@@ -251,7 +251,7 @@ policy  = { bump = "patch", track = "exact" }
 
 # API fallback, used only when a host refuses a git connection
 [fetch]
-api_mode          = "graphql"  # "graphql" or "rest"
+api_mode          = "graphql"  # preferred: "graphql" or "rest"; REST-only providers use REST
 max_tags_per_repo = 10  # Tags to fetch per repo (1-255)
 
 # Enterprise GitHub (api_base and token_env: user or explicit config only)

@@ -352,6 +352,27 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(all(feature = "gitlab", feature = "gitea"))]
+    #[test]
+    fn build_registry_empty_config_registers_every_preset_host()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = build_registry(&Config::default())?;
+        for (uses, kind) in [
+            ("actions/checkout@v4", provider::Kind::GitHub),
+            ("gitlab.com/group/project@v1", provider::Kind::GitLab),
+            ("codeberg.org/o/r@v1", provider::Kind::Gitea),
+        ] {
+            let action = actup_core::parse_uses(uses)?.ok_or(uses)?;
+            let provider = registry.find_for_repo(&action.to_repo_id());
+            assert_eq!(
+                provider.map(actup_core::Provider::kind),
+                Some(kind),
+                "{uses}"
+            );
+        }
+        Ok(())
+    }
+
     #[cfg(not(feature = "gitlab"))]
     #[test]
     fn build_registry_without_the_gitlab_feature_rejects_a_gitlab_host() {

@@ -1,7 +1,7 @@
 #:schema ../schemas/actup-config.schema.json
 #
-# Example configuration for github.com, a GitHub Enterprise host, GitLab.com
-# and Codeberg.
+# Example configuration for github.com plus a GitHub Enterprise host.
+# The gitlab.com and codeberg.org presets need no [hosts] entry.
 
 default_host = "github.com"
 
@@ -33,13 +33,6 @@ max_tags_per_repo = 10
 kind      = "github"
 api_base  = "https://github.enterprise.com/api/v3"
 token_env = "GHE_TOKEN"
-
-# GitLab.com and Codeberg (Forgejo) presets; both providers are REST-only
-[hosts."gitlab.com"]
-api_mode = "rest"
-
-[hosts."codeberg.org"]
-api_mode = "rest"
 
 # Example workflow references this config would handle:
 #

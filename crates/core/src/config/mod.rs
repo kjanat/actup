@@ -591,7 +591,10 @@ impl std::fmt::Display for HostKind {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct FetchSettings {
-    /// API fallback mode: `"graphql"` (batched, requires auth) or `"rest"` (parallel)
+    /// Preferred API fallback mode: `"graphql"` (batched, requires auth) or `"rest"` (parallel).
+    ///
+    /// A provider that lacks the preferred mode, such as REST-only GitLab and
+    /// Gitea, uses the mode it supports.
     pub api_mode: ApiMode,
 
     /// Maximum tags the API fallback fetches per repository (1–255).
@@ -631,6 +634,8 @@ pub struct HostConfig {
     pub token_env: Option<String>,
 
     /// Override global `[fetch].api_mode` for this host.
+    ///
+    /// A mode the host's provider does not support is a config error.
     pub api_mode: Option<ApiMode>,
 
     /// Override global `[fetch].max_tags_per_repo` for this host.

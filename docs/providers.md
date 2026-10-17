@@ -138,9 +138,8 @@ token_env = "GHE_TOKEN"
 **Status**: Registered by the CLI (feature `gitlab`, on by default), the LSP and
 the MCP server. `REGISTRATION` declares the `gitlab.com` preset
 (`https://gitlab.com/api/v4`, `GITLAB_TOKEN`) and infers `https://{host}/api/v4`
-for other hosts. GitLab supports the REST API only, so each GitLab host sets
-`api_mode = "rest"` while `[fetch] api_mode` is `"graphql"`. A GitLab host is
-registered when `[hosts]` names it.
+for other hosts. GitLab supports the REST API only and uses it whatever
+`[fetch] api_mode` prefers. `gitlab.com` works with zero config.
 
 **Crate features**:
 
@@ -153,12 +152,8 @@ registered when `[hosts]` names it.
 **Configuration**. `api_base` is the full API root:
 
 ```toml
-[hosts."gitlab.com"]
-api_mode = "rest"
-
 [hosts."gitlab.example.com"]
 kind      = "gitlab"
-api_mode  = "rest"
 api_base  = "https://gitlab.example.com/api/v4"
 token_env = "GITLAB_PRIVATE_TOKEN"
 ```
@@ -178,9 +173,8 @@ token_env = "GITLAB_PRIVATE_TOKEN"
 the MCP server. `REGISTRATION` declares the `codeberg.org` preset
 (`https://codeberg.org/api/v1`, `CODEBERG_TOKEN`), infers
 `https://{host}/api/v1` for other hosts and reads `GITEA_TOKEN` there. Gitea
-supports the REST API only, so each Gitea host sets `api_mode = "rest"` while
-`[fetch] api_mode` is `"graphql"`. A Gitea host is registered when `[hosts]`
-names it.
+supports the REST API only and uses it whatever `[fetch] api_mode` prefers.
+`codeberg.org` works with zero config.
 
 **Crate features**:
 
@@ -193,17 +187,12 @@ names it.
 **Configuration**. `api_base` is the full API root:
 
 ```toml
-[hosts."codeberg.org"]
-api_mode = "rest"
-
 [hosts."gitea.example.com"]
-kind     = "gitea"
-api_mode = "rest"
+kind = "gitea"
 
 # Forgejo is a soft fork of Gitea with identical API
 [hosts."forgejo.example.com"]
 kind      = "gitea"  # Uses "gitea" kind
-api_mode  = "rest"
 api_base  = "https://forgejo.example.com/api/v1"
 token_env = "FORGEJO_TOKEN"
 ```
@@ -261,7 +250,8 @@ jobs:
    - Merge user `[hosts."hostname"]` overrides
    - Look up registration by `kind`
    - Fill defaults/inference (token_env, api_base)
-   - Validate required fields and api_mode capability
+   - Validate required fields; a host's own `api_mode` must be one its provider
+     supports, and the global `[fetch] api_mode` is only a preference
 
 3. **Construct provider** via `(registration.create)(config)`
    - Provider is registered in the host-to-provider registry
@@ -360,6 +350,8 @@ Key differences:
   `[[providers.instances]]`
 - **Per-host fetch overrides**: `api_mode` and `max_tags_per_repo` can be set
   per-host in `[hosts]`, overriding `[fetch]` globals
+- **Preset hosts**: every compiled-in preset host (`github.com`, `gitlab.com`,
+  `codeberg.org`) is registered without a `[hosts]` entry
 
 ## Next Steps
 
