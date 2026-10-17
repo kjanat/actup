@@ -36,27 +36,7 @@ extension source to pick up changes.
 
 ## Configuration
 
-### actup config for `/actions:update`
-
-The `/actions:update` slash command reads actup config from the worktree root
-only. It takes the first repo config candidate in `actup-core` discovery order
-(`actup.*`, `.actup.*`, `.config/actup.*`, `.github/actup.*`; TOML, JSON, JSONC
-or YAML). When `lsp.actup-lsp.initialization_options.configPath` names a file,
-the command reads that file over the candidate as an explicit config, where
-every key applies, as `actup-lsp` does. A relative `configPath` starts at the
-worktree root. On Windows, a drive-relative `configPath` such as
-`C:ci\actup.toml` starts at the worktree root when its drive is the worktree's
-drive, and a path rooted without a drive, such as `\repo\actup.toml`, takes the
-worktree's drive or UNC share. The command reads files inside the worktree only,
-and reports an error for a `configPath` outside it. A `\\?\` or `\\.\` device
-path is an error even when it names a file inside the worktree. On macOS and
-Linux the command compares names exactly. On a case-insensitive macOS volume, a
-`configPath` of `ACTUP.toml` names the discovered `actup.toml`. The command
-reads that file as both layers, and the first output line lists both names. The
-resulting config equals the config of `ACTUP.toml` read once. It applies
-`ACTUP_*` variables from the worktree shell environment on top. Parent-directory
-configs and the user config do not apply. The first line of the output names the
-files it used, or `defaults`.
+### actup config
 
 `actup-lsp` resolves config the same way as the `actup` CLI.
 

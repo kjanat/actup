@@ -50,9 +50,7 @@ tokio = { version = "1", default-features = false, features = ["sync"] }  # sync
 # Clap helpers shared by the `actup` and `actup-mcp` binaries.
 clap  = ["dep:clap"]
 # Opt-in TypeScript binding generation via tsify. Enabled by `actup-wasm`
-# for the npm package build (wasm32-unknown-unknown). NOT enabled by the Zed
-# extension (wasm32-wasip2) — wasm-bindgen's placeholder imports do not
-# resolve under `wasm-component-ld`.
+# for the npm package build (wasm32-unknown-unknown).
 tsify = ["dep:tsify", "dep:wasm-bindgen"]
 
 [lints]
