@@ -182,6 +182,8 @@ mod tests {
 
     const PARITY_CHILD: &str = "ENV_PARITY_CHILD";
 
+    const PROFILE_FILE: &str = "LLVM_PROFILE_FILE";
+
     const PARITY_VARS: &[(&str, &str)] = &[
         ("ACTUP_POLICY_BUMP", "minor"),
         ("actup_policy", "flat"),
@@ -224,6 +226,7 @@ mod tests {
         let output = std::process::Command::new(std::env::current_exe()?)
             .args(["--exact", &name])
             .env_clear()
+            .envs(std::env::var_os(PROFILE_FILE).map(|file| (PROFILE_FILE, file)))
             .env(PARITY_CHILD, "1")
             .envs(PARITY_VARS.iter().copied())
             .output()?;
