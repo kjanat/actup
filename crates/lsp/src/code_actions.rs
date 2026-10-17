@@ -176,7 +176,7 @@ fn display_ref(target_ref: &str) -> String {
 /// action with a [`WorkspaceEdit`] that replaces only the ref portion.
 ///
 /// For each `PinBranch` diagnostic, produces a quickfix "Pin to <sha> # <ref>"
-/// action.
+/// action, titled "Pin to <sha>" when other text follows the ref.
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
@@ -270,12 +270,12 @@ fn quick_fix(range: Range, data: DiagnosticData) -> Option<(String, TextEdit, bo
             repin_comment,
             replace_end_col,
         } => {
+            let title = match repin_comment {
+                Some(_) => format!("Pin to {} # {ref_name}", display_ref(&sha)),
+                None => format!("Pin to {}", display_ref(&sha)),
+            };
             let edit = outdated_text_edit(range, &sha, repin_comment.as_deref(), replace_end_col);
-            Some((
-                format!("Pin to {} # {ref_name}", display_ref(&sha)),
-                edit,
-                true,
-            ))
+            Some((title, edit, true))
         }
         DiagnosticData::Unresolvable {
             suggested_ref: Some(suggested),
@@ -1709,7 +1709,7 @@ mod tests {
             titles,
             [
                 "Pin to ccccccc # main",
-                "Pin to ddddddd # nightly",
+                "Pin to ddddddd",
                 "Pin to ccccccc # main"
             ]
         );
