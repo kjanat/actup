@@ -147,8 +147,8 @@ fn detect_completion_context(
     // Convert incoming cursor column (negotiated encoding) to byte offset.
     let cursor_byte = crate::position::col_to_byte(line_str, position.character, encoding);
 
-    // Find `uses:` on this line.
-    let uses_idx = line_str.find("uses:")?;
+    // Find the last `uses:` before the cursor on this line.
+    let uses_idx = line_str.get(..cursor_byte)?.rfind("uses:")?;
     let after_colon = &line_str[uses_idx + 5..]; // everything after "uses:"
 
     // Count spaces/tabs after `uses:` (YAML value separator).
@@ -160,27 +160,35 @@ fn detect_completion_context(
     let value_col = uses_idx + 5 + ws_count;
 
     // Strip optional quotes.
-    let (unquoted, quote_offset) = if value_str.starts_with('"') || value_str.starts_with('\'') {
-        (&value_str[1..], 1usize)
-    } else {
-        (value_str, 0usize)
+    let (unquoted, quote) = match value_str.chars().next() {
+        Some(q @ ('"' | '\'')) => (&value_str[1..], Some(q)),
+        _ => (value_str, None),
     };
 
-    let content_col = value_col + quote_offset;
+    let content_col = value_col + usize::from(quote.is_some());
 
     // Cursor must be at or after the content start (both in byte offsets now).
     if cursor_byte < content_col {
         return None;
     }
 
-    // Clean trailing quote/whitespace from the full value for analysis.
-    let value_clean = unquoted
-        .trim_end()
-        .trim_end_matches('"')
-        .trim_end_matches('\'');
+    let value_len = quote
+        .map_or_else(
+            || unquoted.find(|c: char| c.is_whitespace() || matches!(c, ',' | '}' | ']')),
+            |q| unquoted.find(q),
+        )
+        .unwrap_or(unquoted.len());
+    let value_clean = &unquoted[..value_len];
 
     // Extract the portion from content start up to and including the cursor.
     let offset_in_value = cursor_byte - content_col;
+    if offset_in_value > value_len
+        && !unquoted
+            .get(value_len..offset_in_value)
+            .is_some_and(|gap| gap.trim().is_empty())
+    {
+        return None;
+    }
     let typed = if offset_in_value < value_clean.len() {
         // Ensure we don't slice inside a multi-byte character (defensive).
         let end = offset_in_value + 1;
@@ -885,6 +893,98 @@ mod tests {
         assert_eq!(items[0].sort_text.as_deref(), Some("000"));
         assert_eq!(items[1].sort_text.as_deref(), Some("001"));
         assert_eq!(items[2].sort_text.as_deref(), Some("002"));
+    }
+
+    #[test]
+    fn detect_context_flow_mapping_stops_at_comma() {
+        let text = "      - { uses: actions/checkout@v, with: { x: 1 } }\n";
+        let pos = Position {
+            line: 0,
+            character: 34,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                owner: "actions".into(),
+                repo: "checkout".into(),
+                version_prefix: "v".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn detect_context_flow_mapping_stops_at_brace() {
+        let text = "      - {uses: actions/checkout@}\n";
+        let pos = Position {
+            line: 0,
+            character: 32,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                owner: "actions".into(),
+                repo: "checkout".into(),
+                version_prefix: String::new(),
+            })
+        );
+    }
+
+    #[test]
+    fn detect_context_quoted_flow_value_stops_at_closing_quote() {
+        let text = "      - { uses: \"actions/checkout@v\", with: { x: 1 } }\n";
+        let pos = Position {
+            line: 0,
+            character: 35,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                owner: "actions".into(),
+                repo: "checkout".into(),
+                version_prefix: "v".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn detect_context_flow_sequence_uses_value_under_cursor() {
+        let text = "steps: [{ uses: a/b@v4 }, { uses: actions/setup-node@v }]\n";
+        let pos = Position {
+            line: 0,
+            character: 54,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                owner: "actions".into(),
+                repo: "setup-node".into(),
+                version_prefix: "v".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn detect_context_none_past_flow_value() {
+        let text = "      - { uses: actions/checkout@v4, with: { x: 1 } }\n";
+        for character in [36, 41, 52] {
+            let pos = Position { line: 0, character };
+            assert_eq!(
+                detect_completion_context(text, pos, ENC),
+                None,
+                "cursor at {character}"
+            );
+        }
+    }
+
+    #[test]
+    fn detect_context_none_past_closing_quote_or_comment() {
+        for (text, character) in [
+            ("      - uses: \"actions/checkout@v4\" # c\n", 37),
+            ("      - uses: actions/checkout@v4 # pinned\n", 40),
+        ] {
+            let pos = Position { line: 0, character };
+            assert_eq!(detect_completion_context(text, pos, ENC), None, "{text}");
+        }
     }
 
     #[test]

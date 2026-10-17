@@ -229,6 +229,65 @@ mod tests {
     }
 
     #[test]
+    fn test_flow_style_update_round_trip_changes_only_refs() {
+        let old_sha = sha40('a');
+        let new_sha = sha40('b');
+        let content = [
+            "steps:",
+            "  - { uses: actions/upload-pages-artifact@v4, with: { path: dist } }",
+            "  - { uses: actions/deploy-pages@v4, id: deployment }",
+            "  - {uses: \"a/b@v4\"} # keep",
+            "  - [{ uses: 'c/d@v4' }]",
+            "  - { name: \"déploiement ✓\", uses: e/f@v4 }",
+            "  - { uses: g/h@OLD_SHA, with: { x: 1 } }",
+            "",
+        ]
+        .join("\n")
+        .replace("OLD_SHA", &old_sha);
+        let expected = [
+            "steps:",
+            "  - { uses: actions/upload-pages-artifact@v5.0.0, with: { path: dist } }",
+            "  - { uses: actions/deploy-pages@v5.0.0, id: deployment }",
+            "  - {uses: \"a/b@v5.0.0\"} # keep",
+            "  - [{ uses: 'c/d@v5.0.0' }]",
+            "  - { name: \"déploiement ✓\", uses: e/f@v5.0.0 }",
+            "  - { uses: g/h@NEW_SHA, with: { x: 1 } } # v5.0.0",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW_SHA", &new_sha);
+        let target = version::Info::new(version::Version::parse("v5.0.0"), &new_sha);
+
+        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content.clone());
+        let mut seen = 0;
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+            assert!(file_edits.add(build_edit(&loc, &action_ref, &target)));
+            seen += 1;
+        }
+        assert_eq!(seen, 6);
+
+        let Ok(updated) = file_edits.apply() else {
+            panic!("edits did not apply");
+        };
+        assert_eq!(updated, expected);
+
+        let refs: Vec<String> = WorkflowScanner::extract_actions(&updated)
+            .map(|(_, action_ref)| action_ref.ref_str().to_string())
+            .collect();
+        assert_eq!(
+            refs,
+            [
+                "v5.0.0",
+                "v5.0.0",
+                "v5.0.0",
+                "v5.0.0",
+                "v5.0.0",
+                new_sha.as_str()
+            ]
+        );
+    }
+
+    #[test]
     fn test_create_edit_fallback_replace_ref() {
         // When ref_range returns None (no @), falls back to replace_ref
         let loc = UsesLocation::new(

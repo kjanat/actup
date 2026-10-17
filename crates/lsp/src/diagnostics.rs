@@ -901,6 +901,36 @@ jobs:
     }
 
     #[test]
+    fn extract_located_actions_flow_style_ranges_cover_only_ref() {
+        let sha = "a".repeat(40);
+        let yaml = format!(
+            "steps:\n  - {{ uses: a/b@v4, with: {{ x: 1 }} }}\n  - [{{ uses: c/d@v1 }}]\n  - {{ name: \"✓ ok\", uses: e/f@v2 }}\n  - {{ uses: g/h@{sha}, id: x }} # v1.0.0\n"
+        );
+        let located: Vec<(String, u32, u32, u32, TrailingComment)> =
+            extract_located_actions(&yaml, crate::position::PositionEncoding::Utf16)
+                .into_iter()
+                .map(|a| {
+                    (
+                        a.action_ref.ref_str().to_string(),
+                        a.line,
+                        a.col_start,
+                        a.col_end,
+                        a.trailing,
+                    )
+                })
+                .collect();
+        assert_eq!(
+            located,
+            [
+                ("v4".to_string(), 1, 16, 18, TrailingComment::None),
+                ("v1".to_string(), 2, 17, 19, TrailingComment::None),
+                ("v2".to_string(), 3, 30, 32, TrailingComment::None),
+                (sha, 4, 16, 56, TrailingComment::Foreign),
+            ]
+        );
+    }
+
+    #[test]
     fn extract_located_actions_skips_docker_and_local() {
         let yaml = r"
       - uses: docker://node:16

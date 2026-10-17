@@ -243,10 +243,8 @@ const fn classify_node(stack: &mut [Ctx]) -> NodeRole {
 
 /// Build a [`UsesLocation`] for a `uses:` value scalar.
 ///
-/// `span.start.col()` is 0-indexed and, for quoted scalars, points at the
-/// opening quote while `value` holds the unquoted content — so skip one column
-/// for quoted styles to land on the content, then convert to the 1-indexed
-/// column [`UsesLocation::new`] expects.
+/// `span.start.col()` is a 0-indexed character column. For quoted scalars it
+/// points at the opening quote while `value` holds the unquoted content.
 fn build_location(
     content: &str,
     value: &str,
@@ -262,8 +260,16 @@ fn build_location(
         style,
         ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted
     ));
-    let column = span.start.col() + quote_skip + 1;
-    Some(UsesLocation::new(line, column, value.to_string(), raw_line))
+    let byte_col = raw_line
+        .char_indices()
+        .nth(span.start.col() + quote_skip)
+        .map_or(raw_line.len(), |(byte, _)| byte);
+    Some(UsesLocation::new(
+        line,
+        byte_col + 1,
+        value.to_string(),
+        raw_line,
+    ))
 }
 
 /// Byte range of a substring within a line.
@@ -282,7 +288,7 @@ pub struct RefRange {
 pub struct UsesLocation {
     /// Line number (1-indexed)
     line: usize,
-    /// Column number (1-indexed)
+    /// Byte column of the value within `raw_line` (1-indexed)
     column: usize,
     /// The uses value
     value: String,
@@ -492,6 +498,99 @@ jobs:
         let loc = &locations[0];
         let range = loc.ref_range().unwrap();
         assert_eq!(&loc.raw_line[range], "v4");
+    }
+
+    fn assert_exact_ranges(yaml: &str, expected: &[(usize, &str, &str)]) {
+        let locations = extract_uses_from_yaml(yaml);
+        let found: Vec<(usize, &str, &str, &str)> = locations
+            .iter()
+            .map(|loc| {
+                let raw = loc.raw_line();
+                let value_text = raw.get(loc.value_range()).unwrap_or("<out of range>");
+                let ref_text = loc
+                    .ref_range()
+                    .and_then(|r| raw.get(r))
+                    .unwrap_or("<no ref>");
+                (loc.line(), loc.value(), value_text, ref_text)
+            })
+            .collect();
+        let wanted: Vec<(usize, &str, &str, &str)> = expected
+            .iter()
+            .map(|&(line, value, git_ref)| (line, value, value, git_ref))
+            .collect();
+        assert_eq!(found, wanted, "yaml:\n{yaml}");
+    }
+
+    #[test]
+    fn test_flow_mapping_with_nested_mapping_excludes_comma() {
+        assert_exact_ranges(
+            "steps:\n  - { uses: actions/upload-pages-artifact@v4, with: { path: dist } }\n",
+            &[(2, "actions/upload-pages-artifact@v4", "v4")],
+        );
+    }
+
+    #[test]
+    fn test_flow_mapping_last_entry_excludes_brace() {
+        assert_exact_ranges(
+            "steps:\n  - { uses: actions/deploy-pages@v4 }\n  - {uses: a/b@v1}\n",
+            &[(2, "actions/deploy-pages@v4", "v4"), (3, "a/b@v1", "v1")],
+        );
+    }
+
+    #[test]
+    fn test_flow_mapping_before_other_key_excludes_comma() {
+        assert_exact_ranges(
+            "steps:\n  - { uses: actions/deploy-pages@v4, id: deployment }\n  - {uses: a/b@v1,id: x}\n",
+            &[(2, "actions/deploy-pages@v4", "v4"), (3, "a/b@v1", "v1")],
+        );
+    }
+
+    #[test]
+    fn test_flow_sequence_of_flow_mappings() {
+        assert_exact_ranges(
+            "steps: [{ uses: a/b@v4 }, { uses: c/d@v1 }]\n",
+            &[(1, "a/b@v4", "v4"), (1, "c/d@v1", "v1")],
+        );
+    }
+
+    #[test]
+    fn test_flow_sequence_without_spaces_excludes_bracket() {
+        assert_exact_ranges(
+            "steps: [{uses: a/b@v4},{uses: c/d@v1}]\n",
+            &[(1, "a/b@v4", "v4"), (1, "c/d@v1", "v1")],
+        );
+    }
+
+    #[test]
+    fn test_flow_mapping_quoted_values() {
+        assert_exact_ranges(
+            "steps:\n  - { uses: \"a/b@v4\", with: { x: 1 } }\n  - { uses: 'c/d@v1' }\n  - [{ \"uses\": \"e/f@v2\" }]\n",
+            &[
+                (2, "a/b@v4", "v4"),
+                (3, "c/d@v1", "v1"),
+                (4, "e/f@v2", "v2"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_flow_mapping_trailing_comments() {
+        assert_exact_ranges(
+            "steps:\n  - { uses: a/b@v4, with: { x: 1 } } # pinned\n  - {\n      uses: c/d@v1, # note\n      id: y\n    }\n  - uses: e/f@v2 # block\n",
+            &[
+                (2, "a/b@v4", "v4"),
+                (4, "c/d@v1", "v1"),
+                (7, "e/f@v2", "v2"),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_flow_mapping_after_multibyte_text() {
+        assert_exact_ranges(
+            "steps:\n  - { name: \"déploiement ✓\", uses: a/b@v4 }\n",
+            &[(2, "a/b@v4", "v4")],
+        );
     }
 
     #[test]

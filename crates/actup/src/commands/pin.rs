@@ -210,7 +210,119 @@ pub async fn run(
 
 #[cfg(test)]
 mod tests {
+    use actup_core::{
+        ActionRepoId, BoxFuture,
+        provider::{ActionYml, Kind, Provider, Sha40},
+        version,
+    };
+
     use super::*;
+    use crate::common::FileEdits;
+
+    struct FixedShaProvider {
+        sha: Sha40,
+    }
+
+    impl Provider for FixedShaProvider {
+        fn kind(&self) -> Kind {
+            Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            let sha = self.sha.clone();
+            Box::pin(async move { Ok(sha) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &ActionRepoId,
+        ) -> BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pin_flow_style_steps_resolves_exact_refs() {
+        let sha = "c".repeat(40);
+        let Some(sha40) = Sha40::new(sha.clone()) else {
+            panic!("fixture SHA must be valid");
+        };
+        let provider = FixedShaProvider { sha: sha40 };
+        let content = [
+            "steps:",
+            "  - { uses: actions/upload-pages-artifact@v4, with: { path: dist } }",
+            "  - { uses: actions/deploy-pages@v4, id: deployment }",
+            "",
+        ]
+        .join("\n");
+        let expected = [
+            "steps:",
+            "  - { uses: actions/upload-pages-artifact@SHA, with: { path: dist } } # v4",
+            "  - { uses: actions/deploy-pages@SHA, id: deployment } # v4",
+            "",
+        ]
+        .join("\n")
+        .replace("SHA", &sha);
+
+        let config = Config::default();
+        let mut errors = ErrorTally::default();
+        let mut file_edits =
+            FileEdits::new(std::path::PathBuf::from("/pages.yml"), content.clone());
+        let mut refs = Vec::new();
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+            refs.push(action_ref.to_string());
+            let Some((edit, _)) =
+                pin_action_edit(&provider, &action_ref, &loc, &config, &mut errors).await
+            else {
+                panic!("pin produced no edit for {action_ref}");
+            };
+            assert!(file_edits.add(edit));
+        }
+
+        assert_eq!(
+            refs,
+            [
+                "actions/upload-pages-artifact@v4",
+                "actions/deploy-pages@v4"
+            ]
+        );
+        assert_eq!(errors.total(), 0);
+        let Ok(pinned) = file_edits.apply() else {
+            panic!("edits did not apply");
+        };
+        assert_eq!(pinned, expected);
+    }
 
     fn make_action_ref(
         host: Option<&str>,
