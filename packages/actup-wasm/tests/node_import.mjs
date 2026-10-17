@@ -129,7 +129,7 @@ for (const r of results) {
 }
 
 // Test 4: planUpdates
-const edits = planUpdates(yaml, results);
+const edits = planUpdates(results);
 assert.ok(Array.isArray(edits), "edits is array");
 for (const e of edits) {
 	assert.equal(typeof e.line, "number", "edit.line is number");
@@ -186,7 +186,7 @@ assert.equal(typeof target.sha, "string", "target.sha is a string");
 assert.equal(target.sha.length, 40, "target.sha is 40 chars");
 
 // planUpdates should emit one edit pointing at v4.2.0.
-const outdatedEdits = planUpdates(outdatedYaml, outdatedResults);
+const outdatedEdits = planUpdates(outdatedResults);
 assert.equal(outdatedEdits.length, 1, "one edit emitted");
 assert.equal(outdatedEdits[0].newRef, "v4.2.0", "edit replaces with target version");
 assert.equal(outdatedEdits[0].original, "actions/checkout@v4.0.0", "edit preserves the original uses string");
@@ -261,7 +261,7 @@ const hostResults = await checkRefs(hostYaml, mockProvider);
 assert.equal(hostResults.length, 1, "one ref in host YAML");
 assert.equal(hostResults[0].action_ref.host, "github.com", "host is lower-cased");
 assert.equal(statusName(hostResults[0].status), "Outdated", `got ${JSON.stringify(hostResults[0].status)}`);
-const hostEdits = planUpdates(hostYaml, hostResults);
+const hostEdits = planUpdates(hostResults);
 assert.equal(hostEdits.length, 1, "one edit for the mixed-case host");
 assert.equal(hostEdits[0].original, "GitHub.COM/actions/checkout@v4.0.0", "edit keeps the host as written");
 assert.equal(hostEdits[0].newRef, "v4.2.0", "edit targets v4.2.0");
@@ -280,11 +280,33 @@ assert.equal(escapedLoc.value, "actions/checkout@v4.0.0", "escape is decoded");
 assert.equal(escapedLoc.ref_range, null, "no ref range for an escaped value");
 const escapedResults = await checkRefs(escapedYaml, mockProvider);
 assert.equal(statusName(escapedResults[0].status), "Outdated", "escaped ref is still checked");
-assert.deepEqual(planUpdates(escapedYaml, escapedResults), [], "no edit for an escaped value");
+assert.deepEqual(planUpdates(escapedResults), [], "no edit for an escaped value");
 
 console.log("PASS: escaped value is checked but gets no edit");
 
-// Test 14: sortVersionTags orders by semver precedence, newest first.
+// Test 14: a ref written twice gets one edit per location.
+const repeatedYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4.0.0
+      - uses: actions/checkout@v4.0.0
+`;
+const repeatedResults = await checkRefs(repeatedYaml, mockProvider);
+assert.equal(repeatedResults.length, 2, "one result per location");
+const repeatedEdits = planUpdates(repeatedResults);
+assert.deepEqual(
+	repeatedEdits.map((e) => [e.line, e.refStart, e.refEnd, e.newRef]),
+	[
+		[4, 31, 37, "v4.2.0"],
+		[5, 31, 37, "v4.2.0"],
+	],
+	"one edit for each location",
+);
+
+console.log("PASS: repeated ref gets one edit per location");
+
+// Test 15: sortVersionTags orders by semver precedence, newest first.
 const sorted = sortVersionTags([
 	{ version: "v1.9.0", sha: "a".repeat(40) },
 	{ version: "v1.10.0", sha: "b".repeat(40) },

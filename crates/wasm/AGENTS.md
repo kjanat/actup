@@ -14,12 +14,12 @@ native builds see an empty crate.
 
 ## WASM API (4 exports)
 
-| Export            | Sync/Async | Purpose                                     |
-| ----------------- | ---------- | ------------------------------------------- |
-| `parseUsesRefs`   | sync       | Extract `uses:` locations from YAML         |
-| `checkRefs`       | async      | Check refs via JS-provided `ActupProvider`  |
-| `planUpdates`     | sync       | Compute text edits from `CheckResult` array |
-| `sortVersionTags` | sync       | Sort `VersionTag[]` newest first            |
+| Export            | Sync/Async | Purpose                                            |
+| ----------------- | ---------- | -------------------------------------------------- |
+| `parseUsesRefs`   | sync       | Extract `uses:` locations from YAML                |
+| `checkRefs`       | async      | Check refs via JS-provided `ActupProvider`         |
+| `planUpdates`     | sync       | Compute text edits from `LocatedCheckResult` array |
+| `sortVersionTags` | sync       | Sort `VersionTag[]` newest first                   |
 
 ## Where to Look
 

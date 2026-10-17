@@ -96,8 +96,7 @@ if (setupNodeTarget !== "v4.0.0") {
 console.log("PASS: setup-node targets v4.0.0");
 
 // Test planUpdates
-const resultsJson = JSON.stringify(results);
-const edits = planUpdates(yaml, resultsJson);
+const edits = planUpdates(JSON.stringify(results));
 
 if (!Array.isArray(edits)) {
 	throw new Error(`Expected edits array, got ${typeof edits}`);
@@ -169,7 +168,7 @@ if (!Array.isArray(emptyResults) || emptyResults.length !== 0) {
 console.log("PASS: empty YAML returns empty results");
 
 // Test planUpdates with no outdated results (pass up-to-date)
-const noEdits = planUpdates(yaml, "[]");
+const noEdits = planUpdates("[]");
 if (!Array.isArray(noEdits) || noEdits.length !== 0) {
 	throw new Error(
 		`Expected no edits for empty results, got ${JSON.stringify(noEdits)}`,
@@ -181,7 +180,7 @@ console.log("PASS: planUpdates with empty results returns no edits");
 // (a) the new @ref appears at the expected location, and
 // (b) the resulting YAML still parses cleanly via parseUsesRefs.
 {
-	const fullEdits = planUpdates(yaml, JSON.stringify(results));
+	const fullEdits = planUpdates(JSON.stringify(results));
 	if (fullEdits.length === 0) {
 		throw new Error("Roundtrip: expected at least one edit for the outdated checkout ref");
 	}

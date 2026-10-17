@@ -130,7 +130,7 @@ export async function fixAllInWorkspace(
 
 			const { checkRefs, planUpdates } = await import("actup-wasm");
 			const results = await checkRefs(text, provider);
-			const edits = planUpdates(text, results);
+			const edits = planUpdates(results);
 			if (edits.length === 0) continue;
 
 			const wsEdit = new vscode.WorkspaceEdit();

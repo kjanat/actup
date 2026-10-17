@@ -60,12 +60,12 @@ for (const r of results) {
 	if (typeof r.status === "object" && "Outdated" in r.status) {
 		const { target } = r.status.Outdated;
 		console.log(
-			`${r.action_ref.owner}/${r.action_ref.repo}: ${r.action_ref.git_ref} → ${target.version}`,
+			`${r.action_ref.owner}/${r.action_ref.repo}: ${r.action_ref.ref_str} → ${target.version}`,
 		);
 	}
 }
 
-const edits = planUpdates(yaml, results);
+const edits = planUpdates(results);
 // edits: [{ line, refStart, refEnd, original, newRef }]
 ```
 
@@ -107,12 +107,14 @@ value it checked, the parsed `action_ref`, and a status: `"UpToDate"`,
 Optional `config` accepts `{ default_host?, policy?: { bump? } }` where `bump`
 is `"patch"` | `"minor"` | `"major"` | `"latest"`. Unknown keys reject the call.
 
-### `planUpdates(yaml, results)`
+### `planUpdates(results)`
 
-Compute minimal text edits from check results. Pure, synchronous.
+Compute minimal text edits from the `LocatedCheckResult[]` that `checkRefs`
+returns. Pure, synchronous.
 
-Returns `UpdateEdit[]` — each entry has `line`, `refStart`, `refEnd`,
-`original`, and `newRef`. Only generates edits for outdated refs.
+Returns `UpdateEdit[]` with one entry per outdated result, placed at that
+result's `location`. Each entry has `line`, `refStart`, `refEnd`, `original`,
+and `newRef`. A result whose `location.ref_range` is `null` gets no edit.
 
 ### `sortVersionTags(tags)`
 

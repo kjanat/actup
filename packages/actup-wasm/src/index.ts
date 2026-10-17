@@ -16,7 +16,7 @@
 
 /// <reference types="node" />
 
-import type { ActupConfig, CheckResult, LocatedCheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
+import type { ActupConfig, LocatedCheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
 import type { ActupProvider } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
@@ -164,21 +164,19 @@ export async function checkRefs(
 }
 
 /**
- * Plan minimal text edits from check results.
+ * Plan minimal text edits from located check results.
  *
- * Takes the original YAML and a JSON array of check results (as returned by
- * `checkRefs`), and returns an array of edit objects for each outdated ref.
+ * Returns one edit for each outdated result, placed at that result's
+ * `location`. A result whose location has no `ref_range` gets no edit.
  *
  * Pure, synchronous. The caller applies the edits.
  *
- * @param yaml - The original YAML content.
- * @param results - Array of check results from `checkRefs`.
+ * @param results - Array of located check results from `checkRefs`.
  * @returns Array of text edits to apply.
  */
-export function planUpdates(yaml: string, results: CheckResult[]): UpdateEdit[] {
+export function planUpdates(results: readonly LocatedCheckResult[]): UpdateEdit[] {
 	const w = requireInit();
-	const resultsJson = JSON.stringify(results);
-	return w.planUpdates(yaml, resultsJson);
+	return w.planUpdates(JSON.stringify(results));
 }
 
 /** Detect Node.js / Bun / Deno (with node compat) runtime. */

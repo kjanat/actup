@@ -48,6 +48,8 @@ describe("multi-byte text before `uses:`", () => {
 	});
 
 	test("fix all in workspace replaces exactly the refs", async () => {
+		mockWorkspace.reset();
+		mockWindow.reset();
 		const document = new FakeDocument("repo/.github/workflows/utf16.yml", text);
 		mockWorkspace.documents.push(document);
 		await fixAllInWorkspace(provider, new FakeLogOutputChannel());

@@ -167,6 +167,11 @@ class Workspace {
 		this.appliedEdits.push(edit);
 		return Promise.resolve(true);
 	}
+
+	reset(): void {
+		this.documents.splice(0);
+		this.appliedEdits.splice(0);
+	}
 }
 
 export const workspace = new Workspace();
@@ -187,6 +192,10 @@ class Window {
 	showErrorMessage(message: string): Promise<undefined> {
 		this.messages.push(message);
 		return Promise.resolve(undefined);
+	}
+
+	reset(): void {
+		this.messages.splice(0);
 	}
 }
 

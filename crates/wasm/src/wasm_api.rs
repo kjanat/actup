@@ -106,7 +106,7 @@ pub fn sort_version_tags(
 }
 
 /// A [`CheckResult`] with the `uses:` location it was checked from.
-#[derive(Debug, Serialize, tsify_next::Tsify)]
+#[derive(Debug, Serialize, Deserialize, tsify_next::Tsify)]
 struct LocatedCheckResult {
     /// The `uses:` value in the YAML that produced this result
     location: UsesLocation,
@@ -211,11 +211,11 @@ struct UpdateEdit {
     new_ref: String,
 }
 
-/// Plan text edits from check results.
+/// Plan text edits from located check results.
 ///
-/// Takes the original YAML and a JSON array of [`CheckResult`]s (as returned
-/// by [`checkRefs`]), and returns an array of [`UpdateEdit`] objects for
-/// each outdated ref.
+/// Takes a JSON array of [`LocatedCheckResult`]s (as returned by
+/// [`checkRefs`]) and returns one [`UpdateEdit`] for each outdated result
+/// whose `location` has a ref range.
 ///
 /// This is a pure, synchronous function. The caller applies the edits.
 ///
@@ -223,38 +223,26 @@ struct UpdateEdit {
 ///
 /// Returns `JsValue` error on serde failures.
 #[wasm_bindgen(js_name = "planUpdates", unchecked_return_type = "UpdateEdit[]")]
-pub fn plan_updates(yaml: &str, results_json: &str) -> Result<JsValue, JsValue> {
-    let results: Vec<CheckResult> = serde_json::from_str(results_json)
+pub fn plan_updates(results_json: &str) -> Result<JsValue, JsValue> {
+    let results: Vec<LocatedCheckResult> = serde_json::from_str(results_json)
         .map_err(|e| JsValue::from_str(&format!("invalid results JSON: {e}")))?;
 
-    let locations = extract_uses_from_yaml(yaml);
-    let mut edits: Vec<UpdateEdit> = Vec::new();
-
-    for result in &results {
-        let status = result.status();
-        let target_ref = match status {
-            CheckStatus::Outdated { target, .. } => target.version().as_str().to_owned(),
-            _ => continue,
-        };
-
-        // Emit an edit for every matching location — the same action can
-        // appear in multiple jobs/steps of a single workflow.
-        let action_ref = result.action_ref();
-        let written_as_action =
-            |l: &&UsesLocation| parse_uses(l.value()).is_ok_and(|p| p.as_ref() == Some(action_ref));
-
-        for loc in locations.iter().filter(written_as_action) {
-            if let Some(range) = loc.ref_range() {
-                edits.push(UpdateEdit {
-                    line: loc.line(),
-                    ref_start: range.start,
-                    ref_end: range.end,
-                    original: loc.value().to_owned(),
-                    new_ref: target_ref.clone(),
-                });
-            }
-        }
-    }
+    let edits: Vec<UpdateEdit> = results
+        .iter()
+        .filter_map(|result| {
+            let CheckStatus::Outdated { target, .. } = &result.status else {
+                return None;
+            };
+            let range = result.location.ref_range()?;
+            Some(UpdateEdit {
+                line: result.location.line(),
+                ref_start: range.start,
+                ref_end: range.end,
+                original: result.location.value().to_owned(),
+                new_ref: target.version().as_str().to_owned(),
+            })
+        })
+        .collect();
 
     to_js(&edits)
 }
