@@ -1307,7 +1307,7 @@ mod tests {
             panic!("no workflow found");
         };
 
-        let refs: Vec<String> = WorkflowScanner::extract_actions(&content)
+        let refs: Vec<String> = WorkflowScanner::extract_actions(&content, SourceFormat::Yaml)
             .map(|(_, action_ref)| action_ref.to_string())
             .collect();
         assert_eq!(refs, [format!("o/a@{}", sha('a'))]);
