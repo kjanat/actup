@@ -39,7 +39,7 @@ use crate::{Error, policy};
 ///
 /// # Example Configuration
 ///
-/// ```yaml
+/// ```toml
 /// # .actup.toml - Conservative security-focused config
 /// update_policy = "patch"
 /// ref_style = "sha"
@@ -52,8 +52,8 @@ use crate::{Error, policy};
 /// # - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 /// ```
 ///
-/// ```yaml
-/// # .actup.toml - Permissive always-latest config
+/// ```toml
+/// # .actup.toml - Permissive major-update config
 /// update_policy = "major"
 /// ref_style = "tag"
 /// allow_prerelease = true
