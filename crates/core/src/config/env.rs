@@ -180,17 +180,57 @@ mod tests {
         Ok(())
     }
 
+    const PARITY_CHILD: &str = "ENV_PARITY_CHILD";
+
+    const PARITY_VARS: &[(&str, &str)] = &[
+        ("ACTUP_POLICY_BUMP", "minor"),
+        ("actup_policy", "flat"),
+        ("actup_policy_prerelease", "true"),
+        ("ACTUP_CACHE", "flat"),
+        ("ACTUP_CACHE_TTL", "60"),
+        ("Actup_Cache_Ttl", "90"),
+        (" ACTUP_DEFAULT_HOST ", "ghe.corp.com"),
+        ("ACTUP_SCAN_IGNORE", "[\"a/b\", \"c/d\"]"),
+        ("ACTUP_META", "{a = 1, b = \"two\"}"),
+        ("ACTUP_FETCH_MAX_TAGS_PER_REPO", "7"),
+        ("ACTUP_", "x"),
+        ("ACTUP__POLICY", "x"),
+        ("ACTUP_POLICY_", "x"),
+        ("ACTUP_POLICY__BUMP", "x"),
+        ("XACTUP_POLICY_BUMP", "x"),
+        ("GITHUB_TOKEN", "t"),
+    ];
+
     #[test]
-    fn matches_figment_env_on_the_process_environment() -> Result<(), Box<dyn std::error::Error>> {
-        let vars = std::env::vars_os().map(|(k, v)| {
-            (
-                k.to_string_lossy().into_owned(),
-                v.to_string_lossy().into_owned(),
-            )
-        });
-        let ours: Value = Figment::from(EnvOverrides::from_vars(vars)).extract()?;
-        let figment: Value = Figment::from(Env::prefixed(PREFIX).split("_")).extract()?;
-        assert_eq!(ours, figment);
+    fn matches_figment_env_on_a_controlled_environment() -> Result<(), Box<dyn std::error::Error>> {
+        if std::env::var_os(PARITY_CHILD).is_some() {
+            let vars = std::env::vars_os().map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            });
+            let ours: Value = Figment::from(EnvOverrides::from_vars(vars)).extract()?;
+            let figment: Value = Figment::from(Env::prefixed(PREFIX).split("_")).extract()?;
+            assert_eq!(ours, figment);
+            assert!(ours.as_dict().is_some_and(|dict| !dict.is_empty()));
+            return Ok(());
+        }
+
+        let path = module_path!()
+            .split_once("::")
+            .map_or(module_path!(), |(_, path)| path);
+        let name = format!("{path}::matches_figment_env_on_a_controlled_environment");
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", &name])
+            .env_clear()
+            .env(PARITY_CHILD, "1")
+            .envs(PARITY_VARS.iter().copied())
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{stdout}{stderr}");
+        assert!(stdout.contains("1 passed"), "{stdout}{stderr}");
         Ok(())
     }
 

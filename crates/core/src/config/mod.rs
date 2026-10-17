@@ -584,14 +584,10 @@ impl Config {
         Self::extract(&figment.merge(env), loaded_from)
     }
 
-    /// Parse one config `file` as path and contents, or the defaults for `None`, then apply `env`.
-    ///
-    /// `path` chooses the format. Defaults, formats and `env` behave as in
-    /// [`Config::load`], without the upward search or the user config.
+    /// Parse one config `file`, given as path and contents, over the defaults and apply `env`.
     ///
     /// # Errors
-    /// Returns [`Error::InvalidConfig`] naming the file or the environment
-    /// that holds the invalid value.
+    /// Returns [`Error::InvalidConfig`] for an invalid value.
     pub fn from_contents(file: Option<(&Path, &str)>, env: EnvOverrides) -> Result<Self, Error> {
         let mut figment = Figment::new().merge(Serialized::defaults(Self::default()));
         if let Some((path, contents)) = file {
