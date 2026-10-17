@@ -6,13 +6,21 @@ import { byteToColumn } from "./position.ts";
 
 const DIAGNOSTIC_SOURCE = "actup";
 
-/** Stored edit for an outdated diagnostic, keyed by document URI string. */
-export interface DiagnosticData {
-	readonly kind: "outdated";
-	readonly targetRef: string;
-	readonly range: vscode.Range;
-	readonly newText: string;
-}
+/** Stored edit for an outdated or pin-branch diagnostic, keyed by document URI string. */
+export type DiagnosticData =
+	| {
+		readonly kind: "outdated";
+		readonly targetRef: string;
+		readonly range: vscode.Range;
+		readonly newText: string;
+	}
+	| {
+		readonly kind: "pin-branch";
+		readonly sha: string;
+		readonly refName: string;
+		readonly range: vscode.Range;
+		readonly newText: string;
+	};
 
 /** Per-document diagnostic results for code actions to consume. */
 export const diagnosticDataByUri = new Map<string, Map<string, DiagnosticData>>();
@@ -81,7 +89,7 @@ export async function computeDiagnostics(
 	for (const result of results) {
 		const refStart = result.location.ref_range?.start;
 		const edit = refStart === undefined ? undefined : editByRef.get(`${result.location.line}:${refStart}`);
-		const diag = statusToDiagnostic(result.status, result.location, edit);
+		const diag = statusToDiagnostic(result, edit);
 		if (diag === undefined) {
 			continue;
 		}
@@ -142,11 +150,19 @@ interface DiagResult {
 	data?: DiagnosticData;
 }
 
-function statusToDiagnostic(
-	status: CheckStatus,
-	loc: UsesLocation,
-	edit: UpdateEdit | undefined,
-): DiagResult | undefined {
+function editRange(loc: UsesLocation, edit: UpdateEdit): vscode.Range {
+	const line = loc.line - 1;
+	return new vscode.Range(
+		line,
+		byteToColumn(loc.raw_line, edit.refStart),
+		line,
+		byteToColumn(loc.raw_line, edit.replaceEnd),
+	);
+}
+
+function statusToDiagnostic(result: LocatedCheckResult, edit: UpdateEdit | undefined): DiagResult | undefined {
+	const status: CheckStatus = result.status;
+	const loc = result.location;
 	// UpToDate — no diagnostic
 	if (status === "UpToDate") return undefined;
 
@@ -155,6 +171,7 @@ function statusToDiagnostic(
 	const range = refRange !== null
 		? new vscode.Range(line, byteToColumn(loc.raw_line, refRange.start), line, byteToColumn(loc.raw_line, refRange.end))
 		: new vscode.Range(line, 0, line, loc.raw_line.length);
+	const kind = result.ref_kind ?? "ref";
 
 	if (typeof status === "object" && "Outdated" in status) {
 		const { target, current } = status.Outdated;
@@ -172,13 +189,39 @@ function statusToDiagnostic(
 		if (edit === undefined) {
 			return { diagnostic: diag };
 		}
-		const editRange = new vscode.Range(
-			line,
-			byteToColumn(loc.raw_line, edit.refStart),
-			line,
-			byteToColumn(loc.raw_line, edit.replaceEnd),
+		return {
+			diagnostic: diag,
+			data: { kind: "outdated", targetRef, range: editRange(loc, edit), newText: edit.newText },
+		};
+	}
+
+	if (typeof status === "object" && "Floating" in status) {
+		const diag = new vscode.Diagnostic(
+			range,
+			`${loc.value}: '${status.Floating.ref_name}' is a floating ${kind}, pin to a tag or SHA`,
+			vscode.DiagnosticSeverity.Warning,
 		);
-		return { diagnostic: diag, data: { kind: "outdated", targetRef, range: editRange, newText: edit.newText } };
+		diag.source = DIAGNOSTIC_SOURCE;
+		diag.code = "floating";
+		return { diagnostic: diag };
+	}
+
+	if (typeof status === "object" && "PinBranch" in status) {
+		const { ref_name: refName, sha } = status.PinBranch;
+		const diag = new vscode.Diagnostic(
+			range,
+			`${loc.value}: pin ${kind} '${refName}' to ${sha.slice(0, 7)} # ${refName}`,
+			vscode.DiagnosticSeverity.Warning,
+		);
+		diag.source = DIAGNOSTIC_SOURCE;
+		diag.code = "pin-branch";
+		if (edit === undefined) {
+			return { diagnostic: diag };
+		}
+		return {
+			diagnostic: diag,
+			data: { kind: "pin-branch", sha, refName, range: editRange(loc, edit), newText: edit.newText },
+		};
 	}
 
 	if (typeof status === "object" && "Unresolvable" in status) {

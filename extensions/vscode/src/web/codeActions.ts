@@ -13,6 +13,14 @@ const ACTION_SELECTOR: vscode.DocumentSelector = [
 
 export { ACTION_SELECTOR };
 
+function quickFixTitle(data: DiagnosticData): string {
+	if (data.kind === "outdated") {
+		return `Update to ${data.targetRef}`;
+	}
+	const sha = data.sha.slice(0, 7);
+	return data.newText === data.sha ? `Pin to ${sha}` : `Pin to ${sha} # ${data.refName}`;
+}
+
 export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 	static readonly metadata: vscode.CodeActionProviderMetadata = {
 		providedCodeActionKinds: [
@@ -32,21 +40,18 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 			return actions;
 		}
 
-		const outdatedDiags: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
+		const fixable: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
 
 		for (const diag of context.diagnostics) {
 			if (diag.source !== "actup") continue;
 			const data = dataMap.get(diagnosticKey(diag));
-			if (data === undefined || data.kind !== "outdated") continue;
-			outdatedDiags.push({ diagnostic: diag, data });
+			if (data === undefined) continue;
+			fixable.push({ diagnostic: diag, data });
 		}
 
 		// Individual quickfixes
-		for (const { diagnostic, data } of outdatedDiags) {
-			const action = new vscode.CodeAction(
-				`Update to ${data.targetRef}`,
-				vscode.CodeActionKind.QuickFix,
-			);
+		for (const { diagnostic, data } of fixable) {
+			const action = new vscode.CodeAction(quickFixTitle(data), vscode.CodeActionKind.QuickFix);
 			const edit = new vscode.WorkspaceEdit();
 			edit.replace(document.uri, data.range, data.newText);
 			action.edit = edit;
@@ -55,27 +60,27 @@ export class ActupCodeActionProvider implements vscode.CodeActionProvider {
 			actions.push(action);
 		}
 
-		// Fix-all uses every outdated diagnostic in the document, not just those
+		// Fix-all uses every fixable diagnostic in the document, not just those
 		// in `context.diagnostics` (which is range-scoped to the cursor).
-		const allOutdated: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
+		const allFixable: { diagnostic: vscode.Diagnostic; data: DiagnosticData }[] = [];
 		for (const diag of vscode.languages.getDiagnostics(document.uri)) {
 			if (diag.source !== "actup") continue;
 			const data = dataMap.get(diagnosticKey(diag));
-			if (data === undefined || data.kind !== "outdated") continue;
-			allOutdated.push({ diagnostic: diag, data });
+			if (data === undefined) continue;
+			allFixable.push({ diagnostic: diag, data });
 		}
 
-		if (allOutdated.length >= 2) {
+		if (allFixable.length >= 2) {
 			const fixAll = new vscode.CodeAction(
-				`Fix all outdated actions (${allOutdated.length} refs)`,
+				`Fix all outdated actions (${allFixable.length} refs)`,
 				SOURCE_FIX_ALL_ACTUP,
 			);
 			const edit = new vscode.WorkspaceEdit();
-			for (const { data } of allOutdated) {
+			for (const { data } of allFixable) {
 				edit.replace(document.uri, data.range, data.newText);
 			}
 			fixAll.edit = edit;
-			fixAll.diagnostics = allOutdated.map(d => d.diagnostic);
+			fixAll.diagnostics = allFixable.map(d => d.diagnostic);
 			actions.push(fixAll);
 		}
 

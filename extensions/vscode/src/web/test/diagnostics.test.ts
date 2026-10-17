@@ -327,3 +327,86 @@ describe("a target on the commit the ref already names", () => {
 		expect(bump?.code).toBe("outdated");
 	});
 });
+
+describe("floating and pin-branch refs", () => {
+	const head = "d".repeat(40);
+	const branchProvider: wasm.ActupProvider = {
+		...provider,
+		getVersions: () =>
+			Promise.resolve({
+				semverTags: [{ version: "v1.0.0", sha: "a".repeat(40) }, { version: "v1.2.0", sha: "b".repeat(40) }],
+				defaultBranch: { name: "main", sha: head },
+			}),
+	};
+	const text = [
+		"jobs:",
+		"  build:",
+		"    steps:",
+		"      - uses: actions/checkout@main",
+		"      - uses: actions/cache@main",
+		"      - uses: actions/setup-node@v1.0.0",
+		"",
+	].join("\n");
+
+	async function diagnoseUnder(name: string, policy: string): Promise<{ document: FakeDocument; diagnostics: vscode.Diagnostic[] }> {
+		const document = new FakeDocument(name, text);
+		const config = wasm.parseConfig("actup.toml", policy);
+		await computeDiagnostics(
+			document.uri,
+			text,
+			branchProvider,
+			createDiagnosticCollection(),
+			() => Promise.resolve({ kind: "loaded", path: "actup.toml", config }),
+		);
+		return { document, diagnostics: vscode.languages.getDiagnostics(document.uri) };
+	}
+
+	test("warn about a floating branch under policy.branch = warn and offer no edit", async () => {
+		const { document, diagnostics } = await diagnoseUnder("floating.yml", "[policy]\nbranch = \"warn\"\n");
+		const [checkout, cache, setupNode] = diagnostics;
+
+		expect(checkout?.range).toEqual(rangeOf(document, 3, "main"));
+		expect(checkout?.severity).toBe(vscode.DiagnosticSeverity.Warning);
+		expect(checkout?.code).toBe("floating");
+		expect(checkout?.message).toBe("actions/checkout@main: 'main' is a floating branch, pin to a tag or SHA");
+		expect(cache?.code).toBe("floating");
+		expect(setupNode?.code).toBe("outdated");
+		const actions = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(0).range,
+			codeActionContext(diagnostics),
+		);
+		expect(actions.map(action => action.title)).toEqual(["Update to v1.2.0"]);
+	});
+
+	test("offer the pin from planUpdates under policy.branch = update, in the quick fix and fix-all", async () => {
+		const { document, diagnostics } = await diagnoseUnder("pin-branch.yml", "[policy]\nbranch = \"update\"\n");
+		const [checkout, cache, setupNode] = diagnostics;
+
+		expect(checkout?.range).toEqual(rangeOf(document, 3, "main"));
+		expect(checkout?.severity).toBe(vscode.DiagnosticSeverity.Warning);
+		expect(checkout?.code).toBe("pin-branch");
+		expect(checkout?.message).toBe("actions/checkout@main: pin branch 'main' to ddddddd # main");
+		expect(cache?.code).toBe("pin-branch");
+		expect(setupNode?.code).toBe("outdated");
+
+		const actions = new ActupCodeActionProvider().provideCodeActions(
+			document,
+			document.lineAt(0).range,
+			codeActionContext(diagnostics),
+		);
+		expect(actions.map(action => action.title)).toEqual([
+			"Pin to ddddddd # main",
+			"Pin to ddddddd # main",
+			"Update to v1.2.0",
+			"Fix all outdated actions (3 refs)",
+		]);
+		const [checkoutFix, , , fixAll] = actions;
+		expect(editsOf(checkoutFix)).toEqual([{ range: rangeOf(document, 3, "main"), newText: `${head} # main` }]);
+		expect(editsOf(fixAll)).toEqual([
+			{ range: rangeOf(document, 3, "main"), newText: `${head} # main` },
+			{ range: rangeOf(document, 4, "main"), newText: `${head} # main` },
+			{ range: rangeOf(document, 5, "v1.0.0"), newText: "v1.2.0" },
+		]);
+	});
+});
