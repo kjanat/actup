@@ -2,8 +2,8 @@
  * Hand-maintained TypeScript types for actup-wasm.
  *
  * Only the provider contract ({@link ActupProvider} and
- * {@link ProviderErrorKind}) lives here — every other shape (input contracts
- * AND output wire types) is tsify-generated from Rust. See `index.ts` for
+ * {@link ProviderErrorKind}) lives here. Tsify generates every other shape,
+ * input contracts and output wire types alike, from Rust. See `index.ts` for
  * re-exports.
  */
 
@@ -20,7 +20,7 @@ import type { ActionYml, VersionSet } from "../wasm/actup_wasm.js";
 export type ProviderErrorKind = "notFound" | "rateLimited" | "auth" | "forbidden" | "network";
 
 /**
- * Provider interface — implement to supply version data from any host.
+ * Provider interface. Implement it to supply version data from any host.
  *
  * Reject with an object whose `kind` is a {@link ProviderErrorKind}.
  */

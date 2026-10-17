@@ -420,7 +420,7 @@ assert.equal(isHostSegment("-bad.host"), false);
 
 console.log("PASS: parseUses, parseActionPath and isHostSegment follow core");
 
-// Test 17: the fetch provider reports a short SHA ref that abbreviates a commit.
+// Test 18: the fetch provider reports a short SHA ref that abbreviates a commit.
 const { createGitHubProvider } = await import("../dist/provider.js");
 const fullSha = "abc1234".padEnd(40, "0");
 const originalFetch = globalThis.fetch;
@@ -442,7 +442,7 @@ try {
 
 console.log("PASS: fetch provider reports a short SHA ref");
 
-// Test 18: a prerelease newer than the latest stable tag is no target, and a listed non-semver tag needs no lookup.
+// Test 19: a prerelease newer than the latest stable tag is no target, and a listed non-semver tag needs no lookup.
 let lookups = 0;
 const prereleaseProvider = {
 	...mockProvider,
@@ -469,7 +469,6 @@ assert.equal(lookups, 0, "listed tags need no provider lookup");
 
 console.log("PASS: prereleases and non-semver tags follow core tag processing");
 
-// Test 19: the `kind` of a provider rejection picks the error class.
 const rejecting = (kind, extra = {}) => ({
 	...mockProvider,
 	async getVersions() {
@@ -515,7 +514,6 @@ assert.deepEqual(await unresolvable(missingRef, "actions/checkout@nope"), {
 
 console.log("PASS: provider rejection kinds pick the error class");
 
-// Test 20: the GitHub provider sets `kind` from the HTTP status.
 const realFetch = globalThis.fetch;
 const githubWith = async (respond) => {
 	globalThis.fetch = async (url) => respond(String(url));
@@ -555,7 +553,6 @@ assert.match((await githubWith(() => reply(502))).reason, /^network error during
 
 console.log("PASS: GitHub provider statuses map to error classes");
 
-// Test 20: `policy.track` reaches core, and results name a same-commit target.
 const twinTags = {
 	...mockProvider,
 	async getVersions() {

@@ -500,7 +500,6 @@ await test("throws GitHubProviderError on 401", async () => {
 	}
 });
 
-// Test: other statuses carry their kind
 await test("sets kind from 403, 404 and 500 statuses", async () => {
 	for (const [status, kind] of [[403, "forbidden"], [404, "notFound"], [500, "network"]]) {
 		mockFetch([{ match: () => true, respond: () => jsonResponse({ message: "x" }, status) }]);
@@ -514,7 +513,6 @@ await test("sets kind from 403, 404 and 500 statuses", async () => {
 	}
 });
 
-// Test: an unexpected body shape counts as a network failure
 await test("sets kind network for an unexpected tag listing", async () => {
 	mockFetch([{ match: () => true, respond: () => jsonResponse({ not: "a list" }) }]);
 	try {
