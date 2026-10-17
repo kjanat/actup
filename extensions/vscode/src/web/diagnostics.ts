@@ -106,10 +106,10 @@ function statusToDiagnostic(
 	if (status === "UpToDate") return undefined;
 
 	const line = loc.line - 1; // 1-indexed -> 0-indexed
-	const refRange = loc.ref_range;
+	const refRange = loc.ref_range ?? null;
 	const range = refRange !== null
 		? new vscode.Range(line, refRange.start, line, refRange.end)
-		: new vscode.Range(line, loc.column - 1, line, loc.column - 1 + loc.value.length);
+		: new vscode.Range(line, 0, line, loc.raw_line.length);
 
 	if (typeof status === "object" && "Outdated" in status) {
 		const { target, current } = status.Outdated;
@@ -124,7 +124,7 @@ function statusToDiagnostic(
 		);
 		diag.source = DIAGNOSTIC_SOURCE;
 		diag.code = "outdated";
-		return { diagnostic: diag, data: { kind: "outdated", targetRef } };
+		return refRange === null ? { diagnostic: diag } : { diagnostic: diag, data: { kind: "outdated", targetRef } };
 	}
 
 	if (typeof status === "object" && "Unresolvable" in status) {
