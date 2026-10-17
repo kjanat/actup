@@ -802,6 +802,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_edit_ignores_refs_on_unserved_hosts() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        let content = "steps:\n  - uses: ghe.corp.example/o/a@v4.0.0\n";
+        std::fs::write(&file, content)?;
+        let config = Config::from_contents(
+            Some((
+                Path::new("actup.toml"),
+                "[scan]\nignore = [\"ghe.corp.example/o/*\"]\n\n[cache]\nenabled = false\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &config,
+            &registry("v4.2.0"),
+            &Arc::new(FileCache::disabled()),
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        let skipped: Vec<(usize, &str, &str, SkipCause)> = result
+            .skipped
+            .iter()
+            .map(|s| {
+                (
+                    s.site.line,
+                    s.site.provider.as_str(),
+                    s.site.host.as_str(),
+                    s.reason,
+                )
+            })
+            .collect();
+        assert_eq!(
+            skipped,
+            [(2, "unknown", "ghe.corp.example", SkipCause::Ignored)]
+        );
+        assert_eq!(result.errored, []);
+        assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+        for dry_run in [true, false] {
+            let code = run(
+                dir.path(),
+                dry_run,
+                OutputFormat::Human,
+                &config,
+                &registry("v4.2.0"),
+                &Arc::new(FileCache::disabled()),
+            )
+            .await;
+            assert_eq!(code, i32::from(CliExitCode::Success));
+        }
+        assert_eq!(std::fs::read_to_string(&file)?, content);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_edit_reports_ignored_refs_without_failing()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;

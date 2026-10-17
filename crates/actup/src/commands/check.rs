@@ -210,6 +210,22 @@ fn collect_actions(
     for scanned in &scan.refs {
         let relative = &scan.files[scanned.file].relative;
         let action_ref = &scanned.action_ref;
+        if config.should_ignore(action_ref) {
+            let site = scanner.site_for(relative, scanned.loc.line(), action_ref);
+            findings.push(
+                Finding::new(
+                    relative.clone(),
+                    scanned.loc.line(),
+                    action_ref.clone(),
+                    FindingStatus::Ignored,
+                    site.provider,
+                    site.host,
+                )
+                .with_span(Span::of(&scanned.loc)),
+            );
+            continue;
+        }
+
         // No provider configured for the ref's host is an environment
         // error: emit immediately so it doesn't block batch fetching.
         let Some(provider) = scanner.provider_for(action_ref) else {
@@ -230,21 +246,6 @@ fn collect_actions(
             );
             continue;
         };
-
-        if config.should_ignore(action_ref) {
-            findings.push(
-                Finding::new(
-                    relative.clone(),
-                    scanned.loc.line(),
-                    action_ref.clone(),
-                    FindingStatus::Ignored,
-                    provider.kind().to_string(),
-                    provider.host().to_string(),
-                )
-                .with_span(Span::of(&scanned.loc)),
-            );
-            continue;
-        }
 
         collected.push(CollectedAction {
             file: relative.clone(),
@@ -1233,6 +1234,68 @@ mod tests {
             immediate,
             [("r", "ghe.corp.example", false), ("me", "github.com", true)]
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ignored_refs_on_unserved_hosts_are_ignored_findings()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        std::fs::write(
+            workflows.join("ci.yml"),
+            "steps:\n  - uses: ghe.corp.example/o/r@v1\n  - uses: skip/me@v1\n",
+        )?;
+        let config = Config::from_contents(
+            Some((
+                Path::new("actup.toml"),
+                "[scan]\nignore = [\"ghe.corp.example/o/*\", \"skip/*\"]\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = test_registry();
+        let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
+        let mut io_errors = ErrorTally::default();
+        let scan = Scan::collect(&scanner, &scanner.discover(), &mut io_errors);
+        let mut findings = Vec::new();
+
+        let collected = collect_actions(&scanner, &scan, &config, &mut findings);
+
+        assert!(collected.is_empty());
+        let ignored: Vec<(&str, &str, &str, bool)> = findings
+            .iter()
+            .map(|f| {
+                (
+                    f.action_ref().repo(),
+                    f.provider(),
+                    f.host(),
+                    matches!(f.status(), FindingStatus::Ignored),
+                )
+            })
+            .collect();
+        assert_eq!(
+            ignored,
+            [
+                ("r", "unknown", "ghe.corp.example", true),
+                ("me", "github", "github.com", true),
+            ]
+        );
+        for format in [CheckFormat::Human, CheckFormat::Json] {
+            assert_eq!(
+                run(
+                    dir.path(),
+                    &[],
+                    format,
+                    false,
+                    &config,
+                    &registry,
+                    &Arc::new(FileCache::disabled())
+                )
+                .await,
+                i32::from(crate::cli::CliExitCode::Success)
+            );
+        }
         Ok(())
     }
 

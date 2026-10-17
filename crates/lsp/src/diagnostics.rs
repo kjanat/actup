@@ -329,10 +329,11 @@ fn extract_located_actions(
     locate_uses(text, format, encoding).actions
 }
 
-fn unique_repo_ids(actions: &[LocatedAction]) -> Vec<ActionRepoId> {
+fn unique_repo_ids(actions: &[LocatedAction], config: &Config) -> Vec<ActionRepoId> {
     let mut seen = std::collections::HashSet::new();
     actions
         .iter()
+        .filter(|action| !config.should_ignore(&action.action_ref))
         .filter_map(|action| {
             let id = action.action_ref.to_repo_id().without_subpath();
             seen.insert(id.clone()).then_some(id)
@@ -343,9 +344,10 @@ fn unique_repo_ids(actions: &[LocatedAction]) -> Vec<ActionRepoId> {
 pub fn extract_unique_repo_ids(
     text: &str,
     format: SourceFormat,
+    config: &Config,
     encoding: crate::position::PositionEncoding,
 ) -> Vec<ActionRepoId> {
-    unique_repo_ids(&extract_located_actions(text, format, encoding))
+    unique_repo_ids(&extract_located_actions(text, format, encoding), config)
 }
 
 /// Fetch version sets for a batch of unique repos, using file cache first.
@@ -385,6 +387,9 @@ async fn compute_diagnostics_for_actions(
         let repo_id = action.action_ref.to_repo_id().without_subpath();
         let versions = versions_map.get(&repo_id).and_then(|r| r.as_ref().ok());
         let result = match versions_map.get(&repo_id) {
+            _ if config.should_ignore(&action.action_ref) => {
+                CheckResult::new(action.action_ref.clone(), CheckStatus::Ignored)
+            }
             Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
                 Some(provider) => {
                     check_action_with_provider(&action.action_ref, versions, config, provider).await
@@ -830,7 +835,7 @@ pub async fn compute_diagnostics(
     encoding: crate::position::PositionEncoding,
 ) -> DiagnosticResult {
     let located = locate_uses(text, uri_format(uri), encoding);
-    let unique_repos = unique_repo_ids(&located.actions);
+    let unique_repos = unique_repo_ids(&located.actions, config);
     let versions_map = if unique_repos.is_empty() {
         HashMap::new()
     } else {
@@ -1397,6 +1402,7 @@ jobs:
         let repos = extract_unique_repo_ids(
             yaml,
             SourceFormat::Yaml,
+            &Config::default(),
             crate::position::PositionEncoding::Utf16,
         );
         assert_eq!(repos, [ActionRepoId::simple("o", "s")]);
@@ -2099,6 +2105,53 @@ jobs:
         .await;
         assert_eq!(result.diagnostics, []);
         assert!(!result.errors.has_errors());
+    }
+
+    #[tokio::test]
+    async fn ignored_refs_on_unserved_hosts_get_no_diagnostic()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let registry = test_utils::mock_registry(test_utils::MockProvider::new("github.com"));
+        let cache = crate::file_cache::FileCache::disabled();
+        let config = Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[scan]\nignore = [\"ghe.corp.example/skip/*\"]\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let text =
+            "steps:\n  - uses: ghe.corp.example/skip/a@v1\n  - uses: ghe.corp.example/o/b@v1\n";
+
+        let result = compute_diagnostics(
+            text,
+            &uri,
+            &config,
+            &registry,
+            &cache,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+
+        let lines: Vec<u32> = result
+            .diagnostics
+            .iter()
+            .map(|d| d.range.start.line)
+            .collect();
+        assert_eq!(lines, [2]);
+        assert_eq!(
+            extract_unique_repo_ids(
+                text,
+                SourceFormat::Yaml,
+                &config,
+                crate::position::PositionEncoding::Utf16
+            )
+            .iter()
+            .map(actup_core::ActionRepoId::repo)
+            .collect::<Vec<_>>(),
+            ["b"]
+        );
+        Ok(())
     }
 
     #[tokio::test]

@@ -664,16 +664,28 @@ impl<'a> WorkflowScanner<'a> {
         result: &mut EditResult,
     ) -> Option<(&dyn Provider, RefSite)> {
         let line = scanned.loc.line();
-        let Some(provider) = self.provider_for(&scanned.action_ref) else {
-            report_unserved(self, &file.relative, line, &scanned.action_ref, result);
-            return None;
-        };
-        let site = RefSite::new(&file.relative, line, &scanned.action_ref, provider);
-        if self.config.should_ignore(&scanned.action_ref) {
-            report_ignored(site, result);
+        let action_ref = &scanned.action_ref;
+        if self.config.should_ignore(action_ref) {
+            report_ignored(self.site_for(&file.relative, line, action_ref), result);
             return None;
         }
-        Some((provider, site))
+        let Some(provider) = self.provider_for(action_ref) else {
+            report_unserved(self, &file.relative, line, action_ref, result);
+            return None;
+        };
+        Some((
+            provider,
+            RefSite::new(&file.relative, line, action_ref, provider),
+        ))
+    }
+
+    /// Describe `action_ref` at `file:line` with its provider, or with provider `unknown` when none serves it.
+    #[must_use]
+    pub fn site_for(&self, file: &str, line: usize, action_ref: &ActionRef) -> RefSite {
+        self.provider_for(action_ref).map_or_else(
+            || RefSite::unserved(self, file, line, action_ref),
+            |provider| RefSite::new(file, line, action_ref, provider),
+        )
     }
 
     /// The host an action resolves to: its written host, else the default host, else `github.com`.

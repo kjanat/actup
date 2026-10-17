@@ -287,6 +287,7 @@ async fn prefetch_workspace_versions(
         for repo in crate::diagnostics::extract_unique_repo_ids(
             &loaded.text,
             loaded.file.format(),
+            config,
             encoding,
         ) {
             if seen.insert(repo.clone()) {

@@ -1591,6 +1591,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_pin_and_unpin_ignore_refs_on_unserved_hosts()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let content = format!(
+            "steps:\n  - uses: ghe.corp.example/o/tag@v4.1.0\n  - uses: ghe.corp.example/o/pin@{} # v4.1.0\n",
+            sha('a')
+        );
+        let file = workflow(dir.path(), &content)?;
+        let config = Config::from_contents(
+            Some((
+                Path::new("actup.toml"),
+                "[scan]\nignore = [\"ghe.corp.example/o/*\"]\n",
+            )),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = unpin_registry()?;
+
+        for mode in [Mode::Pin, Mode::Unpin] {
+            let Some(result) = edit(
+                dir.path(),
+                mode,
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry,
+                &Arc::new(FileCache::disabled()),
+            )
+            .await
+            else {
+                panic!("no workflow found");
+            };
+            let skipped: Vec<(usize, &str, SkipCause)> = result
+                .skipped
+                .iter()
+                .map(|s| (s.site.line, s.site.provider.as_str(), s.reason))
+                .collect();
+            assert_eq!(
+                skipped,
+                [
+                    (2, "unknown", SkipCause::Ignored),
+                    (3, "unknown", SkipCause::Ignored)
+                ],
+                "{mode:?}"
+            );
+            assert_eq!(result.errored, [], "{mode:?}");
+            assert_eq!(result.exit_code(false), i32::from(CliExitCode::Success));
+            let code = run(
+                dir.path(),
+                mode,
+                false,
+                OutputFormat::Human,
+                &config,
+                &registry,
+                &Arc::new(FileCache::disabled()),
+            )
+            .await;
+            assert_eq!(code, i32::from(CliExitCode::Success), "{mode:?}");
+            assert_eq!(std::fs::read_to_string(&file)?, content);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_pin_leaves_every_ignored_ref_kind_and_reports_it()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
