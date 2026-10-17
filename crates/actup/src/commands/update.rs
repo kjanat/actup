@@ -512,6 +512,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_refreshes_the_version_comment_of_a_retargeted_tag()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = "steps:\n  - uses: o/p@v4.0.0 # v4.0.0 keep\n  - uses: o/q@v4.0.0 # mine\n";
+        for pin in ["preserve", "tag"] {
+            let written =
+                update_with_config(&format!("[policy]\npin = \"{pin}\"\n"), content).await?;
+            assert_eq!(
+                written,
+                "steps:\n  - uses: o/p@v4.2.0 # v4.2.0 keep\n  - uses: o/q@v4.2.0 # mine\n",
+                "{pin}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_pin_override_wins_for_matching_actions()
     -> Result<(), Box<dyn std::error::Error>> {
         let toml = "[policy]\npin = \"tag\"\n\n[[overrides]]\npattern = \"pinned/*\"\npolicy = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"o/q\"\npolicy = { pin = \"preserve\" }\n";

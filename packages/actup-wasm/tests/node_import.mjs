@@ -381,6 +381,17 @@ assert.equal(
 	"an unpin keeps the note as the comment",
 );
 
+const taggedYaml =
+	`jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.0.0 # v4.0.0 keep\n      - uses: actions/checkout@v4.0.0 # mine\n`;
+const taggedResults = await checkRefs(taggedYaml, mockProvider);
+for (const pin of ["preserve", "tag"]) {
+	assert.equal(
+		applyEdits(taggedYaml, planUpdates(taggedResults, { policy: { pin } })),
+		taggedYaml.replace("v4.0.0 # v4.0.0 keep", "v4.2.0 # v4.2.0 keep").replace("v4.0.0 # mine", "v4.2.0 # mine"),
+		`pin = ${pin} refreshes a tag's version comment and leaves other comments`,
+	);
+}
+
 console.log("PASS: policy.pin picks tag or SHA output");
 
 // Test 16: sortVersionTags orders by semver precedence, newest first.

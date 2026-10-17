@@ -176,9 +176,10 @@ action.
 
 The `# vX.Y.Z` comment replaces the version of an old version comment and keeps
 the note after it: `# v4.0.0 pinned for node16` becomes
-`# v4.2.0 pinned for node16`. It is added only where the line can take it: never
-next to another comment, never on a line that holds other `uses:` values or ends
-inside a scalar, and never in a plain-text file.
+`# v4.2.0 pinned for node16`. A tag ref moved to a new tag refreshes its version
+comment the same way. It is added only where the line can take it: never next to
+another comment, never on a line that holds other `uses:` values or ends inside
+a scalar, and never in a plain-text file.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose

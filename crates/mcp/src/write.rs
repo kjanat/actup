@@ -696,6 +696,31 @@ mod tests {
     }
 
     #[test]
+    fn retarget_refreshes_the_version_comment_of_a_tag() -> Result<(), Box<dyn std::error::Error>> {
+        for (content, written) in [
+            (
+                "- uses: a/b@v4.0.0 # v4.0.0 keep\n",
+                "- uses: a/b@v4.2.0 # v4.2.0 keep\n",
+            ),
+            ("- uses: a/b@v4.0.0 # mine\n", "- uses: a/b@v4.2.0 # mine\n"),
+        ] {
+            let (l, action) = loc(content)?;
+            let (edit, to) = retarget(&l, &action, &target(), Style::Preserve).ok_or("no edit")?;
+            let site = Site {
+                path: "f".into(),
+                line: 1,
+                provider: "github".into(),
+                host: "github.com".into(),
+                action: l.value().into(),
+            };
+            let mut edits = FileEdits::new("f".into(), content.to_string());
+            edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), &to));
+            assert_eq!(plan(content, edits)?.content, written);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn retarget_skips_a_value_not_written_verbatim() -> Result<(), Box<dyn std::error::Error>> {
         let (escaped, action) = loc("- uses: \"a/b@v4.0.\\x30\"\n")?;
         assert!(retarget(&escaped, &action, &target(), Style::Preserve).is_none());

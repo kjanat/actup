@@ -1533,7 +1533,7 @@ mod tests {
                 "preserve",
                 [
                     format!("o/p@{sha} # v4.2.0 pinned for node16"),
-                    "o/q@v4.2.0 # v4.0.0 keep".to_string(),
+                    "o/q@v4.2.0 # v4.2.0 keep".to_string(),
                 ],
             ),
             (
@@ -1547,7 +1547,7 @@ mod tests {
                 "tag",
                 [
                     "o/p@v4.2.0 # pinned for node16".to_string(),
-                    "o/q@v4.2.0 # v4.0.0 keep".to_string(),
+                    "o/q@v4.2.0 # v4.2.0 keep".to_string(),
                 ],
             ),
         ] {

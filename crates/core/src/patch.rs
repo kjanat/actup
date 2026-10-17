@@ -67,16 +67,31 @@ impl PendingEdit {
     }
 }
 
-fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
-    loc.ref_range()
-        .map(|range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()))
+fn retag_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
+    let range = loc.ref_range()?;
+    let raw = loc.raw_line();
+    Some(match Trailing::after(raw, range.end) {
+        Trailing::Version { note } => {
+            let comment = labeled_comment(tag, note);
+            PendingEdit::replace_range(
+                loc.line(),
+                range.start..raw.len(),
+                format!("{tag}{comment}"),
+            )
+            .with_inline_comment(comment)
+        }
+        Trailing::None | Trailing::Foreign => {
+            PendingEdit::replace_range(loc.line(), range, tag.to_string())
+        }
+    })
 }
 
 /// Build the edit that moves the ref at `loc` to `target` under the `style` pin style.
 ///
-/// A SHA target keeps a `# vX.Y.Z` version comment accurate. A SHA pin
-/// rewritten to a tag (`pin = "tag"`) drops its version comment. Returns
-/// `None` when the line does not hold the value verbatim.
+/// A version comment after the ref names the new version and keeps its
+/// note. A SHA pin rewritten to a tag (`pin = "tag"`) drops the version and
+/// keeps the note. Returns `None` when the line does not hold the value
+/// verbatim.
 #[must_use]
 pub fn retarget_edit(
     loc: &UsesLocation,
@@ -90,7 +105,7 @@ pub fn retarget_edit(
     } else if current_is_sha {
         unpin_edit(loc, &tag)
     } else {
-        ref_edit(loc, &tag)
+        retag_edit(loc, &tag)
     }
 }
 
@@ -627,6 +642,41 @@ mod tests {
             apply_line(&bare, edit).ok_or("edit did not apply")?,
             "      - uses: actions/checkout@v4.2.0"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_retargeted_tag_refreshes_its_version_comment() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let target = version::Info::new(version::Version::parse("v4.2.0"), sha40('b'));
+        for (line, written, comment) in [
+            (
+                "      - uses: actions/checkout@v4.0.0 # v4.0.0 keep",
+                "      - uses: actions/checkout@v4.2.0 # v4.2.0 keep",
+                Some(" # v4.2.0 keep"),
+            ),
+            (
+                "      - uses: actions/checkout@v4 #v4.0.0",
+                "      - uses: actions/checkout@v4.2.0 # v4.2.0",
+                Some(" # v4.2.0"),
+            ),
+            (
+                "      - uses: actions/checkout@v4.0.0 # mine",
+                "      - uses: actions/checkout@v4.2.0 # mine",
+                None,
+            ),
+        ] {
+            for style in [Style::Preserve, Style::Tag] {
+                let edit =
+                    retarget_edit(&sha_loc(line)?, false, &target, style).ok_or("no edit")?;
+                assert_eq!(edit.inline_comment.as_deref(), comment, "{line} {style}");
+                assert_eq!(
+                    apply_line(line, edit).ok_or("edit did not apply")?,
+                    written,
+                    "{style}"
+                );
+            }
+        }
         Ok(())
     }
 

@@ -120,8 +120,9 @@ impl Rewrite {
     /// Write `target` for an outdated ref under `style`.
     ///
     /// A SHA gets a ` # <version>` comment unless foreign text follows the ref.
-    /// A SHA pin rewritten to a tag loses the version of its trailing version
-    /// comment and keeps the note after it.
+    /// A tag rewritten to a tag refreshes a trailing version comment to the
+    /// new version. A SHA pin rewritten to a tag loses the version of its
+    /// trailing version comment. Both keep the note after the version.
     #[must_use]
     pub fn outdated(
         style: Style,
@@ -139,7 +140,12 @@ impl Rewrite {
                 comment: note_comment(note),
                 to_line_end: true,
             },
-            Trailing::None | Trailing::Version { .. } | Trailing::Foreign => Self {
+            Trailing::Version { note } => Self {
+                comment: Some(labeled_comment(&version, note)),
+                new_ref: version,
+                to_line_end: true,
+            },
+            Trailing::None | Trailing::Foreign => Self {
                 new_ref: version,
                 comment: None,
                 to_line_end: false,
@@ -270,7 +276,24 @@ mod tests {
                 Trailing::Foreign,
                 rewrite(&sha, None, false),
             ),
-            (Style::Tag, false, VERSION, rewrite("v4.2.0", None, false)),
+            (
+                Style::Tag,
+                false,
+                VERSION,
+                rewrite("v4.2.0", Some(" # v4.2.0"), true),
+            ),
+            (
+                Style::Preserve,
+                false,
+                VERSION,
+                rewrite("v4.2.0", Some(" # v4.2.0"), true),
+            ),
+            (
+                Style::Preserve,
+                false,
+                Trailing::Foreign,
+                rewrite("v4.2.0", None, false),
+            ),
             (
                 Style::Tag,
                 true,
@@ -317,7 +340,16 @@ mod tests {
                 true,
                 rewrite("v4.2.0", Some(" # pinned for node16"), true),
             ),
-            (Style::Tag, false, rewrite("v4.2.0", None, false)),
+            (
+                Style::Tag,
+                false,
+                rewrite("v4.2.0", Some(" # v4.2.0 pinned for node16"), true),
+            ),
+            (
+                Style::Preserve,
+                false,
+                rewrite("v4.2.0", Some(" # v4.2.0 pinned for node16"), true),
+            ),
         ] {
             assert_eq!(
                 Rewrite::outdated(style, is_sha, &target, noted),
