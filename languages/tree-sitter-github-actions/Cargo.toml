@@ -1,16 +1,17 @@
 [package]
-name                 = "tree-sitter-github-actions"
-version.workspace    = true
-authors.workspace    = true
-edition.workspace    = true
-description          = "Github Actions grammar for tree-sitter"
-readme               = "README.md"
-repository.workspace = true
-license              = "MIT"
-keywords             = ["github-actions", "incremental", "parsing", "tree-sitter"]
-categories           = ["parser-implementations", "parsing", "text-editors"]
-build                = "bindings/rust/build.rs"
-include              = [
+name                   = "tree-sitter-github-actions"
+version.workspace      = true
+authors.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Github Actions grammar for tree-sitter"
+readme                 = "README.md"
+repository.workspace   = true
+license                = "MIT"
+keywords               = ["github-actions", "incremental", "parsing", "tree-sitter"]
+categories             = ["parser-implementations", "parsing", "text-editors"]
+build                  = "bindings/rust/build.rs"
+include                = [
   "../../LICENSE-MIT",
   "bindings/rust/*",
   "grammar.js",
@@ -18,7 +19,7 @@ include              = [
   "src/*",
   "tree-sitter.json",
 ]
-autoexamples         = false
+autoexamples           = false
 
 [lib]
 path = "bindings/rust/lib.rs"
@@ -31,3 +32,5 @@ tree-sitter.workspace = true
 
 [build-dependencies]
 cc.workspace = true
+
+[lints]

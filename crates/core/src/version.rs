@@ -866,7 +866,7 @@ mod tests {
     #[test]
     fn test_version_set_new() {
         let vs = Set::new();
-        assert!(vs.semver_tags().is_empty());
+        assert_eq!(vs.semver_tags(), []);
         assert!(vs.latest().is_none());
         assert!(vs.default_branch().is_none());
     }

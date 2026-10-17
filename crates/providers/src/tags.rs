@@ -147,7 +147,7 @@ mod tests {
     fn test_process_tags_empty() {
         let tags: Vec<TestTag> = vec![];
         let result = process_tags(tags);
-        assert!(result.semver_tags().is_empty());
+        assert_eq!(result.semver_tags(), []);
         assert!(result.latest().is_none());
         assert!(result.latest_per_major().is_empty());
     }

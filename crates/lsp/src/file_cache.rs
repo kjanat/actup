@@ -280,7 +280,7 @@ mod tests {
         cache.set("test_key", entry).await.unwrap();
 
         let retrieved = cache.get("test_key").await.unwrap();
-        assert!(retrieved.versions().semver_tags().is_empty());
+        assert_eq!(retrieved.versions().semver_tags(), []);
     }
 
     #[tokio::test]

@@ -1,12 +1,13 @@
 [package]
-name                 = "actup-wasm"
-version.workspace    = true
-edition.workspace    = true
-description          = "WASM bindings for actup-core — parse and check GitHub Actions uses: refs"
-homepage.workspace   = true
-repository.workspace = true
-license.workspace    = true
-publish              = false  # Published via npm, not crates.io
+name                   = "actup-wasm"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "WASM bindings for actup-core — parse and check GitHub Actions uses: refs"
+homepage.workspace     = true
+repository.workspace   = true
+license.workspace      = true
+publish                = false  # Published via npm, not crates.io
 
 [package.metadata.cargo-machete]
 ignored = ["wasm-bindgen-futures"]

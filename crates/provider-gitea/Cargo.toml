@@ -1,12 +1,13 @@
 [package]
-name                 = "actup-provider-gitea"
-version.workspace    = true
-edition.workspace    = true
-description          = "Gitea provider for actup - implements version resolution for Gitea and Forgejo instances"
-homepage.workspace   = true
-repository.workspace = true
-license.workspace    = true
-publish.workspace    = true
+name                   = "actup-provider-gitea"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Gitea provider for actup - implements version resolution for Gitea and Forgejo instances"
+homepage.workspace     = true
+repository.workspace   = true
+license.workspace      = true
+publish.workspace      = true
 
 [lib]
 name = "actup_provider_gitea"

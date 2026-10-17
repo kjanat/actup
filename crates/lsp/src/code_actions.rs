@@ -508,7 +508,7 @@ mod tests {
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), None);
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
-        assert!(actions.is_empty());
+        assert_eq!(actions, []);
     }
 
     #[test]
@@ -521,7 +521,7 @@ mod tests {
         };
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
-        assert!(actions.is_empty());
+        assert_eq!(actions, []);
     }
 
     #[test]
@@ -535,7 +535,7 @@ mod tests {
         };
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
-        assert!(actions.is_empty());
+        assert_eq!(actions, []);
     }
 
     #[test]
@@ -673,7 +673,7 @@ mod tests {
             40,
             &targets,
         );
-        assert!(actions.is_empty());
+        assert_eq!(actions, []);
     }
 
     #[test]

@@ -135,7 +135,7 @@ mod discovery_tests {
     fn test_discover_empty_repo() {
         let temp = ok_or_panic(TempDir::new(), "create temp dir");
         let files = discover_files(temp.path(), &[]);
-        assert!(files.is_empty());
+        assert_eq!(files, []);
     }
 
     #[test]

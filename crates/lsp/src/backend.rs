@@ -1401,7 +1401,7 @@ mod tests {
         let state = DocumentState::new("test".into(), 1);
         assert_eq!(state.text, "test");
         assert_eq!(state.version, 1);
-        assert!(state.diagnostics.is_empty());
+        assert_eq!(state.diagnostics, []);
     }
 
     #[test]

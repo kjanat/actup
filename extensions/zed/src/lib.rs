@@ -270,7 +270,7 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         let repo = action_ref.repo().to_string();
         let api_base = api_base_for_host(&host);
         unique_repos
-            .entry((host.clone(), owner.clone(), repo.clone()))
+            .entry((host, owner.clone(), repo.clone()))
             .or_insert((owner, repo, api_base));
     }
 

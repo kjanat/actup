@@ -807,7 +807,7 @@ mod tests {
         match finding.status() {
             FindingStatus::Pinned { sha, tag } => {
                 assert!(tag.is_none());
-                assert!(!sha.is_empty());
+                assert_ne!(sha, "");
             }
             _ => panic!("expected Pinned status"),
         }
@@ -1009,7 +1009,7 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
 
         assert!(parsed.is_array());
-        assert!(parsed.as_array().unwrap().is_empty());
+        assert_eq!(parsed, serde_json::json!([]));
     }
 
     // Summary tests

@@ -1006,7 +1006,7 @@ jobs:
             crate::position::PositionEncoding::Utf16,
         )
         .await;
-        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.diagnostics, []);
         assert!(!result.errors.has_errors());
     }
 
@@ -1233,7 +1233,7 @@ jobs:
         )
         .await;
 
-        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.diagnostics, []);
     }
 
     // --- batch_fetch_versions ---
@@ -1399,7 +1399,7 @@ jobs:
             crate::position::PositionEncoding::Utf16,
         )
         .await;
-        assert!(result.diagnostics.is_empty());
+        assert_eq!(result.diagnostics, []);
     }
 
     #[test]

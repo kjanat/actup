@@ -633,7 +633,7 @@ mod tests {
     #[test]
     fn action_completion_no_match() {
         let items = action_completions("nonexistent/action");
-        assert!(items.is_empty());
+        assert_eq!(items, []);
     }
 
     #[test]
@@ -673,9 +673,9 @@ mod tests {
     #[test]
     fn popular_actions_have_valid_data() {
         for action in POPULAR_ACTIONS {
-            assert!(!action.owner.is_empty());
-            assert!(!action.repo.is_empty());
-            assert!(!action.description.is_empty());
+            assert_ne!(action.owner, "");
+            assert_ne!(action.repo, "");
+            assert_ne!(action.description, "");
             assert!(action.default_ref.starts_with('v'));
         }
     }
@@ -704,7 +704,7 @@ mod tests {
                 assert!(list.items.iter().any(|i| i.label.contains("checkout")));
             }
             CompletionResponse::Array(items) => {
-                assert!(!items.is_empty());
+                assert_ne!(items, []);
             }
         }
     }
@@ -759,7 +759,7 @@ mod tests {
                 );
             }
             CompletionResponse::Array(items) => {
-                assert!(!items.is_empty());
+                assert_ne!(items, []);
             }
         }
     }

@@ -585,9 +585,9 @@ mod tests {
         assert_eq!(config.ref_style, policy::Style::Preserve);
         assert_eq!(config.branch_policy, policy::Branch::Ignore);
         assert!(!config.allow_prerelease);
-        assert!(config.ignore.is_empty());
+        assert_eq!(config.ignore, Vec::<String>::new());
         assert!(config.action_overrides.is_empty());
-        assert!(config.extra_paths.is_empty());
+        assert_eq!(config.extra_paths, Vec::<String>::new());
         assert!(config.loaded_from.is_none());
         assert!(config.default_host.is_none());
         assert_eq!(config.fetch.api_mode, ApiMode::Graphql);

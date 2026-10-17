@@ -481,7 +481,7 @@ async fn code_action_returns_quickfix_for_outdated() {
     );
 
     let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value).unwrap();
-    assert!(!actions.is_empty());
+    assert_ne!(actions, []);
 
     let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
         panic!("expected CodeAction, got Command");

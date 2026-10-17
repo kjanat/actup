@@ -651,7 +651,7 @@ mod tests {
         assert_eq!(result.refs_updated, 0);
         assert_eq!(result.actions_checked, 0);
         assert!(!result.cancelled);
-        assert!(result.failures.is_empty());
+        assert_eq!(result.failures, []);
     }
 
     #[test]
@@ -673,7 +673,7 @@ mod tests {
             source: Some("other-tool".into()),
             ..Default::default()
         };
-        assert!(edits_from_diagnostics(&[diag]).is_empty());
+        assert_eq!(edits_from_diagnostics(&[diag]), []);
     }
 
     #[test]
@@ -688,7 +688,7 @@ mod tests {
             ..Default::default()
         };
         // Unresolvable refs are NOT auto-fixed in workspace-wide operations.
-        assert!(edits_from_diagnostics(&[diag]).is_empty());
+        assert_eq!(edits_from_diagnostics(&[diag]), []);
     }
 
     #[test]
@@ -868,7 +868,7 @@ mod tests {
             data: None,
             ..Default::default()
         };
-        assert!(edits_from_diagnostics(&[diag]).is_empty());
+        assert_eq!(edits_from_diagnostics(&[diag]), []);
     }
 
     #[test]
@@ -879,7 +879,7 @@ mod tests {
             data: Some(serde_json::json!({"kind": "unknown_variant"})),
             ..Default::default()
         };
-        assert!(edits_from_diagnostics(&[diag]).is_empty());
+        assert_eq!(edits_from_diagnostics(&[diag]), []);
     }
 
     #[test]
@@ -894,7 +894,7 @@ mod tests {
         assert_eq!(result.total_files, 0);
         assert_eq!(result.refs_updated, 0);
         assert!(!result.cancelled);
-        assert!(result.failures.is_empty());
+        assert_eq!(result.failures, []);
     }
 
     #[test]

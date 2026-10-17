@@ -1,12 +1,13 @@
 [package]
-name                 = "actup"
-version.workspace    = true
-edition.workspace    = true
-description          = "CLI tool for managing GitHub Actions versions"
-homepage.workspace   = true
-repository.workspace = true
-license.workspace    = true
-publish.workspace    = true
+name                   = "actup"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "CLI tool for managing GitHub Actions versions"
+homepage.workspace     = true
+repository.workspace   = true
+license.workspace      = true
+publish.workspace      = true
 
 [[bin]]
 name = "actup"

@@ -392,7 +392,7 @@ mod tests {
     #[test]
     fn test_process_tags_empty() {
         let result = process_tags(vec![] as Vec<GitHubTag>);
-        assert!(result.semver_tags().is_empty());
+        assert_eq!(result.semver_tags(), []);
         assert!(result.latest().is_none());
         assert!(result.latest_per_major().is_empty());
     }

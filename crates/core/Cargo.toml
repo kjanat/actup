@@ -1,12 +1,13 @@
 [package]
-name                 = "actup-core"
-version.workspace    = true
-edition.workspace    = true
-description          = "Provider-neutral core engine for GitHub Actions version management"
-homepage.workspace   = true
-repository.workspace = true
-license.workspace    = true
-publish.workspace    = true
+name                   = "actup-core"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "Provider-neutral core engine for GitHub Actions version management"
+homepage.workspace     = true
+repository.workspace   = true
+license.workspace      = true
+publish.workspace      = true
 
 [dependencies]
 dirs          = { workspace = true }  # Config discovery

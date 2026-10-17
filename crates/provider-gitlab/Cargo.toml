@@ -1,12 +1,13 @@
 [package]
-name                 = "actup-provider-gitlab"
-version.workspace    = true
-edition.workspace    = true
-description          = "GitLab provider for actup - implements version resolution for GitLab.com and self-hosted GitLab"
-homepage.workspace   = true
-repository.workspace = true
-license.workspace    = true
-publish.workspace    = true
+name                   = "actup-provider-gitlab"
+version.workspace      = true
+edition.workspace      = true
+rust-version.workspace = true
+description            = "GitLab provider for actup - implements version resolution for GitLab.com and self-hosted GitLab"
+homepage.workspace     = true
+repository.workspace   = true
+license.workspace      = true
+publish.workspace      = true
 
 [lib]
 name = "actup_provider_gitlab"
