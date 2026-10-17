@@ -54,7 +54,7 @@ ghcr.io/o/i:v1.0.0-beta_exp
 EOF'
 
 long="v1.0.0-$(printf 'a%.0s' {1..122})"
-for tag in "v1.0.0~x" "release/v1" ".v1" "v1.0.0-é" "${long}"; do
+for tag in "v1.0.0~x" "release/v1" ".v1" "${long}"; do
 	if ! decide "${tag}" && grep -q "::error::tag ${tag} gives the invalid image tag" "${work}/out" \
 		&& [[ ! -s "${work}/output" ]]; then
 		pass "${tag:0:20} fails before any output"
@@ -62,6 +62,16 @@ for tag in "v1.0.0~x" "release/v1" ".v1" "v1.0.0-é" "${long}"; do
 		fail "${tag:0:20} fails before any output"
 	fi
 done
+
+if ! LC_ALL=en_US.UTF-8 bash -c '[[ é =~ ^[A-Za-z]$ ]]'; then
+	fail "en_US.UTF-8 matches é with [A-Za-z]; generate the locale with locale-gen en_US.UTF-8"
+elif ! LC_ALL=en_US.UTF-8 decide "v1.0.0-é" \
+	&& grep -q "::error::tag v1.0.0-é gives the invalid image tag" "${work}/out" \
+	&& [[ ! -s "${work}/output" ]]; then
+	pass "v1.0.0-é fails under en_US.UTF-8"
+else
+	fail "v1.0.0-é fails under en_US.UTF-8"
+fi
 
 if decide "${long%a}" && grep -q "image-tags<<EOF" "${work}/output"; then
 	pass "a 128-character image tag passes"
