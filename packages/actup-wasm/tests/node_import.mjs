@@ -668,6 +668,11 @@ assert.equal(alias.same_commit_pins, false, "v1 is coarser than v1.0.5");
 const [behind] = await checkRefs("steps:\n  - uses: o/r@v1.0.4\n", twinTags, { policy: { track: "exact" } });
 assert.equal(behind.same_commit, null, "a real bump has no same-commit target");
 assert.equal(planUpdates([exact], { policy: { track: "exact" } })[0].newText, "v1.0.5", "planUpdates reads the new fields");
+assert.equal(
+	planUpdates([{ ...exact, same_commit_pins: undefined }], { policy: { track: "exact" } })[0].newText,
+	"v1.0.5",
+	"planUpdates defaults a missing same_commit_pins",
+);
 
 console.log("PASS: policy.track reaches core and same-commit targets serialize");
 
