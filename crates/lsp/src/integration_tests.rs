@@ -1298,7 +1298,7 @@ async fn completion_on_uses_line_returns_response() {
     // Trigger completion after "@" (line 6, after "actions/checkout@").
     let position = Position {
         line: 6,
-        character: 34,
+        character: 31,
     };
     let resp = harness
         .request(completion_request(20, &uri, position, Some("@")))

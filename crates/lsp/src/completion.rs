@@ -179,7 +179,6 @@ fn detect_completion_context(
         .unwrap_or(unquoted.len());
     let value_clean = &unquoted[..value_len];
 
-    // Extract the portion from content start up to and including the cursor.
     let offset_in_value = cursor_byte - content_col;
     if offset_in_value > value_len
         && !unquoted
@@ -188,13 +187,7 @@ fn detect_completion_context(
     {
         return None;
     }
-    let typed = if offset_in_value < value_clean.len() {
-        // Ensure we don't slice inside a multi-byte character (defensive).
-        let end = offset_in_value + 1;
-        value_clean.get(..end).unwrap_or(value_clean)
-    } else {
-        value_clean
-    };
+    let typed = value_clean.get(..offset_in_value).unwrap_or(value_clean);
 
     // Check if there's an `@` in the typed portion.
     if let Some(at_pos) = typed.rfind('@') {
@@ -505,7 +498,7 @@ mod tests {
         let text = "      - uses: actions/ch\n";
         let pos = Position {
             line: 0,
-            character: 23,
+            character: 24,
         };
         let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
@@ -521,7 +514,7 @@ mod tests {
         let text = "      - uses: actions/checkout@v\n";
         let pos = Position {
             line: 0,
-            character: 31,
+            character: 32,
         };
         let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
@@ -539,7 +532,7 @@ mod tests {
         let text = "      - uses: actions/checkout@\n";
         let pos = Position {
             line: 0,
-            character: 30,
+            character: 31,
         };
         let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
@@ -557,7 +550,7 @@ mod tests {
         let text = "      - uses: \"actions/checkout@v\"\n";
         let pos = Position {
             line: 0,
-            character: 32,
+            character: 33,
         };
         let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
@@ -568,6 +561,66 @@ mod tests {
                 version_prefix: "v".into(),
             }
         );
+    }
+
+    #[test]
+    fn detect_context_typed_text_ends_at_cursor() {
+        let text = "      - uses: actions/checkout@v4\n";
+        for (character, expected) in [
+            (
+                24,
+                CompletionContext::ActionName {
+                    prefix: "actions/ch".into(),
+                },
+            ),
+            (
+                32,
+                CompletionContext::VersionRef {
+                    owner: "actions".into(),
+                    repo: "checkout".into(),
+                    version_prefix: "v".into(),
+                },
+            ),
+            (
+                34,
+                CompletionContext::VersionRef {
+                    owner: "actions".into(),
+                    repo: "checkout".into(),
+                    version_prefix: "v4".into(),
+                },
+            ),
+        ] {
+            let pos = Position { line: 0, character };
+            assert_eq!(
+                detect_completion_context(text, pos, ENC),
+                Some(expected),
+                "cursor at {character}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn compute_completions_mid_version_filters_by_text_before_cursor() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let versions = test_utils::simple_version_set("v5.0.0", DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let file_cache = FileCache::disabled();
+        let text = "      - uses: actions/checkout@v4\n";
+        let position = Position {
+            line: 0,
+            character: 32,
+        };
+
+        let Some(CompletionResponse::List(list)) =
+            compute_completions(text, position, &registry, &file_cache, None, ENC).await
+        else {
+            panic!("expected a completion list");
+        };
+        let labels: Vec<_> = list.items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels, ["v5.0.0"]);
     }
 
     #[test]
@@ -781,7 +834,7 @@ mod tests {
         let text = "      - uses: actions/checkout@\n";
         let position = Position {
             line: 0,
-            character: 30,
+            character: 31,
         };
 
         let result = compute_completions(text, position, &registry, &file_cache, None, ENC).await;
@@ -833,7 +886,7 @@ mod tests {
         let completion_text = "      - uses: actions/checkout@\n";
         let position = Position {
             line: 0,
-            character: 30,
+            character: 31,
         };
 
         let result = compute_completions(
@@ -900,7 +953,7 @@ mod tests {
         let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@\n";
         let pos = Position {
             line: 6,
-            character: 30,
+            character: 31,
         };
         let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
@@ -918,7 +971,7 @@ mod tests {
         let text = "      - uses: 'actions/checkout@v'\n";
         let pos = Position {
             line: 0,
-            character: 32,
+            character: 33,
         };
         let ctx = detect_completion_context(text, pos, ENC).unwrap();
         assert_eq!(
@@ -1082,7 +1135,7 @@ mod tests {
         let text = "steps: [uses: actions/setup-node@v]\n";
         let pos = Position {
             line: 0,
-            character: 33,
+            character: 34,
         };
         assert_eq!(
             detect_completion_context(text, pos, ENC),
@@ -1104,7 +1157,7 @@ mod tests {
         let text = "      - { name: don't, uses: a/b@v }\n";
         let pos = Position {
             line: 0,
-            character: 33,
+            character: 34,
         };
         assert_eq!(
             detect_completion_context(text, pos, ENC),
