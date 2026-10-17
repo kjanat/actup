@@ -133,7 +133,6 @@ fn extract_workspace_root(params: &InitializeParams) -> Option<PathBuf> {
 ///
 /// Clients can pass `{ "configPath": "/path/to/actup.toml" }` to override
 /// the standard config discovery (analogous to CLI's `--config` flag).
-/// A blank `configPath` counts as unset.
 fn extract_config_path(params: &InitializeParams) -> Option<PathBuf> {
     let opts = params.initialization_options.as_ref()?;
     let path_str = opts.get("configPath")?.as_str()?;
