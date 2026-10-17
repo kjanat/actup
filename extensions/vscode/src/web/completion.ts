@@ -24,6 +24,8 @@ const POPULAR_ACTIONS: readonly {
 	{ owner: "docker", repo: "setup-buildx-action", description: "Set up Docker Buildx", defaultRef: "v4" },
 ];
 
+const USES_KEY = /(?:^\s*(?:-\s+)?|[{,]\s*)uses:[ \t]*/g;
+
 export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 	constructor(
 		private readonly provider: ActupProvider,
@@ -36,16 +38,17 @@ export class ActupCompletionProvider implements vscode.CompletionItemProvider {
 		_token: vscode.CancellationToken,
 		_context: vscode.CompletionContext,
 	): Promise<vscode.CompletionList | undefined> {
-		const line = document.lineAt(position.line).text;
-
-		// Only complete on `uses:` lines
-		const usesMatch = /^\s*-?\s*uses:\s*(.*)$/.exec(line);
-		if (usesMatch === null) {
+		const beforeCursor = document.lineAt(position.line).text.slice(0, position.character);
+		const usesKey = [...beforeCursor.matchAll(USES_KEY)].at(-1);
+		if (usesKey === undefined) {
 			return undefined;
 		}
 
-		const valueStart = line.indexOf(usesMatch[1] ?? "");
-		const typed = line.slice(valueStart, position.character);
+		const valueStart = usesKey.index + usesKey[0].length;
+		const typed = beforeCursor.slice(valueStart);
+		if (/[\s,{}[\]]/.test(typed)) {
+			return undefined;
+		}
 
 		// After @: suggest version tags
 		const atIdx = typed.lastIndexOf("@");
