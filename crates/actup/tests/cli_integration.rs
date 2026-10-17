@@ -485,6 +485,51 @@ mod config_tests {
     }
 
     #[test]
+    fn test_explicit_config_found_by_discovery_loads_once() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = TempDir::new()?;
+        let repo = temp.path().canonicalize()?.join("repo");
+        fs::create_dir_all(repo.join(".git"))?;
+        fs::create_dir(repo.join("sub"))?;
+        let repo_config = repo.join("actup.toml");
+        fs::write(&repo_config, RESTRICTED)?;
+
+        for explicit in [repo_config.clone(), repo.join("sub/../actup.toml")] {
+            let config = Config::load(Some(&explicit), None, &repo, None)?;
+            assert_eq!(
+                file_sources(&config),
+                [ConfigSource::Explicit {
+                    path: explicit.clone()
+                }]
+            );
+            assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
+            assert!(config.repo_only_hosts.is_empty());
+        }
+
+        let other = repo.join("other.toml");
+        fs::write(&other, "[policy]\nbump = \"patch\"\n")?;
+        let config = Config::load(Some(&other), None, &repo, None)?;
+        assert_eq!(
+            file_sources(&config),
+            [
+                ConfigSource::Repo {
+                    path: repo_config,
+                    ignored: [
+                        "default_host",
+                        "scan.extra_paths",
+                        "hosts.\"ghe.corp.com\".api_base",
+                        "hosts.\"ghe.corp.com\".token_env",
+                    ]
+                    .map(str::to_owned)
+                    .to_vec(),
+                },
+                ConfigSource::Explicit { path: other },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_explicit_config_rejects_escaping_extra_paths() -> Result<(), Box<dyn std::error::Error>>
     {
         let temp = TempDir::new()?;

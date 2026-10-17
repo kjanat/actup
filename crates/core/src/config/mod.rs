@@ -627,7 +627,8 @@ impl Config {
     /// Precedence (highest to lowest):
     /// 1. Environment variables (ACTUP_*)
     /// 2. Explicit `config_path` (if provided), relative to the process working directory
-    /// 3. Repo config, searched upward from `start_dir` by [`repo_search_dirs`] with `ceiling`
+    /// 3. Repo config, searched upward from `start_dir` by [`repo_search_dirs`] with `ceiling`,
+    ///    unless it is the file at `config_path`
     /// 4. User config at `user_config`, usually [`user_config_path`]
     /// 5. Defaults
     ///
@@ -652,7 +653,9 @@ impl Config {
             );
         }
 
-        if let Some(repo_config) = find_repo_config(start_dir, ceiling) {
+        if let Some(repo_config) = find_repo_config(start_dir, ceiling)
+            && !config_path.is_some_and(|path| same_file(path, &repo_config))
+        {
             layers = layers.repo(read_config_file(&repo_config)?);
         }
 
@@ -717,6 +720,10 @@ impl Config {
             .as_deref()
             .unwrap_or(resolution::FALLBACK_DEFAULT_HOST)
     }
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
 }
 
 fn read_config_file(path: &Path) -> Result<FileContents, Error> {
@@ -807,7 +814,6 @@ impl Layers {
     }
 }
 
-/// An auto-discovered repo config with the keys a repo config may not set removed.
 struct RepoFile {
     file: FileContents,
     data: Result<ProfileData, figment::Error>,
