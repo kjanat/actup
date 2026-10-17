@@ -1,12 +1,12 @@
 import { parseUsesRefs } from "actup-wasm";
-import type { ActupProvider, CheckResult } from "actup-wasm";
+import type { ActupProvider, LocatedCheckResult } from "actup-wasm";
 import * as vscode from "vscode";
 import { byteToColumn } from "./position.ts";
 
 export class ActupHoverProvider implements vscode.HoverProvider {
 	constructor(
 		private readonly provider: ActupProvider,
-		private readonly resultCache: Map<string, CheckResult[]>,
+		private readonly resultCache: Map<string, LocatedCheckResult[]>,
 	) {}
 
 	async provideHover(
@@ -31,16 +31,7 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 		}
 
 		const results = this.resultCache.get(document.uri.toString());
-		const matchingResult = results?.find((r) => {
-			const a = r.action_ref;
-			const aHost = a.host ?? "github.com";
-			const refHost = ref.host ?? "github.com";
-			return aHost === refHost
-				&& a.owner === ref.owner
-				&& a.repo === ref.repo
-				&& a.ref_str === ref.gitRef
-				&& (a.subpath ?? null) === (ref.subpath ?? null);
-		});
+		const matchingResult = results?.find(r => r.location.line === loc.line && r.location.column === loc.column);
 
 		// isTrusted=false: action.yml content is remote and untrusted; trusted Markdown
 		// would let it execute commands or render unsafe links.

@@ -130,7 +130,11 @@ export class MarkdownString {
 }
 
 export class Hover {
-	constructor(readonly contents: MarkdownString, readonly range?: Range) {}
+	readonly contents: MarkdownString[];
+
+	constructor(contents: MarkdownString | MarkdownString[], readonly range?: Range) {
+		this.contents = Array.isArray(contents) ? contents : [contents];
+	}
 }
 
 interface UriLike {

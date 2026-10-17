@@ -1,4 +1,4 @@
-import type { ActupProvider, CheckResult } from "actup-wasm";
+import type { ActupProvider, LocatedCheckResult } from "actup-wasm";
 import * as vscode from "vscode";
 import { ACTION_SELECTOR, ActupCodeActionProvider } from "./codeActions.ts";
 import { ActupCompletionProvider } from "./completion.ts";
@@ -40,7 +40,7 @@ export async function activate(
 	}
 
 	// Result cache for hover and code actions
-	const resultCache = new Map<string, CheckResult[]>();
+	const resultCache = new Map<string, LocatedCheckResult[]>();
 
 	// Diagnostics
 	const diagnosticCollection = createDiagnosticCollection();

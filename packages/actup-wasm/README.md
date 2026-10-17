@@ -93,15 +93,16 @@ Parse `uses:` references from workflow YAML. Pure, synchronous. No network
 access.
 
 Returns `UsesLocation[]` — each entry has `line`, `column`, `value`, `raw_line`,
-and `ref_range` (byte offsets of the `@ref` portion).
+and `ref_range` (byte offsets of the `@ref` portion, or `null`).
 
 ### `checkRefs(yaml, provider, config?)`
 
 Check `uses:` references against a provider. Async.
 
 Parses the YAML, resolves each non-local ref through the provider, and returns
-`CheckResult[]` with status: `"UpToDate"`, `{ Outdated: ... }`, or
-`{ Unresolvable: ... }`.
+`LocatedCheckResult[]`. Each entry has the `location` (`UsesLocation`) of the
+value it checked, the parsed `action_ref`, and a status: `"UpToDate"`,
+`{ Outdated: ... }`, or `{ Unresolvable: ... }`.
 
 Optional `config` accepts `{ default_host?, policy?: { bump? } }` where `bump`
 is `"patch"` | `"minor"` | `"major"` | `"latest"`. Unknown keys reject the call.

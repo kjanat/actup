@@ -1,7 +1,7 @@
 //! Public WASM-facing API. Compiled only on `wasm32` targets.
 
 use actup_core::{
-    UsesLocation,
+    ActionRef, UsesLocation,
     config::Config,
     extract_uses_from_yaml, parse_uses, policy,
     provider::{Kind, Registry},
@@ -53,6 +53,12 @@ impl From<ActupConfig> for Config {
     }
 }
 
+fn to_js<T: Serialize>(value: &T) -> Result<JsValue, JsValue> {
+    value
+        .serialize(&serde_wasm_bindgen::Serializer::new().serialize_missing_as_null(true))
+        .map_err(|e| JsValue::from_str(&e.to_string()))
+}
+
 fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
     let not_object = || JsValue::from_str("invalid config: expected an object");
     let json = js_sys::JSON::stringify(value)?
@@ -81,8 +87,7 @@ fn parse_config(value: &JsValue) -> Result<Config, JsValue> {
 /// for valid input).
 #[wasm_bindgen(js_name = "parseUsesRefs", unchecked_return_type = "UsesLocation[]")]
 pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
-    let locations = extract_uses_from_yaml(yaml);
-    serde_wasm_bindgen::to_value(&locations).map_err(|e| JsValue::from_str(&e.to_string()))
+    to_js(&extract_uses_from_yaml(yaml))
 }
 
 /// Sort version tags newest first by semver precedence.
@@ -97,13 +102,35 @@ pub fn sort_version_tags(
     let mut tags: Vec<VersionTag> =
         serde_wasm_bindgen::from_value(tags).map_err(|e| JsValue::from_str(&e.to_string()))?;
     bridge::sort_newest_first(&mut tags);
-    serde_wasm_bindgen::to_value(&tags).map_err(|e| JsValue::from_str(&e.to_string()))
+    to_js(&tags)
+}
+
+/// A [`CheckResult`] with the `uses:` location it was checked from.
+#[derive(Debug, Serialize, tsify_next::Tsify)]
+struct LocatedCheckResult {
+    /// The `uses:` value in the YAML that produced this result
+    location: UsesLocation,
+    /// The action reference that was checked
+    action_ref: ActionRef,
+    /// The check status
+    status: CheckStatus,
+}
+
+impl LocatedCheckResult {
+    fn new(location: &UsesLocation, result: &CheckResult) -> Self {
+        Self {
+            location: location.clone(),
+            action_ref: result.action_ref().clone(),
+            status: result.status().clone(),
+        }
+    }
 }
 
 /// Check `uses:` references in YAML against a host-provided JS provider.
 ///
 /// Parses the YAML, resolves each non-local `uses:` ref through the
-/// provider, and returns an array of [`CheckResult`] objects.
+/// provider, and returns an array of [`LocatedCheckResult`] objects. Each
+/// carries the [`UsesLocation`] of the value it checked.
 ///
 /// # Arguments
 ///
@@ -117,7 +144,7 @@ pub fn sort_version_tags(
 /// on serde failures, or if the provider throws.
 #[wasm_bindgen(
     js_name = "checkRefs",
-    unchecked_return_type = "Promise<CheckResult[]>"
+    unchecked_return_type = "Promise<LocatedCheckResult[]>"
 )]
 pub fn check_refs(
     yaml: String,
@@ -144,29 +171,27 @@ pub fn check_refs(
         registry.register(Box::new(adapter));
 
         let locations = extract_uses_from_yaml(&yaml);
-        let mut results: Vec<CheckResult> = Vec::with_capacity(locations.len());
+        let mut results: Vec<LocatedCheckResult> = Vec::with_capacity(locations.len());
 
         for loc in &locations {
             let Ok(Some(parsed)) = parse_uses(loc.value()) else {
                 continue;
             };
 
-            match check_action_remote(&parsed, &config, &registry).await {
-                Ok(result) => results.push(result),
-                Err(e) => {
-                    // Convert provider errors to Unresolvable status
-                    results.push(CheckResult::new(
-                        parsed,
-                        CheckStatus::Unresolvable {
-                            reason: e.to_string(),
-                            is_environment_error: e.is_environment_error(),
-                        },
-                    ));
-                }
-            }
+            let result = match check_action_remote(&parsed, &config, &registry).await {
+                Ok(result) => result,
+                Err(e) => CheckResult::new(
+                    parsed,
+                    CheckStatus::Unresolvable {
+                        reason: e.to_string(),
+                        is_environment_error: e.is_environment_error(),
+                    },
+                ),
+            };
+            results.push(LocatedCheckResult::new(loc, &result));
         }
 
-        serde_wasm_bindgen::to_value(&results).map_err(|e| JsValue::from_str(&e.to_string()))
+        to_js(&results)
     })
 }
 
@@ -231,5 +256,5 @@ pub fn plan_updates(yaml: &str, results_json: &str) -> Result<JsValue, JsValue> 
         }
     }
 
-    serde_wasm_bindgen::to_value(&edits).map_err(|e| JsValue::from_str(&e.to_string()))
+    to_js(&edits)
 }

@@ -16,7 +16,7 @@
 
 /// <reference types="node" />
 
-import type { ActupConfig, CheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
+import type { ActupConfig, CheckResult, LocatedCheckResult, UpdateEdit, UsesLocation, VersionTag } from "../wasm/actup_wasm.js";
 import type { ActupProvider } from "./types.ts";
 
 export type { GitHubProviderOptions } from "./provider.ts";
@@ -36,6 +36,7 @@ export type {
 	CheckResult,
 	CheckStatus,
 	Info as VersionInfo,
+	LocatedCheckResult,
 	Update as UpdatePolicy,
 	UpdateEdit,
 	UsesLocation,
@@ -145,7 +146,8 @@ export function sortVersionTags(tags: readonly VersionTag[]): VersionTag[] {
  *
  * Parses the YAML, resolves each non-local `uses:` ref through the provider,
  * and returns an array of check results with status (up-to-date, outdated,
- * unresolvable).
+ * unresolvable). Each result carries the `location` of the `uses:` value it
+ * checked.
  *
  * @param yaml - Raw YAML content.
  * @param provider - Object implementing the `ActupProvider` interface.
@@ -156,7 +158,7 @@ export async function checkRefs(
 	yaml: string,
 	provider: ActupProvider,
 	config?: ActupConfig,
-): Promise<CheckResult[]> {
+): Promise<LocatedCheckResult[]> {
 	const w = requireInit();
 	return await w.checkRefs(yaml, provider, config);
 }

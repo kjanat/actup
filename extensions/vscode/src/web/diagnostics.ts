@@ -1,5 +1,5 @@
-import type { ActionRef, ActupProvider, UsesLocation } from "actup-wasm";
-import { checkRefs, type CheckResult, type CheckStatus, parseUsesRefs } from "actup-wasm";
+import type { ActupProvider, UsesLocation } from "actup-wasm";
+import { checkRefs, type CheckStatus, type LocatedCheckResult } from "actup-wasm";
 import * as vscode from "vscode";
 import { byteToColumn } from "./position.ts";
 
@@ -32,7 +32,7 @@ export async function computeDiagnostics(
 		return;
 	}
 
-	let results: CheckResult[];
+	let results: LocatedCheckResult[];
 	try {
 		results = await checkRefs(text, provider);
 	} catch {
@@ -42,22 +42,11 @@ export async function computeDiagnostics(
 		return;
 	}
 
-	// Mutable copy so identical refs map to distinct lines (consumed in occurrence order).
-	const remaining = [...parseUsesRefs(text)];
 	const diagnostics: vscode.Diagnostic[] = [];
 	const dataMap = new Map<string, DiagnosticData>();
 
 	for (const result of results) {
-		const expected = formatUsesValue(result.action_ref);
-		const idx = remaining.findIndex(l => l.value === expected);
-		if (idx === -1) {
-			continue;
-		}
-		const loc = remaining[idx];
-		if (loc === undefined) continue;
-		remaining.splice(idx, 1);
-
-		const diag = statusToDiagnostic(result.status, loc, text);
+		const diag = statusToDiagnostic(result.status, result.location);
 		if (diag === undefined) {
 			continue;
 		}
@@ -77,17 +66,6 @@ export function clearDiagnosticData(uri: vscode.Uri): void {
 	diagnosticDataByUri.delete(uri.toString());
 }
 
-function formatUsesValue(ref: ActionRef): string {
-	let value = "";
-	if (ref.host !== null) {
-		value += `${ref.host}/`;
-	}
-	value += `${ref.owner}/${ref.repo}`;
-	if (ref.subpath !== null) value += `/${ref.subpath}`;
-	value += `@${ref.ref_str}`;
-	return value;
-}
-
 /** Unique key for a diagnostic (for data lookup). */
 export function diagnosticKey(d: vscode.Diagnostic): string {
 	return `${d.range.start.line}:${d.range.start.character}:${d.range.end.character}`;
@@ -101,13 +79,12 @@ interface DiagResult {
 function statusToDiagnostic(
 	status: CheckStatus,
 	loc: UsesLocation,
-	_text: string,
 ): DiagResult | undefined {
 	// UpToDate — no diagnostic
 	if (status === "UpToDate") return undefined;
 
 	const line = loc.line - 1; // 1-indexed -> 0-indexed
-	const refRange = loc.ref_range ?? null;
+	const refRange = loc.ref_range;
 	const range = refRange !== null
 		? new vscode.Range(line, byteToColumn(loc.raw_line, refRange.start), line, byteToColumn(loc.raw_line, refRange.end))
 		: new vscode.Range(line, 0, line, loc.raw_line.length);

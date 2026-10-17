@@ -106,6 +106,9 @@ const statusName = (s) => (typeof s === "string" ? s : Object.keys(s)[0]);
 const checkoutResult = results.find((r) => r.action_ref?.repo === "checkout");
 assert.ok(checkoutResult, "checkout result present");
 assert.equal(checkoutResult.action_ref.owner, "actions", "checkout owner");
+assert.equal(checkoutResult.action_ref.host, null, "absent host is null");
+assert.equal(checkoutResult.action_ref.subpath, null, "absent subpath is null");
+assert.deepEqual(checkoutResult.location, locations[0], "result carries its location");
 assert.ok(
 	validStatuses.has(statusName(checkoutResult.status)),
 	`checkout status valid: got ${JSON.stringify(checkoutResult.status)}`,
@@ -114,6 +117,7 @@ assert.ok(
 const setupNodeResult = results.find((r) => r.action_ref?.repo === "setup-node");
 assert.ok(setupNodeResult, "setup-node result present");
 assert.equal(setupNodeResult.action_ref.owner, "actions", "setup-node owner");
+assert.deepEqual(setupNodeResult.location, locations[1], "result carries its location");
 assert.ok(
 	validStatuses.has(statusName(setupNodeResult.status)),
 	`setup-node status valid: got ${JSON.stringify(setupNodeResult.status)}`,
@@ -273,7 +277,7 @@ jobs:
 `;
 const [escapedLoc] = parseUsesRefs(escapedYaml);
 assert.equal(escapedLoc.value, "actions/checkout@v4.0.0", "escape is decoded");
-assert.equal(escapedLoc.ref_range ?? null, null, "no ref range for an escaped value");
+assert.equal(escapedLoc.ref_range, null, "no ref range for an escaped value");
 const escapedResults = await checkRefs(escapedYaml, mockProvider);
 assert.equal(statusName(escapedResults[0].status), "Outdated", "escaped ref is still checked");
 assert.deepEqual(planUpdates(escapedYaml, escapedResults), [], "no edit for an escaped value");
