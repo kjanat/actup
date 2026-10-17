@@ -1265,10 +1265,8 @@ impl LspBackend {
         *self.config.write().await = ConfigState::Loaded(new_config.clone());
 
         // Rebuild provider registry (config may change hosts/tokens).
-        match provider_setup::build_registry(&new_config) {
-            Ok(r) => {
-                *self.registry.write().await = Some(Arc::new(r));
-            }
+        let registry = match provider_setup::build_registry(&new_config) {
+            Ok(r) => Some(Arc::new(r)),
             Err(e) => {
                 tracing::error!("failed to rebuild provider registry: {e}");
                 self.client
@@ -1277,8 +1275,10 @@ impl LspBackend {
                         format!("actup: failed to rebuild providers: {e}"),
                     )
                     .await;
+                None
             }
-        }
+        };
+        *self.registry.write().await = registry;
 
         // Rebuild file cache (TTL or path may have changed).
         let file_cache = Arc::new(provider_setup::build_file_cache(&new_config));
@@ -2221,6 +2221,39 @@ mod tests {
             backend.pin_actions_at(&uri, position, Some(1), true).await,
             []
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn reload_with_rejected_providers_drops_the_registry()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use futures::StreamExt as _;
+
+        let temp = tempfile::tempdir()?;
+        let config_file = temp.path().join("actup.toml");
+        std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+        assert!(backend.registry.read().await.is_some());
+
+        std::fs::write(&config_file, "default_host = \"git.example.com\"\n")?;
+        let drain = async {
+            while let Ok(Some(_)) =
+                tokio::time::timeout(Duration::from_millis(200), socket.next()).await
+            {}
+        };
+        tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(backend.reload_config(), drain)
+        })
+        .await?;
+
+        let stored = backend.config.read().await.clone();
+        let ConfigState::Loaded(config) = stored else {
+            panic!("reload stored {stored:?}");
+        };
+        assert_eq!(config.default_host.as_deref(), Some("git.example.com"));
+        assert!(provider_setup::build_registry(&config).is_err());
+        assert!(backend.registry.read().await.is_none());
         Ok(())
     }
 
