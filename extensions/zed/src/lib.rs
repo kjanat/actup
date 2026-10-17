@@ -540,16 +540,18 @@ fn format_check_output(
         }
     }
 
-    // Summary line
+    let unknown = ref_count.saturating_sub(results.len());
     let _ = writeln!(
         out,
-        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} branch refs to pin, {} ignored\n",
+        "**Summary:** {} outdated, {} up-to-date, {} pinned, {} floating, {} branch refs to pin, {} ignored, {} unknown, {} unresolvable\n",
         outdated.len(),
         up_to_date,
         pinned,
         floating.len(),
         pin_branch.len(),
         ignored,
+        unknown,
+        unresolvable.len(),
     );
 
     // Outdated refs
@@ -839,6 +841,54 @@ mod tests {
         );
         assert!(output.text.contains("Found 3 workflow file(s)"));
         assert_eq!(output.sections[0].label, "actup: No refs found");
+    }
+
+    #[test]
+    fn format_check_output_summary_counts_every_ref() {
+        let sha = "a".repeat(40);
+        let target = std::sync::Arc::new(actup_core::version::Info::new(
+            actup_core::version::Version::parse("v5.0.0"),
+            &sha,
+        ));
+        let statuses = [
+            CheckStatus::UpToDate,
+            CheckStatus::Outdated {
+                current: "v4".to_string(),
+                target,
+            },
+            CheckStatus::Pinned {
+                sha: sha.clone(),
+                tag: None,
+            },
+            CheckStatus::Ignored,
+            CheckStatus::Floating {
+                ref_name: "dev".to_string(),
+            },
+            CheckStatus::PinBranch {
+                ref_name: "main".to_string(),
+                sha,
+            },
+            CheckStatus::Unresolvable {
+                reason: "not found".to_string(),
+                is_environment_error: false,
+            },
+        ];
+        let results: Vec<(String, UsesLocation, CheckResult)> = statuses
+            .into_iter()
+            .zip(1..)
+            .map(|(status, line)| {
+                let loc = UsesLocation::new(line, 9, "o/r@v4".to_string(), "  uses: o/r@v4".into());
+                let result = CheckResult::new(ActionRef::simple("o", "r", "v4"), status);
+                ("ci.yml".to_string(), loc, result)
+            })
+            .collect();
+        let fetch_errors = [("github.com/o/x".to_string(), "timeout".to_string())];
+
+        let text = format_check_output(&loaded("actup.toml"), &results, &fetch_errors, 1, 9);
+        assert!(
+            text.contains("**Summary:** 1 outdated, 1 up-to-date, 1 pinned, 1 floating, 1 branch refs to pin, 1 ignored, 2 unknown, 1 unresolvable\n"),
+            "{text}"
+        );
     }
 
     #[test]

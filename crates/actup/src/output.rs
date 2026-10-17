@@ -395,21 +395,66 @@ pub fn print_summary(findings: &[Finding]) {
     println!("{}", summary_line(findings).bold());
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct StatusCounts {
+    up_to_date: usize,
+    ignored: usize,
+    outdated: usize,
+    pinned: usize,
+    floating: usize,
+    to_pin: usize,
+    unknown: usize,
+    unresolvable: usize,
+}
+
+impl StatusCounts {
+    fn tally(findings: &[Finding]) -> Self {
+        let mut counts = Self::default();
+        for finding in findings {
+            let bucket = match finding.status() {
+                FindingStatus::UpToDate => &mut counts.up_to_date,
+                FindingStatus::Ignored => &mut counts.ignored,
+                FindingStatus::Outdated { .. } => &mut counts.outdated,
+                FindingStatus::Pinned { .. } => &mut counts.pinned,
+                FindingStatus::Floating { .. } => &mut counts.floating,
+                FindingStatus::PinBranch { .. } => &mut counts.to_pin,
+                FindingStatus::Unknown { .. } => &mut counts.unknown,
+                FindingStatus::Unresolvable { .. } => &mut counts.unresolvable,
+            };
+            *bucket += 1;
+        }
+        counts
+    }
+
+    const fn total(&self) -> usize {
+        self.up_to_date
+            + self.ignored
+            + self.outdated
+            + self.pinned
+            + self.floating
+            + self.to_pin
+            + self.unknown
+            + self.unresolvable
+    }
+}
+
 fn summary_line(findings: &[Finding]) -> String {
-    let total = findings.len();
-    let count =
-        |pred: fn(&FindingStatus) -> bool| findings.iter().filter(|f| pred(f.status())).count();
-    let up_to_date = count(|s| matches!(s, FindingStatus::UpToDate));
-    let ignored = count(|s| matches!(s, FindingStatus::Ignored));
-    let outdated = count(|s| matches!(s, FindingStatus::Outdated { .. }));
-    let pinned = count(|s| matches!(s, FindingStatus::Pinned { .. }));
-    let floating = count(|s| matches!(s, FindingStatus::Floating { .. }));
-    let to_pin = count(|s| matches!(s, FindingStatus::PinBranch { .. }));
-    let unresolvable = count(|s| matches!(s, FindingStatus::Unresolvable { .. }));
+    let counts = StatusCounts::tally(findings);
+    let total = counts.total();
+    let StatusCounts {
+        up_to_date,
+        ignored,
+        outdated,
+        pinned,
+        floating,
+        to_pin,
+        unknown,
+        unresolvable,
+    } = counts;
     let sha_pinned = findings.iter().filter(|f| f.action_ref().is_sha()).count();
 
     format!(
-        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {to_pin} branch refs to pin, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
+        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {to_pin} branch refs to pin, {unknown} unknown, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
         if total == 1 { "" } else { "s" }
     )
 }
@@ -1008,7 +1053,7 @@ mod tests {
         print_summary(&findings);
         assert_eq!(
             summary_line(&findings),
-            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unresolvable; 0 of 1 SHA-pinned"
+            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 1 SHA-pinned"
         );
     }
 
@@ -1068,7 +1113,69 @@ mod tests {
 
         assert_eq!(
             summary_line(&findings),
-            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 0 floating, 1 branch refs to pin, 1 unresolvable; 1 of 6 SHA-pinned"
+            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 0 floating, 1 branch refs to pin, 0 unknown, 1 unresolvable; 1 of 6 SHA-pinned"
+        );
+    }
+
+    #[test]
+    fn test_summary_counts_every_status_once() {
+        let statuses = [
+            FindingStatus::UpToDate,
+            FindingStatus::Ignored,
+            FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: make_version_info("v4.0.0", "abc123"),
+                exact_version: None,
+            },
+            FindingStatus::Pinned {
+                sha: "a".repeat(40),
+                tag: None,
+            },
+            FindingStatus::Floating {
+                ref_name: "dev".to_string(),
+            },
+            FindingStatus::PinBranch {
+                ref_name: "main".to_string(),
+                sha: "f".repeat(40),
+            },
+            FindingStatus::Unknown {
+                reason: "tag beyond max_tags".to_string(),
+            },
+            FindingStatus::Unresolvable {
+                reason: "not found".to_string(),
+                is_environment_error: false,
+            },
+            FindingStatus::Unresolvable {
+                reason: "timeout".to_string(),
+                is_environment_error: true,
+            },
+        ];
+        let findings: Vec<Finding> = statuses
+            .into_iter()
+            .zip(1..)
+            .map(|(status, line)| {
+                make_finding("test.yml", line, make_action_ref("o", "r", "v1"), status)
+            })
+            .collect();
+
+        let counts = StatusCounts::tally(&findings);
+        assert_eq!(
+            counts,
+            StatusCounts {
+                up_to_date: 1,
+                ignored: 1,
+                outdated: 1,
+                pinned: 1,
+                floating: 1,
+                to_pin: 1,
+                unknown: 1,
+                unresolvable: 2,
+            }
+        );
+        assert_eq!(counts.total(), findings.len());
+        assert_eq!(
+            summary_line(&findings),
+            "Scanned 9 actions: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 1 floating, 1 branch refs to pin, 1 unknown, 2 unresolvable; 0 of 9 SHA-pinned"
         );
     }
 
@@ -1077,7 +1184,7 @@ mod tests {
         let findings: Vec<Finding> = vec![];
         assert_eq!(
             summary_line(&findings),
-            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unresolvable; 0 of 0 SHA-pinned"
+            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 0 SHA-pinned"
         );
     }
 
