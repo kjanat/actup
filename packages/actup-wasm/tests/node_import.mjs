@@ -763,6 +763,9 @@ await checkRefs(outdatedYaml, hostProvider, explicitConfig);
 assert.deepEqual(hosts, ["ghe.corp.example", "ghe.other.example"], "default_host reaches the provider");
 assert.throws(() => parseExplicitConfig("ci/actup.toml", "update_policy = \"patch\"\n"), /ci\/actup\.toml.*update_policy/s);
 
+await assert.rejects(checkRefs(outdatedYaml, hostProvider, { nope: true }), /nope/);
+assert.throws(() => parseExplicitConfig("ci/actup.toml", "nope = true\n"), /ci\/actup\.toml.*nope/s);
+
 console.log("PASS: a caller's config and an explicit file keep every key");
 
 console.log("\nAll npm package integration tests PASSED");
