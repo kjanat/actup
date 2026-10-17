@@ -44,11 +44,15 @@ only. It takes the first repo config candidate in `actup-core` discovery order
 or YAML). When `lsp.actup-lsp.initialization_options.configPath` names a file,
 the command reads that file over the candidate as an explicit config, where
 every key applies, as `actup-lsp` does. A relative `configPath` starts at the
-worktree root. The command reads files inside the worktree only, and reports an
-error for a `configPath` outside it. It applies `ACTUP_*` variables from the
-worktree shell environment on top. Parent-directory configs and the user config
-do not apply. The first line of the output names the files it used, or
-`defaults`.
+worktree root. On Windows, a drive-relative `configPath` such as
+`C:ci\actup.toml` starts at the worktree root when its drive is the worktree's
+drive, and a path rooted without a drive, such as `\repo\actup.toml`, takes the
+worktree's drive or UNC share. The command reads files inside the worktree only,
+and reports an error for a `configPath` outside it. A `\\?\` or `\\.\` device
+path is an error even when it names a file inside the worktree. It applies
+`ACTUP_*` variables from the worktree shell environment on top. Parent-directory
+configs and the user config do not apply. The first line of the output names the
+files it used, or `defaults`.
 
 `actup-lsp` resolves config the same way as the `actup` CLI.
 

@@ -1333,6 +1333,19 @@ mod tests {
                 ("C:repo\\actup.toml", "repo/actup.toml"),
                 ("C:..\\repo\\ci\\actup.toml", "ci/actup.toml"),
             ],
+        )?;
+        assert_maps(
+            PathStyle::Windows,
+            "\\\\?\\C:\\repo",
+            &[("actup.toml", "actup.toml")],
+        )?;
+        assert_maps(
+            PathStyle::Windows,
+            "C:repo",
+            &[
+                ("actup.toml", "actup.toml"),
+                ("C:\\repo\\ci\\actup.toml", "ci/actup.toml"),
+            ],
         )
     }
 
@@ -1346,95 +1359,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn worktree_relative_rejects_paths_outside_the_worktree() {
-        let cases = [
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "../actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "ci/../../actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "/etc/actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "/home/u/repo2/actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "/home/u/repo/../actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "/home/u/repo",
-                "names the worktree root",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "ci/..",
-                "names the worktree root",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\repo",
-                "D:\\repo\\actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\repo",
-                "..\\actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\repo",
-                "\\\\server\\share\\actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Windows,
-                "\\\\server\\share\\repo",
-                "\\\\server\\other\\repo\\actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\Ärger",
-                "c:\\ärgern\\actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Posix,
-                "/home/u/repo",
-                "/home/u/Repo/actup.toml",
-                "is outside the worktree",
-            ),
-            (
-                PathStyle::Windows,
-                "C:\\repo",
-                "D:actup.toml",
-                "is outside the worktree",
-            ),
-        ];
-        for (style, root, written, expected) in cases {
+    fn assert_rejects(style: PathStyle, cases: &[(&str, &str, &str)]) {
+        for (root, written, expected) in cases {
             let Err(error) = worktree_relative(style, root, written) else {
                 panic!("{style:?} {root} {written} must fail");
             };
@@ -1444,6 +1370,75 @@ mod tests {
                 "{style:?}"
             );
         }
+    }
+
+    #[test]
+    fn worktree_relative_rejects_posix_paths_outside_the_worktree() {
+        assert_rejects(
+            PathStyle::Posix,
+            &[
+                ("/home/u/repo", "../actup.toml", "is outside the worktree"),
+                (
+                    "/home/u/repo",
+                    "ci/../../actup.toml",
+                    "is outside the worktree",
+                ),
+                ("/home/u/repo", "/etc/actup.toml", "is outside the worktree"),
+                (
+                    "/home/u/repo",
+                    "/home/u/repo2/actup.toml",
+                    "is outside the worktree",
+                ),
+                (
+                    "/home/u/repo",
+                    "/home/u/repo/../actup.toml",
+                    "is outside the worktree",
+                ),
+                ("/home/u/repo", "/home/u/repo", "names the worktree root"),
+                ("/home/u/repo", "ci/..", "names the worktree root"),
+                (
+                    "/home/u/repo",
+                    "/home/u/Repo/actup.toml",
+                    "is outside the worktree",
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn worktree_relative_rejects_windows_paths_outside_the_worktree() {
+        assert_rejects(
+            PathStyle::Windows,
+            &[
+                (
+                    "C:\\repo",
+                    "D:\\repo\\actup.toml",
+                    "is outside the worktree",
+                ),
+                ("C:\\repo", "..\\actup.toml", "is outside the worktree"),
+                (
+                    "C:\\repo",
+                    "\\\\server\\share\\actup.toml",
+                    "is outside the worktree",
+                ),
+                (
+                    "\\\\server\\share\\repo",
+                    "\\\\server\\other\\repo\\actup.toml",
+                    "is outside the worktree",
+                ),
+                (
+                    "C:\\Ärger",
+                    "c:\\ärgern\\actup.toml",
+                    "is outside the worktree",
+                ),
+                ("C:\\repo", "D:actup.toml", "is outside the worktree"),
+                (
+                    "\\\\?\\C:\\repo",
+                    "C:\\repo\\actup.toml",
+                    "is outside the worktree",
+                ),
+            ],
+        );
     }
 
     #[test]
