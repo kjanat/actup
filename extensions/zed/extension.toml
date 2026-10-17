@@ -29,5 +29,5 @@ args    = ["actup-mcp"]
 
 [grammars.github_actions]
 repository = "https://github.com/kjanat/actup-v2"
-rev        = "57a4f01c4bd1c8cd7599fdfc72f72fd41bd7414b"
+rev        = "7fb4037d3fb694b62c3b0aa493616478a5f0cea5"
 path       = "languages/tree-sitter-github-actions"

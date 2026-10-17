@@ -193,7 +193,7 @@ mod tests {
         );
         assert_eq!(
             field("rev"),
-            Some("57a4f01c4bd1c8cd7599fdfc72f72fd41bd7414b")
+            Some("7fb4037d3fb694b62c3b0aa493616478a5f0cea5")
         );
         assert_eq!(field("path"), Some("languages/tree-sitter-github-actions"));
         Ok(())
