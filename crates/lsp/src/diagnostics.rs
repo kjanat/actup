@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use actup_core::{
-    ActionRef, ActionRepoId, Config, Error as CoreError, check_action_with_provider,
-    extract_uses_from_yaml, parse_uses, provider,
+    ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON,
+    check_action_with_provider, expand_short_sha, extract_uses_from_yaml, parse_uses, provider,
     resolution::{CheckResult, CheckStatus},
 };
 use serde::{Deserialize, Serialize};
@@ -44,6 +44,19 @@ pub enum DiagnosticData {
         /// When set, extend the replacement to this 0-indexed column (in the
         /// negotiated encoding) so a stale version comment is overwritten rather
         /// than left behind. `None` replaces only the ref range.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace_end_col: Option<u32>,
+    },
+    /// The ref is a short SHA; the full SHA it abbreviates replaces it.
+    #[serde(rename = "expand-sha")]
+    ExpandSha {
+        /// The full 40-character commit SHA.
+        target_ref: String,
+        /// The `# vX.Y.Z` comment to append when a tag points at the commit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repin_comment: Option<String>,
+        /// When set, extend the replacement to this column to overwrite a
+        /// stale version comment.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         replace_end_col: Option<u32>,
     },
@@ -192,7 +205,7 @@ fn extract_located_actions(
                     loc.ref_range()
                         .map_or((0, line_end_col, false, TrailingComment::None), |r| {
                             // Only SHA pins carry a `# vX.Y.Z` comment we maintain on re-pin.
-                            let trailing = if action_ref.is_sha() {
+                            let trailing = if action_ref.is_sha() || action_ref.is_short_sha() {
                                 classify_trailing(raw_line, r.end)
                             } else {
                                 TrailingComment::None
@@ -293,6 +306,7 @@ async fn compute_diagnostics_for_actions(
         };
 
         let repo_id = action.action_ref.to_repo_id().without_subpath();
+        let versions = versions_map.get(&repo_id).and_then(|r| r.as_ref().ok());
         let result = match versions_map.get(&repo_id) {
             Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
                 Some(provider) => {
@@ -336,6 +350,12 @@ async fn compute_diagnostics_for_actions(
                     action.line_end_col,
                 ))
             }
+            CheckStatus::Unresolvable {
+                reason,
+                is_environment_error: false,
+            } if action.editable && reason == SHORT_SHA_REASON => {
+                expand_edit(action, registry.find_for_repo(&repo_id), versions).await
+            }
             _ => None,
         };
 
@@ -355,6 +375,34 @@ async fn compute_diagnostics_for_actions(
         errors,
         version_sets: successful_version_sets(versions_map),
     }
+}
+
+/// Build the edit that expands a short SHA ref to the full SHA it abbreviates,
+/// commented with the tag on that commit when one exists.
+async fn expand_edit(
+    action: &LocatedAction,
+    provider: Option<&dyn provider::Provider>,
+    versions: Option<&actup_core::version::Set>,
+) -> Option<OutdatedEdit> {
+    let sha = expand_short_sha(&action.action_ref, provider?).await?;
+    let sha = sha.as_str();
+    let untagged = || OutdatedEdit {
+        target_ref: sha.to_string(),
+        repin_comment: None,
+        replace_end_col: None,
+    };
+    Some(
+        versions
+            .and_then(|v| v.tag_on(sha))
+            .map_or_else(untagged, |tag| {
+                sha_repin_edit(
+                    sha,
+                    tag.version().as_str(),
+                    action.trailing,
+                    action.line_end_col,
+                )
+            }),
+    )
 }
 
 pub async fn compute_diagnostics_with_versions(
@@ -478,12 +526,19 @@ fn status_to_diagnostic(
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,
-        } => Some(unresolvable_diagnostic(
-            range,
-            uses_value,
-            reason,
-            *is_environment_error,
-        )),
+        } => {
+            let mut diag =
+                unresolvable_diagnostic(range, uses_value, reason, *is_environment_error);
+            diag.data = edit.and_then(|e| {
+                serde_json::to_value(DiagnosticData::ExpandSha {
+                    target_ref: e.target_ref,
+                    repin_comment: e.repin_comment,
+                    replace_end_col: e.replace_end_col,
+                })
+                .ok()
+            });
+            Some(diag)
+        }
     }
 }
 
@@ -657,7 +712,9 @@ mod tests {
         let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
         match data {
             DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v4.0.0"),
-            DiagnosticData::Unresolvable { .. } => panic!("expected Outdated variant"),
+            DiagnosticData::Unresolvable { .. } | DiagnosticData::ExpandSha { .. } => {
+                panic!("expected Outdated variant")
+            }
         }
     }
 
@@ -1054,7 +1111,9 @@ jobs:
         let back: DiagnosticData = serde_json::from_value(json).unwrap();
         match back {
             DiagnosticData::Unresolvable { suggested_ref } => assert!(suggested_ref.is_none()),
-            DiagnosticData::Outdated { .. } => panic!("wrong variant"),
+            DiagnosticData::Outdated { .. } | DiagnosticData::ExpandSha { .. } => {
+                panic!("wrong variant")
+            }
         }
     }
 
@@ -1557,6 +1616,89 @@ jobs:
             "expected tag in pinned message, got: {}",
             result.diagnostics[0].message
         );
+    }
+
+    async fn short_sha_diagnostics(line: &str, tag_sha: &str) -> Vec<Diagnostic> {
+        let versions = test_utils::simple_version_set("v4.2.0", tag_sha);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        compute_diagnostics(
+            &format!("{line}\n"),
+            &uri,
+            &Config::default(),
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await
+        .diagnostics
+    }
+
+    fn expand_data(diag: &Diagnostic) -> Option<DiagnosticData> {
+        serde_json::from_value(diag.data.clone()?).ok()
+    }
+
+    #[tokio::test]
+    async fn short_sha_diagnostic_expands_to_tagged_commit() {
+        let diags = short_sha_diagnostics("    - uses: actions/checkout@abc1234", DUMMY_SHA).await;
+        let [diag] = diags.as_slice() else {
+            panic!("expected one diagnostic, got {diags:?}");
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
+        assert_eq!(
+            diag.message,
+            format!("actions/checkout@abc1234: {SHORT_SHA_REASON}")
+        );
+        let Some(DiagnosticData::ExpandSha {
+            target_ref,
+            repin_comment,
+            replace_end_col,
+        }) = expand_data(diag)
+        else {
+            panic!("expected expand-sha data, got {:?}", diag.data);
+        };
+        assert_eq!(target_ref, DUMMY_SHA);
+        assert_eq!(repin_comment.as_deref(), Some(" # v4.2.0"));
+        assert_eq!(replace_end_col, None);
+    }
+
+    #[tokio::test]
+    async fn short_sha_diagnostic_refreshes_stale_version_comment() {
+        let line = "    - uses: actions/checkout@abc1234 # v4.1.0";
+        let diags = short_sha_diagnostics(line, DUMMY_SHA).await;
+        let Some(Some(DiagnosticData::ExpandSha {
+            repin_comment,
+            replace_end_col,
+            ..
+        })) = diags.first().map(expand_data)
+        else {
+            panic!("expected expand-sha data, got {diags:?}");
+        };
+        assert_eq!(repin_comment.as_deref(), Some(" # v4.2.0"));
+        assert_eq!(replace_end_col, u32::try_from(line.len()).ok());
+    }
+
+    #[tokio::test]
+    async fn short_sha_diagnostic_on_untagged_commit_has_no_comment() {
+        let diags =
+            short_sha_diagnostics("    - uses: actions/checkout@abc1234", DUMMY_SHA_2).await;
+        let Some(Some(DiagnosticData::ExpandSha {
+            target_ref,
+            repin_comment: None,
+            replace_end_col: None,
+        })) = diags.first().map(expand_data)
+        else {
+            panic!("expected comment-free expand-sha data, got {diags:?}");
+        };
+        assert_eq!(target_ref, DUMMY_SHA);
+    }
+
+    #[tokio::test]
+    async fn hex_ref_naming_another_commit_gets_no_short_sha_diagnostic() {
+        let diags = short_sha_diagnostics("    - uses: actions/checkout@deadbee", DUMMY_SHA).await;
+        assert_eq!(diags, []);
     }
 
     #[tokio::test]

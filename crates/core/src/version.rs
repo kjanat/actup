@@ -84,7 +84,7 @@ impl Version {
             };
         }
 
-        if is_iso_date(ref_str) {
+        if is_iso_date(ref_str) || is_short_sha(ref_str) {
             return Self::Other {
                 tag: ref_str.to_string(),
             };
@@ -317,6 +317,12 @@ impl Ord for Version {
             (_, Self::Sha { .. }) => Ordering::Less,
         }
     }
+}
+
+/// Returns true if `ref_str` is an abbreviated commit SHA of 7 to 39 hex characters.
+#[must_use]
+pub fn is_short_sha(ref_str: &str) -> bool {
+    (7..40).contains(&ref_str.len()) && ref_str.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn is_iso_date(s: &str) -> bool {
@@ -579,6 +585,17 @@ impl Set {
             })
     }
 
+    /// Find the tag that names commit `sha`: the highest full tag, else the highest tag.
+    #[must_use]
+    pub fn tag_on(&self, sha: &str) -> Option<&Arc<Info>> {
+        self.full_tag_on(sha).or_else(|| {
+            self.semver_tags
+                .iter()
+                .filter(|t| t.sha() == sha)
+                .max_by(|a, b| a.version().cmp(b.version()))
+        })
+    }
+
     /// Find the latest version that `bump` allows for a current version
     ///
     /// A component that `current` leaves out matches any value, so `v4` under
@@ -772,6 +789,44 @@ mod tests {
         // Short SHAs should be treated as Other, not Sha
         let v = Version::parse("abc123");
         assert!(matches!(v, Version::Other { .. }));
+    }
+
+    #[test]
+    fn test_parse_all_digit_short_sha_is_not_semver() {
+        for short in ["1234567", &"1".repeat(39)] {
+            assert_eq!(
+                Version::parse(short),
+                Version::Other {
+                    tag: short.to_string()
+                },
+                "{short}"
+            );
+        }
+        assert_eq!(Version::parse("123456").major(), Some(123_456));
+    }
+
+    #[test]
+    fn test_tag_on_prefers_full_tag_then_any_tag() {
+        let sha = "1".repeat(40);
+        let info = |tag: &str| Arc::new(Info::new(Version::parse(tag), sha.clone()));
+        let full = Set::build(
+            vec![info("v4"), info("v4.2.0"), info("v4.2")],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        assert_eq!(
+            full.tag_on(&sha).map(|t| t.version().as_str()),
+            Some("v4.2.0")
+        );
+        let major = Set::build(
+            vec![info("v3"), info("v4")],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        assert_eq!(major.tag_on(&sha).map(|t| t.version().as_str()), Some("v4"));
+        assert!(major.tag_on(&"2".repeat(40)).is_none());
     }
 
     // Version accessor tests

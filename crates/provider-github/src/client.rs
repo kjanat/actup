@@ -18,7 +18,7 @@ use reqwest::{
 use tracing::{debug, warn};
 
 use crate::types::{
-    GitHubBranch, GitHubContent, GitHubRef, GitHubRepo, GitHubTag, GitHubTagObject,
+    GitHubBranch, GitHubCommit, GitHubContent, GitHubRef, GitHubRepo, GitHubTag, GitHubTagObject,
 };
 
 /// Default items per page
@@ -297,6 +297,19 @@ impl GitHubClient {
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GitHubBranch> {
         let url = format!("{}/repos/{owner}/{repo}/branches/{branch}", self.api_base);
         debug!(url = %url, "fetching branch");
+
+        let response = self.get(&url).await?;
+        self.handle_response(response, owner, repo).await
+    }
+
+    /// Get a commit by full or abbreviated SHA
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or commit not found.
+    pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitHubCommit> {
+        let url = format!("{}/repos/{owner}/{repo}/commits/{sha}", self.api_base);
+        debug!(url = %url, "fetching commit");
 
         let response = self.get(&url).await?;
         self.handle_response(response, owner, repo).await

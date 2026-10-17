@@ -61,6 +61,13 @@ pub struct BranchCommit {
     pub sha: String,
 }
 
+/// A commit from GitHub API
+#[derive(Debug, Clone, Deserialize)]
+pub struct GitHubCommit {
+    /// Full commit SHA
+    pub sha: String,
+}
+
 /// A git reference from GitHub API
 #[derive(Debug, Clone, Deserialize)]
 pub struct GitHubRef {

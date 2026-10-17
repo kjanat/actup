@@ -46,6 +46,7 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 | Update single ref        | `Outdated` diagnostic            | `code_actions::code_actions_for_diagnostics`                 |
 | Fix all in file          | 2+ outdated refs                 | `code_actions::fix_all_in_file` (`source.fixAll.actup`)      |
 | Suggest for unresolvable | `Unresolvable` + `suggested_ref` | `code_actions::code_actions_for_diagnostics` (not yet wired) |
+| Expand short SHA         | Short SHA `Unresolvable`         | `code_actions::code_actions_for_diagnostics`                 |
 | Workspace update all     | Command palette                  | `workspace_commands::fix_all_workspace`                      |
 
 ## Architecture Notes

@@ -212,12 +212,18 @@ impl Provider for GitHubProvider {
                     r.object.sha
                 }
             } else {
-                // Try as a branch
-                let branch = self
-                    .client
-                    .get_branch(&owner, &repo_name, &ref_name)
-                    .await?;
-                branch.commit.sha
+                match self.client.get_branch(&owner, &repo_name, &ref_name).await {
+                    Ok(branch) => branch.commit.sha,
+                    Err(actup_core::Error::NotFound { .. })
+                        if actup_core::version::is_short_sha(&ref_name) =>
+                    {
+                        self.client
+                            .get_commit(&owner, &repo_name, &ref_name)
+                            .await?
+                            .sha
+                    }
+                    Err(e) => return Err(e),
+                }
             };
 
             Sha40::new(&sha).ok_or_else(|| actup_core::Error::Internal {

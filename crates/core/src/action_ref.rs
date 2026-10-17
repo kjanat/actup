@@ -100,27 +100,19 @@ impl ActionRef {
         self.ref_str.len() == 40 && self.ref_str.chars().all(|c| c.is_ascii_hexdigit())
     }
 
-    /// Returns true if this ref looks like a short SHA (7+ hex chars, not 40)
+    /// Returns true if this ref looks like a short SHA (7 to 39 hex chars)
     #[must_use]
     pub fn is_short_sha(&self) -> bool {
-        let len = self.ref_str.len();
-        (7..40).contains(&len) && self.ref_str.chars().all(|c| c.is_ascii_hexdigit())
+        crate::version::is_short_sha(&self.ref_str)
     }
 
-    /// Returns true if this looks like a semver tag (v1, v1.2, v1.2.3, v1.0.0-beta, etc.)
+    /// Returns true if this ref is a short SHA that abbreviates the commit `sha`.
     #[must_use]
-    pub fn looks_like_semver(&self) -> bool {
-        let s = self.ref_str.strip_prefix('v').unwrap_or(&self.ref_str);
-
-        // Split off prerelease suffix if present
-        let version_part = s.split('-').next().unwrap_or(s);
-
-        // Check if version part starts with a digit and contains only digits and dots
-        version_part
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_digit())
-            && version_part.chars().all(|c| c.is_ascii_digit() || c == '.')
+    pub fn abbreviates(&self, sha: &str) -> bool {
+        self.is_short_sha()
+            && sha
+                .get(..self.ref_str.len())
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(&self.ref_str))
     }
 
     /// Convert to `ActionRepoId` (drops the ref portion)
@@ -353,23 +345,14 @@ mod tests {
         assert!(thirty_nine.is_short_sha());
     }
 
-    // ActionRef::looks_like_semver tests
-
     #[test]
-    fn test_looks_like_semver() {
-        assert!(ActionRef::simple("o", "r", "v1").looks_like_semver());
-        assert!(ActionRef::simple("o", "r", "v1.2").looks_like_semver());
-        assert!(ActionRef::simple("o", "r", "v1.2.3").looks_like_semver());
-        assert!(ActionRef::simple("o", "r", "1.2.3").looks_like_semver());
-        assert!(!ActionRef::simple("o", "r", "main").looks_like_semver());
-        assert!(!ActionRef::simple("o", "r", "release/v1").looks_like_semver());
-    }
-
-    #[test]
-    fn test_looks_like_semver_prerelease() {
-        assert!(ActionRef::simple("o", "r", "v1.0.0-beta").looks_like_semver());
-        assert!(ActionRef::simple("o", "r", "v1.0.0-rc.1").looks_like_semver());
-        assert!(ActionRef::simple("o", "r", "v2.0.0-alpha.2").looks_like_semver());
+    fn test_abbreviates() {
+        let sha = "abc1234def5678abc1234def5678abc1234def56";
+        assert!(ActionRef::simple("o", "r", "abc1234").abbreviates(sha));
+        assert!(ActionRef::simple("o", "r", "ABC1234D").abbreviates(sha));
+        assert!(!ActionRef::simple("o", "r", "abc1235").abbreviates(sha));
+        assert!(!ActionRef::simple("o", "r", "abc123").abbreviates(sha));
+        assert!(!ActionRef::simple("o", "r", sha).abbreviates(sha));
     }
 
     // ActionRef::to_repo_id tests

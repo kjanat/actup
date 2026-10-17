@@ -1004,7 +1004,13 @@ async fn compute_pin_targets(
                 .resolve_ref_to_sha(&repo_id, ref_str)
                 .await
                 .ok()
-                .map(|s| (s.as_str().to_string(), ref_str.to_string())),
+                .map(|s| {
+                    let label = versions
+                        .filter(|_| action_ref.abbreviates(s.as_str()))
+                        .and_then(|v| v.tag_on(s.as_str()))
+                        .map_or_else(|| ref_str.to_string(), |t| t.version().to_string());
+                    (s.as_str().to_string(), label)
+                }),
         }
     };
 
@@ -1522,6 +1528,38 @@ mod tests {
 
     fn aref(ref_str: &str) -> actup_core::ActionRef {
         actup_core::ActionRef::simple("actions", "checkout", ref_str)
+    }
+
+    async fn sha_pin_target(ref_str: &str) -> Option<(String, String)> {
+        let text = format!("    - uses: actions/checkout@{ref_str}\n");
+        let position = tower_lsp_server::ls_types::Position {
+            line: 0,
+            character: 30,
+        };
+        let action = crate::diagnostics::locate_action_at(
+            &text,
+            position,
+            crate::position::PositionEncoding::Utf16,
+        )?;
+        let versions =
+            crate::test_utils::simple_version_set("v4.2.0", crate::test_utils::DUMMY_SHA);
+        let provider = crate::test_utils::MockProvider::new("github.com");
+        compute_pin_targets(&action, Some(&versions), &provider)
+            .await
+            .sha
+    }
+
+    #[tokio::test]
+    async fn sha_pin_target_labels_short_sha_with_its_tag() {
+        let sha = crate::test_utils::DUMMY_SHA.to_string();
+        assert_eq!(
+            sha_pin_target("abc1234").await,
+            Some((sha.clone(), "v4.2.0".to_string()))
+        );
+        assert_eq!(
+            sha_pin_target("deadbee").await,
+            Some((sha, "deadbee".to_string()))
+        );
     }
 
     #[test]

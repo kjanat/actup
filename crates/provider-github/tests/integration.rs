@@ -2,7 +2,8 @@
 
 #![allow(clippy::expect_used, clippy::unwrap_used)]
 
-use actup_provider_github::GitHubClient;
+use actup_core::{ActionRepoId, Provider};
+use actup_provider_github::{GitHubClient, GitHubProvider};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path, query_param},
@@ -160,4 +161,90 @@ async fn test_rate_limit_error() {
     assert!(result.is_err());
     let err = result.unwrap_err();
     assert!(matches!(err, actup_core::Error::RateLimited { .. }));
+}
+
+const FULL_SHA: &str = "abc1234def5678abc1234def5678abc1234def56";
+
+async fn mount_not_found(server: &MockServer, url: &str) {
+    Mock::given(method("GET"))
+        .and(path(url.to_string()))
+        .respond_with(ResponseTemplate::new(404).set_body_string(r#"{"message": "Not Found"}"#))
+        .mount(server)
+        .await;
+}
+
+fn provider(server: &MockServer) -> Result<GitHubProvider, Box<dyn std::error::Error>> {
+    Ok(GitHubProvider::with_host(
+        &server.uri(),
+        "github.com",
+        None,
+    )?)
+}
+
+#[tokio::test]
+async fn resolve_short_sha_falls_back_to_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_not_found(&server, "/repos/o/r/git/ref/tags/abc1234").await;
+    mount_not_found(&server, "/repos/o/r/branches/abc1234").await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/commits/abc1234"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(format!(r#"{{"sha": "{FULL_SHA}"}}"#)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let sha = provider(&server)?
+        .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), "abc1234")
+        .await?;
+    assert_eq!(sha.as_str(), FULL_SHA);
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolve_hex_branch_name_wins_over_commit() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_not_found(&server, "/repos/o/r/git/ref/tags/deadbee").await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/branches/deadbee"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+            r#"{{"name": "deadbee", "commit": {{"sha": "{FULL_SHA}"}}}}"#
+        )))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/commits/deadbee"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let sha = provider(&server)?
+        .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), "deadbee")
+        .await?;
+    assert_eq!(sha.as_str(), FULL_SHA);
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolve_missing_name_skips_commit_lookup() -> Result<(), Box<dyn std::error::Error>> {
+    let server = MockServer::start().await;
+    mount_not_found(&server, "/repos/o/r/git/ref/tags/nope").await;
+    mount_not_found(&server, "/repos/o/r/branches/nope").await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/r/commits/nope"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&server)
+        .await;
+
+    let result = provider(&server)?
+        .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), "nope")
+        .await;
+    assert!(
+        matches!(result, Err(actup_core::Error::NotFound { .. })),
+        "{result:?}"
+    );
+    Ok(())
 }

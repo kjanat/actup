@@ -873,6 +873,61 @@ mod tests {
         }
     }
 
+    fn collected(ref_str: &str) -> CollectedAction {
+        let action_ref = ActionRef::simple("actions", "checkout", ref_str);
+        CollectedAction {
+            file: "ci.yml".to_string(),
+            line: 3,
+            repo_id: action_ref.to_repo_id(),
+            action_ref,
+            provider: "github".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn check_reports_short_sha_as_user_error() {
+        let versions = version::Set::build(
+            vec![make_version_info("v1.0.0", &"b".repeat(40))],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        let registry = test_registry();
+        let config = Config::default();
+        let short = check_action_with_versions(
+            &collected("aaaaaaa"),
+            Some(&Ok(versions.clone())),
+            &config,
+            &registry,
+        )
+        .await;
+        assert!(
+            matches!(
+                short.status(),
+                FindingStatus::Unresolvable {
+                    reason,
+                    is_environment_error: false,
+                } if reason == actup_core::SHORT_SHA_REASON
+            ),
+            "{:?}",
+            short.status()
+        );
+        assert_eq!(determine_exit_code(std::slice::from_ref(&short), false), 2);
+
+        let named = check_action_with_versions(
+            &collected("deadbee"),
+            Some(&Ok(versions)),
+            &config,
+            &registry,
+        )
+        .await;
+        assert!(
+            matches!(named.status(), FindingStatus::UpToDate),
+            "{:?}",
+            named.status()
+        );
+    }
+
     /// Test [`CollectedAction`] structure (ensures proper collection).
     #[test]
     fn test_collected_action_structure() {

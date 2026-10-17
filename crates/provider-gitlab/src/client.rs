@@ -18,7 +18,7 @@ use reqwest::{
 use tracing::{debug, warn};
 
 use crate::types::{
-    GitLabBranch, GitLabError, GitLabFile, GitLabProject, GitLabTag, GitLabTreeEntry,
+    GitLabBranch, GitLabCommit, GitLabError, GitLabFile, GitLabProject, GitLabTag, GitLabTreeEntry,
 };
 
 /// Default items per page
@@ -291,12 +291,30 @@ impl GitLabClient {
         self.handle_response(response, owner, repo).await
     }
 
-    /// Resolve a ref (tag or branch) to a commit SHA
+    /// Get a commit by full or abbreviated SHA
+    ///
+    /// # Errors
+    ///
+    /// Returns error on network failure, rate limit, auth failure, or commit not found.
+    pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GitLabCommit> {
+        let project_id = Self::encode_project_path(owner, repo);
+        let url = format!(
+            "{}/projects/{project_id}/repository/commits/{}",
+            self.api_base,
+            urlencoding::encode(sha)
+        );
+        debug!(url = %url, sha = %sha, "fetching commit");
+
+        let response = self.get(&url).await?;
+        self.handle_response(response, owner, repo).await
+    }
+
+    /// Resolve a ref (branch, tag, or short commit SHA) to a commit SHA
     ///
     /// GitLab doesn't expose a single resolve-ref endpoint, so we:
     /// 1. Try to get it as a branch first
     /// 2. Try a direct tag lookup
-    /// 3. Fall back to paginated tag listing
+    /// 3. Try a commit lookup when the ref is a short SHA
     ///
     /// # Errors
     ///
@@ -309,15 +327,25 @@ impl GitLabClient {
             Err(e) => return Err(e),
         }
 
-        // Try direct tag lookup - if not found, ref doesn't exist
+        // Try direct tag lookup
         match self.get_tag(owner, repo, ref_name).await {
-            Ok(tag) => Ok(tag.target),
-            Err(Error::NotFound { .. }) => Err(Error::RefNotFound {
-                owner: owner.to_string(),
-                repo: repo.to_string(),
-                ref_name: ref_name.to_string(),
-                host: Some(self.host.clone()),
-            }),
+            Ok(tag) => return Ok(tag.target),
+            Err(Error::NotFound { .. }) => {}
+            Err(e) => return Err(e),
+        }
+
+        let not_found = || Error::RefNotFound {
+            owner: owner.to_string(),
+            repo: repo.to_string(),
+            ref_name: ref_name.to_string(),
+            host: Some(self.host.clone()),
+        };
+        if !actup_core::version::is_short_sha(ref_name) {
+            return Err(not_found());
+        }
+        match self.get_commit(owner, repo, ref_name).await {
+            Ok(commit) => Ok(commit.id),
+            Err(Error::NotFound { .. }) => Err(not_found()),
             Err(e) => Err(e),
         }
     }

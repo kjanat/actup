@@ -106,13 +106,21 @@ impl Provider for GiteaProvider {
         Box::pin(async move {
             debug!(owner = %owner, repo = %repo_name, ref_name = %ref_name, "resolving ref to SHA");
 
-            let git_ref = self
-                .client
-                .get_git_ref(&owner, &repo_name, &ref_name)
-                .await?;
+            let sha = match self.client.get_git_ref(&owner, &repo_name, &ref_name).await {
+                Ok(git_ref) => git_ref.object.sha,
+                Err(actup_core::Error::NotFound { .. })
+                    if actup_core::version::is_short_sha(&ref_name) =>
+                {
+                    self.client
+                        .get_commit(&owner, &repo_name, &ref_name)
+                        .await?
+                        .sha
+                }
+                Err(e) => return Err(e),
+            };
 
-            Sha40::new(&git_ref.object.sha).ok_or_else(|| actup_core::Error::Internal {
-                context: format!("commit SHA from Gitea: {}", git_ref.object.sha),
+            Sha40::new(&sha).ok_or_else(|| actup_core::Error::Internal {
+                context: format!("commit SHA from Gitea: {sha}"),
                 message: "expected 40-character hex string".to_string(),
             })
         })
@@ -225,5 +233,83 @@ impl Provider for GiteaProvider {
                 host: Some(self.client.host().to_string()),
             })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use wiremock::{
+        Mock, MockServer, ResponseTemplate,
+        matchers::{method, path},
+    };
+
+    use super::*;
+
+    const FULL_SHA: &str = "abc1234def5678abc1234def5678abc1234def56";
+
+    async fn respond(server: &MockServer, url: String, status: u16, body: String) {
+        Mock::given(method("GET"))
+            .and(path(url))
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .mount(server)
+            .await;
+    }
+
+    async fn resolve(ref_name: &str) -> (MockServer, Result<Sha40>) {
+        let server = MockServer::start().await;
+        for missing in MISSING {
+            respond(
+                &server,
+                format!("{BASE}/{}", missing.replace("REF", ref_name)),
+                404,
+                r#"{"message": "not found"}"#.to_string(),
+            )
+            .await;
+        }
+        respond(
+            &server,
+            format!("{BASE}/commits/abc1234"),
+            200,
+            commit_body(),
+        )
+        .await;
+        let result = match GiteaProvider::new(&server.uri(), "gitea.com", None) {
+            Ok(provider) => {
+                provider
+                    .resolve_ref_to_sha(&ActionRepoId::simple("o", "r"), ref_name)
+                    .await
+            }
+            Err(e) => Err(e),
+        };
+        (server, result)
+    }
+
+    #[tokio::test]
+    async fn resolve_short_sha_falls_back_to_commit()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let (_server, result) = resolve("abc1234").await;
+        assert_eq!(result?.as_str(), FULL_SHA);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn resolve_missing_name_skips_commit_lookup() {
+        let (server, result) = resolve("nope").await;
+        assert!(
+            matches!(result, Err(actup_core::Error::NotFound { .. })),
+            "{result:?}"
+        );
+        let requests = server.received_requests().await.unwrap_or_default();
+        assert!(requests.iter().all(|r| !r.url.path().contains("/commits/")));
+    }
+
+    const BASE: &str = "/api/v1/repos/o/r/git";
+    const MISSING: [&str; 2] = ["refs/refs/tags/REF", "refs/refs/heads/REF"];
+
+    fn commit_body() -> String {
+        let author = r#"{"name": "a", "email": "a@example.com", "date": "2026-01-01T00:00:00Z"}"#;
+        format!(
+            r#"{{"sha": "{FULL_SHA}", "url": "u", "html_url": "h", "commit": {{"message": "m", "author": {author}, "committer": {author}}}}}"#
+        )
     }
 }

@@ -20,6 +20,9 @@ use crate::{
 /// but the ref might still exist (e.g., older tags beyond `max_tags` limit).
 pub const NO_VERSIONS_FOUND_REASON: &str = "no versions found";
 
+/// Reason string for a short SHA ref that abbreviates a commit.
+pub const SHORT_SHA_REASON: &str = "short SHA; pin to the full 40-character commit";
+
 /// Result of checking a single action reference
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
@@ -192,6 +195,7 @@ fn should_respect_branch_policy_for_major_ref(
 struct Lookup {
     found: CheckStatus,
     missing: CheckStatus,
+    commit: Option<CheckStatus>,
 }
 
 /// Check action using pre-fetched versions and provider ref resolution.
@@ -221,7 +225,10 @@ pub async fn check_action_with_provider(
         .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
         .await
     {
-        Ok(_) => lookup.found,
+        Ok(sha) => match lookup.commit {
+            Some(commit) if action_ref.abbreviates(sha.as_str()) => commit,
+            _ => lookup.found,
+        },
         Err(e) if e.is_environment_error() => CheckStatus::Unresolvable {
             reason: e.to_string(),
             is_environment_error: true,
@@ -259,6 +266,11 @@ fn classify(
     }
 
     let ref_str = action_ref.ref_str();
+
+    if action_ref.is_short_sha() && versions.branch_sha(ref_str).is_none() {
+        return classify_short_sha(ref_str, policy.branch, versions);
+    }
+
     let current = version::Version::parse(ref_str);
 
     if !current.is_semver() {
@@ -283,6 +295,7 @@ fn classify(
                 Some(Lookup {
                     found: CheckStatus::UpToDate,
                     missing,
+                    commit: None,
                 }),
             );
         }
@@ -299,6 +312,7 @@ fn classify(
             Some(Lookup {
                 found,
                 missing: status,
+                commit: None,
             }),
         );
     }
@@ -325,8 +339,61 @@ fn classify_non_semver(
                 reason: format!("ref '{ref_name}' not found"),
                 is_environment_error: false,
             },
+            commit: None,
         }),
     )
+}
+
+/// Classify a short SHA ref that `versions` does not list as a branch.
+///
+/// A tag or branch with that name on another commit takes precedence and
+/// follows the branch policy.
+fn classify_short_sha(
+    ref_name: &str,
+    branch_policy: policy::Branch,
+    versions: &version::Set,
+) -> (CheckStatus, Option<Lookup>) {
+    let short = CheckStatus::Unresolvable {
+        reason: SHORT_SHA_REASON.into(),
+        is_environment_error: false,
+    };
+    (
+        short.clone(),
+        Some(Lookup {
+            found: status_for_non_semver(ref_name, branch_policy, versions),
+            missing: CheckStatus::Unresolvable {
+                reason: format!("ref '{ref_name}' not found"),
+                is_environment_error: false,
+            },
+            commit: Some(short),
+        }),
+    )
+}
+
+/// Resolve a short SHA ref to the full commit SHA it abbreviates.
+///
+/// Returns `None` when the ref is no short SHA, names a tag or branch on
+/// another commit, or the provider cannot resolve it.
+#[cfg_attr(
+    target_arch = "wasm32",
+    allow(
+        clippy::future_not_send,
+        reason = "wasm32 providers intentionally use non-Send boxed futures"
+    )
+)]
+pub async fn expand_short_sha(
+    action_ref: &ActionRef,
+    provider: &dyn provider::Provider,
+) -> Option<provider::Sha40> {
+    if !action_ref.is_short_sha() {
+        return None;
+    }
+    let repo_id = action_ref.to_repo_id().without_subpath();
+    provider
+        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
+        .await
+        .ok()
+        .filter(|sha| action_ref.abbreviates(sha.as_str()))
 }
 
 /// Determine status for a SHA-pinned ref.
@@ -511,6 +578,7 @@ mod tests {
     #[derive(Clone, Copy)]
     enum Resolve {
         Found,
+        To(&'static str),
         Missing,
         Offline,
     }
@@ -556,6 +624,7 @@ mod tests {
         ) -> crate::BoxFuture<'_, crate::Result<Sha40>> {
             let result = match self.lookup {
                 Resolve::Found => Ok(Sha40::new("a".repeat(40)).unwrap()),
+                Resolve::To(sha) => Ok(Sha40::new(sha).unwrap()),
                 Resolve::Missing => Err(Error::RefNotFound {
                     owner: repo.owner().to_string(),
                     repo: repo.repo().to_string(),
@@ -2081,6 +2150,128 @@ mod tests {
         let result = check_action_with_provider(&comma, &versions, &config, &provider).await;
         assert_eq!(result.status(), &unresolvable("ref 'v4,' not found", false));
         Ok(())
+    }
+
+    const SHORT_SHA_COMMIT: &str = "abc1234def5678abc1234def5678abc1234def56";
+
+    fn short_sha_status() -> CheckStatus {
+        unresolvable(SHORT_SHA_REASON, false)
+    }
+
+    #[tokio::test]
+    async fn test_short_sha_is_unresolvable_under_each_branch_policy() {
+        let versions = prerelease_set(&["v1.0.0"]);
+        let short = make_action_ref("actions", "checkout", "abc1234");
+        for branch in [
+            policy::Branch::Ignore,
+            policy::Branch::Warn,
+            policy::Branch::Update,
+        ] {
+            let config = branch_config(branch);
+            assert_eq!(
+                check_action(&short, &versions, &config).status(),
+                &short_sha_status(),
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&short, &versions, &config, Resolve::To(SHORT_SHA_COMMIT)).await,
+                short_sha_status(),
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&short, &versions, &config, Resolve::Missing).await,
+                unresolvable("ref 'abc1234' not found", false),
+                "{branch}"
+            );
+            assert_eq!(
+                status_with(&short, &versions, &config, Resolve::Offline).await,
+                unresolvable("network error during resolve: offline", true),
+                "{branch}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_digit_short_sha_is_not_compared_as_semver() {
+        let versions = prerelease_set(&["v1.0.0", "v2.0.0"]);
+        let action = make_action_ref("actions", "checkout", "1234567");
+        assert_eq!(
+            check_action(&action, &versions, &Config::default()).status(),
+            &short_sha_status()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_hex_named_ref_on_another_commit_follows_branch_policy() {
+        let versions = prerelease_set(&["v1.0.0"]);
+        let named = make_action_ref("actions", "checkout", "deadbee");
+        for (branch, want) in [
+            (policy::Branch::Ignore, CheckStatus::UpToDate),
+            (
+                policy::Branch::Warn,
+                CheckStatus::Floating {
+                    ref_name: "deadbee".to_string(),
+                },
+            ),
+        ] {
+            assert_eq!(
+                status_with(&named, &versions, &branch_config(branch), Resolve::Found).await,
+                want,
+                "{branch}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_listed_hex_branch_skips_short_sha_lookup() {
+        let versions = with_branch(prerelease_set(&["v1.0.0"]), "deadbee");
+        let named = make_action_ref("actions", "checkout", "deadbee");
+        assert_eq!(
+            status_with(
+                &named,
+                &versions,
+                &branch_config(policy::Branch::Warn),
+                Resolve::Missing
+            )
+            .await,
+            CheckStatus::Floating {
+                ref_name: "deadbee".to_string()
+            }
+        );
+        assert_eq!(
+            check_action(&named, &versions, &branch_config(policy::Branch::Update)).status(),
+            &CheckStatus::PinBranch {
+                ref_name: "deadbee".to_string(),
+                sha: "b".repeat(40),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn test_expand_short_sha_returns_only_the_abbreviated_commit() {
+        let short = make_action_ref("actions", "checkout", "abc1234");
+        let expanded = expand_short_sha(
+            &short,
+            &ResolveMockProvider::with(Resolve::To(SHORT_SHA_COMMIT)),
+        )
+        .await;
+        assert_eq!(expanded.as_ref().map(Sha40::as_str), Some(SHORT_SHA_COMMIT));
+        assert!(
+            expand_short_sha(&short, &ResolveMockProvider::with(Resolve::Found))
+                .await
+                .is_none()
+        );
+        assert!(
+            expand_short_sha(&short, &ResolveMockProvider::with(Resolve::Missing))
+                .await
+                .is_none()
+        );
+        let tag = make_action_ref("actions", "checkout", "v4");
+        assert!(
+            expand_short_sha(&tag, &ResolveMockProvider::with(Resolve::Found))
+                .await
+                .is_none()
+        );
     }
 
     #[test]

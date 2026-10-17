@@ -45,7 +45,7 @@ pub use parser::{UsesLocation, extract_uses_from_yaml, parse_action_path, parse_
 pub use policy::Update;
 pub use provider::Provider;
 pub use resolution::{
-    CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, check_action, check_action_remote,
-    check_action_with_provider,
+    CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, SHORT_SHA_REASON, check_action,
+    check_action_remote, check_action_with_provider, expand_short_sha,
 };
 pub use version::{BranchInfo, Info, Version};

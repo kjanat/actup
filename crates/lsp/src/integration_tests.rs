@@ -577,6 +577,59 @@ async fn code_action_returns_quickfix_for_outdated() {
 }
 
 #[tokio::test]
+async fn code_action_expands_short_sha() {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let uri = Uri::from_file_path("/test/shortsha.yml").unwrap();
+    let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@abc1234\n";
+    harness.notify(did_open_notification(&uri, text, 1)).await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut diag =
+        test_utils::make_unresolvable_diagnostic(test_utils::make_range(3, 31, 38), None);
+    diag.data = serde_json::to_value(crate::diagnostics::DiagnosticData::ExpandSha {
+        target_ref: test_utils::DUMMY_SHA.to_string(),
+        repin_comment: Some(" # v4.2.0".to_string()),
+        replace_end_col: None,
+    })
+    .ok();
+
+    let resp = harness
+        .request(code_action_request(11, &uri, diag.range, vec![diag]))
+        .await
+        .expect("codeAction should return a response");
+    let (_, body) = resp.into_parts();
+    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(body.unwrap()).unwrap();
+    let Some(CodeActionOrCommand::CodeAction(action)) = actions
+        .iter()
+        .find(|a| matches!(a, CodeActionOrCommand::CodeAction(c) if c.kind == Some(CodeActionKind::QUICKFIX)))
+    else {
+        panic!("expected a quickfix, got {actions:?}");
+    };
+    assert_eq!(action.title, "Expand to full SHA");
+    let Some(DocumentChanges::Edits(doc_edits)) = action
+        .edit
+        .as_ref()
+        .and_then(|e| e.document_changes.as_ref())
+    else {
+        panic!("expected document changes");
+    };
+    let [OneOf::Left(edit)] = doc_edits[0].edits.as_slice() else {
+        panic!("expected one text edit");
+    };
+    assert_eq!(
+        apply_text_edit(text, edit),
+        format!(
+            "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@{} # v4.2.0\n",
+            test_utils::DUMMY_SHA
+        )
+    );
+
+    harness.shutdown().await;
+}
+
+#[tokio::test]
 async fn code_action_empty_context_returns_none() {
     let mut harness = TestHarness::new();
     harness.initialize(None).await;

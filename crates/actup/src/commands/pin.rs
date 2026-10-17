@@ -1,6 +1,6 @@
 //! Pin command - pin all actions to their current SHA
 
-use std::path::Path;
+use std::{path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider,
@@ -15,6 +15,17 @@ use crate::{
     },
 };
 
+/// The commit a ref pins to.
+enum PinTarget {
+    /// A tag or branch ref on commit `sha`.
+    Named { sha: String },
+    /// A short SHA ref of commit `sha`, with the tag on that commit if any.
+    Expanded {
+        sha: String,
+        tag: Option<Arc<actup_core::Info>>,
+    },
+}
+
 /// Resolve the SHA for an action reference.
 ///
 /// First tries to find it in the version list, then falls back to resolving the ref directly.
@@ -22,7 +33,7 @@ async fn resolve_sha(
     provider: &dyn actup_core::Provider,
     action_ref: &ActionRef,
     errors: &mut ErrorTally,
-) -> Option<String> {
+) -> Option<PinTarget> {
     let repo_id = action_ref.to_repo_id().without_subpath();
 
     // Try to get versions first
@@ -41,7 +52,9 @@ async fn resolve_sha(
         .iter()
         .find(|v| v.version().to_string() == action_ref.ref_str())
     {
-        return Some(v.sha().to_string());
+        return Some(PinTarget::Named {
+            sha: v.sha().to_string(),
+        });
     }
 
     // Try to resolve the ref directly (might be a branch)
@@ -49,7 +62,17 @@ async fn resolve_sha(
         .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
         .await
     {
-        Ok(sha40) => Some(sha40.as_str().to_string()),
+        Ok(sha40) => {
+            let sha = sha40.as_str().to_string();
+            Some(if action_ref.abbreviates(&sha) {
+                PinTarget::Expanded {
+                    tag: versions.tag_on(&sha).cloned(),
+                    sha,
+                }
+            } else {
+                PinTarget::Named { sha }
+            })
+        }
         Err(e) => {
             eprintln!("{}: {} - {}", "Warning".yellow(), action_ref, e);
             errors.record(&e);
@@ -67,7 +90,8 @@ enum PinStep {
 /// Build the pin step for one action.
 ///
 /// SHA-pinned refs are re-pinned only when outdated (never unpinned); tag and
-/// branch refs are pinned to their current commit SHA.
+/// branch refs are pinned to their current commit SHA. A short SHA expands to
+/// the full SHA it abbreviates, commented with the tag on that commit if any.
 async fn pin_action_edit(
     provider: &dyn actup_core::Provider,
     action_ref: &ActionRef,
@@ -106,18 +130,37 @@ async fn pin_action_edit(
         else {
             return PinStep::Unplaceable;
         };
-        let Some(sha) = resolve_sha(provider, action_ref, errors).await else {
+        let Some(pin) = resolve_sha(provider, action_ref, errors).await else {
             return PinStep::Nothing;
         };
-        let new_uses = format!("{prefix}@{sha}");
-        let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
-            .with_comment(format!(" # {}", action_ref.ref_str()));
+        let (edit, target, show_comment) = match pin {
+            PinTarget::Expanded {
+                sha,
+                tag: Some(tag),
+            } => {
+                let Some(edit) = repin_sha_edit(loc, &tag) else {
+                    return PinStep::Unplaceable;
+                };
+                (edit, format!("{prefix}@{sha} # {}", tag.version()), false)
+            }
+            PinTarget::Expanded { sha, tag: None } => {
+                let new_uses = format!("{prefix}@{sha}");
+                let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone());
+                (edit, new_uses, false)
+            }
+            PinTarget::Named { sha } => {
+                let new_uses = format!("{prefix}@{sha}");
+                let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone())
+                    .with_comment(format!(" # {}", action_ref.ref_str()));
+                (edit, new_uses, true)
+            }
+        };
         let change = Change {
             action: action_ref.clone(),
             provider: provider.kind().to_string(),
             line: loc.line(),
-            target: new_uses,
-            show_comment: true,
+            target,
+            show_comment,
         };
         PinStep::Edit(edit, Box::new(change))
     }
@@ -608,6 +651,73 @@ mod tests {
         assert_eq!(
             file_edits.plan().content,
             format!("steps:\n  - uses: actions/cache@{new} # v4.2.0\n")
+        );
+        Ok(())
+    }
+
+    const FULL_SHA: &str = "abc1234def5678abc1234def5678abc1234def56";
+
+    fn pin_provider(tags: &[(&str, &str)], resolves_to: &str) -> Option<FixedShaProvider> {
+        let tags = tags
+            .iter()
+            .map(|(tag, sha)| Arc::new(version::Info::new(version::Version::parse(tag), *sha)))
+            .collect();
+        Some(FixedShaProvider {
+            sha: Sha40::new(resolves_to)?,
+            versions: version::Set::build(tags, HashMap::new(), HashMap::new(), None),
+        })
+    }
+
+    async fn pinned_line(provider: &FixedShaProvider, line: &str) -> Option<String> {
+        let content = format!("steps:\n{line}\n");
+        let (loc, action_ref) = WorkflowScanner::extract_actions(&content).next()?;
+        let mut errors = ErrorTally::default();
+        let PinStep::Edit(edit, change) =
+            pin_action_edit(provider, &action_ref, &loc, &Config::default(), &mut errors).await
+        else {
+            return None;
+        };
+        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
+        file_edits.add(edit, *change);
+        file_edits.plan().content.lines().nth(1).map(str::to_owned)
+    }
+
+    #[tokio::test]
+    async fn pin_expands_short_sha_with_tag_comment() -> Result<(), Box<dyn std::error::Error>> {
+        let provider = pin_provider(&[("v4", FULL_SHA), ("v4.2.0", FULL_SHA)], FULL_SHA)
+            .ok_or("fixture SHA must be valid")?;
+        assert_eq!(
+            pinned_line(&provider, "  - uses: o/r@abc1234").await,
+            Some(format!("  - uses: o/r@{FULL_SHA} # v4.2.0"))
+        );
+        assert_eq!(
+            pinned_line(&provider, "  - uses: o/r@abc1234 # v4.1.0").await,
+            Some(format!("  - uses: o/r@{FULL_SHA} # v4.2.0"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_expands_untagged_short_sha_without_comment()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let other = "b".repeat(40);
+        let provider =
+            pin_provider(&[("v4.2.0", &other)], FULL_SHA).ok_or("fixture SHA must be valid")?;
+        assert_eq!(
+            pinned_line(&provider, "  - uses: o/r@abc1234").await,
+            Some(format!("  - uses: o/r@{FULL_SHA}"))
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_treats_hex_ref_on_another_commit_as_a_name()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let other = "c".repeat(40);
+        let provider = pin_provider(&[], &other).ok_or("fixture SHA must be valid")?;
+        assert_eq!(
+            pinned_line(&provider, "  - uses: o/r@deadbee").await,
+            Some(format!("  - uses: o/r@{other} # deadbee"))
         );
         Ok(())
     }

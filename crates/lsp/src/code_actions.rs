@@ -2,6 +2,7 @@
 //!
 //! Produces [`CodeAction`]s from diagnostics, enabling:
 //! - Single-ref quick fixes (e.g. "Update to vX.Y.Z") for outdated refs
+//! - "Expand to full SHA" quick fixes for short SHA refs
 //! - Fix-all-in-file source action that updates every outdated ref at once
 //!
 //! Entry points:
@@ -148,6 +149,31 @@ pub fn code_actions_for_diagnostics(
 
                 actions.push(CodeActionOrCommand::CodeAction(CodeAction {
                     title: format!("Update to {}", display_ref(&target_ref)),
+                    kind: Some(CodeActionKind::QUICKFIX),
+                    diagnostics: Some(vec![diag.clone()]),
+                    edit: Some(make_edit(
+                        uri,
+                        version,
+                        vec![edit],
+                        supports_document_changes,
+                    )),
+                    is_preferred: Some(true),
+                    ..Default::default()
+                }));
+            }
+            DiagnosticData::ExpandSha {
+                target_ref,
+                repin_comment,
+                replace_end_col,
+            } => {
+                let edit = outdated_text_edit(
+                    diag.range,
+                    &target_ref,
+                    repin_comment.as_deref(),
+                    replace_end_col,
+                );
+                actions.push(CodeActionOrCommand::CodeAction(CodeAction {
+                    title: "Expand to full SHA".to_string(),
                     kind: Some(CodeActionKind::QUICKFIX),
                     diagnostics: Some(vec![diag.clone()]),
                     edit: Some(make_edit(
@@ -488,6 +514,34 @@ mod tests {
     }
 
     #[test]
+    fn expand_sha_diagnostic_produces_quickfix() {
+        let mut diag = make_unresolvable_diagnostic(make_range(6, 31, 38), None);
+        diag.data = serde_json::to_value(DiagnosticData::ExpandSha {
+            target_ref: test_utils::DUMMY_SHA.to_string(),
+            repin_comment: Some(" # v4.2.0".to_string()),
+            replace_end_col: Some(48),
+        })
+        .ok();
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+
+        let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
+        let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
+            panic!("expected one code action, got {actions:?}");
+        };
+        assert_eq!(action.title, "Expand to full SHA");
+        assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
+        assert_eq!(action.is_preferred, Some(true));
+        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        assert_eq!(
+            edits,
+            [&TextEdit {
+                range: make_range(6, 31, 48),
+                new_text: format!("{} # v4.2.0", test_utils::DUMMY_SHA),
+            }]
+        );
+    }
+
+    #[test]
     fn unresolvable_with_suggestion_produces_quickfix() {
         let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
@@ -688,7 +742,9 @@ mod tests {
 
         match back {
             DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v5.0.0"),
-            DiagnosticData::Unresolvable { .. } => panic!("wrong variant"),
+            DiagnosticData::Unresolvable { .. } | DiagnosticData::ExpandSha { .. } => {
+                panic!("wrong variant")
+            }
         }
     }
 
@@ -704,7 +760,9 @@ mod tests {
             DiagnosticData::Unresolvable { suggested_ref } => {
                 assert_eq!(suggested_ref.as_deref(), Some("v3.1.0"));
             }
-            DiagnosticData::Outdated { .. } => panic!("wrong variant"),
+            DiagnosticData::Outdated { .. } | DiagnosticData::ExpandSha { .. } => {
+                panic!("wrong variant")
+            }
         }
     }
 
