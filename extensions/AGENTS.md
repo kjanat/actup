@@ -31,7 +31,7 @@ workspace** — they have independent build systems.
   (`[grammars.yaml]` `repository` + `rev`); `grammars/` is git-ignored
 - Custom tree-sitter queries in `languages/github_actions/` (highlights,
   injections, outline)
-- Entry: `src/lib.rs` (single file)
+- Entry: `src/lib.rs`
 
 ## Where to Look
 
