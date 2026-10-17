@@ -101,13 +101,19 @@ pub enum CheckStatus {
 /// Handles major-only refs like "v4" matching any v4.x.x,
 /// and minor-only refs like "v4.2" matching any v4.2.x.
 /// Under [`policy::Track::Exact`] only the identical version is current.
+/// A tag that differs from `current` only in spelling (`v` prefix, build
+/// metadata) counts as identical when `current` exists as a tag in `versions`.
 fn is_version_current(
     current: &version::Version,
     target: Option<&Arc<version::Info>>,
     track: policy::Track,
+    versions: &version::Set,
 ) -> bool {
+    let identical = |t: &version::Version| {
+        t == current || (same_release(t, current) && versions.has_exact_tag(current.as_str()))
+    };
     if track == policy::Track::Exact {
-        return target.is_some_and(|t| t.version() == current);
+        return target.is_some_and(|t| identical(t.version()));
     }
     match (current, target) {
         // For major-only refs (v4), compare major versions
@@ -130,9 +136,35 @@ fn is_version_current(
             },
             Some(t),
         ) => t.version().major() == Some(*major) && t.version().minor() == Some(*minor),
-        // For full semver, compare Version values directly
-        (_, Some(t)) => t.version() == current,
+        (_, Some(t)) => identical(t.version()),
         (_, None) => false,
+    }
+}
+
+fn same_release(a: &version::Version, b: &version::Version) -> bool {
+    match (a, b) {
+        (
+            version::Version::Semver {
+                major,
+                minor,
+                patch,
+                prerelease,
+                ..
+            },
+            version::Version::Semver {
+                major: other_major,
+                minor: other_minor,
+                patch: other_patch,
+                prerelease: other_prerelease,
+                ..
+            },
+        ) => {
+            major == other_major
+                && minor == other_minor
+                && patch == other_patch
+                && prerelease == other_prerelease
+        }
+        _ => false,
     }
 }
 
@@ -251,7 +283,7 @@ pub fn check_action(
     let target = find_best_target(versions, &current, policy);
 
     // Check if current is up-to-date (handles v4 == v4.1.7 via major comparison)
-    if is_version_current(&current, target.as_ref(), policy.track) {
+    if is_version_current(&current, target.as_ref(), policy.track, versions) {
         // For major-only refs (like "v4" or "6"), verify the exact tag exists.
         // Prevents false "up to date" when user writes "6" but only "v6" exists.
         if current.is_major_only() && !versions.has_exact_tag(action_ref.ref_str()) {
@@ -314,7 +346,8 @@ fn check_pinned_sha(
 
     match target {
         Some(t)
-            if t.sha() != sha && !is_version_current(pinned.version(), Some(&t), policy.track) =>
+            if t.sha() != sha
+                && !is_version_current(pinned.version(), Some(&t), policy.track, versions) =>
         {
             CheckResult::new(
                 action_ref.clone(),
@@ -1542,6 +1575,55 @@ mod tests {
         assert_eq!(
             target_under(disable, &other, &versions)?.as_deref(),
             Some("v2.1.0-rc.1")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_twin_build_tag_on_same_commit_is_current() -> Result<(), Box<dyn std::error::Error>> {
+        let sha = "1111111111111111111111111111111111111111";
+        let versions = make_version_set(
+            vec![
+                make_version_info("v1.0.0", sha),
+                make_version_info("v1.0.0+build", sha),
+            ],
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        let twin = make_action_ref("actions", "checkout", "v1.0.0+build");
+        let bare = make_action_ref("actions", "checkout", "1.0.0");
+        for track in ["keep", "major", "exact"] {
+            let config = format!("[policy]\ntrack = \"{track}\"");
+            assert_eq!(
+                target_under(&config, &twin, &versions)?,
+                None,
+                "track = {track}"
+            );
+            assert_eq!(
+                target_under(&config, &bare, &versions)?.as_deref(),
+                Some("v1.0.0"),
+                "track = {track}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_track_major_moves_full_ref_to_major_tag_of_same_release()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let sha = "6666666666666666666666666666666666666666";
+        let v6_major = make_version_info("v6", sha);
+        let versions = make_version_set(
+            vec![make_version_info("v6.0.0", sha), v6_major.clone()],
+            None,
+            HashMap::new(),
+            HashMap::from([(6, v6_major)]),
+        );
+        let action = make_action_ref("actions", "checkout", "v6.0.0");
+        assert_eq!(
+            target_under("[policy]\ntrack = \"major\"", &action, &versions)?.as_deref(),
+            Some("v6")
         );
         Ok(())
     }
