@@ -651,9 +651,14 @@ impl LanguageServer for LspBackend {
             meta_cache: &self.action_meta_cache,
             encoding,
         };
-        let hover =
-            crate::hover::compute_hover(&doc.text, position, Some(doc.version_sets.as_ref()), &ctx)
-                .await;
+        let hover = crate::hover::compute_hover(
+            &doc.text,
+            crate::diagnostics::uri_format(&uri),
+            position,
+            Some(doc.version_sets.as_ref()),
+            &ctx,
+        )
+        .await;
 
         Ok(hover)
     }

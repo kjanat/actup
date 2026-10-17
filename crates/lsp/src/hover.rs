@@ -10,9 +10,9 @@ use std::{
 };
 
 use actup_core::{
-    ActionRef, Clock, Config, SystemClock,
+    ActionRef, Clock, Config, SourceFormat, SystemClock,
     cache::Staleness,
-    check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
+    check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     version,
 };
@@ -135,10 +135,11 @@ struct LocatedActionForHover {
 /// and for use in the returned hover range.
 fn find_action_at_position(
     text: &str,
+    format: SourceFormat,
     position: Position,
     encoding: crate::position::PositionEncoding,
 ) -> Option<LocatedActionForHover> {
-    let locations = extract_uses_from_yaml(text);
+    let locations = format.extract_uses(text);
 
     for loc in locations {
         let Some(line_0) = loc
@@ -392,11 +393,12 @@ fn build_hover_content(
 /// reference is local/docker.
 pub async fn compute_hover(
     text: &str,
+    format: SourceFormat,
     position: Position,
     document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
     ctx: &HoverContext<'_>,
 ) -> Option<Hover> {
-    let located = find_action_at_position(text, position, ctx.encoding)?;
+    let located = find_action_at_position(text, format, position, ctx.encoding)?;
     let repo_id = located.action_ref.to_repo_id().without_subpath();
 
     let ignored = ctx.config.should_ignore(&located.action_ref);
@@ -554,8 +556,13 @@ mod tests {
             line: 0,
             character: 20,
         };
-        let located =
-            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).unwrap();
+        let located = find_action_at_position(
+            yaml,
+            SourceFormat::Yaml,
+            pos,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .unwrap();
         assert_eq!(located.action_ref.owner(), "actions");
         assert_eq!(located.action_ref.repo(), "checkout");
         assert_eq!(located.action_ref.ref_str(), "v4");
@@ -577,7 +584,12 @@ mod tests {
                     crate::position::PositionEncoding::Utf16,
                 ),
             };
-            find_action_at_position(&yaml, position, crate::position::PositionEncoding::Utf16)
+            find_action_at_position(
+                &yaml,
+                SourceFormat::Yaml,
+                position,
+                crate::position::PositionEncoding::Utf16,
+            )
         };
         let span = |needle: &str| {
             let Some(start) = line.find(needle) else {
@@ -620,7 +632,13 @@ mod tests {
             character: 5,
         };
         assert!(
-            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).is_none()
+            find_action_at_position(
+                yaml,
+                SourceFormat::Yaml,
+                pos,
+                crate::position::PositionEncoding::Utf16
+            )
+            .is_none()
         );
     }
 
@@ -632,7 +650,13 @@ mod tests {
             character: 20,
         };
         assert!(
-            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).is_none()
+            find_action_at_position(
+                yaml,
+                SourceFormat::Yaml,
+                pos,
+                crate::position::PositionEncoding::Utf16
+            )
+            .is_none()
         );
     }
 
@@ -644,7 +668,13 @@ mod tests {
             character: 18,
         };
         assert!(
-            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).is_none()
+            find_action_at_position(
+                yaml,
+                SourceFormat::Yaml,
+                pos,
+                crate::position::PositionEncoding::Utf16
+            )
+            .is_none()
         );
     }
 
@@ -658,7 +688,12 @@ mod tests {
         };
         // Should still be within bounds (inclusive end).
         // value is "actions/checkout@v4" = 19 chars, starts at col 14, ends at 33
-        let located = find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16);
+        let located = find_action_at_position(
+            yaml,
+            SourceFormat::Yaml,
+            pos,
+            crate::position::PositionEncoding::Utf16,
+        );
         // 33 == value_col_end, we use `>` not `>=` for end check
         assert!(located.is_none());
     }
@@ -670,8 +705,13 @@ mod tests {
             line: 0,
             character: 14, // start of value
         };
-        let located =
-            find_action_at_position(yaml, pos, crate::position::PositionEncoding::Utf16).unwrap();
+        let located = find_action_at_position(
+            yaml,
+            SourceFormat::Yaml,
+            pos,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .unwrap();
         assert_eq!(located.action_ref.repo(), "checkout");
     }
 
@@ -1021,7 +1061,7 @@ mod tests {
             meta_cache: &meta_cache,
             encoding: crate::position::PositionEncoding::Utf16,
         };
-        let hover = compute_hover(text, position, None, &ctx).await;
+        let hover = compute_hover(text, SourceFormat::Yaml, position, None, &ctx).await;
         let hover = hover.unwrap();
 
         match &hover.contents {
@@ -1058,7 +1098,7 @@ mod tests {
             line: 0,
             character: 20,
         };
-        match compute_hover(&text, position, None, &ctx).await {
+        match compute_hover(&text, SourceFormat::Yaml, position, None, &ctx).await {
             Some(Hover {
                 contents: HoverContents::Markup(mc),
                 ..
@@ -1135,10 +1175,14 @@ mod tests {
             Some(HoverContents::Markup(mc)) => Ok(mc.value),
             other => Err(format!("expected Markup hover contents, got: {other:?}")),
         };
-        let ignored = markdown(compute_hover(text, Position::new(0, 20), None, &ctx).await)?;
+        let ignored = markdown(
+            compute_hover(text, SourceFormat::Yaml, Position::new(0, 20), None, &ctx).await,
+        )?;
         assert!(ignored.contains("Ignored by config"), "{ignored}");
         assert!(!ignored.contains("no provider available"), "{ignored}");
-        let kept = markdown(compute_hover(text, Position::new(1, 20), None, &ctx).await)?;
+        let kept = markdown(
+            compute_hover(text, SourceFormat::Yaml, Position::new(1, 20), None, &ctx).await,
+        )?;
         assert!(kept.contains("no provider available"), "{kept}");
         Ok(())
     }
@@ -1164,7 +1208,7 @@ mod tests {
             meta_cache: &meta_cache,
             encoding: crate::position::PositionEncoding::Utf16,
         };
-        let hover = compute_hover(text, position, None, &ctx).await;
+        let hover = compute_hover(text, SourceFormat::Yaml, position, None, &ctx).await;
         assert!(hover.is_none(), "expected no hover for non-uses line");
     }
 
@@ -1193,7 +1237,9 @@ mod tests {
             meta_cache: &meta_cache,
             encoding: crate::position::PositionEncoding::Utf16,
         };
-        let hover = compute_hover(text, position, None, &ctx).await.unwrap();
+        let hover = compute_hover(text, SourceFormat::Yaml, position, None, &ctx)
+            .await
+            .unwrap();
 
         match &hover.contents {
             HoverContents::Markup(mc) => {
@@ -1237,9 +1283,15 @@ mod tests {
             line: 0,
             character: 20,
         };
-        let hover = compute_hover("      - uses: actions/checkout@v3\n", position, None, &ctx)
-            .await
-            .ok_or("expected a hover")?;
+        let hover = compute_hover(
+            "      - uses: actions/checkout@v3\n",
+            SourceFormat::Yaml,
+            position,
+            None,
+            &ctx,
+        )
+        .await
+        .ok_or("expected a hover")?;
         let HoverContents::Markup(markup) = &hover.contents else {
             return Err(format!("expected Markup, got {:?}", hover.contents).into());
         };
@@ -1292,6 +1344,7 @@ mod tests {
 
         let hover = compute_hover(
             "      - uses: actions/checkout@v3\n",
+            SourceFormat::Yaml,
             Position {
                 line: 0,
                 character: 20,
@@ -1370,7 +1423,14 @@ mod tests {
             meta_cache: &meta_cache,
             encoding: crate::position::PositionEncoding::Utf16,
         };
-        let hover = compute_hover(text, position, Some(&diagnostics.version_sets), &ctx).await;
+        let hover = compute_hover(
+            text,
+            SourceFormat::Yaml,
+            position,
+            Some(&diagnostics.version_sets),
+            &ctx,
+        )
+        .await;
 
         assert!(hover.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -1470,7 +1530,13 @@ mod tests {
             character: 0,
         };
         assert!(
-            find_action_at_position("", pos, crate::position::PositionEncoding::Utf16).is_none()
+            find_action_at_position(
+                "",
+                SourceFormat::Yaml,
+                pos,
+                crate::position::PositionEncoding::Utf16
+            )
+            .is_none()
         );
     }
 

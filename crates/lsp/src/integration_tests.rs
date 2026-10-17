@@ -1562,6 +1562,50 @@ async fn hover_on_uses_line_returns_response() {
 }
 
 #[tokio::test]
+async fn hover_reads_markdown_and_plain_text_documents() -> Result<(), Box<dyn std::error::Error>> {
+    let mut harness = TestHarness::new();
+    harness.initialize(None).await;
+
+    let cases = [
+        (
+            "/test/USAGE.md",
+            "# Usage\n\n```yaml\nsteps:\n  - uses: actions/checkout@v3\n```\n",
+            Position::new(4, 20),
+            Range::new(Position::new(4, 10), Position::new(4, 29)),
+        ),
+        (
+            "/test/steps.ts",
+            "export const step = { uses: \"actions/checkout@v3\" };\n",
+            Position::new(0, 35),
+            Range::new(Position::new(0, 29), Position::new(0, 48)),
+        ),
+    ];
+    for (id, (path, text, position, range)) in (30..).zip(cases) {
+        let uri = Uri::from_file_path(path).ok_or("bad uri")?;
+        harness.notify(did_open_notification(&uri, text, 1)).await;
+        harness
+            .wait_for_diagnostics(&uri, Duration::from_secs(5))
+            .await;
+        let value = harness
+            .request(hover_request(id, &uri, position))
+            .await
+            .ok_or("hover should return a response")?
+            .into_parts()
+            .1?;
+        let hover: tower_lsp_server::ls_types::Hover = serde_json::from_value(value)?;
+        assert_eq!(hover.range, Some(range), "{path}");
+        let tower_lsp_server::ls_types::HoverContents::Markup(markup) = hover.contents else {
+            panic!("expected markup hover in {path}");
+        };
+        assert!(markup.value.contains("actions/checkout"), "{path}");
+        assert!(markup.value.contains("v4.2.0"), "{path}: {}", markup.value);
+    }
+
+    harness.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test]
 async fn hover_on_non_uses_line_returns_null() {
     let mut harness = TestHarness::new();
     harness.initialize(None).await;
