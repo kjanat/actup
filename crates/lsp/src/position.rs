@@ -106,23 +106,26 @@ pub fn col_to_byte(line: &str, col: u32, encoding: PositionEncoding) -> usize {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::cast_possible_truncation)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
+    type TestResult = Result<(), std::num::TryFromIntError>;
+
     #[test]
-    fn ascii_offsets_are_identity() {
+    fn ascii_offsets_are_identity() -> TestResult {
         let line = "      - uses: actions/checkout@v4";
         for enc in [PositionEncoding::Utf8, PositionEncoding::Utf16] {
             for offset in 0..=line.len() {
-                assert_eq!(byte_to_col(line, offset, enc), offset as u32);
-                assert_eq!(col_to_byte(line, offset as u32, enc), offset);
+                assert_eq!(byte_to_col(line, offset, enc), u32::try_from(offset)?);
+                assert_eq!(col_to_byte(line, u32::try_from(offset)?, enc), offset);
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn utf8_encoding_is_identity() {
+    fn utf8_encoding_is_identity() -> TestResult {
         // "données" has é (2 bytes UTF-8, 1 UTF-16 code unit)
         let line = "uses: owner/repo/données/action@v1";
         let byte_offset = line.find("action").unwrap();
@@ -130,16 +133,17 @@ mod tests {
         // UTF-8: byte offset is the column
         assert_eq!(
             byte_to_col(line, byte_offset, PositionEncoding::Utf8),
-            byte_offset as u32
+            u32::try_from(byte_offset)?
         );
         assert_eq!(
-            col_to_byte(line, byte_offset as u32, PositionEncoding::Utf8),
+            col_to_byte(line, u32::try_from(byte_offset)?, PositionEncoding::Utf8),
             byte_offset
         );
+        Ok(())
     }
 
     #[test]
-    fn utf16_handles_multibyte_chars() {
+    fn utf16_handles_multibyte_chars() -> TestResult {
         // "é" is 2 bytes UTF-8, 1 UTF-16 code unit
         let line = "uses: owner/repo/données/action@v1";
         let e_acute_byte = line.find('é').unwrap();
@@ -148,18 +152,19 @@ mod tests {
         // Before é: UTF-8 == UTF-16
         assert_eq!(
             byte_to_col(line, e_acute_byte, PositionEncoding::Utf16),
-            e_acute_byte as u32,
+            u32::try_from(e_acute_byte)?,
         );
 
         // After é: UTF-16 col is 1 less than byte offset (2 bytes → 1 code unit)
         assert_eq!(
             byte_to_col(line, after_accent_byte, PositionEncoding::Utf16),
-            (after_accent_byte - 1) as u32,
+            u32::try_from(after_accent_byte - 1)?,
         );
+        Ok(())
     }
 
     #[test]
-    fn utf16_handles_non_bmp_emoji() {
+    fn utf16_handles_non_bmp_emoji() -> TestResult {
         // 🎉 is 4 bytes UTF-8, 2 UTF-16 code units (surrogate pair)
         let line = "uses: owner/repo@release-🎉-v1";
         let emoji_byte = line.find('🎉').unwrap();
@@ -168,14 +173,15 @@ mod tests {
         // Before emoji: all ASCII, offsets match
         assert_eq!(
             byte_to_col(line, emoji_byte, PositionEncoding::Utf16),
-            emoji_byte as u32,
+            u32::try_from(emoji_byte)?,
         );
 
         // After emoji: 4 bytes → 2 UTF-16 code units, so col is 2 less
         assert_eq!(
             byte_to_col(line, after_emoji_byte, PositionEncoding::Utf16),
-            (after_emoji_byte - 2) as u32,
+            u32::try_from(after_emoji_byte - 2)?,
         );
+        Ok(())
     }
 
     #[test]

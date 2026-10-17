@@ -1750,9 +1750,9 @@ fn apply_text_edit(text: &str, edit: &TextEdit) -> String {
     let lines: Vec<&str> = text.split('\n').collect();
     let mut result = String::new();
     for (i, line) in lines.iter().enumerate() {
-        #[allow(clippy::cast_possible_truncation)]
-        let i_u32 = i as u32;
-        if i_u32 == edit.range.start.line && i_u32 == edit.range.end.line {
+        let on_edit_line = u32::try_from(i)
+            .is_ok_and(|line| line == edit.range.start.line && line == edit.range.end.line);
+        if on_edit_line {
             let start = edit.range.start.character as usize;
             let end = edit.range.end.character as usize;
             result.push_str(&line[..start]);

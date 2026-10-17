@@ -72,7 +72,7 @@ edits that pass on their own.
 
 ## Conventions
 
-- `#[allow(clippy::cast_possible_truncation)]` for LSP u32 position conversions
+- LSP `u32` positions use `u32::try_from`
 - `#[allow(deprecated)]` for backward-compat with `root_uri`/`root_path` LSP
   fields
 - Diagnostics: Warning (outdated), Error (unresolvable), Info
