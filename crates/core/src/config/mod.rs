@@ -453,7 +453,7 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Cache {
-    /// Cache time-to-live in seconds
+    /// Seconds a fetched answer stays fresh, on disk and in the memory of `actup-lsp` and `actup-mcp`
     #[serde(
         serialize_with = "serialize_duration_secs",
         deserialize_with = "deserialize_duration_secs"

@@ -10,7 +10,9 @@ mod output;
 
 use std::process::ExitCode;
 
-use actup_core::{Config, Registration, provider, user_config_path, validate_no_duplicate_presets};
+use actup_core::{
+    Config, Registration, Retention, provider, user_config_path, validate_no_duplicate_presets,
+};
 use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, CliExitCode, Command};
@@ -171,7 +173,7 @@ pub(crate) fn available_registrations() -> Vec<&'static Registration> {
 }
 
 fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
-    provider::Registry::from_config(config, &available_registrations())
+    provider::Registry::from_config(config, &available_registrations(), &Retention::Run)
 }
 
 #[cfg(test)]

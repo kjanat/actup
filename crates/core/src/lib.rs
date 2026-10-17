@@ -33,7 +33,7 @@ pub mod version;
 pub use action_ref::{ActionRef, ActionRepoId};
 #[cfg(not(target_arch = "wasm32"))]
 pub use atomic_write::{resolve_within, rewrite_atomic, write_atomic};
-pub use caching_provider::{CacheStats, CachingProvider};
+pub use caching_provider::{CacheStats, CachingProvider, Retention};
 pub use clock::{Clock, SystemClock};
 pub use compat::{BoxFuture, MaybeSend, MaybeSync};
 pub use config::{

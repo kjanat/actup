@@ -16,9 +16,10 @@ mod write;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::SystemTime,
 };
 
-use actup_core::{Config, provider::Registry};
+use actup_core::{Clock, Config, SystemClock, provider::Registry};
 pub use confine::{Refusal, Root};
 use rust_mcp_sdk::{
     McpServer, StdioTransport, ToMcpServerHandler, TransportOptions,
@@ -40,7 +41,7 @@ use crate::{args::input_schema, report::Reply};
 pub const INSTRUCTIONS: &str = "\
 actup checks and updates GitHub-compatible Actions `uses:` refs in workflows and composite actions.
 
-Read tools (no side effects, results cached for the server's lifetime):
+Read tools (no side effects, results reused for `cache.ttl` seconds):
 - getVersions: semver tags, the latest tag, and with includeBranches the branches of a repository.
 - getLatest: the version that the configured policy (or policyOverride) moves currentRef to.
 - actionGetReadme / actionGetActionYml: README and action.yml at a ref (default branch when omitted).
@@ -49,7 +50,8 @@ Mutators (write files; pass dryRun: true to plan without writing):
 - updateFile: replace the ref of named `uses:` values in one file. Every edit applies or none does. \
 Only the text after `@` changes; a trailing comment stays as written.
 - updateAllUsesToVersion: move every reference to one action under workspaceRoot to targetRef. \
-SHA-pinned references stay pinned: the provider resolves targetRef to its commit and the line keeps a `# <ref>` comment.
+SHA-pinned references stay pinned: the provider resolves targetRef to its current commit on every call \
+and the line keeps a `# <ref>` comment.
 
 Every path must resolve inside the server root (its working directory or --root). \
 Paths that escape it, including through symlinks, are refused.
@@ -75,17 +77,23 @@ pub struct Server {
     config: Config,
     registry: Registry,
     root: Root,
-    memo: Mutex<HashMap<String, Reply>>,
+    clock: Arc<dyn Clock>,
+    memo: Mutex<HashMap<String, (Reply, SystemTime)>>,
 }
 
 impl Server {
     /// Serve `registry` under `config`, confining every path to `root`.
     #[must_use]
     pub fn new(config: Config, registry: Registry, root: Root) -> Self {
+        Self::with_clock(config, registry, root, Arc::new(SystemClock))
+    }
+
+    fn with_clock(config: Config, registry: Registry, root: Root, clock: Arc<dyn Clock>) -> Self {
         Self {
             config,
             registry,
             root,
+            clock,
             memo: Mutex::new(HashMap::new()),
         }
     }
@@ -202,19 +210,24 @@ impl Server {
             "{name}:{}",
             serde_json::to_string(args).map_err(CallToolError::new)?
         );
-        if let Some(hit) = self
-            .memo
-            .lock()
-            .ok()
-            .and_then(|memo| memo.get(&key).cloned())
-        {
+        let ttl = self.config.cache.ttl;
+        if let Some(hit) = self.memo.lock().ok().and_then(|memo| {
+            memo.get(&key)
+                .filter(|(_, at)| {
+                    self.clock
+                        .now()
+                        .duration_since(*at)
+                        .is_ok_and(|age| age <= ttl)
+                })
+                .map(|(reply, _)| reply.clone())
+        }) {
             return Ok(hit);
         }
         let reply = run.await?;
         if reply.succeeded()
             && let Ok(mut memo) = self.memo.lock()
         {
-            memo.insert(key, reply.clone());
+            memo.insert(key, (reply.clone(), self.clock.now()));
         }
         Ok(reply)
     }
@@ -304,15 +317,37 @@ pub async fn serve_stdio(server: Server) -> SdkResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::{
+        sync::atomic::{AtomicUsize, Ordering},
+        time::Duration,
+    };
 
     use actup_core::{
-        ActionRepoId, BoxFuture,
+        ActionRepoId, BoxFuture, CachingProvider, Retention,
         provider::{ActionYml, Kind, Provider, Sha40},
         version,
     };
 
     use super::*;
+
+    #[derive(Debug)]
+    struct StepClock(Mutex<SystemTime>);
+
+    impl StepClock {
+        fn advance(&self, by: Duration) {
+            if let Ok(mut now) = self.0.lock()
+                && let Some(moved) = now.checked_add(by)
+            {
+                *now = moved;
+            }
+        }
+    }
+
+    impl Clock for StepClock {
+        fn now(&self) -> SystemTime {
+            self.0.lock().map_or(SystemTime::UNIX_EPOCH, |now| *now)
+        }
+    }
 
     struct CountingProvider(Arc<AtomicUsize>);
 
@@ -337,13 +372,17 @@ mod tests {
             _repo: &ActionRepoId,
             ref_name: &str,
         ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
-            let err = actup_core::Error::RefNotFound {
-                owner: String::new(),
-                repo: String::new(),
-                ref_name: ref_name.to_string(),
-                host: None,
-            };
-            Box::pin(async move { Err(err) })
+            let calls = self.0.fetch_add(1, Ordering::SeqCst);
+            let result = ["b", "c"]
+                .get(calls)
+                .and_then(|c| Sha40::new(c.repeat(40)))
+                .ok_or_else(|| actup_core::Error::RefNotFound {
+                    owner: String::new(),
+                    repo: String::new(),
+                    ref_name: ref_name.to_string(),
+                    host: None,
+                });
+            Box::pin(async move { result })
         }
 
         fn get_default_branch(
@@ -387,7 +426,11 @@ mod tests {
         let mut registry = Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(CountingProvider(Arc::clone(&calls))));
-        let server = Server::new(Config::default(), registry, Root::new(dir.path())?);
+        let clock = Arc::new(StepClock(Mutex::new(SystemTime::UNIX_EPOCH)));
+        let dyn_clock: Arc<dyn Clock> = clock.clone();
+        let config = Config::default();
+        let ttl = config.cache.ttl;
+        let server = Server::with_clock(config, registry, Root::new(dir.path())?, dyn_clock);
         let args = |reference: &str| {
             let Value::Object(args) =
                 serde_json::json!({ "owner": "a", "repo": "b", "ref": reference })
@@ -408,6 +451,48 @@ mod tests {
         assert_eq!(second, first);
         assert_eq!(other, Some(Value::from("call 2")));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        clock.advance(ttl);
+        let held = readme(server.call(README, args("v1")).await?);
+        assert_eq!(held, Some(Value::from("call 1")));
+        clock.advance(Duration::from_secs(1));
+        let expired = readme(server.call(README, args("v1")).await?);
+        assert_eq!(expired, Some(Value::from("call 3")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_all_resolves_a_fresh_sha_on_every_call()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflow = dir.path().join(".github/workflows/ci.yml");
+        std::fs::create_dir_all(dir.path().join(".github/workflows"))?;
+        std::fs::write(
+            &workflow,
+            format!("steps:\n  - uses: a/b@{} # main\n", "a".repeat(40)),
+        )?;
+        let mut registry = Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(CachingProvider::with_retention(
+            CountingProvider(Arc::new(AtomicUsize::new(0))),
+            Retention::expiring(Config::default().cache.ttl),
+        )));
+        let server = Server::new(Config::default(), registry, Root::new(dir.path())?);
+        let Value::Object(args) = serde_json::json!({
+            "workspaceRoot": ".",
+            "match": { "owner": "a", "repo": "b" },
+            "targetRef": "main",
+        }) else {
+            unreachable!("object literal");
+        };
+        for sha in ["b", "c"] {
+            let result = server.call(UPDATE_ALL, Some(args.clone())).await?;
+            assert_eq!(result.is_error, None, "{result:?}");
+            assert_eq!(
+                std::fs::read_to_string(&workflow)?,
+                format!("steps:\n  - uses: a/b@{} # main\n", sha.repeat(40))
+            );
+        }
         Ok(())
     }
 

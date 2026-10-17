@@ -1,6 +1,6 @@
 //! Provider registry and file cache construction for the LSP server.
 
-use actup_core::{Config, Registration, provider, validate_no_duplicate_presets};
+use actup_core::{Config, Registration, Retention, provider, validate_no_duplicate_presets};
 
 /// Returns all compiled-in provider registrations.
 ///
@@ -15,8 +15,14 @@ pub fn available_registrations() -> Vec<&'static Registration> {
 }
 
 /// Build a [`provider::Registry`] from the given config and the compiled-in registrations.
+///
+/// Providers reuse an answer for `config.cache.ttl`.
 pub fn build_registry(config: &Config) -> actup_core::Result<provider::Registry> {
-    provider::Registry::from_config(config, &available_registrations())
+    provider::Registry::from_config(
+        config,
+        &available_registrations(),
+        &Retention::expiring(config.cache.ttl),
+    )
 }
 
 /// Build a [`FileCache`](crate::file_cache::FileCache) from the given config.

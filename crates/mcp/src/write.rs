@@ -605,7 +605,7 @@ pub async fn update_all(
     };
     let served = Served::by(provider);
     let sha = match provider
-        .resolve_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
+        .refresh_ref_to_sha(&wanted.without_subpath(), &args.target_ref)
         .await
     {
         Ok(sha) => sha,

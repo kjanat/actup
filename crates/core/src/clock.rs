@@ -31,6 +31,47 @@ impl Clock for SystemClock {
 }
 
 #[cfg(test)]
+#[derive(Debug)]
+pub(crate) struct ManualClock(std::sync::Mutex<SystemTime>);
+
+#[cfg(test)]
+impl ManualClock {
+    pub(crate) fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self(std::sync::Mutex::new(
+            SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000),
+        )))
+    }
+
+    pub(crate) fn advance(&self, by: std::time::Duration) {
+        self.set(|now| now.checked_add(by));
+    }
+
+    pub(crate) fn rewind(&self, by: std::time::Duration) {
+        self.set(|now| now.checked_sub(by));
+    }
+
+    fn set(&self, to: impl FnOnce(SystemTime) -> Option<SystemTime>) {
+        let mut now = match self.0.lock() {
+            Ok(now) => now,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(moved) = to(*now) {
+            *now = moved;
+        }
+    }
+}
+
+#[cfg(test)]
+impl Clock for ManualClock {
+    fn now(&self) -> SystemTime {
+        match self.0.lock() {
+            Ok(now) => *now,
+            Err(poisoned) => *poisoned.into_inner(),
+        }
+    }
+}
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use std::time::Duration;

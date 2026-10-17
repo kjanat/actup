@@ -4,7 +4,7 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use actup_core::{Config, config::CONFIG_VAR, provider::Registry, user_config_path};
+use actup_core::{Config, Retention, config::CONFIG_VAR, provider::Registry, user_config_path};
 use actup_mcp::{Root, Server, serve_stdio};
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
@@ -52,7 +52,11 @@ async fn main() -> ExitCode {
         Ok(config) => config,
         Err(e) => return fail(2, &e.to_string()),
     };
-    let registry = match Registry::from_config(&config, &[&actup_provider_github::REGISTRATION]) {
+    let registry = match Registry::from_config(
+        &config,
+        &[&actup_provider_github::REGISTRATION],
+        &Retention::expiring(config.cache.ttl),
+    ) {
         Ok(registry) => registry,
         Err(e) => return fail(3, &format!("cannot initialize providers: {e}")),
     };

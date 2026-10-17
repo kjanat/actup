@@ -120,7 +120,7 @@
           "default": null
         },
         "ttl": {
-          "description": "Cache time-to-live in seconds",
+          "description": "Seconds a fetched answer stays fresh, on disk and in the memory of `actup-lsp` and `actup-mcp`",
           "type": "integer",
           "format": "uint64",
           "default": 86400,

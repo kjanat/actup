@@ -1,27 +1,82 @@
 //! Caching provider wrapper for deduplicating API requests
 //!
 //! Wraps any `Provider` implementation with an in-memory cache to avoid
-//! duplicate network requests within a single command invocation.
+//! duplicate network requests. A [`Retention`] decides how long an answer
+//! stays reusable: the whole run, or a TTL in long-lived servers.
 
 use std::{
     collections::{HashMap, hash_map::Entry},
     hash::Hash,
     sync::{Arc, Mutex},
+    time::{Duration, SystemTime},
 };
 
 use tokio::sync::{RwLock, Semaphore};
 
 use crate::{
     ActionRepoId, Result,
+    clock::{Clock, SystemClock},
     compat::BoxFuture,
     provider::{self, ActionYml, Provider, Sha40},
     version,
 };
 
+/// How long a [`CachingProvider`] reuses a provider answer.
+#[derive(Debug, Clone)]
+pub enum Retention {
+    /// For the life of the provider.
+    Run,
+    /// Until `ttl` has passed on `clock` since the answer arrived.
+    Expiring {
+        /// How long an answer stays reusable.
+        ttl: Duration,
+        /// The clock that dates each answer.
+        clock: Arc<dyn Clock + Send + Sync>,
+    },
+}
+
+impl Retention {
+    /// Reuse answers for `ttl` of [`SystemClock`] time.
+    #[must_use]
+    pub fn expiring(ttl: Duration) -> Self {
+        Self::Expiring {
+            ttl,
+            clock: Arc::new(SystemClock),
+        }
+    }
+
+    fn stamp<T>(&self, value: T) -> Stamped<T> {
+        let at = match self {
+            Self::Run => None,
+            Self::Expiring { clock, .. } => Some(clock.now()),
+        };
+        Stamped { value, at }
+    }
+
+    fn fresh<T: Clone>(&self, stamped: Option<&Stamped<T>>) -> Option<T> {
+        let stamped = stamped?;
+        let holds = match (self, stamped.at) {
+            (Self::Run, _) => true,
+            (Self::Expiring { ttl, clock }, Some(at)) => {
+                clock.now().duration_since(at).is_ok_and(|age| age <= *ttl)
+            }
+            (Self::Expiring { .. }, None) => false,
+        };
+        holds.then(|| stamped.value.clone())
+    }
+}
+
+struct Stamped<T> {
+    value: T,
+    at: Option<SystemTime>,
+}
+
+type Memo<K, V> = RwLock<HashMap<K, Stamped<V>>>;
+
 /// A provider wrapper that caches results to avoid duplicate API calls.
 ///
-/// This is primarily useful within a single command invocation where the same
-/// action may be referenced multiple times across different workflow files.
+/// The same action may be referenced many times across workflow files. Each
+/// answer is reused for as long as the [`Retention`] allows.
 ///
 /// # Example
 ///
@@ -37,9 +92,10 @@ use crate::{
 /// ```
 pub struct CachingProvider<P> {
     inner: P,
-    version_cache: RwLock<HashMap<ActionRepoId, version::Set>>,
-    sha_cache: RwLock<HashMap<(ActionRepoId, String), Result<Sha40>>>,
-    branch_cache: RwLock<HashMap<ActionRepoId, String>>,
+    retention: Retention,
+    version_cache: Memo<ActionRepoId, version::Set>,
+    sha_cache: Memo<(ActionRepoId, String), Result<Sha40>>,
+    branch_cache: Memo<ActionRepoId, String>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
     // zero permits; followers `acquire().await` on it. The leader holds a
@@ -122,7 +178,7 @@ fn claim_flight<K: Eq + Hash + Clone>(
     }
 }
 
-/// Whether a ref resolution outcome holds for the rest of the run.
+/// Whether a ref resolution outcome may be reused.
 fn settled(result: &Result<Sha40>) -> bool {
     result
         .as_ref()
@@ -134,11 +190,18 @@ fn repo_cache_key(repo: &ActionRepoId) -> ActionRepoId {
 }
 
 impl<P: Provider> CachingProvider<P> {
-    /// Create a new caching provider wrapping the given provider.
+    /// Create a caching provider that keeps every answer for the life of the provider.
     #[must_use]
     pub fn new(inner: P) -> Self {
+        Self::with_retention(inner, Retention::Run)
+    }
+
+    /// Create a caching provider that reuses answers as long as `retention` allows.
+    #[must_use]
+    pub fn with_retention(inner: P, retention: Retention) -> Self {
         Self {
             inner,
+            retention,
             version_cache: RwLock::new(HashMap::new()),
             sha_cache: RwLock::new(HashMap::new()),
             branch_cache: RwLock::new(HashMap::new()),
@@ -223,8 +286,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
         let repo = repo_cache_key(repo);
 
         Box::pin(async move {
-            if let Some(cached) = self.version_cache.read().await.get(&repo) {
-                return Ok(cached.clone());
+            let hit = self
+                .retention
+                .fresh(self.version_cache.read().await.get(&repo));
+            if let Some(cached) = hit {
+                return Ok(cached);
             }
 
             match claim_flight(&self.version_flights, repo.clone()) {
@@ -233,8 +299,11 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     // semaphore is closed (durably, so no race if the leader
                     // closes before we start awaiting).
                     let _ = sem.acquire().await;
-                    if let Some(cached) = self.version_cache.read().await.get(&repo) {
-                        return Ok(cached.clone());
+                    let hit = self
+                        .retention
+                        .fresh(self.version_cache.read().await.get(&repo));
+                    if let Some(cached) = hit {
+                        return Ok(cached);
                     }
                     // Leader errored or was cancelled — do our own fetch
                     // without rejoining a flight. On success, populate the
@@ -244,7 +313,7 @@ impl<P: Provider> Provider for CachingProvider<P> {
                         self.version_cache
                             .write()
                             .await
-                            .insert(repo.clone(), versions.clone());
+                            .insert(repo.clone(), self.retention.stamp(versions.clone()));
                     }
                     result
                 }
@@ -256,15 +325,18 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     // it (and dropped its flight) between our miss above and
                     // this claim, which is what would otherwise make us re-fetch
                     // an already-cached key.
-                    if let Some(cached) = self.version_cache.read().await.get(&repo) {
-                        return Ok(cached.clone());
+                    let hit = self
+                        .retention
+                        .fresh(self.version_cache.read().await.get(&repo));
+                    if let Some(cached) = hit {
+                        return Ok(cached);
                     }
                     let result = self.inner.get_versions(&repo).await;
                     if let Ok(ref versions) = result {
                         self.version_cache
                             .write()
                             .await
-                            .insert(repo.clone(), versions.clone());
+                            .insert(repo.clone(), self.retention.stamp(versions.clone()));
                     }
                     result
                 }
@@ -283,37 +355,46 @@ impl<P: Provider> Provider for CachingProvider<P> {
         Box::pin(async move {
             let cache_key = (repo.clone(), ref_name.clone());
 
-            if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                return cached.clone();
+            let hit = self
+                .retention
+                .fresh(self.sha_cache.read().await.get(&cache_key));
+            if let Some(cached) = hit {
+                return cached;
             }
 
             match claim_flight(&self.sha_flights, cache_key.clone()) {
                 Err(sem) => {
                     let _ = sem.acquire().await;
-                    if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                        return cached.clone();
+                    let hit = self
+                        .retention
+                        .fresh(self.sha_cache.read().await.get(&cache_key));
+                    if let Some(cached) = hit {
+                        return cached;
                     }
                     let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
                     if settled(&result) {
                         self.sha_cache
                             .write()
                             .await
-                            .insert(cache_key.clone(), result.clone());
+                            .insert(cache_key.clone(), self.retention.stamp(result.clone()));
                     }
                     result
                 }
                 Ok(_guard) => {
                     // Double-check: a prior leader may have cached this between
                     // our miss above and claiming the flight (see get_versions).
-                    if let Some(cached) = self.sha_cache.read().await.get(&cache_key) {
-                        return cached.clone();
+                    let hit = self
+                        .retention
+                        .fresh(self.sha_cache.read().await.get(&cache_key));
+                    if let Some(cached) = hit {
+                        return cached;
                     }
                     let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
                     if settled(&result) {
                         self.sha_cache
                             .write()
                             .await
-                            .insert(cache_key.clone(), result.clone());
+                            .insert(cache_key.clone(), self.retention.stamp(result.clone()));
                     }
                     result
                 }
@@ -321,41 +402,70 @@ impl<P: Provider> Provider for CachingProvider<P> {
         })
     }
 
+    fn refresh_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>> {
+        let repo = repo_cache_key(repo);
+        let ref_name = ref_name.to_string();
+
+        Box::pin(async move {
+            let result = self.inner.resolve_ref_to_sha(&repo, &ref_name).await;
+            if settled(&result) {
+                self.sha_cache
+                    .write()
+                    .await
+                    .insert((repo, ref_name), self.retention.stamp(result.clone()));
+            }
+            result
+        })
+    }
+
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
         let repo = repo_cache_key(repo);
 
         Box::pin(async move {
-            if let Some(cached) = self.branch_cache.read().await.get(&repo) {
-                return Ok(cached.clone());
+            let hit = self
+                .retention
+                .fresh(self.branch_cache.read().await.get(&repo));
+            if let Some(cached) = hit {
+                return Ok(cached);
             }
 
             match claim_flight(&self.branch_flights, repo.clone()) {
                 Err(sem) => {
                     let _ = sem.acquire().await;
-                    if let Some(cached) = self.branch_cache.read().await.get(&repo) {
-                        return Ok(cached.clone());
+                    let hit = self
+                        .retention
+                        .fresh(self.branch_cache.read().await.get(&repo));
+                    if let Some(cached) = hit {
+                        return Ok(cached);
                     }
                     let result = self.inner.get_default_branch(&repo).await;
                     if let Ok(ref branch) = result {
                         self.branch_cache
                             .write()
                             .await
-                            .insert(repo.clone(), branch.clone());
+                            .insert(repo.clone(), self.retention.stamp(branch.clone()));
                     }
                     result
                 }
                 Ok(_guard) => {
                     // Double-check: a prior leader may have cached this between
                     // our miss above and claiming the flight (see get_versions).
-                    if let Some(cached) = self.branch_cache.read().await.get(&repo) {
-                        return Ok(cached.clone());
+                    let hit = self
+                        .retention
+                        .fresh(self.branch_cache.read().await.get(&repo));
+                    if let Some(cached) = hit {
+                        return Ok(cached);
                     }
                     let result = self.inner.get_default_branch(&repo).await;
                     if let Ok(ref branch) = result {
                         self.branch_cache
                             .write()
                             .await
-                            .insert(repo.clone(), branch.clone());
+                            .insert(repo.clone(), self.retention.stamp(branch.clone()));
                     }
                     result
                 }
@@ -1162,5 +1272,135 @@ mod tests {
             calls_after_burst,
             "follower-fallback success must populate cache; subsequent call re-fetched"
         );
+    }
+
+    async fn lookup_all<P: Provider>(cached: &CachingProvider<P>, repo: &ActionRepoId) {
+        cached.get_versions(repo).await.unwrap();
+        cached.resolve_ref_to_sha(repo, "v4").await.unwrap();
+        cached.get_default_branch(repo).await.unwrap();
+    }
+
+    fn expiring(clock: &Arc<crate::clock::ManualClock>, secs: u64) -> Retention {
+        let clock: Arc<dyn crate::Clock + Send + Sync> = clock.clone();
+        Retention::Expiring {
+            ttl: std::time::Duration::from_secs(secs),
+            clock,
+        }
+    }
+
+    #[tokio::test]
+    async fn expiring_retention_refetches_each_answer_after_the_ttl() {
+        let clock = crate::clock::ManualClock::new();
+        let cached = CachingProvider::with_retention(CountingProvider::new(), expiring(&clock, 60));
+        let repo = make_repo("actions", "checkout");
+
+        lookup_all(&cached, &repo).await;
+        assert_eq!(cached.inner.calls(), 3);
+        clock.advance(std::time::Duration::from_secs(60));
+        lookup_all(&cached, &repo).await;
+        assert_eq!(cached.inner.calls(), 3);
+        clock.advance(std::time::Duration::from_secs(1));
+        lookup_all(&cached, &repo).await;
+        assert_eq!(cached.inner.calls(), 6);
+        lookup_all(&cached, &repo).await;
+        assert_eq!(cached.inner.calls(), 6);
+    }
+
+    #[tokio::test]
+    async fn expiring_retention_refetches_after_the_clock_moves_back() {
+        let clock = crate::clock::ManualClock::new();
+        let cached = CachingProvider::with_retention(CountingProvider::new(), expiring(&clock, 60));
+        let repo = make_repo("actions", "checkout");
+
+        lookup_all(&cached, &repo).await;
+        clock.rewind(std::time::Duration::from_secs(1));
+        lookup_all(&cached, &repo).await;
+        assert_eq!(cached.inner.calls(), 6);
+    }
+
+    struct Moving {
+        calls: AtomicUsize,
+    }
+
+    impl Provider for Moving {
+        fn kind(&self) -> provider::Kind {
+            provider::Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+            Box::pin(async { Ok(version::Set::new()) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &ActionRepoId,
+            ref_name: &str,
+        ) -> BoxFuture<'_, Result<Sha40>> {
+            let calls = self.calls.fetch_add(1, Ordering::SeqCst);
+            let result = ["a", "b", "c"]
+                .get(calls)
+                .and_then(|c| Sha40::new(c.repeat(40)))
+                .ok_or_else(|| crate::Error::Network {
+                    operation: ref_name.to_string(),
+                    message: "offline".into(),
+                });
+            Box::pin(async move { result })
+        }
+
+        fn get_default_branch(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
+            Box::pin(async { Ok("main".to_string()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> BoxFuture<'_, Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &ActionRepoId,
+            _ref_name: &str,
+        ) -> BoxFuture<'_, Result<ActionYml>> {
+            Box::pin(async { Ok(ActionYml::default()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn refresh_ref_to_sha_bypasses_and_replaces_the_cached_sha() {
+        let cached = CachingProvider::new(Moving {
+            calls: AtomicUsize::new(0),
+        });
+        let repo = make_repo("actions", "checkout");
+        let sha = |c: &str| Sha40::new(c.repeat(40)).unwrap();
+
+        assert_eq!(
+            cached.resolve_ref_to_sha(&repo, "main").await.unwrap(),
+            sha("a")
+        );
+        assert_eq!(
+            cached.refresh_ref_to_sha(&repo, "main").await.unwrap(),
+            sha("b")
+        );
+        assert_eq!(
+            cached.resolve_ref_to_sha(&repo, "main").await.unwrap(),
+            sha("b")
+        );
+        assert_eq!(
+            cached.refresh_ref_to_sha(&repo, "main").await.unwrap(),
+            sha("c")
+        );
+        assert!(cached.refresh_ref_to_sha(&repo, "main").await.is_err());
+        assert_eq!(
+            cached.resolve_ref_to_sha(&repo, "main").await.unwrap(),
+            sha("c")
+        );
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 4);
     }
 }

@@ -10,7 +10,7 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 | `parser`           | Extract `uses:` from YAML with locations   | `UsesLocation`, `extract_uses_*` |
 | `discovery`        | Find workflow/action files in filesystem   | `DiscoveredFile`, `FileKind`     |
 | `provider`         | Provider trait (host-agnostic interface)   | `Provider`, `ProviderKind`       |
-| `caching_provider` | In-memory dedup wrapper around `Provider`  | `CachingProvider`, `CacheStats`  |
+| `caching_provider` | In-memory dedup wrapper around `Provider`  | `CachingProvider`, `Retention`   |
 | `version`          | Semver parsing, version sets, comparison   | `Version`, `Info`, `BranchInfo`  |
 | `policy`           | Update policy (patch/minor/major/latest)   | `Update`, policy matching        |
 | `resolution`       | Orchestrate version checks, compute status | `CheckResult`, `CheckStatus`     |

@@ -329,6 +329,11 @@ Per repo (provider+host+owner+repo):
 ### TTL & invalidation
 
 - Respect TTL from config (e.g. 24h default).
+- The LSP and MCP servers build their registry with
+  `Retention::expiring(cache.ttl)`. Their in-memory provider answers expire
+  after `cache.ttl`. The CLI uses `Retention::Run` and fetches each repo once
+  per run.
+- MCP mutators resolve their target with `refresh_ref_to_sha`.
 - CLI `--refresh` forces network.
 - On rate limiting, reuse stale cache and label status as stale.
 

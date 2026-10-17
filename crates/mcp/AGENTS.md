@@ -41,7 +41,10 @@ Model Context Protocol server for AI agents, served over stdio with
   edits of a file overlap, `FileEdits::plan` skips every edit of that file.
 - Every result carries `provider`, `host` and `status`. Argument and path errors
   are tool errors (`isError`) without a status.
-- Read results are memoized per server process when the provider answered.
+- Read results are memoized for `cache.ttl` when the provider answered.
+  `Registry::from_config` gets `Retention::expiring(config.cache.ttl)`.
+  `updateAllUsesToVersion` resolves `targetRef` with `refresh_ref_to_sha` on
+  every call.
 
 ## Tests
 

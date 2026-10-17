@@ -2845,4 +2845,152 @@ mod tests {
         let b = std::collections::HashMap::new();
         assert!(!hosts_differ(&a, &b));
     }
+
+    #[derive(Debug)]
+    struct StepClock(std::sync::Mutex<std::time::SystemTime>);
+
+    impl actup_core::Clock for StepClock {
+        fn now(&self) -> std::time::SystemTime {
+            *self.0.lock().unwrap()
+        }
+    }
+
+    type Releases = Arc<std::sync::Mutex<actup_core::version::Set>>;
+
+    struct ReleasingProvider(Releases);
+
+    impl actup_core::Provider for ReleasingProvider {
+        fn kind(&self) -> actup_core::provider::Kind {
+            actup_core::provider::Kind::GitHub
+        }
+
+        fn host(&self) -> &'static str {
+            "github.com"
+        }
+
+        fn get_versions(
+            &self,
+            _repo: &actup_core::ActionRepoId,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::version::Set>> {
+            let set = self.0.lock().unwrap().clone();
+            Box::pin(async move { Ok(set) })
+        }
+
+        fn resolve_ref_to_sha(
+            &self,
+            _repo: &actup_core::ActionRepoId,
+            _ref_name: &str,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::Sha40>> {
+            let sha = actup_core::provider::Sha40::new("a".repeat(40)).unwrap();
+            Box::pin(async move { Ok(sha) })
+        }
+
+        fn get_default_branch(
+            &self,
+            _repo: &actup_core::ActionRepoId,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<String>> {
+            Box::pin(async { Ok("main".to_owned()) })
+        }
+
+        fn get_readme(
+            &self,
+            _repo: &actup_core::ActionRepoId,
+            _ref_name: Option<&str>,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<Option<String>>> {
+            Box::pin(async { Ok(None) })
+        }
+
+        fn get_action_yml(
+            &self,
+            _repo: &actup_core::ActionRepoId,
+            _ref_name: &str,
+        ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::ActionYml>>
+        {
+            Box::pin(async { Ok(actup_core::provider::ActionYml::default()) })
+        }
+    }
+
+    fn released(latest: &str, sha: char) -> actup_core::version::Set {
+        let current = crate::test_utils::make_version_info("v4.0.0", &"a".repeat(40));
+        let latest = crate::test_utils::make_version_info(latest, &sha.to_string().repeat(40));
+        actup_core::version::Set::build(
+            vec![current, Arc::clone(&latest)],
+            HashMap::from([(4, Arc::clone(&latest))]),
+            HashMap::new(),
+            Some(latest),
+        )
+    }
+
+    async fn published_messages(
+        backend: &LspBackend,
+        socket: &mut tower_lsp_server::ClientSocket,
+        uri: &Uri,
+        version: i32,
+    ) -> std::result::Result<Vec<String>, Box<dyn std::error::Error>> {
+        let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.0.0\n";
+        backend
+            .documents
+            .insert(uri.clone(), DocumentState::new(text.to_owned(), version));
+        backend.schedule_diagnostics(uri.clone(), text.to_owned(), version, Duration::ZERO);
+        let (_, published) =
+            tokio::time::timeout(Duration::from_secs(10), shown_and_published(socket, uri))
+                .await??;
+        assert_eq!(published.version, Some(version));
+        Ok(published
+            .diagnostics
+            .into_iter()
+            .map(|d| d.message)
+            .collect())
+    }
+
+    #[tokio::test]
+    async fn diagnostics_publish_a_new_release_once_the_cache_ttl_passes()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use futures::StreamExt as _;
+
+        let temp = tempfile::tempdir()?;
+        std::fs::write(
+            temp.path().join("actup.toml"),
+            "[cache]\nenabled = false\nttl = 60\n",
+        )?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+        while let Ok(Some(_)) = tokio::time::timeout(Duration::from_millis(50), socket.next()).await
+        {
+        }
+
+        let releases: Releases = Arc::new(std::sync::Mutex::new(released("v4.1.0", 'b')));
+        let clock = Arc::new(StepClock(std::sync::Mutex::new(
+            std::time::SystemTime::UNIX_EPOCH,
+        )));
+        let dyn_clock: Arc<dyn actup_core::Clock + Send + Sync> = clock.clone();
+        let ttl = Duration::from_secs(60);
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(actup_core::CachingProvider::with_retention(
+            ReleasingProvider(Arc::clone(&releases)),
+            actup_core::Retention::Expiring {
+                ttl,
+                clock: dyn_clock,
+            },
+        )));
+        *backend.registry.write().await = Some(Arc::new(registry));
+        let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+        let targets = |messages: &[String], version: &str| {
+            messages.iter().filter(|m| m.contains(version)).count()
+        };
+
+        let first = published_messages(backend, &mut socket, &uri, 1).await?;
+        assert_eq!(targets(&first, "-> v4.1.0"), 1, "{first:?}");
+
+        *releases.lock().unwrap() = released("v4.2.0", 'c');
+        *clock.0.lock().unwrap() += ttl;
+        let cached = published_messages(backend, &mut socket, &uri, 2).await?;
+        assert_eq!(cached, first);
+
+        *clock.0.lock().unwrap() += Duration::from_secs(1);
+        let refreshed = published_messages(backend, &mut socket, &uri, 3).await?;
+        assert_eq!(targets(&refreshed, "-> v4.2.0"), 1, "{refreshed:?}");
+        Ok(())
+    }
 }

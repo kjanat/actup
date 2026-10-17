@@ -8,7 +8,7 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    ActionRepoId, CachingProvider, Config, Error, Registration, Result,
+    ActionRepoId, CachingProvider, Config, Error, Registration, Result, Retention,
     compat::{BoxFuture, MaybeSend, MaybeSync},
     effective_host, resolve_default_host, validate_no_duplicate_presets, version,
 };
@@ -575,6 +575,15 @@ pub trait Provider: MaybeSend + MaybeSync {
         ref_name: &str,
     ) -> BoxFuture<'_, Result<Sha40>>;
 
+    /// Resolve a ref (tag/branch) to a full commit SHA without reusing a cached answer
+    fn refresh_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>> {
+        self.resolve_ref_to_sha(repo, ref_name)
+    }
+
     /// Get the default branch name for a repository
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>>;
 
@@ -623,6 +632,14 @@ where
         ref_name: &str,
     ) -> BoxFuture<'_, Result<Sha40>> {
         (**self).resolve_ref_to_sha(repo, ref_name)
+    }
+
+    fn refresh_ref_to_sha(
+        &self,
+        repo: &ActionRepoId,
+        ref_name: &str,
+    ) -> BoxFuture<'_, Result<Sha40>> {
+        (**self).refresh_ref_to_sha(repo, ref_name)
     }
 
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
@@ -718,7 +735,7 @@ impl Registry {
     /// Build a registry for `config` from the providers that `registrations` construct.
     ///
     /// Registers every `[hosts]` entry and the default host, each behind a
-    /// [`CachingProvider`].
+    /// [`CachingProvider`] that reuses answers as long as `retention` allows.
     ///
     /// # Errors
     ///
@@ -727,16 +744,20 @@ impl Registry {
     /// # Panics
     ///
     /// Panics if two registrations share a preset hostname.
-    pub fn from_config(config: &Config, registrations: &[&Registration]) -> Result<Self> {
+    pub fn from_config(
+        config: &Config,
+        registrations: &[&Registration],
+        retention: &Retention,
+    ) -> Result<Self> {
         validate_no_duplicate_presets(registrations);
         let mut registry = Self::new();
         let default_host = resolve_default_host(config, registrations)?;
         registry.set_default_host(&default_host);
         for hostname in config.hosts.keys() {
-            registry.register_host(hostname, config, registrations)?;
+            registry.register_host(hostname, config, registrations, retention)?;
         }
         if !config.hosts.contains_key(&default_host) {
-            registry.register_host(&default_host, config, registrations)?;
+            registry.register_host(&default_host, config, registrations, retention)?;
         }
         Ok(registry)
     }
@@ -746,6 +767,7 @@ impl Registry {
         hostname: &str,
         config: &Config,
         registrations: &[&Registration],
+        retention: &Retention,
     ) -> Result<()> {
         let provider_config = effective_host(hostname, config, registrations, &config.fetch)?;
         let registration = registrations
@@ -756,7 +778,10 @@ impl Registry {
                 reason: format!("no registration for kind {:?}", provider_config.kind),
             })?;
         let provider = (registration.create)(provider_config)?;
-        self.register(Box::new(CachingProvider::new(provider)));
+        self.register(Box::new(CachingProvider::with_retention(
+            provider,
+            retention.clone(),
+        )));
         Ok(())
     }
 }
@@ -800,6 +825,9 @@ mod tests {
         }
 
         fn get_versions(&self, _repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set>> {
+            if self.host == COUNTED_HOST {
+                COUNTED_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            }
             Box::pin(async { Ok(version::Set::default()) })
         }
 
@@ -1070,6 +1098,10 @@ mod tests {
         }))
     }
 
+    const COUNTED_HOST: &str = "counted.corp.com";
+
+    static COUNTED_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
     static MOCK_REGISTRATION: Registration = Registration {
         kind: crate::HostKind::GitHub,
         presets: &[crate::Preset {
@@ -1098,7 +1130,8 @@ mod tests {
 
     #[test]
     fn from_config_registers_the_preset_default_host() -> std::result::Result<(), Error> {
-        let registry = Registry::from_config(&Config::default(), &[&MOCK_REGISTRATION])?;
+        let registry =
+            Registry::from_config(&Config::default(), &[&MOCK_REGISTRATION], &Retention::Run)?;
         assert_eq!(registry.default_host(), Some("github.com"));
         let hosts: Vec<&str> = registry.providers().iter().map(Provider::host).collect();
         assert_eq!(hosts, ["github.com"]);
@@ -1113,7 +1146,7 @@ mod tests {
                 .hosts
                 .insert(host.into(), host_of_kind(crate::HostKind::GitHub));
         }
-        let registry = Registry::from_config(&config, &[&MOCK_REGISTRATION])?;
+        let registry = Registry::from_config(&config, &[&MOCK_REGISTRATION], &Retention::Run)?;
         let mut hosts: Vec<&str> = registry.providers().iter().map(Provider::host).collect();
         hosts.sort_unstable();
         assert_eq!(hosts, ["ghe.corp.com", "github.com"]);
@@ -1127,7 +1160,7 @@ mod tests {
             "gitlab.corp.com".into(),
             host_of_kind(crate::HostKind::GitLab),
         );
-        let result = Registry::from_config(&config, &[&MOCK_REGISTRATION]);
+        let result = Registry::from_config(&config, &[&MOCK_REGISTRATION], &Retention::Run);
         let Err(Error::InvalidConfig { path, .. }) = result else {
             panic!("expected InvalidConfig, got {result:?}");
         };
@@ -1141,10 +1174,37 @@ mod tests {
             "broken.corp.com".into(),
             host_of_kind(crate::HostKind::GitHub),
         );
-        let result = Registry::from_config(&config, &[&MOCK_REGISTRATION]);
+        let result = Registry::from_config(&config, &[&MOCK_REGISTRATION], &Retention::Run);
         assert!(
             matches!(result, Err(Error::Auth { ref provider, .. }) if provider == "broken.corp.com"),
             "{result:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn from_config_caches_answers_for_the_given_retention() -> std::result::Result<(), Error>
+    {
+        let mut config = Config::default();
+        config
+            .hosts
+            .insert(COUNTED_HOST.into(), host_of_kind(crate::HostKind::GitHub));
+        let clock = crate::clock::ManualClock::new();
+        let dyn_clock: std::sync::Arc<dyn crate::Clock + Send + Sync> = clock.clone();
+        let retention = Retention::Expiring {
+            ttl: std::time::Duration::from_secs(60),
+            clock: dyn_clock,
+        };
+        let registry = Registry::from_config(&config, &[&MOCK_REGISTRATION], &retention)?;
+        let provider = registry.find(Some(COUNTED_HOST)).unwrap();
+        let repo = ActionRepoId::simple("actions", "checkout");
+        let fetches = || COUNTED_FETCHES.load(std::sync::atomic::Ordering::SeqCst);
+
+        provider.get_versions(&repo).await?;
+        provider.get_versions(&repo).await?;
+        assert_eq!(fetches(), 1);
+        clock.advance(std::time::Duration::from_secs(61));
+        provider.get_versions(&repo).await?;
+        assert_eq!(fetches(), 2);
+        Ok(())
     }
 }
