@@ -4,30 +4,42 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 
 ## Module Map
 
-| Module             | Purpose                                    | Key Types                        |
-| ------------------ | ------------------------------------------ | -------------------------------- |
-| `action_ref`       | Parse/normalize `uses:` strings            | `ActionRef`, `ActionRepoId`      |
-| `parser`           | Extract `uses:` from YAML with locations   | `UsesLocation`, `extract_uses_*` |
-| `discovery`        | Find workflow/action files in filesystem   | `DiscoveredFile`, `FileKind`     |
-| `provider`         | Provider trait (host-agnostic interface)   | `Provider`, `ProviderKind`       |
-| `caching_provider` | In-memory dedup wrapper around `Provider`  | `CachingProvider`, `Retention`   |
-| `version`          | Semver parsing, version sets, comparison   | `Version`, `Info`, `BranchInfo`  |
-| `policy`           | Update policy (patch/minor/major/latest)   | `Update`, policy matching        |
-| `resolution`       | Orchestrate version checks, compute status | `CheckResult`, `CheckStatus`     |
-| `config/`          | Config loading, precedence, validation     | `Config`, `ApiMode`              |
-| `error`            | Structured errors (user vs environment)    | `Error`, `Result`                |
-| `cache`            | Cache trait, entries, entry file names     | `Cache`, `Entry`, `Record`       |
-| `file_cache`       | Disk cache shared by CLI, LSP and MCP      | `FileCache`                      |
+| Module             | Purpose                                                   | Key Types                                              |
+| ------------------ | --------------------------------------------------------- | ------------------------------------------------------ |
+| `action_ref`       | Parse/normalize `uses:` strings                           | `ActionRef`, `ActionRepoId`                            |
+| `parser`           | Parse `uses:` values, locate them in YAML, validate edits | `UsesLocation`, `parse_uses`, `extract_uses_from_yaml` |
+| `syntax`           | `uses:` extraction per file format (YAML, Markdown, text) | `SourceFormat`                                         |
+| `discovery`        | Find workflow/action files in filesystem                  | `DiscoveredFile`, `FileKind`, `ExtraPath`              |
+| `patch`            | Line-relative edits planned onto the original bytes       | `FileEdits`, `PendingEdit`, `retarget_edit`            |
+| `rewrite`          | Text written for an updated ref and its comment           | `Rewrite`, `Trailing`, `PinMarker`                     |
+| `atomic_write`     | Crash-safe file replacement inside a root (native only)   | `write_atomic`, `rewrite_atomic`, `resolve_within`     |
+| `provider`         | Provider trait (host-agnostic interface) and registry     | `Provider`, `Kind`, `Registry`                         |
+| `caching_provider` | In-memory dedup wrapper around `Provider`                 | `CachingProvider`, `Retention`                         |
+| `fetch`            | Progress reporting for batched version fetches            | `Progress`, `Outcome`, `Silent`                        |
+| `version`          | Semver parsing, version sets, comparison                  | `Version`, `Set`, `Info`, `BranchInfo`                 |
+| `policy`           | Update policy, pin style, tracking, branch handling       | `Update`, `Style`, `Track`, `Branch`                   |
+| `resolution`       | Orchestrate version checks, compute status                | `CheckResult`, `CheckStatus`                           |
+| `suggest`          | Closest-tag suggestions for refs that name no tag         | `closest_tag`                                          |
+| `config/`          | Config loading, precedence, validation                    | `Config`, `ApiMode`                                    |
+| `error`            | Structured errors (user vs environment)                   | `Error`, `Result`                                      |
+| `cache`            | Cache trait, entries, entry file names                    | `Cache`, `Entry`, `Record`                             |
+| `file_cache`       | Disk cache shared by CLI, LSP and MCP (native only)       | `FileCache`, `Access`                                  |
+| `clock`            | Time source for TTL checks                                | `Clock`, `SystemClock`                                 |
+| `compat`           | `Send`/`Sync` bounds and boxed futures for wasm           | `BoxFuture`, `MaybeSend`, `MaybeSync`                  |
+| `text`             | Sanitize text for terminal and editor output              | `sanitize_for_terminal`, `sanitize_line`               |
+| `url_path`         | Percent-encode the path and query parts of provider URLs  | `encode_path`, `encode_segment`                        |
 
 ### Config Submodule (`config/`)
 
-| File              | Purpose                                          |
-| ----------------- | ------------------------------------------------ |
-| `mod.rs`          | `Config` struct, figment-based loading           |
-| `registration.rs` | Provider `Registration` statics, preset matching |
-| `resolution.rs`   | Host resolution, api_base inference, token_env   |
-| `validation.rs`   | Hostname, api_base, config validation            |
-| `discovery.rs`    | Config file path search                          |
+| File              | Purpose                                            |
+| ----------------- | -------------------------------------------------- |
+| `mod.rs`          | `Config` struct, figment-based loading             |
+| `registration.rs` | Provider `Registration` statics, preset matching   |
+| `resolution.rs`   | Host resolution, api_base inference, token_env     |
+| `validation.rs`   | Hostname, api_base, config validation              |
+| `discovery.rs`    | Config file path search                            |
+| `env.rs`          | `ACTUP_*` variables and the CLI flag variables     |
+| `matching.rs`     | Action globs for `scan.ignore` and `[[overrides]]` |
 
 `config/resolution.rs` handles the full provider config resolution algorithm:
 merging presets, inferring api_base, resolving token_env, validating host
