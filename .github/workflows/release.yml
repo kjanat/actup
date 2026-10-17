@@ -291,21 +291,41 @@ jobs:
       - name: Build
         working-directory: packages/actup-wasm
         run: bun run build
-      - name: Verify tarball
+      - name: Test
         working-directory: packages/actup-wasm
-        run: |
-          npm pack --dry-run
-          test -f dist/index.js
-          test -f dist/provider.js
-          test -f wasm/actup_wasm_bg.wasm
-      - name: Smoke test
-        working-directory: packages/actup-wasm
-        run: node tests/node_import.mjs
+        run: bun run test
       - name: Pack
         working-directory: packages/actup-wasm
         run: |
+          npm pack --dry-run
           mkdir -p "${RUNNER_TEMP}/npm-package"
           npm pack --pack-destination "${RUNNER_TEMP}/npm-package"
+      - name: Check and smoke-test the packed tarball
+        working-directory: packages/actup-wasm
+        run: |
+          shopt -s nullglob
+          tarballs=("${RUNNER_TEMP}"/npm-package/*.tgz)
+          if ((${#tarballs[@]} != 1)); then
+            echo "::error::expected one npm tarball, found ${#tarballs[@]}"
+            exit 1
+          fi
+          listing="$(tar -tzf "${tarballs[0]}")"
+          missing=0
+          for file in package/dist/index.js package/dist/provider.js package/wasm/actup_wasm_bg.wasm package/LICENSE-MIT package/LICENSE-APACHE; do
+            if ! grep -qxF "${file}" <<<"${listing}"; then
+              echo "::error::the npm tarball lacks ${file}"
+              missing=1
+            fi
+          done
+          if ((missing)); then
+            exit 1
+          fi
+          unpacked="${RUNNER_TEMP}/npm-unpacked"
+          mkdir -p "${unpacked}"
+          tar -xzf "${tarballs[0]}" -C "${unpacked}"
+          mkdir "${unpacked}/package/tests"
+          cp tests/node_import.mjs "${unpacked}/package/tests/"
+          node "${unpacked}/package/tests/node_import.mjs"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
