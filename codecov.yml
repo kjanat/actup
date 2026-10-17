@@ -14,12 +14,10 @@ coverage:
 
 # Files excluded from both project and patch coverage.
 # - Binary entrypoints (`fn main`) are exercised by integration tests, not unit tests.
-# - `crates/mcp` is a stub crate (per `CLAUDE.md`); no implementation to cover yet.
-# - `extensions/**` are separate workspaces (Zed WASM, VS Code TS) tested out-of-band.
+# - `extensions/vscode` is TypeScript, outside the Cargo workspace.
 ignore:
   - "**/main.rs"
-  - "crates/mcp/**"
-  - "extensions/**"
+  - "extensions/vscode/**"
 
 comment:
   layout: "reach,diff,flags,files,footer"
