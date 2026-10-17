@@ -3,7 +3,7 @@
 use actup_core::{ActionRef, RefKind, replace_unsafe_characters};
 use serde_json::{Value, json};
 
-use crate::output::{Finding, FindingStatus, status_name};
+use crate::output::{Finding, FindingStatus, same_commit_text, status_name};
 
 const INFORMATION_URI: &str = env!("CARGO_PKG_REPOSITORY");
 
@@ -95,17 +95,8 @@ fn short(sha: &str) -> &str {
 
 fn describe(finding: &Finding) -> String {
     let action = finding.action_ref().to_string();
-    if let Some(target) = finding.same_commit() {
-        let kind = finding
-            .ref_kind()
-            .map(|k| format!("{k} "))
-            .unwrap_or_default();
-        return format!(
-            "{action}: pin available, same commit: {kind}{} = {} ({})",
-            finding.action_ref().ref_str(),
-            target.version(),
-            short(target.sha()),
-        );
+    if let Some(text) = same_commit_text(finding) {
+        return format!("{action}: {text}");
     }
     match finding.status() {
         FindingStatus::UpToDate => format!("{action}: up to date"),
@@ -526,6 +517,30 @@ mod tests {
                 .is_none()
         );
         Ok(())
+    }
+
+    #[test]
+    fn same_commit_on_a_less_specific_target_offers_no_pin() {
+        let same = finding(
+            "ci.yml",
+            3,
+            "o/same@v1.0.5",
+            FindingStatus::Outdated {
+                current: "v1.0.5".to_string(),
+                latest: info("v1", &"b".repeat(40)),
+                exact_version: None,
+            },
+        )
+        .with_ref(Some(RefKind::Tag), Some(info("v1", &"b".repeat(40))));
+        let findings = [same];
+        let log = sarif(&findings, &[]);
+        let result = &log["runs"][0]["results"][0];
+        assert_eq!(
+            result["message"]["text"],
+            "o/same@v1.0.5: same commit: tag v1.0.5 = v1 (bbbbbbb)"
+        );
+        assert_eq!(result["level"], "note");
+        assert_eq!(annotations(&findings), Vec::<String>::new());
     }
 
     #[test]

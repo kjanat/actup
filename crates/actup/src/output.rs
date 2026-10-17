@@ -560,6 +560,11 @@ fn pin_label(finding: &Finding, ref_name: &str, sha: &str) -> String {
 }
 
 fn same_commit_label(finding: &Finding) -> Option<String> {
+    same_commit_text(finding).map(|label| sanitize_line(&label).into_owned())
+}
+
+/// The same-commit text of `finding`, led by `pin available` only for a target more specific than the ref.
+pub fn same_commit_text(finding: &Finding) -> Option<String> {
     let target = finding.same_commit()?;
     let kind = finding
         .ref_kind()
@@ -571,13 +576,12 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
     } else {
         ""
     };
-    let label = format!(
+    Some(format!(
         "{lead}same commit: {kind}{} = {} ({})",
         finding.action_ref().ref_str(),
         target.version(),
         target.sha().get(..7).unwrap_or_else(|| target.sha()),
-    );
-    Some(sanitize_line(&label).into_owned())
+    ))
 }
 
 fn print_json(findings: &[Finding]) {
