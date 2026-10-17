@@ -9,23 +9,54 @@ struct Section {
     cells: Vec<String>,
 }
 
+#[derive(Clone, Copy)]
+struct Fence {
+    marker: char,
+    len: usize,
+}
+
+fn fence_run(line: &str) -> Option<(Fence, &str)> {
+    let rest = line.trim_start_matches(' ');
+    if line.len() - rest.len() > 3 {
+        return None;
+    }
+    let marker = rest.chars().next().filter(|c| matches!(c, '`' | '~'))?;
+    let info = rest.trim_start_matches(marker);
+    let len = rest.len() - info.len();
+    (len >= 3).then_some((Fence { marker, len }, info))
+}
+
+fn closes(open: Fence, line: &str) -> bool {
+    fence_run(line).is_some_and(|(close, info)| {
+        close.marker == open.marker && close.len >= open.len && info.trim().is_empty()
+    })
+}
+
+fn opens(line: &str) -> Option<Fence> {
+    fence_run(line)
+        .filter(|(open, info)| open.marker == '~' || !info.contains('`'))
+        .map(|(open, _)| open)
+}
+
 fn sections(agents: &str) -> Vec<Section> {
     let mut sections: Vec<Section> = Vec::new();
-    let mut fenced = false;
+    let mut fence: Option<Fence> = None;
     for line in agents.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            fenced = !fenced;
-        } else if !fenced && line.starts_with('#') {
+        if let Some(open) = fence {
+            if closes(open, line) {
+                fence = None;
+            }
+        } else if let Some(open) = opens(line) {
+            fence = Some(open);
+        } else if line.starts_with('#') {
             sections.push(Section {
                 heading: line.to_owned(),
                 cells: Vec::new(),
             });
-        } else if !fenced
-            && let Some(cell) = line
-                .strip_prefix("| `")
-                .and_then(|rest| rest.split_once('`'))
-                .map(|(cell, _)| cell.to_owned())
+        } else if let Some(cell) = line
+            .strip_prefix("| `")
+            .and_then(|rest| rest.split_once('`'))
+            .map(|(cell, _)| cell.to_owned())
             && let Some(section) = sections.last_mut()
         {
             section.cells.push(cell);
@@ -160,5 +191,33 @@ fn module_map_check_skips_fenced_code_blocks() -> TestResult<()> {
         missing_rows(agents, src)?,
         ["src/b.rs", "src/config/ has no table", "src/config/mod.rs"]
     );
+    Ok(())
+}
+
+#[test]
+fn module_map_check_follows_commonmark_fence_rules() -> TestResult<()> {
+    let temp = tempfile::tempdir()?;
+    let src = temp.path();
+    for file in ["lib.rs", "a.rs", "b.rs"] {
+        fs::write(src.join(file), "")?;
+    }
+    let hidden: &[&str] = &["src/b.rs"];
+    let counted: &[&str] = &[];
+    let cases = [
+        ("~~~\n| `b` | B |\n~~~\n", hidden),
+        ("   ```\n| `b` | B |\n  ```\n", hidden),
+        ("    ```\n| `b` | B |\n    ```\n", counted),
+        ("```\n~~~\n| `b` | B |\n```\n", hidden),
+        ("````\n```yaml\n| `b` | B |\n```\n````\n", hidden),
+        ("```\n``` rust\n| `b` | B |\n```\n", hidden),
+        ("```\n| `b` | B |\n`````\n", hidden),
+        ("``` a`b\n| `b` | B |\n", counted),
+        ("~~~ a`b\n| `b` | B |\n~~~\n", hidden),
+    ];
+    for (block, expected) in cases {
+        let agents =
+            format!("## Module Map\n\n| Module | Purpose |\n| --- | --- |\n{block}| `a` | A |\n");
+        assert_eq!(missing_rows(&agents, src)?, expected, "{block}");
+    }
     Ok(())
 }
