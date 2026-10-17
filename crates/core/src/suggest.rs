@@ -46,9 +46,8 @@ pub fn closest_tag(ref_name: &str, versions: &Set, allow_prerelease: bool) -> Op
     let full_only = match shape(ref_name) {
         Shape::Full => {
             let wanted = Version::parse(ref_name);
-            return versions
-                .semver_tags()
-                .iter()
+            return tags()
+                .filter(|tag| tag.version().minor().is_some() && tag.version().patch().is_some())
                 .filter(|tag| tag.version().cmp(&wanted).is_eq())
                 .filter(|tag| tag.version().as_str() != ref_name)
                 .max_by(|a, b| rank(a.version(), b.version()))
@@ -150,6 +149,18 @@ mod tests {
             Some("v4.2.0")
         );
         assert_eq!(suggest("v4.2.0", &["4.2.0"]).as_deref(), Some("4.2.0"));
+    }
+
+    #[test]
+    fn full_versions_skip_partial_tags_and_unwanted_prereleases() {
+        assert_eq!(suggest("v4.0.0", &["v4"]), None);
+        assert_eq!(suggest("v4.2.0", &["v4.2", "v4.2.1"]), None);
+        let rc = set(&["4.2.1-rc.1"]);
+        assert_eq!(closest_tag("v4.2.1-rc.1", &rc, false), None);
+        assert_eq!(
+            closest_tag("v4.2.1-rc.1", &rc, true).map(|t| t.version().to_string()),
+            Some("4.2.1-rc.1".to_string())
+        );
     }
 
     #[test]
