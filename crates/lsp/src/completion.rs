@@ -121,7 +121,6 @@ enum CompletionContext {
     ActionName { prefix: String },
     /// Cursor is after `[host/]owner/repo@` (suggest versions).
     VersionRef {
-        /// Repository parsed from the text before `@`, without a subpath.
         repo_id: ActionRepoId,
         /// Text typed after `@` (for filtering).
         version_prefix: String,
