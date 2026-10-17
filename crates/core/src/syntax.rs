@@ -232,7 +232,9 @@ fn uses_values(line: &str) -> Vec<Range<usize>> {
         let value_start = line.len() - quoted.len();
         let value_len = quoted
             .find(|c: char| {
-                c.is_whitespace() || QUOTES.contains(&c) || matches!(c, ',' | ';' | ')' | '}')
+                c.is_whitespace()
+                    || QUOTES.contains(&c)
+                    || matches!(c, ',' | ';' | ')' | '}' | '\\')
             })
             .unwrap_or(quoted.len());
         let value = value_start..value_start + value_len;
@@ -334,7 +336,8 @@ mod tests {
                   const uses: string = value;\n\
                   reuses: x/y@v1 houses:z/w@v1\n\
                   \"uses\":\"json/style@v3\",\n\
-                  uses:\n";
+                  uses:\n\
+                  print(\"- uses: esc/aped@v5\\n\")\n";
         assert_eq!(
             found(SourceFormat::Text, ts),
             [
@@ -343,6 +346,7 @@ mod tests {
                 (5, "a/b@v1".into(), Some("v1".into())),
                 (5, "c/d@v2".into(), Some("v2".into())),
                 (8, "json/style@v3".into(), Some("v3".into())),
+                (10, "esc/aped@v5".into(), Some("v5".into())),
             ]
         );
     }
