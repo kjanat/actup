@@ -4,7 +4,7 @@
 //! 1. Environment variables (ACTUP_*) - highest
 //! 2. Explicit --config path
 //! 3. Repo configs (actup.toml, .actup.toml, .config/actup.toml, etc.)
-//! 4. User/global config ([`user_config_path`]) - fills gaps only
+//! 4. User/global config ([`user_config_path`])
 //! 5. Defaults (lowest)
 
 pub mod discovery;
@@ -542,7 +542,7 @@ impl Config {
     /// 1. Environment variables (ACTUP_*)
     /// 2. Explicit `config_path` (if provided), relative to the process working directory
     /// 3. Repo config (searched upward from `start_dir`)
-    /// 4. User config at `user_config`, usually [`user_config_path`] - fills gaps only
+    /// 4. User config at `user_config`, usually [`user_config_path`]
     /// 5. Defaults
     ///
     /// # Errors
@@ -558,7 +558,7 @@ impl Config {
         if let Some(user_config) = user_config
             && user_config.exists()
         {
-            figment = figment.join(Toml::file(user_config));
+            figment = figment.merge(Toml::file(user_config));
         }
 
         // Repo config (searched upward from `start_dir`)

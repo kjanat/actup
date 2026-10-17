@@ -1299,6 +1299,49 @@ mod cli_runs {
     }
 
     #[test]
+    fn config_layers_defaults_user_repo_explicit_env() -> Result<(), Box<dyn std::error::Error>> {
+        let home = TempDir::new()?;
+        let repo = TempDir::new()?;
+        fs::create_dir_all(home.path().join("actup"))?;
+        fs::write(
+            home.path().join("actup").join("config.toml"),
+            "[policy]\nbump = \"patch\"\npin = \"tag\"\ntrack = \"major\"\nbranch = \"warn\"\n",
+        )?;
+        fs::write(
+            repo.path().join("actup.toml"),
+            "[policy]\npin = \"sha\"\ntrack = \"major\"\nbranch = \"warn\"\n",
+        )?;
+        fs::write(
+            repo.path().join("explicit.toml"),
+            "[policy]\ntrack = \"exact\"\nbranch = \"warn\"\n",
+        )?;
+        let output = actup(home.path())
+            .env("ACTUP_POLICY__BRANCH", "update")
+            .current_dir(repo.path())
+            .args(["--config", "explicit.toml", "config", "--format", "json"])
+            .output()?;
+
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        let config: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            config.get("policy"),
+            Some(&serde_json::json!({
+                "bump": "patch",
+                "pin": "sha",
+                "track": "exact",
+                "branch": "update",
+                "prerelease": false,
+            })),
+            "config: {config}"
+        );
+        assert_eq!(
+            config.pointer("/cache/ttl"),
+            Some(&serde_json::json!(86400))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn schema_ignores_invalid_config() -> Result<(), Box<dyn std::error::Error>> {
         let repo = broken_repo()?;
         let output = actup(repo.path())
