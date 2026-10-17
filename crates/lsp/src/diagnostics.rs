@@ -81,6 +81,13 @@ pub enum DiagnosticData {
     Unresolvable {
         /// Optional suggested replacement (e.g. closest matching tag).
         suggested_ref: Option<String>,
+        /// The `# vX.Y.Z` comment to append when the suggestion is a SHA pin.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repin_comment: Option<String>,
+        /// When set, extend the replacement to this column to overwrite a
+        /// stale version comment.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        replace_end_col: Option<u32>,
     },
 }
 
@@ -400,10 +407,7 @@ async fn compute_diagnostics_for_actions(
             if diag.data.is_none()
                 && let Some(tag) = result.suggestion()
             {
-                diag.data = serde_json::to_value(DiagnosticData::Unresolvable {
-                    suggested_ref: Some(tag.version().to_string()),
-                })
-                .ok();
+                diag.data = suggestion_data(action, config, tag);
             }
             if !action.editable {
                 diag.data = None;
@@ -586,6 +590,28 @@ fn status_to_diagnostic(
             Some(diag)
         }
     }
+}
+
+fn suggestion_data(
+    action: &LocatedAction,
+    config: &Config,
+    tag: &actup_core::version::Info,
+) -> Option<serde_json::Value> {
+    let edit = OutdatedEdit::new(
+        Rewrite::outdated(
+            config.policy_for(&action.action_ref).pin,
+            action.action_ref.is_sha(),
+            tag,
+            action.trailing(),
+        ),
+        action.line_end(),
+    );
+    serde_json::to_value(DiagnosticData::Unresolvable {
+        suggested_ref: Some(edit.target_ref),
+        repin_comment: edit.repin_comment,
+        replace_end_col: edit.replace_end_col,
+    })
+    .ok()
 }
 
 fn pin_branch_data(ref_name: &str, edit: OutdatedEdit) -> Option<serde_json::Value> {
@@ -1281,11 +1307,13 @@ jobs:
     fn diagnostic_data_unresolvable_none_roundtrips() {
         let data = DiagnosticData::Unresolvable {
             suggested_ref: None,
+            repin_comment: None,
+            replace_end_col: None,
         };
         let json = serde_json::to_value(&data).unwrap();
         let back: DiagnosticData = serde_json::from_value(json).unwrap();
         match back {
-            DiagnosticData::Unresolvable { suggested_ref } => assert!(suggested_ref.is_none()),
+            DiagnosticData::Unresolvable { suggested_ref, .. } => assert!(suggested_ref.is_none()),
             DiagnosticData::Outdated { .. }
             | DiagnosticData::ExpandSha { .. }
             | DiagnosticData::PinBranch { .. } => {
@@ -1306,6 +1334,8 @@ jobs:
 
         let unresolvable = DiagnosticData::Unresolvable {
             suggested_ref: None,
+            repin_comment: None,
+            replace_end_col: None,
         };
         let json = serde_json::to_value(&unresolvable).unwrap();
         assert_eq!(json["kind"], "unresolvable");
@@ -1385,7 +1415,7 @@ jobs:
             Some(NumberOrString::String("unresolvable".into()))
         );
         let data: DiagnosticData = serde_json::from_value(diag.data.clone().ok_or("no data")?)?;
-        let DiagnosticData::Unresolvable { suggested_ref } = data else {
+        let DiagnosticData::Unresolvable { suggested_ref, .. } = data else {
             return Err(format!("expected unresolvable data, got {data:?}").into());
         };
         assert_eq!(suggested_ref.as_deref(), Some("v4.2.0"));
@@ -1395,6 +1425,54 @@ jobs:
             usize::try_from(diag.range.end.character)?,
             ref_start + "v42.0".len()
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn closest_tag_quickfix_follows_the_pin_style() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use tower_lsp_server::ls_types::CodeActionOrCommand;
+
+        let versions = version::Set::build(
+            vec![
+                test_utils::make_version_info("v4.1.0", DUMMY_SHA_2),
+                test_utils::make_version_info("v4.2.0", DUMMY_SHA),
+            ],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        let policy = actup_core::config::Policy {
+            pin: actup_core::policy::Style::Sha,
+            ..Default::default()
+        };
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@v42.0 # v4\n";
+        let diags = diagnostics_under(yaml, versions, policy).await?;
+        let [diag] = diags.as_slice() else {
+            return Err(format!("expected one diagnostic, got {diags:?}").into());
+        };
+        let data: DiagnosticData = serde_json::from_value(diag.data.clone().ok_or("no data")?)?;
+        let DiagnosticData::Unresolvable {
+            suggested_ref,
+            repin_comment,
+            replace_end_col,
+        } = data
+        else {
+            return Err(format!("expected unresolvable data, got {data:?}").into());
+        };
+        assert_eq!(suggested_ref.as_deref(), Some(DUMMY_SHA));
+        assert_eq!(repin_comment.as_deref(), Some(" # v4.2.0"));
+        assert_eq!(replace_end_col, Some(u32::try_from(yaml.trim_end().len())?));
+
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let actions =
+            crate::code_actions::code_actions_for_diagnostics(&uri, Some(1), &diags, true);
+        let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
+            return Err(format!("expected one action, got {actions:?}").into());
+        };
+        assert_eq!(action.title, format!("Change to {}", &DUMMY_SHA[..7]));
+        let edit = serde_json::to_string(&action.edit)?;
+        assert!(edit.contains(&format!("{DUMMY_SHA} # v4.2.0")), "{edit}");
         Ok(())
     }
 

@@ -773,6 +773,8 @@ mod tests {
     fn edits_from_diagnostics_skips_unresolvable() {
         let data = DiagnosticData::Unresolvable {
             suggested_ref: Some("v2.0.0".into()),
+            repin_comment: None,
+            replace_end_col: None,
         };
         let diag = Diagnostic {
             range: make_range(0, 0, 5),

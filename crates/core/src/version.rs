@@ -459,7 +459,7 @@ impl Serialize for Tags {
     }
 }
 
-fn rank(a: &Version, b: &Version) -> Ordering {
+pub(crate) fn rank(a: &Version, b: &Version) -> Ordering {
     let parts = |v: &Version| (v.minor().is_some(), v.patch().is_some());
     let has_build = |v: &Version| v.as_str().contains('+');
     a.cmp(b)

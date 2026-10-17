@@ -69,6 +69,8 @@ pub fn make_outdated_diagnostic(range: Range, uses_value: &str, target_ref: &str
 pub fn make_unresolvable_diagnostic(range: Range, suggested: Option<&str>) -> Diagnostic {
     let data = DiagnosticData::Unresolvable {
         suggested_ref: suggested.map(String::from),
+        repin_comment: None,
+        replace_end_col: None,
     };
     Diagnostic {
         range,

@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use crate::version::{Info, Set, Version};
+use crate::version::{Info, Set, Version, rank};
 
 const MAX_EDITS: usize = 2;
 
@@ -34,33 +34,36 @@ fn shape(ref_name: &str) -> Shape {
     }
 }
 
-/// Return the highest stable tag that completes the partial version `ref_name`, or else the listed tag within two edits of it.
+/// Return the highest tag that completes the partial version `ref_name`, or else the listed tag within two edits of it, counting prerelease tags only when `allow_prerelease` is set.
 #[must_use]
-pub fn closest_tag(ref_name: &str, versions: &Set) -> Option<Arc<Info>> {
-    let tags = versions.semver_tags();
+pub fn closest_tag(ref_name: &str, versions: &Set, allow_prerelease: bool) -> Option<Arc<Info>> {
+    let tags = || {
+        versions
+            .semver_tags()
+            .iter()
+            .filter(move |tag| allow_prerelease || !tag.version().is_prerelease())
+    };
     match shape(ref_name) {
         Shape::Full => return None,
         Shape::Partial => {
             let wanted = Version::parse(ref_name);
-            let completes = tags
-                .iter()
+            let completes = tags()
                 .filter(|tag| {
                     let have = tag.version();
-                    !have.is_prerelease()
-                        && have.major() == wanted.major()
+                    have.major() == wanted.major()
                         && wanted.minor().is_none_or(|m| have.minor() == Some(m))
                 })
-                .max_by(|a, b| a.version().cmp(b.version()));
+                .max_by(|a, b| rank(a.version(), b.version()));
             if let Some(tag) = completes {
                 return Some(Arc::clone(tag));
             }
         }
         Shape::Other => {}
     }
-    tags.iter()
+    tags()
         .map(|tag| (strsim::levenshtein(ref_name, tag.version().as_str()), tag))
         .filter(|(edits, _)| (1..=MAX_EDITS).contains(edits))
-        .min_by(|(a, x), (b, y)| a.cmp(b).then_with(|| y.version().cmp(x.version())))
+        .min_by(|(a, x), (b, y)| a.cmp(b).then_with(|| rank(y.version(), x.version())))
         .map(|(_, tag)| Arc::clone(tag))
 }
 
@@ -80,7 +83,30 @@ mod tests {
     }
 
     fn suggest(ref_name: &str, tags: &[&str]) -> Option<String> {
-        closest_tag(ref_name, &set(tags)).map(|t| t.version().to_string())
+        closest_tag(ref_name, &set(tags), false).map(|t| t.version().to_string())
+    }
+
+    #[test]
+    fn prerelease_tags_count_when_the_policy_allows_them() {
+        let tags = set(&["v4.2.0", "v4.2.1-rc.1"]);
+        let pick = |allow| closest_tag("v4.2", &tags, allow).map(|t| t.version().to_string());
+        assert_eq!(pick(false).as_deref(), Some("v4.2.0"));
+        assert_eq!(pick(true).as_deref(), Some("v4.2.1-rc.1"));
+        assert_eq!(
+            closest_tag("v4.2.1_rc.1", &tags, true).map(|t| t.version().to_string()),
+            Some("v4.2.1-rc.1".to_string())
+        );
+        assert_eq!(closest_tag("v4.2.1_rc.1", &tags, false), None);
+    }
+
+    #[test]
+    fn equal_versions_pick_the_same_tag_in_any_order() {
+        let forward = ["v4.2", "v4.2.0", "v4.2.0+build.1"];
+        let backward = ["v4.2.0+build.1", "v4.2.0", "v4.2"];
+        assert_eq!(suggest("v4", &forward).as_deref(), Some("v4.2.0"));
+        assert_eq!(suggest("v4", &backward).as_deref(), Some("v4.2.0"));
+        assert_eq!(suggest("v4.2.O", &forward).as_deref(), Some("v4.2.0"));
+        assert_eq!(suggest("v4.2.O", &backward).as_deref(), Some("v4.2.0"));
     }
 
     #[test]

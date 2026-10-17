@@ -279,15 +279,20 @@ fn quick_fix(range: Range, data: DiagnosticData) -> Option<(String, TextEdit, bo
         }
         DiagnosticData::Unresolvable {
             suggested_ref: Some(suggested),
+            repin_comment,
+            replace_end_col,
         } => {
-            let edit = TextEdit {
-                range,
-                new_text: suggested.clone(),
-            };
-            Some((format!("Change to {suggested}"), edit, false))
+            let edit =
+                outdated_text_edit(range, &suggested, repin_comment.as_deref(), replace_end_col);
+            Some((
+                format!("Change to {}", display_ref(&suggested)),
+                edit,
+                false,
+            ))
         }
         DiagnosticData::Unresolvable {
             suggested_ref: None,
+            ..
         } => None,
     }
 }
@@ -964,12 +969,14 @@ mod tests {
     fn unresolvable_data_roundtrips_through_json() {
         let data = DiagnosticData::Unresolvable {
             suggested_ref: Some("v3.1.0".into()),
+            repin_comment: None,
+            replace_end_col: None,
         };
         let json = serde_json::to_value(&data).unwrap();
         let back: DiagnosticData = serde_json::from_value(json).unwrap();
 
         match back {
-            DiagnosticData::Unresolvable { suggested_ref } => {
+            DiagnosticData::Unresolvable { suggested_ref, .. } => {
                 assert_eq!(suggested_ref.as_deref(), Some("v3.1.0"));
             }
             DiagnosticData::Outdated { .. }

@@ -107,7 +107,11 @@ impl CheckResult {
             CheckStatus::Unresolvable {
                 is_environment_error: false,
                 ..
-            } => crate::suggest::closest_tag(action_ref.ref_str(), versions),
+            } => crate::suggest::closest_tag(
+                action_ref.ref_str(),
+                versions,
+                config.policy_for(action_ref).prerelease,
+            ),
             _ => None,
         };
         let listed = current_commit(action_ref, versions);
@@ -3145,6 +3149,26 @@ mod tests {
         assert_eq!(suggestion("v42.1").as_deref(), Some("v4.2.1"));
         assert_eq!(suggestion("v4.2.0"), None);
         assert_eq!(suggestion("nope"), None);
+    }
+
+    #[test]
+    fn closest_tag_follows_the_prerelease_policy() {
+        let versions = complete(prerelease_set(&["v4.2.0", "v4.2.1-rc.1"]));
+        let action = make_action_ref("actions", "checkout", "v4.2");
+        let pick = |prerelease| {
+            let config = Config {
+                policy: Policy {
+                    prerelease,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            check_action(&action, &versions, &config)
+                .suggestion()
+                .map(|t| t.version().to_string())
+        };
+        assert_eq!(pick(false).as_deref(), Some("v4.2.0"));
+        assert_eq!(pick(true).as_deref(), Some("v4.2.1-rc.1"));
     }
 
     #[tokio::test]
