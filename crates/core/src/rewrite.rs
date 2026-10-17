@@ -95,7 +95,9 @@ fn comment_start(rest: &str) -> usize {
 
 /// Whether a line fragment is a version comment like `# v1.2.3` or `# 1.2 note`.
 ///
-/// The first token after `#` must have the shape `v?N[.N[.N]][-pre][+build]`.
+/// The first token after `#` must have the shape `v?N[.N[.N]][-pre][+build]`,
+/// with pre-release and build identifiers as `SemVer` 2.0.0 §9 and §10
+/// define them, and must not be an ISO date.
 #[must_use]
 pub fn is_version_comment(tail: &str) -> bool {
     tail.starts_with('#') && split_comment(tail).is_some_and(|(token, _)| is_version_token(token))
@@ -103,6 +105,9 @@ pub fn is_version_comment(tail: &str) -> bool {
 
 fn is_version_token(token: &str) -> bool {
     let token = token.strip_prefix('v').unwrap_or(token);
+    if version::is_iso_date(token) {
+        return false;
+    }
     let (token, build) = token
         .split_once('+')
         .map_or((token, None), |(token, build)| (token, Some(build)));
@@ -110,16 +115,17 @@ fn is_version_token(token: &str) -> bool {
         .split_once('-')
         .map_or((token, None), |(numbers, pre)| (numbers, Some(pre)));
     let is_number = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
-    let is_identifier = |part: &str| {
-        !part.is_empty()
-            && part
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-    };
+    let is_identifier =
+        |id: &str| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-');
+    let has_leading_zero =
+        |id: &str| id.len() > 1 && id.starts_with('0') && id.bytes().all(|b| b.is_ascii_digit());
     (1..=3).contains(&numbers.split('.').count())
         && numbers.split('.').all(is_number)
-        && prerelease.is_none_or(is_identifier)
-        && build.is_none_or(is_identifier)
+        && prerelease.is_none_or(|pre| {
+            pre.split('.')
+                .all(|id| is_identifier(id) && !has_leading_zero(id))
+        })
+        && build.is_none_or(|build| build.split('.').all(is_identifier))
 }
 
 fn split_comment(tail: &str) -> Option<(&str, &str)> {
@@ -342,6 +348,7 @@ mod tests {
             "# v1.0.0+build",
             "# 1.2.3+build.5 keep",
             "# 1.2.3-beta.1+b",
+            "# 1.2.3-0.x-y.10+001.sha-5",
         ] {
             assert!(is_version_comment(tail), "{tail}");
         }
@@ -359,6 +366,15 @@ mod tests {
             "# 1.2-",
             "# 1.x",
             "# 1.2.3+",
+            "# 2024-01-01",
+            "# v2024-01-01",
+            "# 1.2.3-a..b",
+            "# 1.2.3-.a",
+            "# 1.2.3+.",
+            "# 1.2.3+a..b",
+            "# 1.2.3-01",
+            "# 1.2.3-a.007",
+            "# 1.2.3-a_b",
             &format!("# {}", "a".repeat(40)),
             " # v1",
         ] {

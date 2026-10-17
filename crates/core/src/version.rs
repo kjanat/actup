@@ -338,7 +338,7 @@ pub fn is_short_sha(ref_str: &str) -> bool {
     (7..40).contains(&ref_str.len()) && ref_str.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn is_iso_date(s: &str) -> bool {
+pub(crate) fn is_iso_date(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() == 10
         && b.iter().enumerate().all(|(i, c)| match i {
