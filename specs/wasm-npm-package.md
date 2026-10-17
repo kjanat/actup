@@ -13,7 +13,6 @@ Publish a thin TypeScript wrapper as `actup-wasm` on npm. Enable:
 
 - VS Code web extension (vscode.dev) — `wasm32-unknown-unknown` with JS
   `fetch()` bridge
-- Zed extension — `wasm32-wasip2` with Zed's `http-client` host interface
 - Standalone Node.js/Bun/Deno usage — `actup-wasm` as a library
 - MCP server in JS/TS — wrapping the WASM module
 
@@ -21,15 +20,13 @@ The CLI remains native-only. The existing native LSP binary is unaffected.
 
 ## Motivation
 
-Before this spec, both the VS Code and Zed extensions were thin shims that
-located and spawned `actup-lsp` as a native binary. This meant:
+Before this spec, the VS Code extension was a thin shim that located and spawned
+`actup-lsp` as a native binary. This meant:
 
 1. **No vscode.dev support** — web extensions can't spawn native processes
 2. **Users must pre-install `actup-lsp`** — friction, version mismatch risk
 3. **No JS/TS ecosystem integration** — can't use actup from Node scripts, CI
    tools, or MCP servers without a Rust toolchain
-4. **Zed extension is hollow** — compiles to WASM but delegates everything to a
-   native binary
 
 WASM eliminates the native binary requirement for the core check/update
 pipeline.
@@ -57,7 +54,7 @@ Native CLI pipeline: **discover files → read → parse → resolve → diff �
 WASM pipeline: **host provides YAML content → parse → resolve → return edits**
 (host applies)
 
-The npm package never touches the filesystem. The host (VS Code, Node.js, Zed)
+The npm package never touches the filesystem. The host (VS Code, Node.js)
 handles I/O.
 
 ### Crate layout
@@ -97,7 +94,7 @@ packages/
 | D6  | npm package `actup-wasm` + TS types                | M      | D5         |
 | D7  | Default `fetch()`-based GitHub provider            | S      | D6         |
 | D8  | VS Code web extension (direct WASM, no LSP)        | L      | D6, D7     |
-| D9  | Zed extension launches `actup-lsp` and `actup-mcp` | L      | D5         |
+| D9  | Zed extension launches `actup-lsp` and `actup-mcp` | L      | -          |
 | D10 | WASM-based MCP server                              | L      | D6, D7     |
 
 ## Non-Goals
@@ -307,11 +304,11 @@ Cloudflare Workers.
 | Consumer           | Target                   | HTTP            | Runtime                |
 | ------------------ | ------------------------ | --------------- | ---------------------- |
 | npm / VS Code web  | `wasm32-unknown-unknown` | JS fetch bridge | `wasm-bindgen-futures` |
-| Zed extension      | `wasm32-wasip2`          | Zed http-client | WASI reactor           |
 | Node.js standalone | `wasm32-unknown-unknown` | JS fetch bridge | Node WASM loader       |
 
 The `actup-wasm` crate targets `wasm32-unknown-unknown` (broadest compat). The
-Zed extension (D9) embeds `actup-core` directly and builds for `wasm32-wasip2`.
+Zed extension (D9) builds for `wasm32-wasip2`, launches `actup-lsp` and
+`actup-mcp`, and embeds no `actup-core`.
 
 ## RwLock Strategy
 
@@ -377,12 +374,11 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 
 ## Risks & Mitigations
 
-| Risk                              | Likelihood | Impact | Mitigation                                                                                                    |
-| --------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------------------------------- |
-| `saphyr-parser` bloats WASM       | Medium     | M      | `packages/actup-wasm/scripts/build-wasm.ts` caps the gzip size; profile with `twiggy`                         |
-| `SystemTime` in `Set::fetched_at` | Low        | S      | `#[serde(skip)]` — WASM consumer won't use cache timestamps                                                   |
-| Async executor mismatch in WASM   | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4                                                          |
-| Zed wasip2 needs different build  | Medium     | L      | `extensions/zed` builds for `wasm32-wasip2`, launches `actup-lsp` and `actup-mcp`, and embeds no `actup-core` |
+| Risk                              | Likelihood | Impact | Mitigation                                                                            |
+| --------------------------------- | ---------- | ------ | ------------------------------------------------------------------------------------- |
+| `saphyr-parser` bloats WASM       | Medium     | M      | `packages/actup-wasm/scripts/build-wasm.ts` caps the gzip size; profile with `twiggy` |
+| `SystemTime` in `Set::fetched_at` | Low        | S      | `#[serde(skip)]` — WASM consumer won't use cache timestamps                           |
+| Async executor mismatch in WASM   | Medium     | M      | `wasm-bindgen-futures` for browser; test early in D4                                  |
 
 ## Trade-offs Made
 
@@ -392,7 +388,7 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 | Eliminate FS from WASM surface   | Abstract FS behind trait         | Host always has the files; WASM never needs to discover/read                                                                                                                                             |
 | High-level API first             | Provider-level API first         | Consumers want results, not a toolkit                                                                                                                                                                    |
 | New `actup-wasm` crate           | WASM features in existing crates | Clean boundary; `actup-core` keeps its WASM changes small: `Clock`, `MaybeSend`/`MaybeSync`, the `tsify` feature, a `sync`-only `tokio` on `wasm32`, and no `atomic_write` or `file_cache` modules there |
-| `wasm32-unknown-unknown` primary | `wasm32-wasip2` primary          | Broadest compat (browser + Node); wasip2 only for Zed                                                                                                                                                    |
+| `wasm32-unknown-unknown` primary | `wasm32-wasip2` primary          | Broadest compat (browser + Node)                                                                                                                                                                         |
 | `wasm-bindgen` + `wasm-pack`     | Manual WASM instantiation        | Mature toolchain, good TS type generation                                                                                                                                                                |
 
 ## Resolved Questions
