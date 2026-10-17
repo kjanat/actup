@@ -5,6 +5,7 @@
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
 use actup_core::{ActionRef, Config, parse_action_path, provider, version};
+use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 

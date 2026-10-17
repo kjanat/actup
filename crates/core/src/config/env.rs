@@ -19,8 +19,11 @@ pub const FORMAT_VAR: &str = "ACTUP_FORMAT";
 /// Environment variable that sets the CLI `--strict` flag.
 pub const STRICT_VAR: &str = "ACTUP_STRICT";
 
+/// Environment variable that sets the CLI `--color` option.
+pub const COLOR_VAR: &str = "ACTUP_COLOR";
+
 /// Environment variables that set CLI flags and never set a config key.
-pub const CLI_FLAG_VARS: [&str; 4] = [CONFIG_VAR, VERBOSE_VAR, FORMAT_VAR, STRICT_VAR];
+pub const CLI_FLAG_VARS: [&str; 5] = [CONFIG_VAR, VERBOSE_VAR, FORMAT_VAR, STRICT_VAR, COLOR_VAR];
 
 /// Config keys set by `ACTUP_*` environment variables.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -197,6 +200,7 @@ mod tests {
                 ("ACTUP_VERBOSE", "1"),
                 ("ACTUP_FORMAT", "json"),
                 ("Actup_Strict", "true"),
+                ("ACTUP_COLOR", "never"),
                 ("ACTUP_POLICY__BUMP", "patch"),
             ]),
             [pair("policy.bump", "patch")]

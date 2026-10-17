@@ -7,7 +7,7 @@ use std::{
 
 use actup_core::config;
 use clap::{
-    CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
+    ColorChoice, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum,
     error::{Error, ErrorKind},
     parser::ValueSource,
 };
@@ -34,6 +34,16 @@ pub struct Cli {
         value_name = "PATH"
     )]
     pub config: Option<PathBuf>,
+
+    /// When to colour output
+    #[arg(
+        long,
+        global = true,
+        env = config::COLOR_VAR,
+        value_name = "WHEN",
+        default_value = "auto"
+    )]
+    pub color: ColorChoice,
 
     #[command(flatten)]
     pub latest: LatestArgs,
@@ -82,6 +92,16 @@ impl Cli {
             }
         }
         Self::from_arg_matches_mut(&mut matches)
+    }
+
+    /// The colour choice `--color` selects for stdout and stderr.
+    #[must_use]
+    pub const fn color_choice(&self) -> anstream::ColorChoice {
+        match self.color {
+            ColorChoice::Auto => anstream::ColorChoice::Auto,
+            ColorChoice::Always => anstream::ColorChoice::Always,
+            ColorChoice::Never => anstream::ColorChoice::Never,
+        }
     }
 
     /// Generate shell completions and write to stdout

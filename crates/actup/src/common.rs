@@ -3,6 +3,7 @@
 //! This module provides the common pipeline used by check, update, and pin commands:
 //! discover -> read -> extract uses -> filter -> provider lookup -> (command-specific logic)
 
+use anstream::{eprintln, println};
 use std::{fs, path::Path};
 
 use actup_core::{

@@ -1,6 +1,7 @@
 //! Schema command - output JSON schema for configuration
 
 use actup_core::Config;
+use anstream::{eprintln, println};
 use schemars::schema_for;
 
 use crate::cli::CliExitCode;

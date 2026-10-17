@@ -1,5 +1,6 @@
 //! Output formatting for CLI
 
+use anstream::{eprintln, println};
 use std::sync::Arc;
 
 use actup_core::{ActionRef, RefKind, version};

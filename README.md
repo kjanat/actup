@@ -67,6 +67,11 @@ actup check --format toml   # TOML format
 actup check --format human  # Default, colored output
 ```
 
+Human output is coloured only on a terminal. `--color always` and
+`--color never` force the choice. Under the default `--color auto`, a non-empty
+`NO_COLOR` turns colour off, and a `CLICOLOR_FORCE` other than `0` turns it on
+for piped output. `NO_COLOR` wins when both are set.
+
 With `--format json` or `toml`, `check` prints one entry per finding and
 `update` and `pin` print a report with `dry_run` and the lists `edited`,
 `skipped` and `errors`. Every entry names the file, line, action, owner, repo,
@@ -236,6 +241,7 @@ file, the explicit file and the `ACTUP_*` variables that set config keys.
 - `ACTUP_VERBOSE` - Enable verbose output
 - `ACTUP_FORMAT` - Default output format (`human`, `json`, `toml`)
 - `ACTUP_STRICT` - Enable strict mode for `check`
+- `ACTUP_COLOR` - Colour mode, same as `--color` (`auto`, `always`, `never`)
 
 An empty value of one of these variables counts as unset.
 

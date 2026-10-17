@@ -1343,7 +1343,11 @@ mod cli_runs {
 
     fn actup(home: &Path) -> Command {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_actup"));
-        cmd.env("XDG_CONFIG_HOME", home).env("HOME", home);
+        cmd.env("XDG_CONFIG_HOME", home)
+            .env("HOME", home)
+            .env_remove("NO_COLOR")
+            .env_remove("CLICOLOR")
+            .env_remove("CLICOLOR_FORCE");
         for (key, _) in std::env::vars_os() {
             if key.to_string_lossy().starts_with("ACTUP_") {
                 cmd.env_remove(key);
@@ -1828,6 +1832,38 @@ mod cli_runs {
             config.pointer("/cache/ttl"),
             Some(&serde_json::json!(86400))
         );
+        Ok(())
+    }
+
+    fn colored(args: &[&str], env: &[(&str, &str)]) -> Result<bool, Box<dyn std::error::Error>> {
+        let repo = TempDir::new()?;
+        let mut cmd = actup(repo.path());
+        cmd.args(args).arg("config").arg(repo.path());
+        for (key, value) in env {
+            cmd.env(key, value);
+        }
+        let output = cmd.output()?;
+        assert_eq!(output.status.code(), Some(0), "{args:?} {env:?}");
+        assert!(
+            String::from_utf8(output.stdout.clone())?.contains("Policy"),
+            "{args:?} {env:?}"
+        );
+        Ok(output.stdout.contains(&0x1b))
+    }
+
+    #[test]
+    fn piped_output_is_colored_only_on_request() -> Result<(), Box<dyn std::error::Error>> {
+        assert!(!colored(&[], &[])?);
+        assert!(!colored(&["--color", "auto"], &[])?);
+        assert!(colored(&["--color", "always"], &[])?);
+        assert!(colored(&[], &[("ACTUP_COLOR", "always")])?);
+        assert!(colored(&[], &[("CLICOLOR_FORCE", "1")])?);
+        assert!(!colored(
+            &[],
+            &[("NO_COLOR", "1"), ("CLICOLOR_FORCE", "1")]
+        )?);
+        assert!(colored(&["--color", "always"], &[("NO_COLOR", "1")])?);
+        assert!(!colored(&["--color", "never"], &[("CLICOLOR_FORCE", "1")])?);
         Ok(())
     }
 

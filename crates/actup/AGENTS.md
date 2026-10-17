@@ -56,6 +56,9 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 
 - `--format json` for machine output; schema must be stable
 - `--verbose` enables debug tracing
+- Print through `anstream::println!` and `anstream::eprintln!`; `--color` sets
+  `anstream::ColorChoice` once in `main.rs`, and the streams strip ANSI codes
+  when colour is off
 - `--dry-run` for update/fix/pin shows changes without applying
 - Feature flags `github`, `gitlab`, `gitea` are placeholders that compile
   nothing; `default = ["github"]`

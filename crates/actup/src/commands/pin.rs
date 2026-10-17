@@ -1,5 +1,6 @@
 //! Pin command - pin all actions to their current SHA
 
+use anstream::println;
 use std::{path::Path, sync::Arc};
 
 use actup_core::{

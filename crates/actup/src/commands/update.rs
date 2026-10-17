@@ -1,5 +1,6 @@
 //! Update command - update actions to their latest versions
 
+use anstream::println;
 use std::path::Path;
 
 use actup_core::{

@@ -1,5 +1,6 @@
 //! Cache command - manage the version cache
 
+use anstream::{eprintln, println};
 use std::{path::PathBuf, time::Duration};
 
 use actup_core::{Config, cache::Cache};

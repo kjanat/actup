@@ -30,7 +30,9 @@ pub use discovery::{
     CONFIG_EXTENSIONS, Candidate, iter_config_candidates, repo_candidates, repo_search_dirs,
     user_config_path,
 };
-pub use env::{CLI_FLAG_VARS, CONFIG_VAR, EnvOverrides, FORMAT_VAR, STRICT_VAR, VERBOSE_VAR};
+pub use env::{
+    CLI_FLAG_VARS, COLOR_VAR, CONFIG_VAR, EnvOverrides, FORMAT_VAR, STRICT_VAR, VERBOSE_VAR,
+};
 use figment::{
     Figment,
     providers::{Format as _, Json, Serialized, Toml, Yaml},

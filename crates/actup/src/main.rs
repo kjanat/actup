@@ -8,6 +8,7 @@ mod common;
 mod file_cache;
 mod output;
 
+use anstream::{eprintln, println};
 use std::process::ExitCode;
 
 use actup_core::{
@@ -20,6 +21,7 @@ use crate::cli::{Cli, CliExitCode, Command};
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::try_parse_args(std::env::args_os()).unwrap_or_else(|e| e.exit());
+    cli.color_choice().write_global();
 
     // Initialize tracing
     let filter = if cli.verbose {
@@ -35,6 +37,7 @@ async fn main() -> ExitCode {
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
+        .with_ansi(anstream::AutoStream::choice(&std::io::stdout()) != anstream::ColorChoice::Never)
         .init();
 
     let exit_code = run(cli).await;

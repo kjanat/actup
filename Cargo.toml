@@ -34,6 +34,7 @@ actup-provider-gitea.path  = "crates/provider-gitea"
 actup-provider-github.path = "crates/provider-github"
 actup-provider-gitlab.path = "crates/provider-gitlab"
 actup-providers.path       = "crates/providers"
+anstream                   = "1"  # colour-aware streams
 async-trait                = "0.1"  # async trait impls
 base64                     = "0.22"  # encoding
 bstr                       = "1"  # byte strings (git refs)

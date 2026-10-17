@@ -1,5 +1,6 @@
 //! Config command - show effective configuration
 
+use anstream::{eprintln, println};
 use std::path::Path;
 
 use actup_core::{
