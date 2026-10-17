@@ -106,7 +106,7 @@ impl OutdatedEdit {
         Self {
             target_ref: rewrite.new_ref,
             repin_comment: (!after_ref.is_empty()).then_some(after_ref),
-            replace_end_col: to_line_end.then_some(end.line_end_col),
+            replace_end_col: to_line_end.then_some(end.rewrite_end_col),
         }
     }
 }
@@ -116,8 +116,10 @@ impl OutdatedEdit {
 pub struct LineEnd<'a> {
     /// The [`closer`] of the value.
     pub closer: &'a str,
-    /// 0-indexed end-of-line column in the negotiated encoding.
-    pub line_end_col: u32,
+    /// 0-indexed column (negotiated encoding) where a rewrite after the ref
+    /// ends: the line end, or the end of the [`label_span`](actup_core::rewrite::label_span) on a line that
+    /// takes no comment.
+    pub rewrite_end_col: u32,
 }
 
 /// Parsed action reference with its source location in the document.
@@ -144,7 +146,7 @@ pub struct LocatedAction {
     /// 0-indexed column (negotiated encoding) where a rewrite after the ref
     /// ends: the line end, or the end of the [`label_span`](actup_core::rewrite::label_span) on a line that
     /// takes no comment.
-    pub line_end_col: u32,
+    pub rewrite_end_col: u32,
 }
 
 /// Return the [`SourceFormat`] of the file `uri` names, or YAML for a non-file URI.
@@ -212,7 +214,7 @@ impl LocatedAction {
     pub fn line_end(&self) -> LineEnd<'_> {
         LineEnd {
             closer: &self.closer,
-            line_end_col: self.line_end_col,
+            rewrite_end_col: self.rewrite_end_col,
         }
     }
 }
@@ -223,17 +225,6 @@ struct LocatedUses {
     invalid: Vec<Diagnostic>,
 }
 
-/// Extract and parse all `uses:` references from document text read as `format`.
-///
-/// Skips local (`./`) and docker (`docker://`) references. A value that fails
-/// to parse becomes an error diagnostic on its ref, or on its line when the
-/// line does not hold the ref verbatim.
-///
-/// Column positions are converted from byte offsets to the negotiated
-/// LSP position encoding. A ref on a line outside
-/// [`SourceFormat::comment_lines`] reads only the [`label_span`](actup_core::rewrite::label_span) after its
-/// value, so no edit appends a comment there and a rewrite of a label
-/// comment leaves the rest of the line alone.
 fn locate_uses(
     text: &str,
     format: SourceFormat,
@@ -331,7 +322,7 @@ fn locate_uses(
             closer: closing.to_string(),
             tail: tail.to_string(),
             takes_comment,
-            line_end_col: rewrite_end_col,
+            rewrite_end_col,
         });
     }
 
@@ -991,7 +982,7 @@ mod tests {
         };
         let end = |closer| LineEnd {
             closer,
-            line_end_col: 70,
+            rewrite_end_col: 70,
         };
         for to_line_end in [true, false] {
             let edit = OutdatedEdit::new(rewrite(to_line_end), end("  "));
@@ -1013,7 +1004,7 @@ mod tests {
         };
         let end = LineEnd {
             closer: "\" } ",
-            line_end_col: 70,
+            rewrite_end_col: 70,
         };
         let placed = |rewrite| {
             let edit = OutdatedEdit::new(rewrite, end);
@@ -2807,7 +2798,7 @@ jobs:
         let text = extract_located_actions(&line, SourceFormat::Text, encoding);
         let read: Vec<(Trailing<'_>, &str, u32)> = text
             .iter()
-            .map(|a| (a.trailing(None), a.tail.as_str(), a.line_end_col))
+            .map(|a| (a.trailing(None), a.tail.as_str(), a.rewrite_end_col))
             .collect();
         let label_end = line.find(" this").and_then(|end| u32::try_from(end).ok());
         let value_end = line.rfind("v1").and_then(|at| u32::try_from(at + 2).ok());

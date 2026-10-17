@@ -504,10 +504,10 @@ mod tests {
         test_utils::make_range(line, col_start, col_end)
     }
 
-    const fn unquoted(line_end_col: u32) -> LineEnd<'static> {
+    const fn unquoted(rewrite_end_col: u32) -> LineEnd<'static> {
         LineEnd {
             closer: "",
-            line_end_col,
+            rewrite_end_col,
         }
     }
 
@@ -1974,7 +1974,7 @@ mod tests {
         };
         let end = LineEnd {
             closer: "\" ",
-            line_end_col: 47,
+            rewrite_end_col: 47,
         };
         let actions = pin_code_actions(
             &uri,
