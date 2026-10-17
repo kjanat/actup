@@ -119,6 +119,12 @@ crates-publish-test:
     shellcheck .github/actions/crates-publish/*.sh
     .github/actions/crates-publish/test.sh
 
+# Test the release version script
+[group('test')]
+release-version-test:
+    shellcheck .github/actions/release-version/*.sh
+    .github/actions/release-version/test.sh
+
 # Test the example-workflow pin script
 [group('test')]
 examples-test:

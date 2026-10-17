@@ -1,0 +1,27 @@
+name: release version
+description: |
+  Decide the release facts of the pushed tag: whether it is a prerelease,
+  the npm dist-tag and the container image tags.
+inputs:
+  image:
+    description: Container image name without a tag
+    required: true
+outputs:
+  prerelease:
+    description: "`true` when the version before any `+` build metadata has a prerelease part"
+    value: ${{ steps.decide.outputs.prerelease }}
+  dist-tag:
+    description: npm dist-tag, `next` for a prerelease and `latest` otherwise
+    value: ${{ steps.decide.outputs.dist-tag }}
+  image-tags:
+    description: Image references to push, one per line
+    value: ${{ steps.decide.outputs.image-tags }}
+runs:
+  using: composite
+  steps:
+    - id: decide
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ github.ref_name }}
+        IMAGE: ${{ inputs.image }}
+      run: bash "${GITHUB_ACTION_PATH}/run.sh"

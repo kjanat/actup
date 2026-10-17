@@ -222,10 +222,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - run: shellcheck action/*.sh examples/*.sh .github/actions/crates-publish/*.sh
+      - run: shellcheck action/*.sh examples/*.sh .github/actions/crates-publish/*.sh .github/actions/release-version/*.sh
       - run: action/test.sh
       - run: examples/pin.test.sh
       - run: .github/actions/crates-publish/test.sh
+      - run: .github/actions/release-version/test.sh
 
   self-check:
     name: Self-check pins
