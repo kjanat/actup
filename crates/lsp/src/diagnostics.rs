@@ -2091,11 +2091,33 @@ jobs:
             ),
             []
         );
-        assert!(
-            crate::code_actions::fix_all_in_file(&uri, Some(1), &outdated.diagnostics, true)
-                .is_none()
-        );
         assert_eq!(crate::code_actions::update_text_edit(diag), None);
+
+        let two =
+            diagnostics("    - uses: actions/checkout@v3\n    - uses: actions/checkout@v4.0.0\n")
+                .await;
+        assert_eq!(two.diagnostics.len(), 2, "{:?}", two.diagnostics);
+        for diag in &two.diagnostics {
+            assert_eq!(diag.code, Some(NumberOrString::String("outdated".into())));
+            assert!(
+                diag.message.contains(" (stale: fetched "),
+                "{}",
+                diag.message
+            );
+            assert_eq!(diag.data, None);
+        }
+        assert!(
+            crate::code_actions::fix_all_in_file(&uri, Some(1), &two.diagnostics, true).is_none()
+        );
+        assert_eq!(
+            crate::code_actions::code_actions_for_diagnostics(
+                &uri,
+                Some(1),
+                &two.diagnostics,
+                true
+            ),
+            []
+        );
 
         let current = diagnostics("    - uses: actions/checkout@v4.2.0\n").await;
         assert_eq!(current.diagnostics, []);
