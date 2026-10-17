@@ -4,7 +4,7 @@
 //! `actup actions/checkout@v4` prints the latest within major v4.
 //! `actup gitlab.com/group/project` asks the provider of `gitlab.com`.
 
-use actup_core::{ActionRef, Config, parse_action_path, provider, version};
+use actup_core::{ActionRef, Config, parse_action_path, provider, sanitize_for_terminal, version};
 use anstream::{eprintln, println};
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -108,8 +108,9 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
 
     let Some(query) = parse_action_query(action_str) else {
         eprintln!(
-            "Invalid action reference: {action_str}\n\
-             Expected format: owner/repo or owner/repo@ref"
+            "Invalid action reference: {}\n\
+             Expected format: owner/repo or owner/repo@ref",
+            sanitize_for_terminal(action_str)
         );
         return CliExitCode::UserError.into();
     };
@@ -131,7 +132,7 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
     let versions = match provider.get_versions(&repo_id).await {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("{e}");
+            eprintln!("{}", sanitize_for_terminal(&e.to_string()));
             return if e.is_environment_error() {
                 CliExitCode::EnvironmentError.into()
             } else {
@@ -146,10 +147,11 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
             .as_ref()
             .map(|c| format!(" matching {c}"))
             .unwrap_or_default();
-        eprintln!(
+        let message = format!(
             "No versions found for {}/{}{context}",
             query.owner, query.repo
         );
+        eprintln!("{}", sanitize_for_terminal(&message));
         return CliExitCode::UserError.into();
     };
 
@@ -172,11 +174,10 @@ pub async fn run(args: &LatestArgs, _config: &Config, registry: &provider::Regis
                 .map(|ev| format!(" ({ev})"))
                 .unwrap_or_default();
             println!(
-                "{}/{}  {}{}",
-                query.owner,
-                query.repo,
-                result.latest.green(),
-                suffix.dimmed()
+                "{}  {}{}",
+                sanitize_for_terminal(&format!("{}/{}", query.owner, query.repo)),
+                sanitize_for_terminal(&result.latest).green(),
+                sanitize_for_terminal(&suffix).dimmed()
             );
         }
         OutputFormat::Json => match serde_json::to_string_pretty(&result) {

@@ -5,7 +5,7 @@ use std::path::Path;
 
 use actup_core::{
     Config, ConfigSource, Registration, effective_host, iter_config_candidates,
-    resolve_default_host,
+    resolve_default_host, sanitize_for_terminal,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -90,7 +90,10 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     }
     println!("  enabled:  {}", config.cache.enabled);
     if let Some(path) = &config.cache.path {
-        println!("  path:     {}", path.display());
+        println!(
+            "  path:     {}",
+            sanitize_for_terminal(&path.display().to_string())
+        );
     }
     println!();
 
@@ -104,7 +107,7 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     if !config.scan.ignore.is_empty() {
         println!("{}:", "Ignored Actions".bold());
         for action in &config.scan.ignore {
-            println!("  - {action}");
+            println!("  - {}", sanitize_for_terminal(&action.to_string()));
         }
         println!();
     }
@@ -112,7 +115,7 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     if !config.overrides.is_empty() {
         println!("{}:", "Overrides".bold());
         for o in &config.overrides {
-            println!("  - {}", o.pattern);
+            println!("  - {}", sanitize_for_terminal(&o.pattern.to_string()));
         }
         println!();
     }
@@ -120,7 +123,7 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     if !config.scan.extra_paths.is_empty() {
         println!("{}:", "Extra Paths".bold());
         for p in &config.scan.extra_paths {
-            println!("  - {p}");
+            println!("  - {}", sanitize_for_terminal(p.as_str()));
         }
         println!();
     }
@@ -138,12 +141,12 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
                 "  Config file(s) found but not loaded (using CLI defaults and/or explicit overrides):"
             );
             for p in found {
-                println!("    {}", p.display());
+                println!("    {}", sanitize_for_terminal(&p.display().to_string()));
             }
         }
     }
     for source in &config.sources {
-        println!("  - {source}");
+        println!("  - {}", sanitize_for_terminal(&source.to_string()));
     }
 }
 
@@ -158,17 +161,22 @@ fn display_hosts(config: &Config, registrations: &[&'static Registration]) {
     let default_host = match resolve_default_host(config, registrations) {
         Ok(host) => host,
         Err(e) => {
-            println!("  default_host: {} {}", "(error)".red(), e);
+            println!(
+                "  default_host: {} {}",
+                "(error)".red(),
+                sanitize_for_terminal(&e.to_string())
+            );
             println!();
             return;
         }
     };
 
     let explicit_default = config.default_host.is_some();
+    let shown = sanitize_for_terminal(&default_host);
     if explicit_default {
-        println!("  default_host: {default_host}");
+        println!("  default_host: {shown}");
     } else {
-        println!("  default_host: {default_host} {}", "(via preset)".dimmed());
+        println!("  default_host: {shown} {}", "(via preset)".dimmed());
     }
     println!();
 
@@ -208,7 +216,7 @@ fn display_effective_host(
 
     let has_user_entry = config.hosts.contains_key(hostname);
 
-    println!("  {}{}:", hostname.bold(), suffix);
+    println!("  {}{}:", sanitize_for_terminal(hostname).bold(), suffix);
 
     match effective_host(hostname, config, registrations, &config.fetch) {
         Ok(resolved) => {
@@ -229,7 +237,11 @@ fn display_effective_host(
                 } else {
                     api_base_source
                 };
-            println!("    api_base:  {} {}", resolved.api_base, api_base_label);
+            println!(
+                "    api_base:  {} {}",
+                sanitize_for_terminal(&resolved.api_base),
+                api_base_label
+            );
 
             // token_env
             let token_env_source = source_label(
@@ -237,7 +249,10 @@ fn display_effective_host(
                 user_config.and_then(|hc| hc.token_env.as_ref()).is_some(),
             );
             match &resolved.token_env {
-                Some(token_env) => println!("    token_env: {token_env} {token_env_source}"),
+                Some(token_env) => println!(
+                    "    token_env: {} {token_env_source}",
+                    sanitize_for_terminal(token_env)
+                ),
                 None => println!(
                     "    token_env: {} {}",
                     "(none)".dimmed(),
@@ -270,7 +285,12 @@ fn display_effective_host(
             } else {
                 " (no config entry)"
             };
-            println!("    {} {}{}", "error:".red(), e, entry_note);
+            println!(
+                "    {} {}{}",
+                "error:".red(),
+                sanitize_for_terminal(&e.to_string()),
+                entry_note
+            );
         }
     }
     println!();

@@ -459,14 +459,14 @@ impl LanguageServer for LspBackend {
                 }
                 Err(e) => {
                     tracing::error!("failed to build provider registry: {e}");
-                    self.client
-                        .show_message(
-                            MessageType::ERROR,
-                            format!(
-                                "actup: failed to initialize providers: {e}. Diagnostics are paused until the config is fixed."
-                            ),
-                        )
-                        .await;
+                    crate::error_ux::show_message(
+                        &self.client,
+                        MessageType::ERROR,
+                        format!(
+                            "actup: failed to initialize providers: {e}. Diagnostics are paused until the config is fixed."
+                        ),
+                    )
+                    .await;
                     None
                 }
             };
@@ -792,12 +792,12 @@ impl LanguageServer for LspBackend {
         // Require workspace root — can't discover files without it.
         let workspace_root = self.workspace_root.read().await.clone();
         let Some(workspace_root) = workspace_root else {
-            self.client
-                .show_message(
-                    MessageType::WARNING,
-                    "actup: no workspace root; cannot scan for workflow files",
-                )
-                .await;
+            crate::error_ux::show_message(
+                &self.client,
+                MessageType::WARNING,
+                "actup: no workspace root; cannot scan for workflow files",
+            )
+            .await;
             return Ok(None);
         };
 
@@ -806,9 +806,12 @@ impl LanguageServer for LspBackend {
         let config = match state {
             ConfigState::Loaded(config) => config,
             ConfigState::Invalid(error) => {
-                self.client
-                    .show_message(MessageType::ERROR, format!("actup: {error}"))
-                    .await;
+                crate::error_ux::show_message(
+                    &self.client,
+                    MessageType::ERROR,
+                    format!("actup: {error}"),
+                )
+                .await;
                 return Ok(None);
             }
         };
@@ -816,12 +819,12 @@ impl LanguageServer for LspBackend {
         let file_cache = self.file_cache.read().await.clone();
 
         let Some(registry) = registry else {
-            self.client
-                .show_message(
-                    MessageType::WARNING,
-                    "actup: no provider registry available; cannot check versions",
-                )
-                .await;
+            crate::error_ux::show_message(
+                &self.client,
+                MessageType::WARNING,
+                "actup: no provider registry available; cannot check versions",
+            )
+            .await;
             return Ok(None);
         };
 
@@ -1088,28 +1091,28 @@ impl LspBackend {
     /// Apply a [`FixAllResult`](crate::workspace_commands::FixAllResult) to the workspace and notify the user.
     async fn apply_fix_all_result(&self, result: crate::workspace_commands::FixAllResult) {
         if result.cancelled && result.refs_updated == 0 {
-            self.client
-                .show_message(
-                    MessageType::INFO,
-                    format!(
-                        "actup: cancelled ({}/{} files scanned, {} actions checked)",
-                        result.files_scanned, result.total_files, result.actions_checked,
-                    ),
-                )
-                .await;
+            crate::error_ux::show_message(
+                &self.client,
+                MessageType::INFO,
+                format!(
+                    "actup: cancelled ({}/{} files scanned, {} actions checked)",
+                    result.files_scanned, result.total_files, result.actions_checked,
+                ),
+            )
+            .await;
             return;
         }
 
         if result.refs_updated == 0 {
-            self.client
-                .show_message(
-                    MessageType::INFO,
-                    format!(
-                        "actup: all action refs are up to date ({} files scanned, {} actions checked)",
-                        result.files_scanned, result.actions_checked,
-                    ),
-                )
-                .await;
+            crate::error_ux::show_message(
+                &self.client,
+                MessageType::INFO,
+                format!(
+                    "actup: all action refs are up to date ({} files scanned, {} actions checked)",
+                    result.files_scanned, result.actions_checked,
+                ),
+            )
+            .await;
             return;
         }
 
@@ -1120,7 +1123,7 @@ impl LspBackend {
                     "actup: updated {} refs in {} files ({} actions checked){cancelled_suffix}",
                     result.refs_updated, result.files_changed, result.actions_checked,
                 );
-                self.client.show_message(MessageType::INFO, &msg).await;
+                crate::error_ux::show_message(&self.client, MessageType::INFO, &msg).await;
                 tracing::info!(%msg);
             }
             Ok(response) => {
@@ -1129,40 +1132,40 @@ impl LspBackend {
                     .as_deref()
                     .unwrap_or("unknown reason");
                 tracing::warn!(reason, "workspace edit rejected by client");
-                self.client
-                    .show_message(
-                        MessageType::WARNING,
-                        format!("actup: edit rejected by editor: {reason}"),
-                    )
-                    .await;
+                crate::error_ux::show_message(
+                    &self.client,
+                    MessageType::WARNING,
+                    format!("actup: edit rejected by editor: {reason}"),
+                )
+                .await;
             }
             Err(e) => {
                 tracing::error!(error = %e, "failed to apply workspace edit");
-                self.client
-                    .show_message(
-                        MessageType::ERROR,
-                        format!("actup: failed to apply edit: {e}"),
-                    )
-                    .await;
+                crate::error_ux::show_message(
+                    &self.client,
+                    MessageType::ERROR,
+                    format!("actup: failed to apply edit: {e}"),
+                )
+                .await;
             }
         }
 
         if !result.failures.is_empty() {
             let count = result.failures.len();
-            self.client
-                .log_message(
-                    MessageType::WARNING,
-                    format!(
-                        "actup: {count} file(s) could not be checked: {}",
-                        result
-                            .failures
-                            .iter()
-                            .map(|(p, e)| format!("{p}: {e}"))
-                            .collect::<Vec<_>>()
-                            .join("; ")
-                    ),
-                )
-                .await;
+            crate::error_ux::log_message(
+                &self.client,
+                MessageType::WARNING,
+                format!(
+                    "actup: {count} file(s) could not be checked: {}",
+                    result
+                        .failures
+                        .iter()
+                        .map(|(p, e)| format!("{p}: {e}"))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ),
+            )
+            .await;
         }
     }
 }
@@ -1239,12 +1242,12 @@ impl LspBackend {
 
     async fn invalid_config(&self, error: &actup_core::Error) -> ConfigState {
         tracing::error!("{error}");
-        self.client
-            .show_message(
-                MessageType::ERROR,
-                format!("actup: {error}. Diagnostics are paused until the config parses."),
-            )
-            .await;
+        crate::error_ux::show_message(
+            &self.client,
+            MessageType::ERROR,
+            format!("actup: {error}. Diagnostics are paused until the config parses."),
+        )
+        .await;
         ConfigState::Invalid(error.to_string())
     }
 
@@ -1298,14 +1301,14 @@ impl LspBackend {
             Ok(r) => Some(Arc::new(r)),
             Err(e) => {
                 tracing::error!("failed to rebuild provider registry: {e}");
-                self.client
-                    .show_message(
-                        MessageType::ERROR,
-                        format!(
-                            "actup: failed to rebuild providers: {e}. Diagnostics are paused until the config is fixed."
-                        ),
-                    )
-                    .await;
+                crate::error_ux::show_message(
+                    &self.client,
+                    MessageType::ERROR,
+                    format!(
+                        "actup: failed to rebuild providers: {e}. Diagnostics are paused until the config is fixed."
+                    ),
+                )
+                .await;
                 None
             }
         };
@@ -1321,12 +1324,12 @@ impl LspBackend {
 
         if policy_changed {
             tracing::info!("policy changed, refreshing diagnostics for all open documents");
-            self.client
-                .log_message(
-                    MessageType::INFO,
-                    "actup: config changed, refreshing diagnostics",
-                )
-                .await;
+            crate::error_ux::log_message(
+                &self.client,
+                MessageType::INFO,
+                "actup: config changed, refreshing diagnostics",
+            )
+            .await;
             self.refresh_all_diagnostics().await;
         } else {
             tracing::debug!("config reloaded but policy unchanged, skipping diagnostic refresh");
@@ -2520,6 +2523,42 @@ mod tests {
                 .get(&uri)
                 .is_some_and(|doc| doc.diagnostics.is_empty())
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shown_messages_replace_bidi_and_control_characters()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        std::fs::write(
+            temp.path().join("actup.toml"),
+            "[hosts.\"git.\u{202e}moc\u{1b}[2K.example.com\"]\napi_mode = \"rest\"\n",
+        )?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+
+        let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
+        let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4.1.0\n";
+        backend
+            .documents
+            .insert(uri.clone(), DocumentState::new(text.to_owned(), 1));
+        backend.schedule_diagnostics(uri.clone(), text.to_owned(), 1, Duration::ZERO);
+        let (shown, _) = tokio::time::timeout(
+            Duration::from_secs(10),
+            shown_and_published(&mut socket, &uri),
+        )
+        .await??;
+
+        let Some(error) = shown.iter().find(|m| m.typ == MessageType::ERROR) else {
+            panic!("shown {shown:?}");
+        };
+        assert!(
+            error
+                .message
+                .contains("git.\u{fffd}moc\u{fffd}[2K.example.com"),
+            "{error:?}"
+        );
+        assert!(!error.message.contains(['\u{202e}', '\u{1b}']), "{error:?}");
         Ok(())
     }
 

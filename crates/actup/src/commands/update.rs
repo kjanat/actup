@@ -6,7 +6,7 @@ use std::path::Path;
 use actup_core::{
     ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider,
     patch::{FileEdits, PendingEdit, SkipReason, retarget_edit},
-    policy, provider, version,
+    policy, provider, sanitize_for_terminal, version,
 };
 use owo_colors::OwoColorize;
 
@@ -142,10 +142,10 @@ async fn edit(
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
-                    relative,
+                    sanitize_for_terminal(&relative),
                     change.site.line,
-                    change.site.reference.red(),
-                    change.written(comment.as_deref()).green()
+                    sanitize_for_terminal(&change.site.reference).red(),
+                    sanitize_for_terminal(&change.written(comment.as_deref())).green()
                 );
             }
         }

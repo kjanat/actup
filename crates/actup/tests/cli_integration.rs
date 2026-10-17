@@ -1868,6 +1868,49 @@ mod cli_runs {
     }
 
     #[test]
+    fn human_output_replaces_bidi_and_control_characters() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let repo = TempDir::new()?;
+        let workflows = repo.path().join(".github").join("workflows");
+        fs::create_dir_all(&workflows)?;
+        fs::write(
+            workflows.join("ci\u{202e}lmy.yml"),
+            "jobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: \"ghe.corp.example/o/r@v1\\e[2K\u{200b}\"\n",
+        )?;
+
+        let human = actup(repo.path()).arg("check").arg(repo.path()).output()?;
+        assert_eq!(human.status.code(), Some(3));
+        let stdout = String::from_utf8(human.stdout)?;
+        assert!(stdout.contains("ci\u{fffd}lmy.yml"), "stdout: {stdout}");
+        assert!(
+            stdout.contains("ghe.corp.example/o/r@v1\u{fffd}[2K\u{fffd}"),
+            "stdout: {stdout}"
+        );
+        assert!(
+            !stdout.contains(['\u{202e}', '\u{1b}', '\u{200b}']),
+            "stdout: {stdout}"
+        );
+
+        let json = actup(repo.path())
+            .args(["check", "--format", "json"])
+            .arg(repo.path())
+            .output()?;
+        let findings: serde_json::Value = serde_json::from_slice(&json.stdout)?;
+        let file = findings
+            .pointer("/0/file")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("no file in findings")?;
+        assert!(file.ends_with("ci\u{202e}lmy.yml"), "file: {file:?}");
+        assert_eq!(
+            findings
+                .pointer("/0/reference")
+                .and_then(serde_json::Value::as_str),
+            Some("v1\u{1b}[2K\u{200b}")
+        );
+        Ok(())
+    }
+
+    #[test]
     fn help_opens_with_the_program_description() -> Result<(), Box<dyn std::error::Error>> {
         let home = TempDir::new()?;
         for flag in ["--help", "-h"] {

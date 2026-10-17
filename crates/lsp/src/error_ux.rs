@@ -7,8 +7,22 @@
 
 use std::{collections::HashSet, sync::Mutex};
 
-use actup_core::Error as CoreError;
+use actup_core::{Error as CoreError, sanitize_for_terminal};
 use tower_lsp_server::{Client, ls_types::MessageType};
+
+/// Send `message` as `window/showMessage` with [`sanitize_for_terminal`] applied.
+pub async fn show_message(client: &Client, typ: MessageType, message: impl std::fmt::Display) {
+    client
+        .show_message(typ, sanitize_for_terminal(&message.to_string()))
+        .await;
+}
+
+/// Send `message` as `window/logMessage` with [`sanitize_for_terminal`] applied.
+pub async fn log_message(client: &Client, typ: MessageType, message: impl std::fmt::Display) {
+    client
+        .log_message(typ, sanitize_for_terminal(&message.to_string()))
+        .await;
+}
 
 /// Category of environment error for deduplication and notification routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -150,52 +164,50 @@ pub async fn notify_errors(client: &Client, errors: &DiagnosticErrors, dedup: &E
 
         match category {
             ErrorCategory::RateLimit => {
-                client
-                    .show_message(
-                        MessageType::WARNING,
-                        format!(
-                            "actup: API rate limit exceeded. \
+                show_message(
+                    client,
+                    MessageType::WARNING,
+                    format!(
+                        "actup: API rate limit exceeded. \
                              Version checks may be incomplete. \
                              Set GITHUB_TOKEN for higher limits. ({message})"
-                        ),
-                    )
-                    .await;
+                    ),
+                )
+                .await;
             }
             ErrorCategory::Auth => {
-                client
-                    .show_message(
-                        MessageType::WARNING,
-                        format!(
-                            "actup: Authentication failed. \
+                show_message(
+                    client,
+                    MessageType::WARNING,
+                    format!(
+                        "actup: Authentication failed. \
                              Set GITHUB_TOKEN environment variable \
                              with a valid token. ({message})"
-                        ),
-                    )
-                    .await;
+                    ),
+                )
+                .await;
             }
             ErrorCategory::Forbidden => {
-                client
-                    .show_message(
-                        MessageType::WARNING,
-                        format!(
-                            "actup: Permission denied. \
+                show_message(
+                    client,
+                    MessageType::WARNING,
+                    format!(
+                        "actup: Permission denied. \
                              Your token may lack required scopes. ({message})"
-                        ),
-                    )
-                    .await;
+                    ),
+                )
+                .await;
             }
             ErrorCategory::Network => {
-                client
-                    .log_message(
-                        MessageType::WARNING,
-                        format!("actup: Network error during version check: {message}"),
-                    )
-                    .await;
+                log_message(
+                    client,
+                    MessageType::WARNING,
+                    format!("actup: Network error during version check: {message}"),
+                )
+                .await;
             }
             ErrorCategory::ProviderNotFound => {
-                client
-                    .log_message(MessageType::WARNING, format!("actup: {message}"))
-                    .await;
+                log_message(client, MessageType::WARNING, format!("actup: {message}")).await;
             }
         }
     }
@@ -203,16 +215,16 @@ pub async fn notify_errors(client: &Client, errors: &DiagnosticErrors, dedup: &E
     // Aggregate status log if there were errors.
     if errors.has_errors() {
         let summary: Vec<&str> = errors.iter().map(|(_, msg)| msg.as_str()).collect();
-        client
-            .log_message(
-                MessageType::LOG,
-                format!(
-                    "actup: diagnostic run had {} error(s): {}",
-                    errors.category_count(),
-                    summary.join("; "),
-                ),
-            )
-            .await;
+        log_message(
+            client,
+            MessageType::LOG,
+            format!(
+                "actup: diagnostic run had {} error(s): {}",
+                errors.category_count(),
+                summary.join("; "),
+            ),
+        )
+        .await;
     }
 }
 

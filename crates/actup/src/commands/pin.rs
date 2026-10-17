@@ -8,6 +8,7 @@ use actup_core::{
     patch::{FileEdits, PendingEdit, SkipReason, repin_sha_edit},
     provider,
     rewrite::{PinMarker, Rewrite},
+    sanitize_for_terminal,
 };
 use owo_colors::OwoColorize;
 
@@ -283,10 +284,10 @@ async fn edit(
             if matches!(format, OutputFormat::Human) {
                 println!(
                     "{}:{}: {} -> {}",
-                    relative,
+                    sanitize_for_terminal(&relative),
                     change.site.line,
-                    change.site.action.yellow(),
-                    change.written(comment.as_deref()).cyan()
+                    sanitize_for_terminal(&change.site.action).yellow(),
+                    sanitize_for_terminal(&change.written(comment.as_deref())).cyan()
                 );
             }
         }

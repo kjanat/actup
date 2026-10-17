@@ -12,7 +12,8 @@ use anstream::{eprintln, println};
 use std::process::ExitCode;
 
 use actup_core::{
-    Config, Registration, Retention, provider, user_config_path, validate_no_duplicate_presets,
+    Config, Registration, Retention, provider, sanitize_for_terminal, user_config_path,
+    validate_no_duplicate_presets,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -44,6 +45,21 @@ async fn main() -> ExitCode {
     // Exit codes 0-3 are safe to convert to u8
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     ExitCode::from(exit_code as u8)
+}
+
+fn load_config(explicit: Option<&std::path::Path>, start_dir: &std::path::Path) -> Option<Config> {
+    match Config::load(explicit, user_config_path().as_deref(), start_dir, None) {
+        Ok(config) => {
+            for source in &config.sources {
+                tracing::info!(%source, "loaded config");
+            }
+            Some(config)
+        }
+        Err(e) => {
+            eprintln!("Error: {}", sanitize_for_terminal(&e.to_string()));
+            None
+        }
+    }
 }
 
 async fn run(cli: Cli) -> i32 {
@@ -82,36 +98,28 @@ async fn run(cli: Cli) -> i32 {
         Some(Command::Cache { .. }) | None => match std::env::current_dir() {
             Ok(dir) => dir,
             Err(e) => {
-                eprintln!("Error reading current directory: {e}");
+                eprintln!(
+                    "Error reading current directory: {}",
+                    sanitize_for_terminal(&e.to_string())
+                );
                 return CliExitCode::EnvironmentError.into();
             }
         },
         Some(Command::Completions { .. } | Command::Schema) => unreachable!("handled above"),
     };
 
-    let config = match Config::load(
-        cli.config.as_deref(),
-        user_config_path().as_deref(),
-        &start_dir,
-        None,
-    ) {
-        Ok(c) => {
-            for source in &c.sources {
-                tracing::info!(%source, "loaded config");
-            }
-            c
-        }
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return CliExitCode::UserError.into();
-        }
+    let Some(config) = load_config(cli.config.as_deref(), &start_dir) else {
+        return CliExitCode::UserError.into();
     };
 
     // Build provider registry
     let registry = match build_registry(&config) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Error initializing providers: {e}");
+            eprintln!(
+                "Error initializing providers: {}",
+                sanitize_for_terminal(&e.to_string())
+            );
             return CliExitCode::EnvironmentError.into();
         }
     };

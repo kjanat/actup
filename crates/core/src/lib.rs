@@ -28,6 +28,7 @@ pub mod resolution;
 pub mod rewrite;
 pub mod suggest;
 pub mod syntax;
+pub mod text;
 pub mod version;
 
 // Re-export primary types at crate root
@@ -62,4 +63,5 @@ pub use resolution::{
 };
 pub use suggest::closest_tag;
 pub use syntax::SourceFormat;
+pub use text::sanitize_for_terminal;
 pub use version::{BranchInfo, Info, Version};

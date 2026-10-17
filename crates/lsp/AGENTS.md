@@ -77,6 +77,9 @@ edits that pass on their own.
   fields
 - Diagnostics: Warning (outdated), Error (unresolvable), Info
   (network/rate-limited)
+- Send `window/showMessage` and `window/logMessage` through
+  `error_ux::show_message` and `error_ux::log_message`, which apply
+  `actup_core::sanitize_for_terminal`
 
 ## Tests
 

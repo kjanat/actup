@@ -3,7 +3,7 @@
 use anstream::{eprintln, println};
 use std::{path::PathBuf, time::Duration};
 
-use actup_core::{Config, cache::Cache};
+use actup_core::{Config, cache::Cache, sanitize_for_terminal};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -55,17 +55,18 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
     let cache_dir = get_cache_dir(config);
     let (entry_count, total_size) = match get_cache_stats(&cache_dir) {
         Ok(stats) => stats,
-        Err(e) => {
-            eprintln!("{}: {}", "Error reading cache directory".red(), e);
-            return 3; // Environment error
-        }
+        Err(e) => return report_failure("Error reading cache directory", &e),
     };
 
     match format {
         OutputFormat::Human => {
             println!("{}", "Cache Information".bold());
             println!();
-            println!("  {:<12} {}", "Path:".dimmed(), cache_dir.display());
+            println!(
+                "  {:<12} {}",
+                "Path:".dimmed(),
+                sanitize_for_terminal(&cache_dir.display().to_string())
+            );
             println!(
                 "  {:<12} {}",
                 "Enabled:".dimmed(),
@@ -163,10 +164,7 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
     };
     let (entry_count, _) = match stats_result {
         Ok(stats) => stats,
-        Err(e) => {
-            eprintln!("{}: {}", "Error reading cache directory".red(), e);
-            return 3; // Environment error
-        }
+        Err(e) => return report_failure("Error reading cache directory", &e),
     };
 
     if entry_count == 0 {
@@ -217,10 +215,7 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
             }
             0
         }
-        Err(e) => {
-            eprintln!("{}: {}", "Error clearing cache".red(), e);
-            3 // Environment error
-        }
+        Err(e) => report_failure("Error clearing cache", &e),
     }
 }
 
@@ -234,7 +229,10 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
 
     match format {
         OutputFormat::Human => {
-            println!("{}", cache_dir.display());
+            println!(
+                "{}",
+                sanitize_for_terminal(&cache_dir.display().to_string())
+            );
         }
         OutputFormat::Json => match serde_json::to_string(&output) {
             Ok(json) => println!("{json}"),
@@ -253,6 +251,16 @@ fn path(format: OutputFormat, config: &Config) -> i32 {
     }
 
     0
+}
+
+/// Print `what` and `error` to stderr and return the environment error exit code.
+fn report_failure(what: &str, error: &dyn std::fmt::Display) -> i32 {
+    eprintln!(
+        "{}: {}",
+        what.red(),
+        sanitize_for_terminal(&error.to_string())
+    );
+    3
 }
 
 /// Get cache directory from config or default

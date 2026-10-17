@@ -3,7 +3,7 @@
 use anstream::{eprintln, println};
 use std::sync::Arc;
 
-use actup_core::{ActionRef, RefKind, version};
+use actup_core::{ActionRef, RefKind, sanitize_for_terminal, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -319,7 +319,7 @@ fn print_human(findings: &[Finding]) {
             if !current_file.is_empty() {
                 println!();
             }
-            println!("{}", finding.file().bold());
+            println!("{}", sanitize_for_terminal(finding.file()).bold());
             current_file = finding.file().to_string();
         }
 
@@ -330,7 +330,7 @@ fn print_human(findings: &[Finding]) {
 /// Print one finding's `  Lnn: <action>  <status>` line.
 fn print_finding_line(finding: &Finding) {
     let line_prefix = format!("  L{}: ", finding.line());
-    let action_str = finding.action_ref().to_string();
+    let action_str = sanitize_for_terminal(&finding.action_ref().to_string()).into_owned();
 
     match finding.status() {
         _ if let Some(label) = same_commit_label(finding) => {
@@ -367,10 +367,10 @@ fn print_finding_line(finding: &Finding) {
                 "{}{}  {}{} -> {}{}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                current.red(),
+                sanitize_for_terminal(current).red(),
                 kind_note(finding).dimmed(),
-                version_str.green(),
-                suffix.dimmed()
+                sanitize_for_terminal(&version_str).green(),
+                sanitize_for_terminal(&suffix).dimmed()
             );
         }
         FindingStatus::Pinned { sha, tag } => {
@@ -380,10 +380,11 @@ fn print_finding_line(finding: &Finding) {
                 line_prefix.dimmed(),
                 action_str,
                 format!("pinned to {}", &sha[..7.min(sha.len())]).cyan(),
-                tag_info.dimmed()
+                sanitize_for_terminal(&tag_info).dimmed()
             );
         }
         FindingStatus::Floating { ref_name } => {
+            let ref_name = sanitize_for_terminal(ref_name);
             println!(
                 "{}{}  {}",
                 line_prefix.dimmed(),
@@ -392,11 +393,12 @@ fn print_finding_line(finding: &Finding) {
             );
         }
         FindingStatus::PinBranch { ref_name, sha } => {
+            let ref_name = sanitize_for_terminal(ref_name);
             println!(
                 "{}{}  {}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                pin_label(finding, ref_name, sha).yellow()
+                pin_label(finding, &ref_name, sha).yellow()
             );
         }
         FindingStatus::Unknown { reason } => {
@@ -404,7 +406,7 @@ fn print_finding_line(finding: &Finding) {
                 "{}{}  {}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
-                format!("unknown: {reason}").yellow()
+                sanitize_for_terminal(&format!("unknown: {reason}")).yellow()
             );
         }
         FindingStatus::Unresolvable {
@@ -419,11 +421,15 @@ fn print_unresolvable(finding: &Finding, line_prefix: &str, reason: &str, enviro
     println!(
         "{}{}  {}",
         line_prefix.dimmed(),
-        finding.action_ref().to_string().red(),
-        format!("{label}: {reason}").red()
+        sanitize_for_terminal(&finding.action_ref().to_string()).red(),
+        sanitize_for_terminal(&format!("{label}: {reason}")).red()
     );
     if let Some(hint) = suggestion_hint(finding) {
-        println!("{}{}", " ".repeat(line_prefix.len()), hint.dimmed());
+        println!(
+            "{}{}",
+            " ".repeat(line_prefix.len()),
+            sanitize_for_terminal(&hint).dimmed()
+        );
     }
 }
 
@@ -461,12 +467,13 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
     } else {
         ""
     };
-    Some(format!(
+    let label = format!(
         "{lead}same commit: {kind}{} = {} ({})",
         finding.action_ref().ref_str(),
         target.version(),
         target.sha().get(..7).unwrap_or_else(|| target.sha()),
-    ))
+    );
+    Some(sanitize_for_terminal(&label).into_owned())
 }
 
 fn print_json(findings: &[Finding]) {

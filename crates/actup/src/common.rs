@@ -10,7 +10,7 @@ use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
     SourceFormat, UsesLocation, discover_files, parse_uses,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
-    provider, resolve_within, rewrite_atomic,
+    provider, resolve_within, rewrite_atomic, sanitize_for_terminal,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -261,13 +261,17 @@ pub struct ErroredRef {
 
 /// Warn that the writer leaves `site` unchanged and record it as skipped.
 pub fn report_skipped(site: RefSite, reason: SkipReason, result: &mut EditResult) {
-    eprintln!(
-        "{}: {}:{}: {} - {}; edit it by hand",
-        "Warning".yellow(),
+    let warning = format!(
+        "{}:{}: {} - {}; edit it by hand",
         site.file,
         site.line,
         site.action,
         reason.describe()
+    );
+    eprintln!(
+        "{}: {}",
+        "Warning".yellow(),
+        sanitize_for_terminal(&warning)
     );
     result.skipped.push(SkippedRef {
         site,
@@ -285,7 +289,12 @@ pub fn report_ignored(site: RefSite, result: &mut EditResult) {
 
 /// Warn that `err` leaves `site` unchanged, count it, and record it as errored.
 pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
-    eprintln!("{}: {} - {err}", "Warning".yellow(), site.action);
+    let warning = format!("{} - {err}", site.action);
+    eprintln!(
+        "{}: {}",
+        "Warning".yellow(),
+        sanitize_for_terminal(&warning)
+    );
     result.errors.record(err);
     result.errored.push(ErroredRef {
         site,
@@ -361,7 +370,7 @@ pub fn commit_file(
     };
     if let Err(refusal) = outcome {
         let message = refusal.message(&path);
-        eprintln!("{}: {message}", "Error".red());
+        eprintln!("{}: {}", "Error".red(), sanitize_for_terminal(&message));
         for (change, _) in written {
             if matches!(refusal, WriteRefusal::Invalid(_)) {
                 result.errors.record_user();
@@ -471,7 +480,7 @@ impl<'a> WorkflowScanner<'a> {
             } else {
                 format!("No workflow files found under {}", self.path.display())
             };
-            println!("{}", message.dimmed());
+            println!("{}", sanitize_for_terminal(&message).dimmed());
         }
     }
 
@@ -481,7 +490,12 @@ impl<'a> WorkflowScanner<'a> {
         match fs::read_to_string(file.path()) {
             Ok(content) => Some(content),
             Err(e) => {
-                eprintln!("{}: {} - {}", "Warning".yellow(), file.path().display(), e);
+                let warning = format!("{} - {e}", file.path().display());
+                eprintln!(
+                    "{}: {}",
+                    "Warning".yellow(),
+                    sanitize_for_terminal(&warning)
+                );
                 errors.record_env();
                 None
             }
