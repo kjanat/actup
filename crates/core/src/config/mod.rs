@@ -38,7 +38,7 @@ pub use env::{
 };
 use figment::{
     Figment,
-    providers::{Format as _, Json, Serialized, Toml, Yaml},
+    providers::{Format as _, Json, Serialized, Toml},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -1048,7 +1048,9 @@ impl figment::Provider for FileContents {
         match self.format {
             Format::Toml => figment::Provider::data(&Toml::string(&self.contents)),
             Format::Json | Format::Jsonc => figment::Provider::data(&Json::string(&self.contents)),
-            Format::Yaml => figment::Provider::data(&Yaml::string(&self.contents)),
+            Format::Yaml => crate::yaml::from_str(&self.contents, crate::yaml::Anchors::Expand)
+                .map(|dict| figment::Profile::Default.collect(dict))
+                .map_err(|e| figment::Error::from(e.to_string())),
         }
     }
 }
@@ -2083,6 +2085,180 @@ mod tests {
             reason.contains("`update_policy` is no longer supported; use `policy.bump`"),
             "{reason}"
         );
+    }
+
+    fn explicit_yaml(contents: &str) -> Result<Config, Error> {
+        let path = Path::new("/x/actup.yaml");
+        Layers::default()
+            .trusted(
+                FileContents::new(path, contents)?,
+                Source::Explicit {
+                    path: path.to_path_buf(),
+                },
+            )
+            .extract(EnvOverrides::default())
+    }
+
+    fn repo_yaml(contents: &str) -> Result<Config, Error> {
+        Config::from_contents(
+            Some((Path::new(".github/actup.yaml"), contents)),
+            EnvOverrides::default(),
+        )
+    }
+
+    #[test]
+    fn test_yaml_config_reads_core_schema_scalars() -> Result<(), Box<dyn std::error::Error>> {
+        let config = explicit_yaml("hosts:\n  ghe.corp:\n    kind: github\n    token_env: ON\n")?;
+        let Some(host) = config.hosts.get("ghe.corp") else {
+            panic!("missing ghe.corp");
+        };
+        assert_eq!(host.token_env.as_deref(), Some("ON"));
+
+        for (text, enabled) in [
+            ("true", true),
+            ("True", true),
+            ("TRUE", true),
+            ("FALSE", false),
+        ] {
+            let config = repo_yaml(&format!("cache:\n  enabled: {text}\n"))?;
+            assert_eq!(config.cache.enabled, enabled, "{text}");
+        }
+        for (text, tags) in [
+            ("12", 12),
+            ("0x1F", 31),
+            ("0o17", 15),
+            ("010", 10),
+            ("+7", 7),
+        ] {
+            let config = repo_yaml(&format!("fetch:\n  max_tags_per_repo: {text}\n"))?;
+            assert_eq!(config.fetch.max_tags_per_repo.get(), tags, "{text}");
+        }
+        for text in ["~", "null", "Null", "NULL", ""] {
+            let config = explicit_yaml(&format!("default_host: {text}\n"))?;
+            assert_eq!(config.default_host, None, "{text:?}");
+        }
+        for (text, host) in [
+            ("'true'", "true"),
+            ("\"NULL\"", "NULL"),
+            ("|\n  12", "12\n"),
+            ("yes", "yes"),
+            ("off", "off"),
+            ("nULL", "nULL"),
+            ("!!str 12", "12"),
+        ] {
+            let config = explicit_yaml(&format!("default_host: {text}\n"))?;
+            assert_eq!(config.default_host.as_deref(), Some(host), "{text}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_yaml_config_rejects_non_core_scalars_for_typed_keys() {
+        for (text, found) in [
+            ("tRUE", "found string \"tRUE\""),
+            ("yes", "found string \"yes\""),
+            ("on", "found string \"on\""),
+            ("'true'", "found string \"true\""),
+            ("1", "found unsigned int"),
+        ] {
+            let (path, reason) = rejected(
+                Some((
+                    ".github/actup.yaml",
+                    &format!("cache:\n  enabled: {text}\n"),
+                )),
+                &[],
+            );
+            assert_eq!(path, ".github/actup.yaml");
+            assert!(reason.contains(found), "{text}: {reason}");
+        }
+        for (text, found) in [
+            ("1.5", "found float `1.5`"),
+            (".inf", "found float `inf`"),
+            ("-.INF", "found float `-inf`"),
+            (".NaN", "found float `NaN`"),
+            ("1e3", "found float `1000`"),
+            ("'10'", "found string \"10\""),
+        ] {
+            let (_, reason) = rejected(
+                Some((".github/actup.yaml", &format!("cache:\n  ttl: {text}\n"))),
+                &[],
+            );
+            assert!(reason.contains(found), "{text}: {reason}");
+        }
+    }
+
+    #[test]
+    fn test_yaml_config_errors_name_file_line_and_column() {
+        let cases = [
+            ("policy:\n  bump: minor\n bad\n", "at line 3, column 2"),
+            (
+                "base: &b\n  bump: minor\npolicy:\n  <<: *b\n",
+                "merge keys are not supported at line 4, column 3",
+            ),
+            (
+                "policy:\n  bump: minor\n  bump: patch\n",
+                "duplicate key `bump` at line 3, column 3",
+            ),
+            (
+                "policy:\n  bump: !custom minor\n",
+                "tag `!custom` is not a core schema tag at line 2, column 17",
+            ),
+            ("policy:\n  bump: !!int minor\n", "does not fit tag"),
+            (
+                "policy:\n  bump: minor\n---\npolicy:\n  bump: patch\n",
+                "more than one YAML document at line 3, column 1",
+            ),
+            (
+                "? [a]\n: b\n",
+                "a mapping key must be a scalar at line 1, column 3",
+            ),
+        ];
+        for (contents, needle) in cases {
+            let (path, reason) = rejected(Some((".github/actup.yaml", contents)), &[]);
+            assert_eq!(path, ".github/actup.yaml");
+            assert!(reason.contains(needle), "{contents:?}: {reason}");
+            assert!(
+                reason.contains("in .github/actup.yaml YAML file"),
+                "{reason}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_yaml_config_expands_anchors_up_to_the_cap() -> Result<(), Box<dyn std::error::Error>> {
+        let config = repo_yaml(
+            "overrides:\n  - pattern: a/*\n    policy: &p\n      bump: patch\n  - pattern: b/*\n    policy: *p\n",
+        )?;
+        let bumps: Vec<_> = config.overrides.iter().map(|o| o.policy.bump).collect();
+        assert_eq!(
+            bumps,
+            [Some(policy::Update::Patch), Some(policy::Update::Patch)]
+        );
+
+        let ten = |alias: &str| [alias; 10].join(", ");
+        let bomb = format!(
+            "a: &a [{}]\nb: &b [{}]\nc: &c [{}]\nd: [{}]\n",
+            ten("1"),
+            ten("*a"),
+            ten("*b"),
+            ten("*c"),
+        );
+        let (path, reason) = rejected(Some((".github/actup.yaml", &bomb)), &[]);
+        assert_eq!(path, ".github/actup.yaml");
+        assert!(
+            reason.contains("aliases expand to more than 10000 nodes at line 4"),
+            "{reason}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_yaml_config_skips_a_byte_order_mark() -> Result<(), Box<dyn std::error::Error>> {
+        let config = repo_yaml("\u{feff}policy:\n  bump: minor\n")?;
+        assert_eq!(config.policy.bump, policy::Update::Minor);
+        let config = repo_yaml("")?;
+        assert_eq!(config.policy.bump, Policy::default().bump);
+        Ok(())
     }
 
     #[test]

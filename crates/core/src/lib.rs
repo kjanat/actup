@@ -34,6 +34,7 @@ pub mod syntax;
 pub mod text;
 pub mod url_path;
 pub mod version;
+pub mod yaml;
 
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};

@@ -76,7 +76,7 @@ features = ["derive", "env", "wrap_help"]
 
 [workspace.dependencies.figment]  # Configuration
 version  = "0.10"
-features = ["env", "json", "toml", "yaml"]
+features = ["env", "json", "toml"]
 
 [workspace.dependencies.gix-features]  # git progress traits
 version  = "0.48"
@@ -104,11 +104,6 @@ features         = ["json", "rustls"]
 [workspace.dependencies.serde]  # serialization
 version  = "1"
 features = ["derive", "rc"]
-
-[workspace.dependencies.serde-saphyr]  # yaml
-version          = "1.3.0"
-default-features = false
-features         = ["deserialize"]
 
 [workspace.dependencies.tokio]  # async runtime
 version  = "1"

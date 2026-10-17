@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use actup_core::{
     error::Result,
     provider::{ActionInput, ActionOutput, ActionRuns, ActionStep, ActionYml},
+    yaml,
 };
 use serde::Deserialize;
 
@@ -243,14 +244,12 @@ fn build_action_yml(path: &str, source: &str, raw: RawActionYml) -> Result<Actio
 /// Returns error if the YAML content cannot be parsed or if `runs.using`
 /// invariants are violated (missing `main`/`image`/empty `steps` per type).
 pub fn parse_action_yml(raw: &str, path: &str) -> Result<ActionYml> {
-    let options = serde_saphyr::options! { with_snippet: false };
-    let parsed: RawActionYml = serde_saphyr::from_str_with_options(raw, options).map_err(|e| {
-        actup_core::Error::YamlParse {
+    let parsed: RawActionYml =
+        yaml::from_str(raw, yaml::Anchors::Reject).map_err(|e| actup_core::Error::YamlParse {
             path: path.into(),
             reason: String::new(),
             source: Some(std::sync::Arc::new(e)),
-        }
-    })?;
+        })?;
     build_action_yml(path, raw, parsed)
 }
 
@@ -506,13 +505,111 @@ runs:
         );
     }
 
-    #[test]
-    fn invalid_yaml_reports_the_line_on_one_line() {
-        let Err(err) = parse_action_yml("name: x\nruns: [unclosed\n", "action.yml") else {
-            panic!("expected a parse error");
+    fn input(text: &str) -> std::result::Result<ActionInput, Box<dyn std::error::Error>> {
+        let parsed = parse_action_yml(&format!("inputs:\n  t:\n{text}"), "action.yml")?;
+        parsed
+            .inputs()
+            .get("t")
+            .cloned()
+            .ok_or_else(|| "missing input t".into())
+    }
+
+    fn rejected(yaml: &str) -> String {
+        let Err(err) = parse_action_yml(yaml, "action.yml") else {
+            panic!("{yaml:?} must be rejected");
         };
-        let rendered = actup_core::error::chain(&err);
-        assert!(rendered.contains("line 2"), "{rendered}");
-        assert!(!rendered.contains('\n'), "{rendered}");
+        actup_core::error::chain(&err)
+    }
+
+    #[test]
+    fn scalars_follow_the_core_schema() -> std::result::Result<(), Box<dyn std::error::Error>> {
+        for (text, default) in [
+            ("30", Some("30")),
+            ("0x1F", Some("0x1F")),
+            ("1.50", Some("1.50")),
+            (".inf", Some(".inf")),
+            ("true", Some("true")),
+            ("yes", Some("yes")),
+            ("ON", Some("ON")),
+            ("tRUE", Some("tRUE")),
+            ("'~'", Some("~")),
+            ("!!str 12", Some("12")),
+            ("~", None),
+            ("Null", None),
+            ("", None),
+        ] {
+            let parsed = input(&format!("    default: {text}\n"))?;
+            assert_eq!(parsed.default(), default, "{text:?}");
+        }
+        for (text, required) in [("true", true), ("True", true), ("FALSE", false)] {
+            let parsed = input(&format!("    required: {text}\n"))?;
+            assert_eq!(parsed.required(), required, "{text}");
+        }
+        let parsed = parse_action_yml("name: ON\ndescription: |\n  true\n", "action.yml")?;
+        assert_eq!(parsed.name(), Some("ON"));
+        assert_eq!(parsed.description(), Some("true\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn non_bool_required_is_rejected_with_its_location() {
+        for text in ["yes", "tRUE", "on", "'true'", "1"] {
+            let reason = rejected(&format!("inputs:\n  t:\n    required: {text}\n"));
+            assert!(reason.contains("expected a boolean"), "{text}: {reason}");
+            assert!(reason.contains("at line 3, column 15"), "{text}: {reason}");
+        }
+    }
+
+    #[test]
+    fn structural_errors_name_line_and_column_on_one_line() {
+        for (yaml, needle) in [
+            ("name: x\nruns: {using: [x}\n", "at line 2, column 17"),
+            (
+                "inputs:\n  a: &x\n    description: d\n  b: *x\n",
+                "anchors are not supported at line 3, column 5",
+            ),
+            (
+                "name: &n x\n",
+                "anchors are not supported at line 1, column 10",
+            ),
+            (
+                "x: &b {name: n}\n<<: *b\n",
+                "anchors are not supported at line 1, column 7",
+            ),
+            (
+                "<<: {name: n}\n",
+                "merge keys are not supported at line 1, column 1",
+            ),
+            (
+                "name: a\nname: b\n",
+                "duplicate key `name` at line 2, column 1",
+            ),
+            (
+                "name: !custom x\n",
+                "tag `!custom` is not a core schema tag at line 1, column 15",
+            ),
+            (
+                "name: !!int x\n",
+                "`x` does not fit tag `!!int` at line 1, column 13",
+            ),
+            (
+                "name: a\n---\nname: b\n",
+                "more than one YAML document at line 2, column 1",
+            ),
+        ] {
+            let reason = rejected(yaml);
+            assert!(reason.contains(needle), "{yaml:?}: {reason}");
+            assert!(!reason.contains('\n'), "{reason}");
+        }
+    }
+
+    #[test]
+    fn byte_order_mark_and_empty_files_parse() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        let parsed = parse_action_yml("\u{feff}name: bom\n", "action.yml")?;
+        assert_eq!(parsed.name(), Some("bom"));
+        let parsed = parse_action_yml("# only a comment\n", "action.yml")?;
+        assert_eq!(parsed.name(), None);
+        Ok(())
     }
 }

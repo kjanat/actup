@@ -28,6 +28,7 @@ Provider-neutral engine. No GitHub/GitLab/Gitea specifics allowed here.
 | `compat`           | `Send`/`Sync` bounds and boxed futures for wasm           | `BoxFuture`, `MaybeSend`, `MaybeSync`                  |
 | `text`             | Sanitize text for terminal and editor output              | `sanitize_for_terminal`, `sanitize_line`               |
 | `url_path`         | Percent-encode the path and query parts of provider URLs  | `encode_path`, `encode_segment`                        |
+| `yaml`             | Load YAML config and `action.yml` with the runner's rules | `Dialect`, `from_str`, `Error`                         |
 
 ### Config Submodule (`config/`)
 

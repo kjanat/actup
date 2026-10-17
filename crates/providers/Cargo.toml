@@ -20,7 +20,6 @@ gix-features  = { workspace = true }
 gix-protocol  = { workspace = true }
 gix-transport = { workspace = true }
 serde         = { workspace = true }
-serde-saphyr  = { workspace = true }
 tokio         = { workspace = true }
 tracing       = { workspace = true }
 
