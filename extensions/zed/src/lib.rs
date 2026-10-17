@@ -1,4 +1,4 @@
-//! Zed editor extension for actup: starts the `actup-lsp` language server.
+//! Zed editor extension for actup: starts the `actup-lsp` language server and the `actup-mcp` context server.
 use zed_extension_api::{self as zed};
 
 use std::{env, fs};
@@ -14,6 +14,8 @@ const ACTIONS_LANGUAGE_SERVER_BINARY: &str = "actions-languageserver";
 /// GitHub Actions language server package bin path after npm install.
 const ACTIONS_LANGUAGE_SERVER_BIN_PATH: &str =
     "node_modules/@actions/languageserver/bin/actions-languageserver";
+
+const CONTEXT_SERVER: &str = "actup-mcp";
 
 /// Zed extension entry point. Delegates to `actup-lsp` for language intelligence.
 struct ActupExtension;
@@ -72,6 +74,14 @@ impl zed::Extension for ActupExtension {
         })
     }
 
+    fn context_server_command(
+        &mut self,
+        _context_server_id: &zed::ContextServerId,
+        _project: &zed::Project,
+    ) -> zed::Result<zed::Command> {
+        Ok(mcp_command())
+    }
+
     fn language_server_initialization_options(
         &mut self,
         server_id: &zed::LanguageServerId,
@@ -99,6 +109,14 @@ mod extension_entrypoint {
     use super::ActupExtension;
 
     zed::register_extension!(ActupExtension);
+}
+
+fn mcp_command() -> zed::Command {
+    zed::Command {
+        command: CONTEXT_SERVER.to_owned(),
+        args: Vec::new(),
+        env: Vec::new(),
+    }
 }
 
 /// Return the command for GitHub's Actions language server.
@@ -179,4 +197,32 @@ fn actions_language_server_bin_path() -> zed::Result<String> {
     path.to_str()
         .map(ToString::to_string)
         .ok_or_else(|| "actions-languageserver path is not valid UTF-8".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest() -> Result<toml::Table, toml::de::Error> {
+        toml::from_str(include_str!("../extension.toml"))
+    }
+
+    #[test]
+    fn manifest_declares_the_actup_mcp_context_server() -> Result<(), Box<dyn std::error::Error>> {
+        let manifest = manifest()?;
+        let servers = manifest
+            .get("context_servers")
+            .and_then(toml::Value::as_table)
+            .ok_or("extension.toml declares no context servers")?;
+        assert_eq!(servers.keys().collect::<Vec<_>>(), [CONTEXT_SERVER]);
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_command_runs_actup_mcp_from_path() {
+        let command = mcp_command();
+        assert_eq!(command.command, "actup-mcp");
+        assert_eq!(command.args, Vec::<String>::new());
+        assert_eq!(command.env, Vec::<(String, String)>::new());
+    }
 }

@@ -36,6 +36,8 @@ package = "@actions/languageserver"
 # kind    = "npm:install"
 # package = "actup-lsp"
 
+[context_servers.actup-mcp]
+
 [grammars.github_actions]
 repository = "file:///home/kjanat/projects/actup-v2"
 rev        = "tree-sitter-github-actions"
