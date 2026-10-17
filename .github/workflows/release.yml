@@ -265,11 +265,14 @@ jobs:
   npm-verify:
     name: Verify the npm package
     runs-on: ubuntu-latest
+    outputs:
+      dist-tag: ${{ steps.tag.outputs.dist-tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: { persist-credentials: false }
 
-      - name: Check the tag against the package version
+      - name: Check the tag against the package version and pick the dist-tag
+        id: tag
         env: { TAG: "${{ github.ref_name }}" }
         run: |
           version="$(jq -r '.version' packages/actup-wasm/package.json)"
@@ -277,6 +280,13 @@ jobs:
             echo "::error file=packages/actup-wasm/package.json::tag ${TAG} does not match actup-wasm ${version}"
             exit 1
           fi
+          if [[ "${version%%+*}" == *-* ]]; then
+            dist_tag=next
+          else
+            dist_tag=latest
+          fi
+          echo "actup-wasm ${version} publishes under the ${dist_tag} dist-tag"
+          echo "dist-tag=${dist_tag}" >>"${GITHUB_OUTPUT}"
 
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -357,6 +367,11 @@ jobs:
             echo "::error::expected one npm tarball, found ${#tarballs[@]}"
             exit 1
           fi
-          npm publish "${tarballs[0]}" --provenance --access public
+          if [[ "${DIST_TAG}" != latest && "${DIST_TAG}" != next ]]; then
+            echo "::error::npm-verify picked no dist-tag"
+            exit 1
+          fi
+          npm publish "${tarballs[0]}" --provenance --access public --tag "${DIST_TAG}"
         env:
+          DIST_TAG: ${{ needs.npm-verify.outputs.dist-tag }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
