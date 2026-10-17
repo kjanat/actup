@@ -137,9 +137,9 @@ export async function fixAllInWorkspace(
 					line,
 					byteToColumn(lineText, edit.refStart),
 					line,
-					byteToColumn(lineText, edit.refEnd),
+					byteToColumn(lineText, edit.replaceEnd),
 				);
-				wsEdit.replace(fileUri, range, edit.newRef);
+				wsEdit.replace(fileUri, range, edit.newText);
 			}
 			await vscode.workspace.applyEdit(wsEdit);
 			totalEdits += edits.length;

@@ -3,7 +3,8 @@
 use std::path::Path;
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, provider, version,
+    ActionRef, CheckStatus, Config, UsesLocation, check_action_with_provider, policy, provider,
+    version,
 };
 use owo_colors::OwoColorize;
 
@@ -11,7 +12,7 @@ use crate::{
     cli::OutputFormat,
     common::{
         Change, EditResult, FileEdits, PendingEdit, RefSite, SkipReason, WorkflowScanner,
-        commit_file, report_error, report_skipped, report_unserved,
+        commit_file, repin_sha_edit, report_error, report_skipped, report_unserved, unpin_edit,
     },
 };
 
@@ -20,32 +21,36 @@ fn ref_edit(loc: &UsesLocation, new_ref: &str) -> Option<PendingEdit> {
         .map(|range| PendingEdit::replace_range(loc.line(), range, new_ref.to_string()))
 }
 
-/// Build the edit for an outdated action, preserving its reference style.
+/// Build the edit for an outdated action under its `policy.pin` style.
 ///
-/// Tag refs update to the new tag. SHA pins re-pin to the target's commit SHA
-/// (never unpin to a tag) and keep a `# vX.Y.Z` version comment accurate.
+/// A SHA target keeps a `# vX.Y.Z` version comment accurate. A SHA pin
+/// rewritten to a tag (`pin = "tag"`) drops its version comment.
 fn build_edit(
     loc: &UsesLocation,
     action_ref: &ActionRef,
     target: &version::Info,
+    style: policy::Style,
 ) -> Option<PendingEdit> {
-    if action_ref.is_sha() {
-        crate::common::repin_sha_edit(loc, target)
+    let tag = target.version().to_string();
+    if style.writes_sha(action_ref.is_sha()) {
+        repin_sha_edit(loc, target)
+    } else if action_ref.is_sha() {
+        unpin_edit(loc, &tag)
     } else {
-        ref_edit(loc, &target.version().to_string())
+        ref_edit(loc, &tag)
     }
 }
 
-fn new_ref(action_ref: &ActionRef, target: &version::Info) -> String {
-    if action_ref.is_sha() {
+fn new_ref(action_ref: &ActionRef, target: &version::Info, style: policy::Style) -> String {
+    if style.writes_sha(action_ref.is_sha()) {
         target.sha().to_string()
     } else {
         target.version().to_string()
     }
 }
 
-fn target_display(action_ref: &ActionRef, target: &version::Info) -> String {
-    if action_ref.is_sha() {
+fn target_display(action_ref: &ActionRef, target: &version::Info, style: policy::Style) -> String {
+    if style.writes_sha(action_ref.is_sha()) {
         let short = &target.sha()[..7.min(target.sha().len())];
         format!("{} ({short})", target.version())
     } else {
@@ -116,11 +121,12 @@ async fn edit(
 
             // Use core check_action to determine if update needed
             let check = check_action_with_provider(&action_ref, &versions, config, provider).await;
+            let style = config.policy_for(&action_ref).pin;
             let (edit, new_ref, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
-                    build_edit(&loc, &action_ref, target),
-                    new_ref(&action_ref, target),
-                    target_display(&action_ref, target),
+                    build_edit(&loc, &action_ref, target, style),
+                    new_ref(&action_ref, target, style),
+                    target_display(&action_ref, target, style),
                     false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
@@ -392,6 +398,122 @@ mod tests {
         Ok(())
     }
 
+    async fn update_with_config(
+        toml: &str,
+        content: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        std::fs::write(&file, content)?;
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), toml)),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let registry = registry("v4.2.0");
+
+        let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        let written = std::fs::read_to_string(&file)?;
+        let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+        assert_eq!(code, i32::from(CliExitCode::Success));
+        assert_eq!(std::fs::read_to_string(&file)?, written);
+        Ok(written)
+    }
+
+    fn pin_style_workflow() -> String {
+        [
+            "steps:",
+            "  - uses: actions/checkout@v4.0.0",
+            "  - uses: o/p@OLD # v4.0.0",
+            "  - uses: o/q@OLD",
+            "  - uses: o/r@OLD # mine",
+            "  - uses: pinned/x@v4.0.0",
+            "",
+        ]
+        .join("\n")
+        .replace("OLD", &sha40('a'))
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_preserve_keeps_each_ref_style() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let written =
+            update_with_config("[policy]\npin = \"preserve\"\n", &pin_style_workflow()).await?;
+        let expected = [
+            "steps:",
+            "  - uses: actions/checkout@v4.2.0",
+            "  - uses: o/p@NEW # v4.2.0",
+            "  - uses: o/q@NEW # v4.2.0",
+            "  - uses: o/r@NEW # mine",
+            "  - uses: pinned/x@v4.2.0",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW", &sha40('b'));
+        assert_eq!(written, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_sha_writes_shas_with_version_comments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let written =
+            update_with_config("[policy]\npin = \"sha\"\n", &pin_style_workflow()).await?;
+        let expected = [
+            "steps:",
+            "  - uses: actions/checkout@NEW # v4.2.0",
+            "  - uses: o/p@NEW # v4.2.0",
+            "  - uses: o/q@NEW # v4.2.0",
+            "  - uses: o/r@NEW # mine",
+            "  - uses: pinned/x@NEW # v4.2.0",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW", &sha40('b'));
+        assert_eq!(written, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_tag_unpins_outdated_shas() -> Result<(), Box<dyn std::error::Error>> {
+        let written =
+            update_with_config("[policy]\npin = \"tag\"\n", &pin_style_workflow()).await?;
+        let expected = [
+            "steps:",
+            "  - uses: actions/checkout@v4.2.0",
+            "  - uses: o/p@v4.2.0",
+            "  - uses: o/q@v4.2.0",
+            "  - uses: o/r@v4.2.0 # mine",
+            "  - uses: pinned/x@v4.2.0",
+            "",
+        ]
+        .join("\n");
+        assert_eq!(written, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_run_pin_override_wins_for_matching_actions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let toml = "[policy]\npin = \"tag\"\n\n[[overrides]]\npattern = \"pinned/*\"\npolicy = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"o/q\"\npolicy = { pin = \"preserve\" }\n";
+        let written = update_with_config(toml, &pin_style_workflow()).await?;
+        let expected = [
+            "steps:",
+            "  - uses: actions/checkout@v4.2.0",
+            "  - uses: o/p@v4.2.0",
+            "  - uses: o/q@NEW # v4.2.0",
+            "  - uses: o/r@v4.2.0 # mine",
+            "  - uses: pinned/x@NEW # v4.2.0",
+            "",
+        ]
+        .join("\n")
+        .replace("NEW", &sha40('b'));
+        assert_eq!(written, expected);
+        Ok(())
+    }
+
     async fn assert_update_writes(
         content: &str,
         expected: &str,
@@ -559,8 +681,8 @@ mod tests {
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
         let tag = make_action_ref("actions", "checkout", "v4");
         let pinned = make_action_ref("actions", "checkout", &sha40('b'));
-        assert!(build_edit(&loc, &tag, &target).is_none());
-        assert!(build_edit(&loc, &pinned, &target).is_none());
+        assert!(build_edit(&loc, &tag, &target, policy::Style::Preserve).is_none());
+        assert!(build_edit(&loc, &pinned, &target, policy::Style::Preserve).is_none());
         assert!(pin_branch_edit(&loc, "v4", &sha40('c')).is_none());
     }
 
@@ -568,11 +690,19 @@ mod tests {
     fn test_target_display_names_the_version_and_a_sha_pin() {
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('b'));
         assert_eq!(
-            target_display(&make_action_ref("a", "b", "v4"), &target),
+            target_display(
+                &make_action_ref("a", "b", "v4"),
+                &target,
+                policy::Style::Preserve
+            ),
             "v5.0.0"
         );
         assert_eq!(
-            target_display(&make_action_ref("a", "b", &sha40('a')), &target),
+            target_display(
+                &make_action_ref("a", "b", &sha40('a')),
+                &target,
+                policy::Style::Preserve
+            ),
             "v5.0.0 (bbbbbbb)"
         );
     }
@@ -602,7 +732,8 @@ mod tests {
         let loc = sha_loc(line)?;
         let action_ref = make_action_ref("actions", "checkout", "v4");
         let target = version::Info::new(version::Version::parse("v5.0.0"), sha40('a'));
-        let edit = build_edit(&loc, &action_ref, &target).ok_or("no edit")?;
+        let edit =
+            build_edit(&loc, &action_ref, &target, policy::Style::Preserve).ok_or("no edit")?;
         assert_eq!(
             apply_at(line, edit)?,
             "      - uses: actions/checkout@v5.0.0"
@@ -618,7 +749,8 @@ mod tests {
         let loc = sha_loc(&line)?;
         let action_ref = make_action_ref("actions", "checkout", &old);
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
-        let edit = build_edit(&loc, &action_ref, &target).ok_or("no edit")?;
+        let edit =
+            build_edit(&loc, &action_ref, &target, policy::Style::Preserve).ok_or("no edit")?;
         assert_eq!(
             apply_at(&line, edit)?,
             format!("      - uses: actions/checkout@{new} # v7.0.1")
@@ -660,7 +792,10 @@ mod tests {
         let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content.clone());
         let mut seen = 0;
         for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
-            file_edits.add(build_edit(&loc, &action_ref, &target).ok_or("no edit")?, ());
+            file_edits.add(
+                build_edit(&loc, &action_ref, &target, policy::Style::Preserve).ok_or("no edit")?,
+                (),
+            );
             seen += 1;
         }
         assert_eq!(seen, 6);

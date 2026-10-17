@@ -13,7 +13,9 @@ use std::{
 use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
     UsesLocation, discover_files, extract_uses_from_yaml, line_spans, lines_ending_in_scalars,
-    parse_uses, provider, rewrite_atomic, validate_edit, version,
+    parse_uses, provider,
+    rewrite::{Trailing, is_version_comment},
+    rewrite_atomic, validate_edit, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -142,11 +144,11 @@ impl PendingEdit {
     }
 }
 
-/// Build an edit that re-pins a SHA-pinned ref to the `target` commit SHA.
+/// Build an edit that pins a ref to the `target` commit SHA.
 ///
-/// Re-pins to the SHA (never unpins to a tag) and keeps a `# vX.Y.Z` version
-/// comment accurate: a stale version comment is refreshed, a missing one is
-/// added, and a foreign comment is left untouched. Shared by `update` and `pin`.
+/// Keeps a `# vX.Y.Z` version comment accurate: a stale version comment is
+/// refreshed, a missing one is added, and a foreign comment is left
+/// untouched. Shared by `update` and `pin`.
 pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<PendingEdit> {
     let new_sha = target.sha();
     let version_comment = format!(" # {}", target.version());
@@ -168,6 +170,21 @@ pub fn repin_sha_edit(loc: &UsesLocation, target: &version::Info) -> Option<Pend
         PendingEdit::replace_range(loc.line(), range, new_sha.to_string())
             .with_comment(version_comment)
     })
+}
+
+/// Build an edit that writes the tag `tag` over a SHA pin and drops a trailing version comment.
+pub fn unpin_edit(loc: &UsesLocation, tag: &str) -> Option<PendingEdit> {
+    let range = loc.ref_range()?;
+    let raw = loc.raw_line();
+    let end = match Trailing::after(raw, range.end) {
+        Trailing::Version => raw.len(),
+        Trailing::None | Trailing::Foreign => range.end,
+    };
+    Some(PendingEdit::replace_range(
+        loc.line(),
+        range.start..end,
+        tag.to_string(),
+    ))
 }
 
 /// Why `update` or `pin` leaves an action reference unchanged.
@@ -364,16 +381,6 @@ pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
         kind: ErrorKind::from(err),
         message: err.to_string(),
     });
-}
-
-/// Whether a trailing line fragment is a version comment like `# v1.2.3` or `# 1.2`.
-fn is_version_comment(tail: &str) -> bool {
-    let Some(body) = tail.strip_prefix('#') else {
-        return false;
-    };
-    let body = body.trim();
-    let body = body.strip_prefix('v').unwrap_or(body);
-    body.starts_with(|c: char| c.is_ascii_digit())
 }
 
 // FileEdits - accumulated edits for a single file

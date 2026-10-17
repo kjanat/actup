@@ -66,7 +66,7 @@ for (const r of results) {
 }
 
 const edits = planUpdates(results);
-// edits: [{ line, refStart, refEnd, original, newRef }]
+// edits: [{ line, refStart, refEnd, replaceEnd, original, newRef, newText }]
 ```
 
 ## API
@@ -105,17 +105,26 @@ Parses the YAML, resolves each non-local ref through the provider, and returns
 value it checked, the parsed `action_ref`, and a status: `"UpToDate"`,
 `{ Outdated: ... }`, or `{ Unresolvable: ... }`.
 
-Optional `config` accepts `{ default_host?, policy?: { bump? } }` where `bump`
-is `"patch"` | `"minor"` | `"major"` | `"latest"`. Unknown keys reject the call.
+Optional `config` accepts `{ default_host?, policy?: { bump?, pin? } }` where
+`bump` is `"patch"` | `"minor"` | `"major"` | `"latest"` and `pin` is
+`"preserve"` | `"tag"` | `"sha"`. Unknown keys reject the call.
 
-### `planUpdates(results)`
+### `planUpdates(results, config?)`
 
 Compute minimal text edits from the `LocatedCheckResult[]` that `checkRefs`
 returns. Pure, synchronous.
 
 Returns `UpdateEdit[]` with one entry per outdated result, placed at that
-result's `location`. Each entry has `line`, `refStart`, `refEnd`, `original`,
-and `newRef`. A result whose `location.ref_range` is `null` gets no edit.
+result's `location`. Each entry has `line`, `refStart`, `refEnd`, `replaceEnd`,
+`original`, `newRef` and `newText`. Replace the bytes `refStart..replaceEnd` of
+the line with `newText`. A result whose `location.ref_range` is `null` gets no
+edit.
+
+`config.policy.pin` picks the written form, as in `actup update`. `preserve`
+(the default) keeps a tag a tag and re-pins a SHA to the new SHA with a
+`# vX.Y.Z` comment. `sha` writes every target as a SHA with that comment.
+**`tag` unpins:** it writes outdated SHA pins as mutable tags and drops their
+version comment.
 
 ### `sortVersionTags(tags)`
 

@@ -220,7 +220,8 @@ console.log("PASS: config policy.bump = minor keeps v4.0.0 up to date");
 
 // Test 8: unknown config keys are rejected.
 await assert.rejects(checkRefs(outdatedYaml, majorProvider, { update_policy: "patch" }), /update_policy/);
-await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { pin: "sha" } }), /pin/);
+await assert.rejects(checkRefs(outdatedYaml, majorProvider, { policy: { track: "exact" } }), /track/);
+assert.throws(() => planUpdates(outdatedResults, { policy: { track: "exact" } }), /track/);
 
 console.log("PASS: unknown config keys are rejected");
 
@@ -311,7 +312,57 @@ assert.deepEqual(
 
 console.log("PASS: repeated ref gets one edit per location");
 
-// Test 15: sortVersionTags orders by semver precedence, newest first.
+// Test 15: `policy.pin` picks the written form of each outdated ref.
+const oldSha = "a".repeat(40);
+const newSha = "b".repeat(40);
+const pinYaml = `\
+jobs:
+  build:
+    steps:
+      - uses: actions/checkout@v4.0.0
+      - uses: actions/checkout@${oldSha} # v4.0.0
+      - uses: actions/checkout@${oldSha}
+`;
+const pinResults = await checkRefs(pinYaml, mockProvider);
+assert.deepEqual(pinResults.map((r) => statusName(r.status)), ["Outdated", "Outdated", "Outdated"]);
+const applyEdits = (text, edits) => {
+	const lines = text.split("\n");
+	for (const e of edits) {
+		const l = lines[e.line - 1];
+		lines[e.line - 1] = l.slice(0, e.refStart) + e.newText + l.slice(e.replaceEnd);
+	}
+	return lines.join("\n");
+};
+const pinned = (refs) => `jobs:\n  build:\n    steps:\n${refs.map((r) => `      - uses: actions/checkout@${r}\n`).join("")}`;
+const planned = (config) => applyEdits(pinYaml, planUpdates(pinResults, config));
+assert.deepEqual(
+	planUpdates(pinResults).map((e) => e.line),
+	[4, 5, 6],
+	"one edit per location when two locations share a ref",
+);
+
+assert.equal(
+	planned(undefined),
+	pinned(["v4.2.0", `${newSha} # v4.2.0`, `${newSha} # v4.2.0`]),
+	"default pin = preserve keeps each ref style",
+);
+assert.equal(
+	planned({ policy: { pin: "sha" } }),
+	pinned([`${newSha} # v4.2.0`, `${newSha} # v4.2.0`, `${newSha} # v4.2.0`]),
+	"pin = sha writes SHAs with version comments",
+);
+assert.equal(
+	planned({ policy: { pin: "tag" } }),
+	pinned(["v4.2.0", "v4.2.0", "v4.2.0"]),
+	"pin = tag unpins outdated SHA pins",
+);
+const [shaEdit] = planUpdates(pinResults, { policy: { pin: "sha" } });
+assert.equal(shaEdit.newRef, newSha, "newRef is the bare SHA");
+assert.equal(shaEdit.replaceEnd, shaEdit.refEnd, "a tag ref keeps the rest of its line");
+
+console.log("PASS: policy.pin picks tag or SHA output");
+
+// Test 16: sortVersionTags orders by semver precedence, newest first.
 const sorted = sortVersionTags([
 	{ version: "v1.9.0", sha: "a".repeat(40) },
 	{ version: "v1.10.0", sha: "b".repeat(40) },
@@ -328,7 +379,7 @@ assert.equal(sorted[0].sha, "d".repeat(40), "each tag keeps its sha");
 
 console.log("PASS: sortVersionTags orders newest first");
 
-// Test 16: core's ref parser, host rule included.
+// Test 17: core's ref parser, host rule included.
 assert.deepEqual(parseUses("a.b/c@v1"), { host: null, owner: "a.b", repo: "c", subpath: null, ref_str: "v1" });
 assert.deepEqual(parseUses("GitHub.COM/actions/checkout/sub@v4"), {
 	host: "github.com",

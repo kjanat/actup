@@ -24,6 +24,7 @@ pub mod parser;
 pub mod policy;
 pub mod provider;
 pub mod resolution;
+pub mod rewrite;
 pub mod version;
 
 // Re-export primary types at crate root

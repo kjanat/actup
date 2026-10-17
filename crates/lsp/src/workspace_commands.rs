@@ -548,7 +548,7 @@ async fn refuse_edits(
         .map(|e| format!("after edit: {e}"))
 }
 
-fn apply_text_edits(
+pub fn apply_text_edits(
     text: &str,
     edits: &[TextEdit],
     encoding: crate::position::PositionEncoding,

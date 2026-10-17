@@ -260,7 +260,7 @@
           "default": "latest"
         },
         "pin": {
-          "description": "How a ref is written when updating.\n\n`preserve` keeps the current style (tag stays a tag, SHA stays a SHA),\n`tag` rewrites to the version tag, `sha` pins to the commit SHA with a\n`# vX.Y.Z` comment.\n\n```toml\npin = \"sha\"   # actions/checkout@v4 -> @<sha> # v4.2.0\n```",
+          "description": "How a ref is written when updating.\n\n`preserve` keeps the current style (tag stays a tag, SHA stays a SHA),\n`tag` rewrites to the version tag, `sha` pins to the commit SHA with a\n`# vX.Y.Z` comment. `update`, LSP quick fixes and fix-all apply it to\noutdated refs.\n\n**`tag` unpins:** an outdated SHA pin becomes its target's mutable tag.\n\n```toml\npin = \"sha\"   # actions/checkout@v4 -> @<sha> # v4.2.0\n```",
           "$ref": "#/$defs/Style",
           "default": "preserve"
         },
@@ -362,7 +362,7 @@
       }
     },
     "Style": {
-      "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With pin = \"preserve\" - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With pin = \"tag\" - converts to version tags\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With pin = \"sha\" - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",
+      "description": "How to format version references when updating.\n\n# Workflow Examples\n\n```yaml\n# With pin = \"preserve\" - keeps original format\n- uses: actions/checkout@v4      # stays as tag\n- uses: actions/checkout@abc123  # stays as SHA\n\n# With pin = \"tag\" - writes version tags, unpinning SHA pins\n- uses: actions/checkout@v4.1.1  # always a tag\n\n# With pin = \"sha\" - pins to commit SHA (most secure)\n- uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```",
       "oneOf": [
         {
           "description": "Keep the original style (tag stays tag, SHA stays SHA).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4\n\n# After (pin = \"preserve\"):\n- uses: actions/checkout@v4.2.0\n# Tag format preserved\n```",
@@ -370,7 +370,7 @@
           "const": "preserve"
         },
         {
-          "description": "Always use version tags (v1.2.3).\n\n```yaml\n# Before:\n- uses: actions/checkout@abc1234...\n\n# After (pin = \"tag\"):\n- uses: actions/checkout@v4.2.0\n# SHA converted to tag\n```",
+          "description": "Always use version tags (v1.2.3).\n\n**This unpins.** An outdated SHA-pinned ref is rewritten to its target's\nmutable tag and its `# vX.Y.Z` comment is dropped. Set it only to move\noff SHA pins on purpose.\n\n```yaml\n# Before:\n- uses: actions/checkout@abc1234... # v4.1.0\n\n# After (pin = \"tag\"):\n- uses: actions/checkout@v4.2.0\n# SHA converted to tag\n```",
           "type": "string",
           "const": "tag"
         },

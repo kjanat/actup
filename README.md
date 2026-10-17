@@ -144,6 +144,27 @@ case-sensitively. `*` stays within one segment and `**` spans segments.
 In `uses:` refs, actup lower-cases the host. Owner and repo must match
 `[A-Za-z0-9._-]+` and must not be `.` or `..`.
 
+### Pin Style
+
+`policy.pin` sets how `update`, the LSP quick fixes, fix-all and the wasm
+`planUpdates` write an outdated ref. An `[[overrides]]` entry can set it per
+action.
+
+| `pin`      | Tag ref `@v4.0.0` | SHA pin `@<old> # v4.0.0` |
+| ---------- | ----------------- | ------------------------- |
+| `preserve` | `@v4.2.0`         | `@<new> # v4.2.0`         |
+| `sha`      | `@<new> # v4.2.0` | `@<new> # v4.2.0`         |
+| `tag`      | `@v4.2.0`         | `@v4.2.0`                 |
+
+The `# vX.Y.Z` comment replaces an old version comment. It is added only where
+the line can take it: never next to another comment, and never on a line that
+holds other `uses:` values or ends inside a scalar.
+
+> [!WARNING]
+> `pin = "tag"` unpins. It rewrites an outdated SHA pin to its target's tag,
+> which the action's owner can move, and drops the version comment. Set `tag`
+> only to leave SHA pins on purpose.
+
 ### Config Discovery
 
 1. `-c, --config <path>` (or `ACTUP_CONFIG`) or LSP `configPath` (explicit). A

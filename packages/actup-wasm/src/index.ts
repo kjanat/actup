@@ -38,6 +38,7 @@ export type {
 	CheckStatus,
 	Info as VersionInfo,
 	LocatedCheckResult,
+	Style as PinStyle,
 	Update as UpdatePolicy,
 	UpdateEdit,
 	UsesLocation,
@@ -212,15 +213,18 @@ export async function checkRefs(
  *
  * Returns one edit for each outdated result, placed at that result's
  * `location`. A result whose location has no `ref_range` gets no edit.
+ * Each edit replaces `refStart..replaceEnd` of its line with `newText`.
  *
  * Pure, synchronous. The caller applies the edits.
  *
  * @param results - Array of located check results from `checkRefs`.
+ * @param config - Optional config; `policy.pin` picks tag or SHA output.
+ *   `pin: "tag"` unpins outdated SHA pins.
  * @returns Array of text edits to apply.
  */
-export function planUpdates(results: readonly LocatedCheckResult[]): UpdateEdit[] {
+export function planUpdates(results: readonly LocatedCheckResult[], config?: ActupConfig): UpdateEdit[] {
 	const w = requireInit();
-	return w.planUpdates(JSON.stringify(results));
+	return w.planUpdates(JSON.stringify(results), config);
 }
 
 /** Detect Node.js / Bun / Deno (with node compat) runtime. */

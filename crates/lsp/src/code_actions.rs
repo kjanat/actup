@@ -17,7 +17,9 @@ use tower_lsp_server::ls_types::{
     WorkspaceEdit,
 };
 
-use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, TrailingComment, sha_repin_edit};
+use actup_core::rewrite::{Rewrite, Trailing};
+
+use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData, OutdatedEdit};
 
 /// Custom [`CodeActionKind`] for actup's fix-all source action.
 ///
@@ -238,16 +240,16 @@ pub fn pin_code_actions(
     version: Option<i32>,
     supports_document_changes: bool,
     ref_range: Range,
-    trailing: TrailingComment,
+    trailing: Trailing,
     line_end_col: u32,
     targets: &PinTargets,
 ) -> Vec<CodeActionOrCommand> {
     // Switching to a floating ref drops a now-inaccurate version comment.
-    let strip_end = matches!(trailing, TrailingComment::Version).then_some(line_end_col);
+    let strip_end = matches!(trailing, Trailing::Version).then_some(line_end_col);
     let mut actions = Vec::new();
 
     if let Some((sha, label)) = &targets.sha {
-        let e = sha_repin_edit(sha, label, trailing, line_end_col);
+        let e = OutdatedEdit::new(Rewrite::pin(sha, label, trailing), line_end_col);
         let edit = outdated_text_edit(
             ref_range,
             &e.target_ref,
@@ -654,7 +656,7 @@ mod tests {
             TEST_VERSION,
             true,
             make_range(0, 31, 37),
-            TrailingComment::None,
+            Trailing::None,
             40,
             &targets,
         );
@@ -697,7 +699,7 @@ mod tests {
             TEST_VERSION,
             true,
             make_range(0, 31, 71),
-            TrailingComment::Version,
+            Trailing::Version,
             86,
             &targets,
         );
@@ -723,7 +725,7 @@ mod tests {
             TEST_VERSION,
             true,
             make_range(0, 31, 37),
-            TrailingComment::None,
+            Trailing::None,
             40,
             &targets,
         );
@@ -1111,5 +1113,141 @@ mod tests {
         };
         // Untracked document should have version None (null).
         assert_eq!(doc_edits[0].text_document.version, None);
+    }
+
+    const PIN_STYLE_WORKFLOW: &str = "steps:\n  - uses: actions/checkout@v4.0.0\n  - uses: o/p@OLD # v4.0.0\n  - uses: o/q@OLD\n  - uses: o/r@OLD # mine\n  - uses: pinned/x@v4.0.0\n";
+
+    fn pin_style_versions() -> actup_core::version::Set {
+        let old = test_utils::make_version_info("v4.0.0", &"a".repeat(40));
+        let new = test_utils::make_version_info("v4.2.0", &"b".repeat(40));
+        actup_core::version::Set::build(
+            vec![std::sync::Arc::clone(&new), old],
+            HashMap::from([(4, std::sync::Arc::clone(&new))]),
+            HashMap::new(),
+            Some(new),
+        )
+    }
+
+    fn edits_of(action: &CodeActionOrCommand, uri: &Uri) -> Vec<TextEdit> {
+        let CodeActionOrCommand::CodeAction(action) = action else {
+            panic!("expected CodeAction");
+        };
+        action
+            .edit
+            .as_ref()
+            .and_then(|edit| edit.changes.as_ref())
+            .and_then(|changes| changes.get(uri))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    async fn fix_under_config(toml: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let text = PIN_STYLE_WORKFLOW.replace("OLD", &"a".repeat(40));
+        let mut provider = test_utils::MockProvider::new("github.com");
+        for (owner, repo) in [
+            ("actions", "checkout"),
+            ("o", "p"),
+            ("o", "q"),
+            ("o", "r"),
+            ("pinned", "x"),
+        ] {
+            provider = provider.with_versions(owner, repo, pin_style_versions());
+        }
+        let registry = test_utils::mock_registry(provider);
+        let config = actup_core::Config::from_contents(
+            Some((std::path::Path::new("actup.toml"), toml)),
+            actup_core::config::EnvOverrides::default(),
+        )?;
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let result = crate::diagnostics::compute_diagnostics(
+            &text,
+            &uri,
+            &config,
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            encoding,
+        )
+        .await;
+
+        let fix_all =
+            fix_all_in_file(&uri, None, &result.diagnostics, false).ok_or("no fix-all")?;
+        let quick_edits: Vec<TextEdit> =
+            code_actions_for_diagnostics(&uri, None, &result.diagnostics, false)
+                .iter()
+                .flat_map(|action| edits_of(action, &uri))
+                .collect();
+        let fixed =
+            crate::workspace_commands::apply_text_edits(&text, &edits_of(&fix_all, &uri), encoding)
+                .ok_or("fix-all edits do not fit")?;
+        let quickfixed = crate::workspace_commands::apply_text_edits(&text, &quick_edits, encoding)
+            .ok_or("quickfix edits do not fit")?;
+        assert_eq!(quickfixed, fixed);
+        Ok(fixed)
+    }
+
+    fn expected(lines: [&str; 5]) -> String {
+        format!("steps:\n{}\n", lines.join("\n")).replace("NEW", &"b".repeat(40))
+    }
+
+    #[tokio::test]
+    async fn pin_preserve_keeps_each_ref_style() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            fix_under_config("[policy]\npin = \"preserve\"\n").await?,
+            expected([
+                "  - uses: actions/checkout@v4.2.0",
+                "  - uses: o/p@NEW # v4.2.0",
+                "  - uses: o/q@NEW # v4.2.0",
+                "  - uses: o/r@NEW # mine",
+                "  - uses: pinned/x@v4.2.0",
+            ])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_sha_writes_shas_with_version_comments() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            fix_under_config("[policy]\npin = \"sha\"\n").await?,
+            expected([
+                "  - uses: actions/checkout@NEW # v4.2.0",
+                "  - uses: o/p@NEW # v4.2.0",
+                "  - uses: o/q@NEW # v4.2.0",
+                "  - uses: o/r@NEW # mine",
+                "  - uses: pinned/x@NEW # v4.2.0",
+            ])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_tag_unpins_outdated_shas() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            fix_under_config("[policy]\npin = \"tag\"\n").await?,
+            expected([
+                "  - uses: actions/checkout@v4.2.0",
+                "  - uses: o/p@v4.2.0",
+                "  - uses: o/q@v4.2.0",
+                "  - uses: o/r@v4.2.0 # mine",
+                "  - uses: pinned/x@v4.2.0",
+            ])
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_override_wins_for_matching_actions() -> Result<(), Box<dyn std::error::Error>> {
+        let toml = "[policy]\npin = \"tag\"\n\n[[overrides]]\npattern = \"pinned/*\"\npolicy = { pin = \"sha\" }\n\n[[overrides]]\npattern = \"o/q\"\npolicy = { pin = \"preserve\" }\n";
+        assert_eq!(
+            fix_under_config(toml).await?,
+            expected([
+                "  - uses: actions/checkout@v4.2.0",
+                "  - uses: o/p@v4.2.0",
+                "  - uses: o/q@NEW # v4.2.0",
+                "  - uses: o/r@v4.2.0 # mine",
+                "  - uses: pinned/x@NEW # v4.2.0",
+            ])
+        );
+        Ok(())
     }
 }

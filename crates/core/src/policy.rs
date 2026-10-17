@@ -135,7 +135,7 @@ impl<'de> Deserialize<'de> for Update {
 /// - uses: actions/checkout@v4      # stays as tag
 /// - uses: actions/checkout@abc123  # stays as SHA
 ///
-/// # With pin = "tag" - converts to version tags
+/// # With pin = "tag" - writes version tags, unpinning SHA pins
 /// - uses: actions/checkout@v4.1.1  # always a tag
 ///
 /// # With pin = "sha" - pins to commit SHA (most secure)
@@ -143,6 +143,7 @@ impl<'de> Deserialize<'de> for Update {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
 pub enum Style {
     /// Keep the original style (tag stays tag, SHA stays SHA).
     ///
@@ -159,9 +160,13 @@ pub enum Style {
 
     /// Always use version tags (v1.2.3).
     ///
+    /// **This unpins.** An outdated SHA-pinned ref is rewritten to its target's
+    /// mutable tag and its `# vX.Y.Z` comment is dropped. Set it only to move
+    /// off SHA pins on purpose.
+    ///
     /// ```yaml
     /// # Before:
-    /// - uses: actions/checkout@abc1234...
+    /// - uses: actions/checkout@abc1234... # v4.1.0
     ///
     /// # After (pin = "tag"):
     /// - uses: actions/checkout@v4.2.0
@@ -183,6 +188,16 @@ pub enum Style {
 }
 
 impl Style {
+    /// Whether a ref written under this style is a commit SHA, given whether the current ref is one.
+    #[must_use]
+    pub const fn writes_sha(self, current_is_sha: bool) -> bool {
+        match self {
+            Self::Preserve => current_is_sha,
+            Self::Tag => false,
+            Self::Sha => true,
+        }
+    }
+
     /// Parse from string (case-insensitive)
     #[must_use]
     pub fn from_str_loose(s: &str) -> Option<Self> {
@@ -467,6 +482,16 @@ mod tests {
         assert_eq!(Style::Preserve.to_string(), "preserve");
         assert_eq!(Style::Tag.to_string(), "tag");
         assert_eq!(Style::Sha.to_string(), "sha");
+    }
+
+    #[test]
+    fn test_ref_style_writes_sha() {
+        assert!(!Style::Preserve.writes_sha(false));
+        assert!(Style::Preserve.writes_sha(true));
+        assert!(!Style::Tag.writes_sha(false));
+        assert!(!Style::Tag.writes_sha(true));
+        assert!(Style::Sha.writes_sha(false));
+        assert!(Style::Sha.writes_sha(true));
     }
 
     #[test]

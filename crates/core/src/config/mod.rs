@@ -224,7 +224,10 @@ pub struct Policy {
     ///
     /// `preserve` keeps the current style (tag stays a tag, SHA stays a SHA),
     /// `tag` rewrites to the version tag, `sha` pins to the commit SHA with a
-    /// `# vX.Y.Z` comment.
+    /// `# vX.Y.Z` comment. `update`, LSP quick fixes and fix-all apply it to
+    /// outdated refs.
+    ///
+    /// **`tag` unpins:** an outdated SHA pin becomes its target's mutable tag.
     ///
     /// ```toml
     /// pin = "sha"   # actions/checkout@v4 -> @<sha> # v4.2.0

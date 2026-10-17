@@ -6,6 +6,7 @@ use actup_core::{
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses, policy,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, check_action_remote},
+    rewrite::{Rewrite, Trailing},
 };
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
@@ -14,9 +15,10 @@ use crate::bridge::{self, JsProvider, JsProviderAdapter, VersionTag};
 
 /// Subset of [`Config`] passable from JS callers.
 ///
-/// JS code passes an object matching this shape, and `checkRefs` rejects
-/// unknown keys. Wider config knobs ([`Cache`], [`HostConfig`],
-/// `[[overrides]]`) are repo-config concerns and stay out of the WASM surface.
+/// JS code passes an object matching this shape, and `checkRefs` and
+/// `planUpdates` reject unknown keys. Wider config knobs ([`Cache`],
+/// [`HostConfig`], `[[overrides]]`) are repo-config concerns and stay out of
+/// the WASM surface.
 ///
 /// [`Cache`]: actup_core::config::Cache
 /// [`HostConfig`]: actup_core::config::HostConfig
@@ -38,6 +40,9 @@ pub struct ActupPolicy {
     /// How far to bump outdated version refs (`policy.bump`).
     #[serde(default)]
     pub bump: Option<policy::Update>,
+    /// How `planUpdates` writes an outdated ref (`policy.pin`). `tag` unpins SHA pins.
+    #[serde(default)]
+    pub pin: Option<policy::Style>,
 }
 
 impl From<ActupConfig> for Config {
@@ -48,6 +53,9 @@ impl From<ActupConfig> for Config {
         }
         if let Some(bump) = value.policy.bump {
             config.policy.bump = bump;
+        }
+        if let Some(pin) = value.policy.pin {
+            config.policy.pin = pin;
         }
         config
     }
@@ -236,25 +244,42 @@ struct UpdateEdit {
     ref_start: usize,
     /// 0-indexed byte offset of the ref portion end within the line
     ref_end: usize,
+    /// 0-indexed byte offset within the line where the replacement ends:
+    /// `refEnd`, or the line end when the edit replaces or drops a version comment
+    replace_end: usize,
     /// The full original `uses:` value (e.g. `"actions/checkout@v3"`)
     original: String,
-    /// The replacement ref string (e.g. `"v4.2.0"`)
+    /// The replacement ref string (e.g. `"v4.2.0"` or a commit SHA)
     new_ref: String,
+    /// The text that replaces `refStart..replaceEnd`: `newRef` plus any
+    /// version comment (e.g. `"<sha> # v4.2.0"`)
+    new_text: String,
 }
 
 /// Plan text edits from located check results.
 ///
 /// Takes a JSON array of [`LocatedCheckResult`]s (as returned by
 /// [`checkRefs`]) and returns one [`UpdateEdit`] for each outdated result
-/// whose `location` has a ref range.
+/// whose `location` has a ref range. `config.policy.pin` picks tag or SHA
+/// output, as in `actup update`.
 ///
 /// This is a pure, synchronous function. The caller applies the edits.
 ///
 /// # Errors
 ///
-/// Returns `JsValue` error on serde failures.
+/// Returns `JsValue` error on serde failures or when `config` does not match
+/// [`ActupConfig`].
 #[wasm_bindgen(js_name = "planUpdates", unchecked_return_type = "UpdateEdit[]")]
-pub fn plan_updates(results_json: &str) -> Result<JsValue, JsValue> {
+pub fn plan_updates(
+    results_json: &str,
+    #[wasm_bindgen(unchecked_param_type = "ActupConfig | null | undefined")] config: Option<
+        JsValue,
+    >,
+) -> Result<JsValue, JsValue> {
+    let config = match config {
+        Some(value) => parse_config(&value)?,
+        None => Config::default(),
+    };
     let results: Vec<LocatedCheckResult> = serde_json::from_str(results_json)
         .map_err(|e| JsValue::from_str(&format!("invalid results JSON: {e}")))?;
 
@@ -264,13 +289,27 @@ pub fn plan_updates(results_json: &str) -> Result<JsValue, JsValue> {
             let CheckStatus::Outdated { target, .. } = &result.status else {
                 return None;
             };
-            let range = result.location.ref_range()?;
+            let location = &result.location;
+            let range = location.ref_range()?;
+            let raw_line = location.raw_line();
+            let rewrite = Rewrite::outdated(
+                config.policy_for(&result.action_ref).pin,
+                result.action_ref.is_sha(),
+                target,
+                Trailing::after(raw_line, range.end),
+            );
             Some(UpdateEdit {
-                line: result.location.line(),
+                line: location.line(),
                 ref_start: range.start,
                 ref_end: range.end,
-                original: result.location.value().to_owned(),
-                new_ref: target.version().as_str().to_owned(),
+                replace_end: if rewrite.to_line_end {
+                    raw_line.len()
+                } else {
+                    range.end
+                },
+                original: location.value().to_owned(),
+                new_text: rewrite.text(),
+                new_ref: rewrite.new_ref,
             })
         })
         .collect();

@@ -9,6 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON,
     check_action_with_provider, expand_short_sha, extract_uses_from_yaml, parse_uses, provider,
     resolution::{CheckResult, CheckStatus},
+    rewrite::{Rewrite, Trailing},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -70,40 +71,6 @@ pub enum DiagnosticData {
     },
 }
 
-/// What follows a `uses:` ref on its line, used to keep a SHA pin's version
-/// comment accurate when re-pinning.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrailingComment {
-    /// Nothing meaningful after the ref.
-    None,
-    /// A version comment like `# v8.1.0` that should be refreshed.
-    Version,
-    /// A non-version comment that must be preserved.
-    Foreign,
-}
-
-/// Whether a trailing fragment is a version comment like `# v1.2.3` or `# 1.2`.
-fn is_version_comment(tail: &str) -> bool {
-    let Some(body) = tail.strip_prefix('#') else {
-        return false;
-    };
-    let body = body.trim();
-    let body = body.strip_prefix('v').unwrap_or(body);
-    body.starts_with(|c: char| c.is_ascii_digit())
-}
-
-/// Classify whatever follows the ref (byte offset `ref_end`) on `raw_line`.
-fn classify_trailing(raw_line: &str, ref_end: usize) -> TrailingComment {
-    let tail = raw_line.get(ref_end..).unwrap_or("").trim_start();
-    if tail.is_empty() {
-        TrailingComment::None
-    } else if is_version_comment(tail) {
-        TrailingComment::Version
-    } else {
-        TrailingComment::Foreign
-    }
-}
-
 /// The replacement an outdated diagnostic should apply.
 pub struct OutdatedEdit {
     pub target_ref: String,
@@ -111,33 +78,14 @@ pub struct OutdatedEdit {
     pub replace_end_col: Option<u32>,
 }
 
-/// Build the edit for re-pinning to `new_sha` (whose version is `version`),
-/// keeping the version comment accurate: refresh a stale one, append a missing
-/// one, preserve a foreign one.
-pub fn sha_repin_edit(
-    new_sha: &str,
-    version: &str,
-    trailing: TrailingComment,
-    line_end_col: u32,
-) -> OutdatedEdit {
-    let target_ref = new_sha.to_string();
-    let comment = format!(" # {version}");
-    match trailing {
-        TrailingComment::Version => OutdatedEdit {
-            target_ref,
-            repin_comment: Some(comment),
-            replace_end_col: Some(line_end_col),
-        },
-        TrailingComment::None => OutdatedEdit {
-            target_ref,
-            repin_comment: Some(comment),
-            replace_end_col: None,
-        },
-        TrailingComment::Foreign => OutdatedEdit {
-            target_ref,
-            repin_comment: None,
-            replace_end_col: None,
-        },
+impl OutdatedEdit {
+    /// Place `rewrite` on a line whose end is column `line_end_col`.
+    pub fn new(rewrite: Rewrite, line_end_col: u32) -> Self {
+        Self {
+            target_ref: rewrite.new_ref,
+            repin_comment: rewrite.comment,
+            replace_end_col: rewrite.to_line_end.then_some(line_end_col),
+        }
     }
 }
 
@@ -155,8 +103,8 @@ pub struct LocatedAction {
     pub editable: bool,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
-    /// What follows the ref on its line (only meaningful for SHA pins).
-    pub trailing: TrailingComment,
+    /// What follows the ref on its line.
+    pub trailing: Trailing,
     /// 0-indexed end-of-line column (negotiated encoding), used to overwrite a
     /// stale version comment when re-pinning.
     pub line_end_col: u32,
@@ -203,18 +151,12 @@ fn extract_located_actions(
                 let line_end_col = crate::position::byte_to_col(raw_line, raw_line.len(), encoding);
                 let (col_start, col_end, editable, trailing) =
                     loc.ref_range()
-                        .map_or((0, line_end_col, false, TrailingComment::None), |r| {
-                            // Only SHA pins carry a `# vX.Y.Z` comment we maintain on re-pin.
-                            let trailing = if action_ref.is_sha() || action_ref.is_short_sha() {
-                                classify_trailing(raw_line, r.end)
-                            } else {
-                                TrailingComment::None
-                            };
+                        .map_or((0, line_end_col, false, Trailing::None), |r| {
                             (
                                 crate::position::byte_to_col(raw_line, r.start, encoding),
                                 crate::position::byte_to_col(raw_line, r.end, encoding),
                                 true,
-                                trailing,
+                                Trailing::after(raw_line, r.end),
                             )
                         });
 
@@ -339,17 +281,16 @@ async fn compute_diagnostics_for_actions(
             ),
         };
 
-        // For an outdated SHA pin, build the comment-aware re-pin edit here where
-        // the line's trailing comment is known.
         let edit = match result.status() {
-            CheckStatus::Outdated { target, .. } if action.action_ref.is_sha() => {
-                Some(sha_repin_edit(
-                    target.sha(),
-                    &target.version().to_string(),
+            CheckStatus::Outdated { target, .. } => Some(OutdatedEdit::new(
+                Rewrite::outdated(
+                    config.policy_for(&action.action_ref).pin,
+                    action.action_ref.is_sha(),
+                    target,
                     action.trailing,
-                    action.line_end_col,
-                ))
-            }
+                ),
+                action.line_end_col,
+            )),
             CheckStatus::Unresolvable {
                 reason,
                 is_environment_error: false,
@@ -394,10 +335,8 @@ async fn expand_edit(
         versions
             .and_then(|v| v.tag_on(sha))
             .map_or_else(untagged, |tag| {
-                sha_repin_edit(
-                    sha,
-                    tag.version().as_str(),
-                    action.trailing,
+                OutdatedEdit::new(
+                    Rewrite::pin(sha, tag.version().as_str(), action.trailing),
                     action.line_end_col,
                 )
             }),
@@ -438,10 +377,6 @@ fn status_to_diagnostic(
         CheckStatus::UpToDate | CheckStatus::Ignored => None,
 
         CheckStatus::Outdated { current, target } => {
-            // SHA-pinned refs re-pin to the new commit SHA (never unpin to a
-            // tag); tag refs update to the tag. `edit` (built by the caller,
-            // which knows the line's trailing comment) carries any version-comment
-            // refresh; fall back to a bare ref replacement for direct callers.
             let OutdatedEdit {
                 target_ref,
                 repin_comment,
@@ -764,30 +699,17 @@ mod tests {
     }
 
     #[test]
-    fn sha_repin_refreshes_stale_version_comment() {
-        // Stale `# v8.1.0` next to an outdated SHA must be overwritten, not kept.
-        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
-        let edit = sha_repin_edit(new_sha, "v8.2.0", TrailingComment::Version, 70);
-        assert_eq!(edit.target_ref, new_sha);
-        assert_eq!(edit.repin_comment.as_deref(), Some(" # v8.2.0"));
+    fn outdated_edit_extends_to_the_line_end_only_when_asked() {
+        let rewrite = |to_line_end| Rewrite {
+            new_ref: "v8.2.0".into(),
+            comment: Some(" # x".into()),
+            to_line_end,
+        };
+        let edit = OutdatedEdit::new(rewrite(true), 70);
+        assert_eq!(edit.target_ref, "v8.2.0");
+        assert_eq!(edit.repin_comment.as_deref(), Some(" # x"));
         assert_eq!(edit.replace_end_col, Some(70));
-    }
-
-    #[test]
-    fn sha_repin_appends_comment_when_absent() {
-        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
-        let edit = sha_repin_edit(new_sha, "v8.2.0", TrailingComment::None, 70);
-        assert_eq!(edit.repin_comment.as_deref(), Some(" # v8.2.0"));
-        assert_eq!(edit.replace_end_col, None);
-    }
-
-    #[test]
-    fn sha_repin_preserves_foreign_comment() {
-        let new_sha = "fac544c07dec837d0ccb6301d7b5580bf5edae39";
-        let edit = sha_repin_edit(new_sha, "v8.2.0", TrailingComment::Foreign, 70);
-        assert_eq!(edit.target_ref, new_sha);
-        assert_eq!(edit.repin_comment, None);
-        assert_eq!(edit.replace_end_col, None);
+        assert_eq!(OutdatedEdit::new(rewrite(false), 70).replace_end_col, None);
     }
 
     #[test]
@@ -999,7 +921,7 @@ jobs:
         let yaml = format!(
             "steps:\n  - {{ uses: a/b@v4, with: {{ x: 1 }} }}\n  - [{{ uses: c/d@v1 }}]\n  - {{ name: \"✓ ok\", uses: e/f@v2 }}\n  - {{ uses: g/h@{sha}, id: x }} # v1.0.0\n"
         );
-        let located: Vec<(String, u32, u32, u32, TrailingComment)> =
+        let located: Vec<(String, u32, u32, u32, Trailing)> =
             extract_located_actions(&yaml, crate::position::PositionEncoding::Utf16)
                 .into_iter()
                 .map(|a| {
@@ -1015,10 +937,10 @@ jobs:
         assert_eq!(
             located,
             [
-                ("v4".to_string(), 1, 16, 18, TrailingComment::None),
-                ("v1".to_string(), 2, 17, 19, TrailingComment::None),
-                ("v2".to_string(), 3, 30, 32, TrailingComment::None),
-                (sha, 4, 16, 56, TrailingComment::Foreign),
+                ("v4".to_string(), 1, 16, 18, Trailing::Foreign),
+                ("v1".to_string(), 2, 17, 19, Trailing::Foreign),
+                ("v2".to_string(), 3, 30, 32, Trailing::Foreign),
+                (sha, 4, 16, 56, Trailing::Foreign),
             ]
         );
     }
@@ -1072,7 +994,7 @@ jobs:
             assert!(!action.editable, "{yaml:?}");
             assert_eq!(
                 (action.col_start, action.col_end, action.trailing),
-                (0, u32::try_from(line_len)?, TrailingComment::None),
+                (0, u32::try_from(line_len)?, Trailing::None),
                 "{yaml:?}"
             );
         }
