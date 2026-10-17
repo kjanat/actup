@@ -253,9 +253,11 @@ async fn edit(
         };
 
         let relative = scanner.relative_path(file);
-        let mut file_edits = FileEdits::new(file.path().to_path_buf(), content.clone());
+        let mut file_edits =
+            FileEdits::new(file.path().to_path_buf(), content.clone(), file.format());
 
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, file.format()) {
+            let loc = file_edits.writable(&loc);
             let Some(provider) = scanner.provider_for(&action_ref) else {
                 report_unserved(&scanner, &relative, loc.line(), &action_ref, &mut result);
                 continue;
@@ -295,7 +297,7 @@ mod tests {
     use std::collections::HashMap;
 
     use actup_core::{
-        ActionRepoId, BoxFuture,
+        ActionRepoId, BoxFuture, SourceFormat,
         provider::{ActionYml, Kind, Provider, Sha40},
         version,
     };
@@ -566,6 +568,50 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_run_pins_an_explicit_markdown_or_terraform_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let registry = repo_sha_registry();
+        let config = Config::default();
+        let cases = [
+            (
+                "usage.md",
+                "Run:\n\n```yml\n- uses: o/h@v2\n```\n- uses: o/i@v3\n",
+                format!(
+                    "Run:\n\n```yml\n- uses: o/h@{} # v2\n```\n- uses: o/i@v3\n",
+                    sha('f')
+                ),
+            ),
+            (
+                "ci.tf",
+                "content = \"steps: [{ uses: o/h@v2 }]\" # keep\n",
+                format!(
+                    "content = \"steps: [{{ uses: o/h@{} }}]\" # keep\n",
+                    sha('f')
+                ),
+            ),
+        ];
+        for (name, content, expected) in cases {
+            let file = dir.path().join(name);
+            std::fs::write(&file, content)?;
+            for _ in 0..2 {
+                let code = run(
+                    &file,
+                    Mode::Pin,
+                    false,
+                    OutputFormat::Human,
+                    &config,
+                    &registry,
+                )
+                .await;
+                assert_eq!(code, i32::from(CliExitCode::Success), "{name}");
+                assert_eq!(std::fs::read_to_string(&file)?, expected, "{name}");
+            }
+        }
+        Ok(())
+    }
+
     async fn assert_pin_writes(
         content: &str,
         expected: &str,
@@ -747,10 +793,13 @@ mod tests {
         .replace("SHA", &sha);
 
         let config = Config::default();
-        let mut file_edits =
-            FileEdits::new(std::path::PathBuf::from("/pages.yml"), content.clone());
+        let mut file_edits = FileEdits::new(
+            std::path::PathBuf::from("/pages.yml"),
+            content.clone(),
+            SourceFormat::Yaml,
+        );
         let mut refs = Vec::new();
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             refs.push(action_ref.to_string());
             let PinStep::Edit(edit, change) = pin_action_edit(
                 &provider,
@@ -787,9 +836,13 @@ mod tests {
         let content = "steps:\n  - uses: GitHub.COM/actions/checkout@v4\n".to_string();
 
         let config = Config::default();
-        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
+        let mut file_edits = FileEdits::new(
+            std::path::PathBuf::from("/ci.yml"),
+            content.clone(),
+            SourceFormat::Yaml,
+        );
         let mut hosts = Vec::new();
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             hosts.push(action_ref.host().map(str::to_owned));
             let PinStep::Edit(edit, change) = pin_action_edit(
                 &provider,
@@ -849,7 +902,7 @@ mod tests {
 
         let config = Config::default();
         let mut refs = Vec::new();
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             refs.push(action_ref.to_string());
             let step = pin_action_edit(
                 &provider,
@@ -894,8 +947,12 @@ mod tests {
         };
         let content = format!("steps:\n  - uses: actions/cache@{old}\n");
 
-        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        let mut file_edits = FileEdits::new(
+            std::path::PathBuf::from("/ci.yml"),
+            content.clone(),
+            SourceFormat::Yaml,
+        );
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             let PinStep::Edit(edit, change) = pin_action_edit(
                 &provider,
                 &action_ref,
@@ -939,14 +996,19 @@ mod tests {
 
     async fn pinned_line(provider: &FixedShaProvider, line: &str) -> Option<Pinned> {
         let content = format!("steps:\n{line}\n");
-        let (loc, action_ref) = WorkflowScanner::extract_actions(&content).next()?;
+        let (loc, action_ref) =
+            WorkflowScanner::extract_actions(&content, SourceFormat::Yaml).next()?;
         let site = RefSite::new("ci.yml", loc.line(), &action_ref, provider);
         let PinStep::Edit(edit, change) =
             pin_action_edit(provider, &action_ref, &loc, &Config::default(), &site).await
         else {
             return None;
         };
-        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/ci.yml"), content.clone());
+        let mut file_edits = FileEdits::new(
+            std::path::PathBuf::from("/ci.yml"),
+            content.clone(),
+            SourceFormat::Yaml,
+        );
         file_edits.add(edit, *change);
         let plan = file_edits.plan();
         let [(change, actup_core::patch::EditOutcome::Applied { comment })] =

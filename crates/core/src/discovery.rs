@@ -14,6 +14,8 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
+use crate::SourceFormat;
+
 /// Default paths to scan for workflows
 pub const DEFAULT_WORKFLOW_PATTERNS: &[&str] =
     &[".github/workflows/*.yml", ".github/workflows/*.yaml"];
@@ -116,6 +118,12 @@ impl DiscoveredFile {
     pub const fn kind(&self) -> FileKind {
         self.kind
     }
+
+    /// Get the syntax to read `uses:` refs from, by the file's extension.
+    #[must_use]
+    pub fn format(&self) -> SourceFormat {
+        SourceFormat::from_path(&self.path)
+    }
 }
 
 /// Type of discovered file
@@ -145,7 +153,7 @@ impl FileKind {
 
 /// Discover action-related files from a directory or explicit file path.
 ///
-/// When `root` is a file, returns that YAML file directly.
+/// When `root` is a file, returns that file directly, whatever its extension.
 ///
 /// When `root` is a directory, searches for:
 /// - action.yml and action.yaml in root
@@ -160,7 +168,7 @@ pub fn discover_files(root: &Path, extra_patterns: &[ExtraPath]) -> Vec<Discover
     let mut seen_paths: HashSet<PathBuf> = HashSet::new();
 
     // Explicit file input: scan that file directly instead of treating it as a repo root.
-    if root.is_file() && has_yaml_ext(root) {
+    if root.is_file() {
         files.push(DiscoveredFile::new(
             root.to_path_buf(),
             classify_explicit_file(root),

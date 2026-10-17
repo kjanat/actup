@@ -21,9 +21,7 @@ use std::{
     },
 };
 
-use actup_core::{
-    ActionRepoId, Config, DiscoveredFile, discover_files, line_spans, provider, validate_edit,
-};
+use actup_core::{ActionRepoId, Config, DiscoveredFile, discover_files, line_spans, provider};
 use dashmap::DashMap;
 use tower_lsp_server::{
     Client,
@@ -314,7 +312,11 @@ async fn prefetch_workspace_versions(
             continue;
         }
 
-        for repo in crate::diagnostics::extract_unique_repo_ids(&loaded.text, encoding) {
+        for repo in crate::diagnostics::extract_unique_repo_ids(
+            &loaded.text,
+            loaded.file.format(),
+            encoding,
+        ) {
             if seen.insert(repo.clone()) {
                 unique_repos.push(repo);
             }
@@ -343,6 +345,7 @@ async fn process_loaded_file(
 
     let result = diagnostics::compute_diagnostics_with_versions(
         &loaded.text,
+        loaded.file.format(),
         config,
         registry,
         versions_map,
@@ -543,7 +546,10 @@ async fn refuse_edits(
     let Some(edited) = apply_text_edits(&loaded.text, edits, ctx.encoding) else {
         return Some("edits do not fit the text".to_string());
     };
-    validate_edit(&loaded.text, &edited)
+    loaded
+        .file
+        .format()
+        .validate_edit(&loaded.text, &edited)
         .err()
         .map(|e| format!("after edit: {e}"))
 }
@@ -1311,5 +1317,72 @@ mod tests {
         assert_eq!(result.files_scanned, 2);
         assert_eq!(result.files_changed, 2);
         assert_eq!(result.refs_updated, 2);
+    }
+
+    #[tokio::test]
+    async fn scan_files_edits_markdown_and_text_extra_paths() {
+        let temp = tempfile::TempDir::new().unwrap();
+        std::fs::create_dir_all(temp.path().join("playground")).unwrap();
+        let readme = temp.path().join("README.md");
+        let script = temp.path().join("playground/index.ts");
+        std::fs::write(
+            &readme,
+            "# Usage\n\n```yaml\n- uses: actions/checkout@v3\n```\nuses: actions/checkout@v3\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &script,
+            "export const step = { uses: \"actions/checkout@v3\" };\n",
+        )
+        .unwrap();
+
+        let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let registry = test_utils::mock_registry(provider);
+        let cache = FileCache::disabled();
+        let documents = DashMap::new();
+        let cancelled = Cancelled::new();
+        let extra = [
+            "README.md".parse().unwrap(),
+            "playground/*.ts".parse().unwrap(),
+        ];
+        let discovered = discover_files(temp.path(), &extra);
+
+        let config = Config::default();
+        let ctx = ScanContext {
+            workspace_root: temp.path(),
+            config: &config,
+            registry: &registry,
+            file_cache: &cache,
+            documents: &documents,
+            cancelled: &cancelled,
+            supports_document_changes: false,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let result = scan_files(&discovered, &ctx, None).await;
+
+        assert_eq!(result.files_changed, 2);
+        assert_eq!(result.refs_updated, 2);
+        let changes = result.edit.changes.unwrap();
+        let lines = |path: &std::path::Path| -> Vec<(u32, u32, String)> {
+            changes[&Uri::from_file_path(path).unwrap()]
+                .iter()
+                .map(|e| {
+                    (
+                        e.range.start.line,
+                        e.range.start.character,
+                        e.new_text.clone(),
+                    )
+                })
+                .collect()
+        };
+        let readme_edits = lines(&readme);
+        let script_edits = lines(&script);
+        assert_eq!(readme_edits.len(), 1);
+        assert_eq!(script_edits.len(), 1);
+        assert_eq!((readme_edits[0].0, readme_edits[0].1), (3, 25));
+        assert_eq!((script_edits[0].0, script_edits[0].1), (0, 46));
+        assert_eq!(readme_edits[0].2, script_edits[0].2);
     }
 }

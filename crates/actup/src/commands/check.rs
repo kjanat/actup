@@ -179,7 +179,7 @@ fn collect_actions(
         };
         let relative = scanner.relative_path(file);
 
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, file.format()) {
             // No provider configured for the ref's host is an environment
             // error: emit immediately so it doesn't block batch fetching.
             let Some(provider) = scanner.provider_for(&action_ref) else {
@@ -1115,6 +1115,45 @@ mod tests {
             .map(|f| (f.action_ref().repo(), f.host()))
             .collect();
         assert_eq!(unresolved, [("r", "ghe.corp.example")]);
+        Ok(())
+    }
+
+    #[test]
+    fn test_collect_actions_reads_markdown_and_text_extra_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("playground"))?;
+        std::fs::write(
+            dir.path().join("README.md"),
+            "# Usage\n\n```yaml\n- uses: actions/checkout@v6\n```\n\nuses: prose/ref@v1\n",
+        )?;
+        std::fs::write(
+            dir.path().join("playground/index.ts"),
+            "export const step = { uses: \"actions/cache@v4\" };\n",
+        )?;
+        let mut config = Config::default();
+        config.scan.extra_paths = vec!["README.md".parse()?, "playground/*.ts".parse()?];
+        let registry = test_registry();
+        let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
+        let discovered = scanner.discover();
+        let mut io_errors = ErrorTally::default();
+        let mut findings = Vec::new();
+
+        let collected = collect_actions(&scanner, &discovered, &mut io_errors, &mut findings);
+
+        let refs: Vec<(&str, usize, &str)> = collected
+            .iter()
+            .map(|c| (c.file.as_str(), c.line, c.action_ref.repo()))
+            .collect();
+        let ts = std::path::Path::new("playground").join("index.ts");
+        assert_eq!(
+            refs,
+            [
+                ("README.md", 4, "checkout"),
+                (ts.to_string_lossy().as_ref(), 1, "cache"),
+            ]
+        );
+        assert_eq!(findings.len(), 0);
         Ok(())
     }
 

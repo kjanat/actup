@@ -7,9 +7,9 @@ use std::{fs, path::Path};
 
 use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
-    UsesLocation, discover_files, extract_uses_from_yaml, parse_uses,
+    SourceFormat, UsesLocation, discover_files, parse_uses,
     patch::{EditOutcome, EditPlan, FileEdits, SkipReason, Splices},
-    provider, resolve_within, rewrite_atomic, validate_edit,
+    provider, resolve_within, rewrite_atomic,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -286,7 +286,7 @@ impl Change {
 ///
 /// The write re-reads the file and places the edits on it. A rewritten line
 /// that differs from the scan refuses the whole file, and so does an edited
-/// text that fails [`validate_edit`] or a file that resolves outside `root`,
+/// text that fails [`SourceFormat::validate_edit`] or a file that resolves outside `root`,
 /// in a dry run too. Returns each written change with its version comment, and
 /// records them in `result`. A refused or failed write records each change as
 /// an errored ref and returns nothing.
@@ -315,7 +315,10 @@ pub fn commit_file(
         resolve_within(root, &path)
             .map_err(WriteRefusal::Io)
             .and_then(|_| {
-                validate_edit(splices.scanned(), &splices.planned()).map_err(WriteRefusal::Invalid)
+                splices
+                    .format()
+                    .validate_edit(splices.scanned(), &splices.planned())
+                    .map_err(WriteRefusal::Invalid)
             })
     } else {
         write_splices(root, &path, &splices)
@@ -380,7 +383,10 @@ impl From<std::io::Error> for WriteRefusal {
 fn write_splices(root: &Path, path: &Path, splices: &Splices) -> Result<(), WriteRefusal> {
     rewrite_atomic(root, path, |current| {
         let content = splices.apply(current).ok_or(WriteRefusal::Changed)?;
-        validate_edit(current, &content).map_err(WriteRefusal::Invalid)?;
+        splices
+            .format()
+            .validate_edit(current, &content)
+            .map_err(WriteRefusal::Invalid)?;
         Ok(content)
     })
 }
@@ -471,16 +477,17 @@ impl<'a> WorkflowScanner<'a> {
     ///
     /// Note: Ignored actions are NOT filtered here - they flow through to the check
     /// phase where they're marked with `CheckStatus::Ignored` for visibility.
-    pub fn extract_actions(content: &str) -> impl Iterator<Item = (UsesLocation, ActionRef)> + '_ {
-        extract_uses_from_yaml(content)
-            .into_iter()
-            .filter_map(|loc| {
-                let Ok(Some(action_ref)) = parse_uses(loc.value()) else {
-                    return None; // Local action or parse error
-                };
+    pub fn extract_actions(
+        content: &str,
+        format: SourceFormat,
+    ) -> impl Iterator<Item = (UsesLocation, ActionRef)> + '_ {
+        format.extract_uses(content).into_iter().filter_map(|loc| {
+            let Ok(Some(action_ref)) = parse_uses(loc.value()) else {
+                return None; // Local action or parse error
+            };
 
-                Some((loc, action_ref))
-            })
+            Some((loc, action_ref))
+        })
     }
 
     /// Look up provider for an action. Returns None if not found.
@@ -865,7 +872,7 @@ mod tests {
         let path = dir.path().join("ci.yml");
         let content = "uses: a/b@v1\n";
         fs::write(&path, content)?;
-        let mut fe = FileEdits::new(path.clone(), content.to_string());
+        let mut fe = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()).with_comment(" # c".into()),
             change(1, "v2", true),
@@ -898,7 +905,7 @@ mod tests {
         let content = "\u{feff}uses: a/b@v1\n";
         fs::write(&path, content)?;
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-        let mut fe = FileEdits::new(path.clone(), content.to_string());
+        let mut fe = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
         fe.add(
             PendingEdit::replace_range(1, 13..15, "v2".to_string()),
             change(1, "v2", false),
@@ -919,7 +926,7 @@ mod tests {
         let path = dir.path().join("ci.yml");
         let content = "uses: a/b@v1\n";
         fs::write(&path, content)?;
-        let mut fe = FileEdits::new(path.clone(), content.to_string());
+        let mut fe = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()),
             change(1, "v2", false),
@@ -939,7 +946,11 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let path = dir.path().join("ci.yml");
         fs::create_dir(&path)?;
-        let mut fe = FileEdits::new(path.clone(), "uses: a/b@v1\n".to_string());
+        let mut fe = FileEdits::new(
+            path.clone(),
+            "uses: a/b@v1\n".to_string(),
+            SourceFormat::Yaml,
+        );
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()),
             change(1, "v2", false),
@@ -972,7 +983,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, &path)?;
 
         for dry_run in [false, true] {
-            let mut fe = FileEdits::new(path.clone(), content.to_string());
+            let mut fe = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
             fe.add(
                 PendingEdit::replace_range(1, 10..12, "v2".to_string()),
                 change(1, "v2", false),
@@ -1007,7 +1018,7 @@ mod tests {
         let scanned = "uses: a/b@v1\n";
         let changed = "uses: a/b@main\n";
         fs::write(&path, changed)?;
-        let mut fe = FileEdits::new(path.clone(), scanned.to_string());
+        let mut fe = FileEdits::new(path.clone(), scanned.to_string(), SourceFormat::Yaml);
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()),
             change(1, "v2", false),
@@ -1038,7 +1049,7 @@ mod tests {
         let path = dir.path().join("ci.yml");
         let scanned = "uses: a/b@v1\nname: a\n";
         fs::write(&path, "uses: a/b@v1\nname: renamed\n")?;
-        let mut fe = FileEdits::new(path.clone(), scanned.to_string());
+        let mut fe = FileEdits::new(path.clone(), scanned.to_string(), SourceFormat::Yaml);
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()),
             change(1, "v2", false),
@@ -1061,7 +1072,7 @@ mod tests {
     ) -> Result<(PathBuf, EditResult, usize), Box<dyn std::error::Error>> {
         let path = dir.join("ci.yml");
         fs::write(&path, content)?;
-        let mut fe = FileEdits::new(path.clone(), content.to_string());
+        let mut fe = FileEdits::new(path.clone(), content.to_string(), SourceFormat::Yaml);
         fe.add(
             PendingEdit::replace_range(2, 14..16, new.to_string()),
             change(2, "v2", false),

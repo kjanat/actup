@@ -26,6 +26,7 @@ pub mod policy;
 pub mod provider;
 pub mod resolution;
 pub mod rewrite;
+pub mod syntax;
 pub mod version;
 
 // Re-export primary types at crate root
@@ -58,4 +59,5 @@ pub use resolution::{
     CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, RefKind, SHORT_SHA_REASON, check_action,
     check_action_remote, check_action_with_provider, expand_short_sha,
 };
+pub use syntax::SourceFormat;
 pub use version::{BranchInfo, Info, Version};

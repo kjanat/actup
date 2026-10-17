@@ -935,8 +935,12 @@ impl LspBackend {
             let Some(doc) = self.documents.get(uri) else {
                 return Vec::new();
             };
-            let Some(action) = crate::diagnostics::locate_action_at(&doc.text, position, encoding)
-            else {
+            let Some(action) = crate::diagnostics::locate_action_at(
+                &doc.text,
+                crate::diagnostics::uri_format(uri),
+                position,
+                encoding,
+            ) else {
                 return Vec::new();
             };
             (action, Arc::clone(&doc.version_sets))
@@ -1554,6 +1558,7 @@ mod tests {
         };
         let action = crate::diagnostics::locate_action_at(
             &text,
+            actup_core::SourceFormat::Yaml,
             position,
             crate::position::PositionEncoding::Utf16,
         )?;
@@ -1629,8 +1634,13 @@ mod tests {
             line: 0,
             character: 30,
         };
-        let action = crate::diagnostics::locate_action_at(line, at, encoding)
-            .ok_or("no action under the cursor")?;
+        let action = crate::diagnostics::locate_action_at(
+            line,
+            actup_core::SourceFormat::Yaml,
+            at,
+            encoding,
+        )
+        .ok_or("no action under the cursor")?;
         let provider = crate::test_utils::MockProvider::new("github.com");
         let targets = compute_pin_targets(&action, Some(versions), &provider).await;
         if targets.unpin.is_none() {

@@ -160,7 +160,19 @@ fn serve_child(root: &Path) -> ExitCode {
     let mut registry = Registry::new();
     registry.set_default_host("github.com");
     registry.register(Box::new(MockProvider));
-    match runtime.block_on(serve_stdio(Server::new(Config::default(), registry, root))) {
+    let mut config = Config::default();
+    config.scan.extra_paths = match ["docs/*.md", "infra/*.tf"]
+        .map(str::parse)
+        .into_iter()
+        .collect()
+    {
+        Ok(paths) => paths,
+        Err(e) => {
+            eprintln!("extra paths: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(serve_stdio(Server::new(config, registry, root))) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("serve: {e}");
@@ -854,6 +866,69 @@ fn update_all_pins_shas_honours_dry_run_and_is_idempotent(
     )
 }
 
+fn mutators_read_markdown_and_text_files(client: &mut Client, ws: &Workspace) -> TestResult {
+    fs::create_dir_all(ws.path("docs"))?;
+    fs::create_dir_all(ws.path("infra"))?;
+    let md = format!(
+        "# Usage\n\n```yaml\n- uses: actions/checkout@{} # v4.0.0\n```\nuses: actions/checkout@v4.0.0\n",
+        sha('a')
+    );
+    let tf = format!(
+        "resource \"a\" {{\n  steps = \"[{{ uses: actions/checkout@{} # v4.0.0 }}]\"\n}}\n",
+        sha('a')
+    );
+    ws.write("docs/usage.md", &md)?;
+    ws.write("infra/main.tf", &tf)?;
+
+    let all = client.call(
+        "updateAllUsesToVersion",
+        json!({
+            "workspaceRoot": ".",
+            "match": { "owner": "actions", "repo": "checkout" },
+            "targetRef": "v4.2.0",
+        }),
+    )?;
+    expect(!is_error(&all), || format!("updateAll failed: {all}"))?;
+    let written = &body(&all)["written"];
+    for path in ["docs/usage.md", "infra/main.tf"] {
+        expect(
+            written.as_array().is_some_and(|w| w.contains(&json!(path))),
+            || format!("{path} not written: {written}"),
+        )?;
+    }
+    expect_eq(
+        &json!(ws.read("docs/usage.md")?),
+        &json!(md.replace(
+            &format!("{} # v4.0.0", sha('a')),
+            &format!("{} # v4.2.0", sha('b'))
+        )),
+        "markdown block re-pinned with a fresh comment",
+    )?;
+    expect_eq(
+        &json!(ws.read("infra/main.tf")?),
+        &json!(tf.replace(&sha('a'), &sha('b'))),
+        "text line re-pinned without a comment change",
+    )?;
+
+    let script = "resource \"b\" {\n  step = { uses: \"actions/setup-node@v4\" }\n}\n";
+    ws.write("infra/tag.tf", script)?;
+    let file = update_file(
+        client,
+        json!({
+            "path": "infra/tag.tf",
+            "edits": [{ "line": 2, "action": "actions/setup-node", "ref": "v5" }],
+        }),
+    )?;
+    expect(!is_error(&file), || {
+        format!("updateFile on text failed: {file}")
+    })?;
+    expect_eq(
+        &json!(ws.read("infra/tag.tf")?),
+        &json!(script.replace("@v4", "@v5")),
+        "text file written",
+    )
+}
+
 fn binary(ws: &Workspace) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_actup-mcp"));
     command
@@ -949,7 +1024,7 @@ const BINARY_CASES: [(&str, BinaryCase); 2] = [
     ),
 ];
 
-const CASES: [(&str, Case); 8] = [
+const CASES: [(&str, Case); 9] = [
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,
@@ -981,6 +1056,10 @@ const CASES: [(&str, Case); 8] = [
     (
         "update_all_pins_shas_honours_dry_run_and_is_idempotent",
         update_all_pins_shas_honours_dry_run_and_is_idempotent,
+    ),
+    (
+        "mutators_read_markdown_and_text_files",
+        mutators_read_markdown_and_text_files,
     ),
 ];
 

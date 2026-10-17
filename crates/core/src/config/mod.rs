@@ -326,6 +326,12 @@ pub struct Scan {
     /// - `".drone.yml"` - Specific Drone CI config file
     /// - `"infra/terraform/github-actions.tf"` - GitHub Actions in Terraform
     ///
+    /// A matched file is read by its extension. `.yml` and `.yaml` files are
+    /// read as YAML. Markdown files (`.md`, `.markdown`) are read through
+    /// their fenced `yaml` or `yml` blocks. Every other file is read line by
+    /// line for `uses:` values that contain `@`, and actup never appends a
+    /// version comment to such a line.
+    ///
     /// Each entry is relative to the scan root. Absolute paths and `..`
     /// segments are rejected, and matches that resolve outside the scan root
     /// through a symlink are skipped.

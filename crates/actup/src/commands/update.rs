@@ -82,9 +82,11 @@ async fn edit(
         };
 
         let relative = scanner.relative_path(file);
-        let mut file_edits = FileEdits::new(file.path().to_path_buf(), content.clone());
+        let mut file_edits =
+            FileEdits::new(file.path().to_path_buf(), content.clone(), file.format());
 
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, file.format()) {
+            let loc = file_edits.writable(&loc);
             let Some(provider) = scanner.provider_for(&action_ref) else {
                 report_unserved(&scanner, &relative, loc.line(), &action_ref, &mut result);
                 continue;
@@ -152,7 +154,7 @@ mod tests {
     use std::{collections::HashMap, sync::Arc};
 
     use actup_core::{
-        ActionRepoId, BoxFuture,
+        ActionRepoId, BoxFuture, SourceFormat,
         patch::EditOutcome,
         provider::{ActionYml, Kind, Provider, Sha40},
     };
@@ -603,6 +605,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_run_updates_markdown_and_text_extra_paths()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        std::fs::create_dir_all(dir.path().join("playground"))?;
+        let readme = dir.path().join("README.md");
+        let script = dir.path().join("playground/index.ts");
+        let md = "# Usage\n\n```yaml\nsteps:\n  - uses: o/p@OLD\n  - uses: actions/checkout@v4.0.0\n```\n\nProse uses: o/q@v4.0.0\n";
+        let ts = "const workflow = `\n  - uses: o/p@OLD # v4.0.0\n  - uses: actions/checkout@v4.0.0\n`;\nexport const step = { uses: \"o/r@v4.0.0\" };\n";
+        std::fs::write(&readme, md.replace("OLD", &sha40('a')))?;
+        std::fs::write(&script, ts.replace("OLD", &sha40('a')))?;
+        let mut config = Config::default();
+        config.scan.extra_paths = vec!["README.md".parse()?, "playground/*.ts".parse()?];
+        let registry = registry("v4.2.0");
+
+        let md_expected = "# Usage\n\n```yaml\nsteps:\n  - uses: o/p@NEW # v4.2.0\n  - uses: actions/checkout@v4.2.0\n```\n\nProse uses: o/q@v4.0.0\n"
+            .replace("NEW", &sha40('b'));
+        let ts_expected = "const workflow = `\n  - uses: o/p@NEW # v4.0.0\n  - uses: actions/checkout@v4.2.0\n`;\nexport const step = { uses: \"o/r@v4.2.0\" };\n"
+            .replace("NEW", &sha40('b'));
+        for _ in 0..2 {
+            let code = run(dir.path(), false, OutputFormat::Json, &config, &registry).await;
+            assert_eq!(code, i32::from(CliExitCode::Success));
+            assert_eq!(std::fs::read_to_string(&readme)?, md_expected);
+            assert_eq!(std::fs::read_to_string(&script)?, ts_expected);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_run_without_workflows_reports_nothing_and_succeeds()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
@@ -621,7 +651,11 @@ mod tests {
 
     fn apply_at(line_body: &str, edit: PendingEdit) -> Result<String, Box<dyn std::error::Error>> {
         let content = format!("{}{line_body}", "\n".repeat(edit.line - 1));
-        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content);
+        let mut file_edits = FileEdits::new(
+            std::path::PathBuf::from("/test.yml"),
+            content,
+            SourceFormat::Yaml,
+        );
         file_edits.add(edit, ());
         let plan = file_edits.plan();
         if !matches!(plan.entries.as_slice(), [((), EditOutcome::Applied { .. })]) {
@@ -769,9 +803,13 @@ mod tests {
         .replace("NEW_SHA", &new_sha);
         let target = version::Info::new(version::Version::parse("v5.0.0"), &new_sha);
 
-        let mut file_edits = FileEdits::new(std::path::PathBuf::from("/test.yml"), content.clone());
+        let mut file_edits = FileEdits::new(
+            std::path::PathBuf::from("/test.yml"),
+            content.clone(),
+            SourceFormat::Yaml,
+        );
         let mut seen = 0;
-        for (loc, action_ref) in WorkflowScanner::extract_actions(&content) {
+        for (loc, action_ref) in WorkflowScanner::extract_actions(&content, SourceFormat::Yaml) {
             file_edits.add(
                 retarget_edit(&loc, action_ref.is_sha(), &target, policy::Style::Preserve)
                     .ok_or("no edit")?,
@@ -784,7 +822,7 @@ mod tests {
         let updated = file_edits.plan().content();
         assert_eq!(updated, expected);
 
-        let refs: Vec<String> = WorkflowScanner::extract_actions(&updated)
+        let refs: Vec<String> = WorkflowScanner::extract_actions(&updated, SourceFormat::Yaml)
             .map(|(_, action_ref)| action_ref.ref_str().to_string())
             .collect();
         assert_eq!(

@@ -9,7 +9,7 @@ use std::{
 use serde::Serialize;
 
 use crate::{
-    UsesLocation, extract_uses_from_yaml, line_spans, lines_ending_in_scalars,
+    SourceFormat, UsesLocation, line_spans,
     policy::Style,
     rewrite::{Trailing, is_version_comment},
     version,
@@ -185,8 +185,9 @@ pub struct FileEdits<L> {
     pub path: PathBuf,
     /// Original file content.
     content: String,
+    format: SourceFormat,
     uses_per_line: HashMap<usize, usize>,
-    lines_in_scalars: BTreeSet<usize>,
+    commentable_lines: BTreeSet<usize>,
     edits: Vec<(PendingEdit, L)>,
 }
 
@@ -202,6 +203,7 @@ pub struct EditPlan<L> {
 
 /// The byte splices of an [`EditPlan`] with the scanned lines they rewrite.
 pub struct Splices {
+    format: SourceFormat,
     scanned: String,
     edits: Vec<(Range<usize>, String)>,
     lines: Vec<(Range<usize>, bool)>,
@@ -216,6 +218,12 @@ impl Splices {
                 && (!unterminated || current.len() == line.end)
         });
         intact.then(|| splice(current, &self.edits))
+    }
+
+    /// The format the scanned text is read as.
+    #[must_use]
+    pub const fn format(&self) -> SourceFormat {
+        self.format
     }
 
     /// The text the plan was made from.
@@ -248,20 +256,44 @@ fn splice(text: &str, edits: &[(Range<usize>, String)]) -> String {
 }
 
 impl<L> FileEdits<L> {
-    /// Create a new `FileEdits` for a file.
+    /// Create a new `FileEdits` for a file whose refs are read as `format`.
     #[must_use]
-    pub fn new(path: PathBuf, content: String) -> Self {
+    pub fn new(path: PathBuf, content: String, format: SourceFormat) -> Self {
         let mut uses_per_line = HashMap::new();
-        for loc in extract_uses_from_yaml(&content) {
+        for loc in format.extract_uses(&content) {
             *uses_per_line.entry(loc.line()).or_insert(0) += 1;
         }
         Self {
             path,
-            lines_in_scalars: lines_ending_in_scalars(&content),
+            format,
+            commentable_lines: format.commentable_lines(&content),
             content,
             uses_per_line,
             edits: Vec::new(),
         }
+    }
+
+    /// Return `loc` with its line cut after the value when that line takes no comment.
+    ///
+    /// An edit built from the result leaves the text after the ref alone on a
+    /// line outside [`SourceFormat::commentable_lines`].
+    #[must_use]
+    pub fn writable(&self, loc: &UsesLocation) -> UsesLocation {
+        let head = loc
+            .value_range()
+            .filter(|_| !self.commentable_lines.contains(&loc.line()))
+            .and_then(|range| loc.raw_line().get(..range.end));
+        head.map_or_else(
+            || loc.clone(),
+            |head| {
+                UsesLocation::new(
+                    loc.line(),
+                    loc.column(),
+                    loc.value().to_owned(),
+                    head.to_owned(),
+                )
+            },
+        )
     }
 
     /// Add an edit with its label.
@@ -274,7 +306,8 @@ impl<L> FileEdits<L> {
     /// An edit whose range overlaps an earlier edit (in source order) is
     /// skipped; edits that share a line without overlapping all apply. A
     /// comment is appended only when its line holds a single `uses:` value, no
-    /// `#`, no other applied edit with a comment, and ends outside a scalar.
+    /// `#`, no other applied edit with a comment, and is in
+    /// [`SourceFormat::commentable_lines`].
     #[must_use]
     pub fn plan(self) -> EditPlan<L> {
         let spans = line_spans(&self.content);
@@ -327,8 +360,8 @@ impl<L> FileEdits<L> {
             let sole_uses = self.uses_per_line.get(&edit.line).copied().unwrap_or(0) <= 1;
             let sole_comment = commented_per_line.get(&edit.line) == Some(&1);
             let uncommented = !self.content[span.clone()].contains('#');
-            let ends_outside_scalar = !self.lines_in_scalars.contains(&edit.line);
-            if sole_uses && sole_comment && uncommented && ends_outside_scalar {
+            let commentable = self.commentable_lines.contains(&edit.line);
+            if sole_uses && sole_comment && uncommented && commentable {
                 splices.push((span.end..span.end, true, comment));
                 outcomes[i] = EditOutcome::Applied {
                     comment: Some(comment.clone()),
@@ -364,6 +397,7 @@ impl<L> FileEdits<L> {
                 .map(|((_, label), outcome)| (label, outcome))
                 .collect(),
             splices: Splices {
+                format: self.format,
                 scanned: self.content,
                 edits,
                 lines,
@@ -392,7 +426,7 @@ mod tests {
     use super::*;
 
     fn apply_line(line: &str, edit: PendingEdit) -> Option<String> {
-        let mut fe = FileEdits::new(PathBuf::from("/test"), line.to_string());
+        let mut fe = FileEdits::new(PathBuf::from("/test"), line.to_string(), SourceFormat::Yaml);
         fe.add(edit, ());
         let plan = fe.plan();
         match plan.entries.as_slice() {
@@ -582,6 +616,75 @@ mod tests {
     }
 
     #[test]
+    fn test_writable_keeps_text_after_the_ref_on_lines_without_comments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let old = sha40('a');
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v4.2.0"), &new);
+        let text = format!("run(\"uses: o/p@{old} # v4.0.0\");\n");
+        let markdown = format!("```yaml\n- uses: o/p@{old} # v4.0.0\n```\n");
+        let cases = [
+            (
+                SourceFormat::Text,
+                &text,
+                1,
+                Style::Preserve,
+                format!("run(\"uses: o/p@{new} # v4.0.0\");\n"),
+            ),
+            (
+                SourceFormat::Text,
+                &text,
+                1,
+                Style::Tag,
+                "run(\"uses: o/p@v4.2.0 # v4.0.0\");\n".to_string(),
+            ),
+            (
+                SourceFormat::Markdown,
+                &markdown,
+                2,
+                Style::Preserve,
+                format!("```yaml\n- uses: o/p@{new} # v4.2.0\n```\n"),
+            ),
+            (
+                SourceFormat::Markdown,
+                &markdown,
+                2,
+                Style::Tag,
+                "```yaml\n- uses: o/p@v4.2.0\n```\n".to_string(),
+            ),
+        ];
+        for (format, content, line, style, expected) in cases {
+            let [loc] = format
+                .extract_uses(content)
+                .try_into()
+                .map_err(|_| "one `uses:`")?;
+            assert_eq!(loc.line(), line);
+            let mut fe = FileEdits::new(PathBuf::from("/test"), content.clone(), format);
+            let edit = retarget_edit(&fe.writable(&loc), true, &target, style).ok_or("no edit")?;
+            fe.add(edit, ());
+            assert_eq!(fe.plan().content(), expected, "{format:?} {style}");
+        }
+
+        let fresh = "run(\"uses: o/p@v4.0.0\");\n";
+        let [loc] = SourceFormat::Text
+            .extract_uses(fresh)
+            .try_into()
+            .map_err(|_| "one `uses:`")?;
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            fresh.to_string(),
+            SourceFormat::Text,
+        );
+        let edit = repin_sha_edit(&fe.writable(&loc), &target).ok_or("no edit")?;
+        fe.add(edit, ());
+        let plan = fe.plan();
+        assert_eq!(plan.entries, [((), EditOutcome::Applied { comment: None })]);
+        assert_eq!(plan.content(), format!("run(\"uses: o/p@{new}\");\n"));
+        assert_eq!(plan.splices.format(), SourceFormat::Text);
+        Ok(())
+    }
+
+    #[test]
     fn test_skip_reasons_describe_the_writer_limit() {
         assert_eq!(
             SkipReason::Unplaceable.describe(),
@@ -596,7 +699,12 @@ mod tests {
 
     #[test]
     fn test_file_edits_empty() {
-        let plan = FileEdits::<()>::new(PathBuf::from("/test"), "content".to_string()).plan();
+        let plan = FileEdits::<()>::new(
+            PathBuf::from("/test"),
+            "content".to_string(),
+            SourceFormat::Yaml,
+        )
+        .plan();
         assert_eq!(plan.entries.len(), 0);
         assert_eq!(plan.content(), "content");
     }
@@ -604,7 +712,11 @@ mod tests {
     #[test]
     fn test_file_edits_add_and_apply() {
         let content = "line1\nuses: foo@v1\nline3\n";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(PendingEdit::replace_range(2, 10..12, "v2".to_string()), ());
 
@@ -615,7 +727,11 @@ mod tests {
 
     #[test]
     fn test_file_edits_identical_ranges_overlap() {
-        let mut fe = FileEdits::new(PathBuf::from("/test"), "line1\nline2\n".to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            "line1\nline2\n".to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(PendingEdit::replace_range(1, 4..5, "ONE".to_string()), 1);
         fe.add(PendingEdit::replace_range(1, 4..5, "UNO".to_string()), 2);
@@ -634,7 +750,11 @@ mod tests {
     #[test]
     fn test_file_edits_apply_every_disjoint_edit_on_one_line() {
         let content = "x: [a@1, bb@22, ccc@333]\n";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(PendingEdit::replace_range(1, 20..23, "3".to_string()), 'c');
         fe.add(PendingEdit::replace_range(1, 6..7, "1111".to_string()), 'a');
@@ -652,7 +772,11 @@ mod tests {
     #[test]
     fn test_file_edits_reject_only_overlapping_edits() {
         let content = "abcdefghijkl\n";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(
             PendingEdit::replace_range(1, 2..6, "X".to_string()),
@@ -692,7 +816,11 @@ mod tests {
     #[test]
     fn test_file_edits_write_no_comment_on_a_line_with_two_uses() {
         let content = "a: [{ uses: a/b@v1 }, { uses: c/d@v2 }]\nb:\n  - uses: e/f@v3\n";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(
             PendingEdit::replace_range(1, 16..18, "S1".to_string()).with_comment(" # v1".into()),
@@ -726,7 +854,11 @@ mod tests {
 
     #[test]
     fn test_file_edits_write_no_comment_for_two_commented_edits_on_a_line() {
-        let mut fe = FileEdits::new(PathBuf::from("/test"), "a@1 b@2".to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            "a@1 b@2".to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(
             PendingEdit::replace_range(1, 2..3, "X".to_string()).with_comment(" # 1".into()),
@@ -754,7 +886,11 @@ mod tests {
             "s:\n  - { uses: a/b@v1, name: \"multi\n    line\" }\n",
             "s:\n  - { uses: a/b@v1, name: multi\n    word }\n",
         ] {
-            let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+            let mut fe = FileEdits::new(
+                PathBuf::from("/test"),
+                content.to_string(),
+                SourceFormat::Yaml,
+            );
             fe.add(
                 PendingEdit::replace_range(2, 16..18, "v2".to_string())
                     .with_comment(" # v2".into()),
@@ -768,7 +904,8 @@ mod tests {
                 [((), EditOutcome::Applied { comment: None })],
                 "{content:?}"
             );
-            let refs: Vec<String> = extract_uses_from_yaml(&plan.content())
+            let refs: Vec<String> = SourceFormat::Yaml
+                .extract_uses(&plan.content())
                 .iter()
                 .map(|loc| loc.value().to_string())
                 .collect();
@@ -778,7 +915,11 @@ mod tests {
 
     #[test]
     fn test_file_edits_comment_follows_an_edit_that_ends_the_line() {
-        let mut fe = FileEdits::new(PathBuf::from("/test"), "uses: a@1\nnext: x\n".to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            "uses: a@1\nnext: x\n".to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(
             PendingEdit::replace_range(1, 8..9, "2".to_string()).with_comment(" # 2".into()),
@@ -792,18 +933,30 @@ mod tests {
     #[test]
     fn test_file_edits_preserves_trailing_newline() {
         let with_newline = "line1\nline2\n";
-        let fe = FileEdits::<()>::new(PathBuf::from("/test"), with_newline.to_string());
+        let fe = FileEdits::<()>::new(
+            PathBuf::from("/test"),
+            with_newline.to_string(),
+            SourceFormat::Yaml,
+        );
         assert_eq!(fe.plan().content(), with_newline);
 
         let without_newline = "line1\nline2";
-        let fe2 = FileEdits::<()>::new(PathBuf::from("/test"), without_newline.to_string());
+        let fe2 = FileEdits::<()>::new(
+            PathBuf::from("/test"),
+            without_newline.to_string(),
+            SourceFormat::Yaml,
+        );
         assert_eq!(fe2.plan().content(), without_newline);
     }
 
     #[test]
     fn test_file_edits_apply_failure() {
         let content = "short\n";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(PendingEdit::replace_range(1, 100..110, "x".to_string()), ());
         fe.add(PendingEdit::replace_range(2, 0..0, "x".to_string()), ());
@@ -824,7 +977,11 @@ mod tests {
 
     #[test]
     fn test_file_edits_skip_a_range_inside_a_multibyte_char() {
-        let mut fe = FileEdits::new(PathBuf::from("/test"), "é@1\n".to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            "é@1\n".to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(PendingEdit::replace_range(1, 1..2, "x".to_string()), ());
 
@@ -839,7 +996,11 @@ mod tests {
     #[test]
     fn test_file_edits_multiple_lines() {
         let content = "  - uses: actions/checkout@v1\n  - uses: actions/setup-node@v2\n";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
 
         fe.add(PendingEdit::replace_range(1, 27..29, "v4".to_string()), ());
         fe.add(PendingEdit::replace_range(2, 29..31, "v5".to_string()), ());
@@ -854,8 +1015,12 @@ mod tests {
     fn test_file_edits_keep_every_line_break_and_the_bom() {
         let content =
             "\u{feff}uses: a/b@v1\r\nx:\r  - uses: c/d@v2\r\n  - uses: e/f@v3\n  - uses: g/h@v4";
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
-        for loc in extract_uses_from_yaml(content) {
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
+        for loc in SourceFormat::Yaml.extract_uses(content) {
             let Some(range) = loc.ref_range() else {
                 panic!("no ref range for {loc:?}");
             };
@@ -882,7 +1047,11 @@ mod tests {
     }
 
     fn plan_v2(content: &str) -> EditPlan<()> {
-        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        let mut fe = FileEdits::new(
+            PathBuf::from("/test"),
+            content.to_string(),
+            SourceFormat::Yaml,
+        );
         fe.add(
             PendingEdit::replace_range(1, 10..12, "v2".to_string()).with_comment(" # v2".into()),
             (),

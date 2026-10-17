@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use actup_core::{
-    ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON,
-    check_action_with_provider, expand_short_sha, extract_uses_from_yaml, parse_uses, provider,
+    ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat,
+    check_action_with_provider, expand_short_sha, parse_uses, provider,
     resolution::{CheckResult, CheckStatus},
     rewrite::{Rewrite, Trailing},
 };
@@ -112,16 +112,26 @@ pub struct LocatedAction {
     pub line_end_col: u32,
 }
 
+/// Return the [`SourceFormat`] of the file `uri` names, or YAML for a non-file URI.
+pub fn uri_format(uri: &Uri) -> SourceFormat {
+    if !uri.scheme().as_str().eq_ignore_ascii_case("file") {
+        return SourceFormat::Yaml;
+    }
+    uri.to_file_path()
+        .map_or(SourceFormat::Yaml, |path| SourceFormat::from_path(&path))
+}
+
 /// Find the `uses:` action whose ref range contains the cursor `position`.
 ///
 /// Used by code actions to offer pin transformations on the ref under the
 /// cursor regardless of whether it has a diagnostic.
 pub fn locate_action_at(
     text: &str,
+    format: SourceFormat,
     position: tower_lsp_server::ls_types::Position,
     encoding: crate::position::PositionEncoding,
 ) -> Option<LocatedAction> {
-    extract_located_actions(text, encoding)
+    extract_located_actions(text, format, encoding)
         .into_iter()
         .find(|a| {
             a.editable
@@ -130,19 +140,23 @@ pub fn locate_action_at(
         })
 }
 
-/// Extract and parse all `uses:` references from document text.
+/// Extract and parse all `uses:` references from document text read as `format`.
 ///
 /// Skips local (`./`) and docker (`docker://`) references, and logs
 /// parse errors without propagating them (a malformed ref in one line
 /// should not block diagnostics for other lines).
 ///
 /// Column positions are converted from byte offsets to the negotiated
-/// LSP position encoding.
+/// LSP position encoding. A ref on a line outside
+/// [`SourceFormat::commentable_lines`] gets [`Trailing::Foreign`] and an
+/// empty tail, so no edit appends, rewrites or reads a comment there.
 fn extract_located_actions(
     text: &str,
+    format: SourceFormat,
     encoding: crate::position::PositionEncoding,
 ) -> Vec<LocatedAction> {
-    let locations = extract_uses_from_yaml(text);
+    let locations = format.extract_uses(text);
+    let commentable = format.commentable_lines(text);
     let mut actions = Vec::with_capacity(locations.len());
 
     for loc in locations {
@@ -154,12 +168,21 @@ fn extract_located_actions(
                 let (col_start, col_end, editable, trailing, tail) =
                     loc.ref_range()
                         .map_or((0, line_end_col, false, Trailing::None, ""), |r| {
+                            let takes_comment = commentable.contains(&loc.line());
                             (
                                 crate::position::byte_to_col(raw_line, r.start, encoding),
                                 crate::position::byte_to_col(raw_line, r.end, encoding),
                                 true,
-                                Trailing::after(raw_line, r.end),
-                                raw_line.get(r.end..).unwrap_or(""),
+                                if takes_comment {
+                                    Trailing::after(raw_line, r.end)
+                                } else {
+                                    Trailing::Foreign
+                                },
+                                if takes_comment {
+                                    raw_line.get(r.end..).unwrap_or("")
+                                } else {
+                                    ""
+                                },
                             )
                         });
 
@@ -206,9 +229,10 @@ fn unique_repo_ids(actions: &[LocatedAction]) -> Vec<ActionRepoId> {
 
 pub fn extract_unique_repo_ids(
     text: &str,
+    format: SourceFormat,
     encoding: crate::position::PositionEncoding,
 ) -> Vec<ActionRepoId> {
-    unique_repo_ids(&extract_located_actions(text, encoding))
+    unique_repo_ids(&extract_located_actions(text, format, encoding))
 }
 
 /// Fetch version sets for a batch of unique repos, using file cache first.
@@ -349,12 +373,13 @@ async fn expand_edit(
 
 pub async fn compute_diagnostics_with_versions(
     text: &str,
+    format: SourceFormat,
     config: &Config,
     registry: &provider::Registry,
     versions_map: &HashMap<ActionRepoId, Result<actup_core::version::Set, CoreError>>,
     encoding: crate::position::PositionEncoding,
 ) -> DiagnosticResult {
-    let actions = extract_located_actions(text, encoding);
+    let actions = extract_located_actions(text, format, encoding);
     if actions.is_empty() {
         return DiagnosticResult {
             diagnostics: Vec::new(),
@@ -571,13 +596,13 @@ fn successful_version_sets(
 /// 2. Collected in [`DiagnosticResult::errors`] for user notifications
 pub async fn compute_diagnostics(
     text: &str,
-    _uri: &Uri,
+    uri: &Uri,
     config: &Config,
     registry: &provider::Registry,
     file_cache: &FileCache,
     encoding: crate::position::PositionEncoding,
 ) -> DiagnosticResult {
-    let actions = extract_located_actions(text, encoding);
+    let actions = extract_located_actions(text, uri_format(uri), encoding);
     if actions.is_empty() {
         return DiagnosticResult {
             diagnostics: Vec::new(),
@@ -900,7 +925,11 @@ jobs:
       - uses: actions/setup-node@v3
       - uses: ./local-action
 ";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert_eq!(actions.len(), 2);
         assert_eq!(actions[0].action_ref.owner(), "actions");
         assert_eq!(actions[0].action_ref.repo(), "checkout");
@@ -913,7 +942,11 @@ jobs:
     #[test]
     fn extract_located_actions_ref_range_points_after_at() {
         let yaml = "      - uses: actions/checkout@v4\n";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].col_start, 31);
         assert_eq!(actions[0].col_end, 33);
@@ -925,19 +958,22 @@ jobs:
         let yaml = format!(
             "steps:\n  - {{ uses: a/b@v4, with: {{ x: 1 }} }}\n  - [{{ uses: c/d@v1 }}]\n  - {{ name: \"✓ ok\", uses: e/f@v2 }}\n  - {{ uses: g/h@{sha}, id: x }} # v1.0.0\n"
         );
-        let located: Vec<(String, u32, u32, u32, Trailing)> =
-            extract_located_actions(&yaml, crate::position::PositionEncoding::Utf16)
-                .into_iter()
-                .map(|a| {
-                    (
-                        a.action_ref.ref_str().to_string(),
-                        a.line,
-                        a.col_start,
-                        a.col_end,
-                        a.trailing,
-                    )
-                })
-                .collect();
+        let located: Vec<(String, u32, u32, u32, Trailing)> = extract_located_actions(
+            &yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .into_iter()
+        .map(|a| {
+            (
+                a.action_ref.ref_str().to_string(),
+                a.line,
+                a.col_start,
+                a.col_end,
+                a.trailing,
+            )
+        })
+        .collect();
         assert_eq!(
             located,
             [
@@ -952,19 +988,22 @@ jobs:
     #[test]
     fn extract_located_actions_number_lines_at_crlf_cr_and_lf() {
         let yaml = "\u{feff}uses: a/b@v1\r\nx:\r  - uses: c/d@v2\r\n  - uses: \"e/f@v3\"\ny: [{ uses: g/h@v4 }]";
-        let located: Vec<(String, u32, u32, u32)> =
-            extract_located_actions(yaml, crate::position::PositionEncoding::Utf16)
-                .into_iter()
-                .map(|a| {
-                    assert!(a.editable, "{}", a.action_ref);
-                    (
-                        a.action_ref.ref_str().to_string(),
-                        a.line,
-                        a.col_start,
-                        a.col_end,
-                    )
-                })
-                .collect();
+        let located: Vec<(String, u32, u32, u32)> = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .into_iter()
+        .map(|a| {
+            assert!(a.editable, "{}", a.action_ref);
+            (
+                a.action_ref.ref_str().to_string(),
+                a.line,
+                a.col_start,
+                a.col_end,
+            )
+        })
+        .collect();
         assert_eq!(
             located,
             [
@@ -987,7 +1026,11 @@ jobs:
             "steps:\n  - uses: \"a/b@\\\n      v4\"\n",
             "steps:\n  - name: \"✓\"\n    uses: \"a/b@v\\x34\"\n",
         ] {
-            let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+            let actions = extract_located_actions(
+                yaml,
+                SourceFormat::Yaml,
+                crate::position::PositionEncoding::Utf16,
+            );
             let [action] = actions.as_slice() else {
                 panic!("expected one action in {yaml:?}");
             };
@@ -1009,7 +1052,14 @@ jobs:
     fn locate_action_at_skips_value_not_written_verbatim() {
         let yaml = "steps:\n  - uses: \"actions/checkout@v\\x34\"\n  - uses: a/b@v4\n";
         let encoding = crate::position::PositionEncoding::Utf16;
-        let at = |line, character| locate_action_at(yaml, Position { line, character }, encoding);
+        let at = |line, character| {
+            locate_action_at(
+                yaml,
+                SourceFormat::Yaml,
+                Position { line, character },
+                encoding,
+            )
+        };
         assert!(at(1, 0).is_none());
         assert!(at(1, 28).is_none());
         let Some(action) = at(2, 15) else {
@@ -1025,7 +1075,11 @@ jobs:
       - uses: ./my-action
       - uses: actions/checkout@v4
 ";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_ref.repo(), "checkout");
     }
@@ -1033,7 +1087,11 @@ jobs:
     #[test]
     fn extract_located_actions_handles_subpath_refs() {
         let yaml = "      - uses: owner/repo/.github/workflows/reusable.yml@v1\n";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].action_ref.owner(), "owner");
         assert_eq!(actions[0].action_ref.repo(), "repo");
@@ -1043,7 +1101,11 @@ jobs:
     #[test]
     fn extract_located_actions_empty_yaml_returns_empty() {
         let yaml = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert!(actions.is_empty());
     }
 
@@ -1058,7 +1120,11 @@ jobs:
       - uses: docker/build-push-action@v5
       - uses: ./local
 ";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert_eq!(actions.len(), 3);
         assert_eq!(actions[0].action_ref.repo(), "checkout");
         assert_eq!(actions[1].action_ref.repo(), "setup-node");
@@ -1068,7 +1134,11 @@ jobs:
     #[test]
     fn extract_preserves_uses_value_string() {
         let yaml = "      - uses: actions/checkout@v4.1.2\n";
-        let actions = extract_located_actions(yaml, crate::position::PositionEncoding::Utf16);
+        let actions = extract_located_actions(
+            yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        );
         assert_eq!(actions.len(), 1);
         assert_eq!(actions[0].uses_value, "actions/checkout@v4.1.2");
     }
@@ -1714,13 +1784,17 @@ jobs:
     }
 
     async fn short_sha_diagnostics(line: &str, tag_sha: &str) -> Vec<Diagnostic> {
+        short_sha_diagnostics_in("/test/ci.yml", &format!("{line}\n"), tag_sha).await
+    }
+
+    async fn short_sha_diagnostics_in(path: &str, text: &str, tag_sha: &str) -> Vec<Diagnostic> {
         let versions = test_utils::simple_version_set("v4.2.0", tag_sha);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path(path).unwrap();
         compute_diagnostics(
-            &format!("{line}\n"),
+            text,
             &uri,
             &Config::default(),
             &registry,
@@ -1733,6 +1807,66 @@ jobs:
 
     fn expand_data(diag: &Diagnostic) -> Option<DiagnosticData> {
         serde_json::from_value(diag.data.clone()?).ok()
+    }
+
+    #[tokio::test]
+    async fn short_sha_comment_follows_the_file_format() {
+        let comment = |diags: &[Diagnostic]| {
+            let [diag] = diags else {
+                panic!("expected one diagnostic, got {diags:?}");
+            };
+            let Some(DiagnosticData::ExpandSha {
+                repin_comment,
+                replace_end_col,
+                ..
+            }) = expand_data(diag)
+            else {
+                panic!("expected expand-sha data, got {diag:?}");
+            };
+            (diag.range.start.line, repin_comment, replace_end_col)
+        };
+        let md = "Prose uses: actions/checkout@abc1234\n```yaml\n- uses: actions/checkout@abc1234\n```\n";
+        let diags = short_sha_diagnostics_in("/test/README.md", md, DUMMY_SHA).await;
+        assert_eq!(comment(&diags), (2, Some(" # v4.2.0".to_owned()), None));
+
+        let ts = "const step = { uses: \"actions/checkout@abc1234\" }; # v1\n";
+        let diags = short_sha_diagnostics_in("/test/index.ts", ts, DUMMY_SHA).await;
+        assert_eq!(comment(&diags), (0, None, None));
+    }
+
+    #[test]
+    fn located_actions_read_no_tail_on_lines_without_comments() {
+        let sha = "a".repeat(40);
+        let line = format!("run(\"uses: o/p@{sha} # v4\");\n");
+        let found = |format| {
+            extract_located_actions(&line, format, crate::position::PositionEncoding::Utf16)
+                .into_iter()
+                .map(|a| (a.trailing, a.tail))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            found(SourceFormat::Text),
+            [(Trailing::Foreign, String::new())]
+        );
+        let yaml = format!("- uses: o/p@{sha} # v4\n");
+        let located: Vec<(Trailing, String)> = extract_located_actions(
+            &yaml,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .into_iter()
+        .map(|a| (a.trailing, a.tail))
+        .collect();
+        assert_eq!(located, [(Trailing::Version, " # v4".to_string())]);
+    }
+
+    #[test]
+    fn uri_format_reads_the_path_extension() {
+        let format = |uri: &str| uri_format(&uri.parse::<Uri>().unwrap());
+        assert_eq!(format("file:///repo/ci.yml"), SourceFormat::Yaml);
+        assert_eq!(format("file:///repo/README.md"), SourceFormat::Markdown);
+        assert_eq!(format("file:///repo/main.tf"), SourceFormat::Text);
+        assert_eq!(format("untitled:Untitled-1"), SourceFormat::Yaml);
     }
 
     #[tokio::test]

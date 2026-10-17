@@ -262,7 +262,9 @@ mod tests {
         let path = dir.path().join("ci.yml");
         fs::write(&path, [0xff, 0xfe, 0x00])?;
 
-        let result = rewrite_atomic(dir.path(), &path, |text| Ok::<_, io::Error>(text.to_string()));
+        let result = rewrite_atomic(dir.path(), &path, |text| {
+            Ok::<_, io::Error>(text.to_string())
+        });
 
         assert_eq!(
             result.err().map(|e| e.kind()),
@@ -298,11 +300,15 @@ mod tests {
         })?;
         assert_eq!(fs::read(&path)?, "\u{feff}uses: a/b@v2\n".as_bytes());
 
-        rewrite_atomic(dir.path(), &path, |text| Ok::<_, io::Error>(text.replace("v2", "v3")))?;
+        rewrite_atomic(dir.path(), &path, |text| {
+            Ok::<_, io::Error>(text.replace("v2", "v3"))
+        })?;
         assert_eq!(fs::read(&path)?, "\u{feff}uses: a/b@v3\n".as_bytes());
 
         fs::write(&path, "uses: a/b@v1\n")?;
-        rewrite_atomic(dir.path(), &path, |text| Ok::<_, io::Error>(text.replace("v1", "v2")))?;
+        rewrite_atomic(dir.path(), &path, |text| {
+            Ok::<_, io::Error>(text.replace("v1", "v2"))
+        })?;
         assert_eq!(fs::read(&path)?, b"uses: a/b@v2\n");
         Ok(())
     }
@@ -330,7 +336,10 @@ mod tests {
             format!("resolves outside {}", root.path().display())
         );
         assert_eq!(fs::read_to_string(&target)?, "uses: a/b@v1\n");
-        assert_eq!(resolve_within(root.path(), root.path())?, fs::canonicalize(root.path())?);
+        assert_eq!(
+            resolve_within(root.path(), root.path())?,
+            fs::canonicalize(root.path())?
+        );
         Ok(())
     }
 

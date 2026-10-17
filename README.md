@@ -286,7 +286,13 @@ does.
 - `.github/workflows/**/*.yml` / `.yaml`
 - `.github/actions/**/action.yml` / `.yaml`
 - Reusable workflows: `uses: owner/repo/.github/workflows/foo.yml@ref`
-- `scan.extra_paths` globs, relative to the scan root
+- `scan.extra_paths` globs, relative to the scan root, and any file passed as
+  the path argument
+
+actup reads a file by its extension. It parses `.yml` and `.yaml` files as YAML,
+and Markdown files (`.md`, `.markdown`) through their fenced `yaml` or `yml`
+blocks. In every other file it reads `uses:` values that contain `@` line by
+line, and it never appends a version comment there.
 
 actup rejects an `extra_paths` entry that is absolute or contains a `..`
 segment. It skips any match that resolves outside the scan root through a

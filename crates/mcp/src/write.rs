@@ -3,12 +3,12 @@
 use std::{fs, io, ops::Range, path::Path};
 
 use actup_core::{
-    ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, UsesLocation,
-    discover_files, extract_uses_from_yaml, line_spans, parse_action_path, parse_uses,
+    ActionRef, ActionRepoId, Config, EditValidationError, FileKind, Info, SourceFormat,
+    UsesLocation, discover_files, line_spans, parse_action_path, parse_uses,
     patch::{EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retarget_edit},
     policy::Style,
     provider::Registry,
-    rewrite_atomic, validate_edit, version,
+    rewrite_atomic, version,
 };
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use serde::Serialize;
@@ -194,7 +194,7 @@ fn plan(original: &str, edits: FileEdits<Label>) -> Result<Planned, String> {
     if old_spans.len() != new_spans.len() {
         return Err("edits changed the number of lines".to_string());
     }
-    let after = extract_uses_from_yaml(&content);
+    let after = plan.splices.format().extract_uses(&content);
     let mut planned = Planned {
         changes: Vec::new(),
         unchanged: Vec::new(),
@@ -283,7 +283,11 @@ fn write(
     rewrite_atomic(root, path, |current| -> Result<String, Refusal> {
         let content = planned.splices.apply(current).ok_or(Refusal::Changed)?;
         if validate {
-            validate_edit(current, &content).map_err(Refusal::Invalid)?;
+            planned
+                .splices
+                .format()
+                .validate_edit(current, &content)
+                .map_err(Refusal::Invalid)?;
         }
         texts = (current.to_string(), content.clone());
         Ok(content)
@@ -379,8 +383,10 @@ pub fn update_file(
     let path = root.file(&args.path).map_err(refused)?;
     let shown = root.relative(&path);
     let original = fs::read_to_string(&path).map_err(|e| refused(format!("{shown}: {e}")))?;
+    let format = SourceFormat::from_path(&path);
     let default_host = registry.default_host().unwrap_or_default();
-    let locations: Vec<(UsesLocation, ActionRef)> = extract_uses_from_yaml(&original)
+    let locations: Vec<(UsesLocation, ActionRef)> = format
+        .extract_uses(&original)
         .into_iter()
         .filter_map(|loc| {
             let action = parse_uses(loc.value()).ok().flatten()?;
@@ -388,7 +394,7 @@ pub fn update_file(
         })
         .collect();
 
-    let mut edits = FileEdits::new(path.clone(), original.clone());
+    let mut edits = FileEdits::new(path.clone(), original.clone(), format);
     let mut unchanged = Vec::new();
     let mut problems = Vec::new();
     for edit in &args.edits {
@@ -444,7 +450,8 @@ pub fn update_file(
         )));
     }
     if args.validate_yaml && !planned.changes.is_empty() {
-        validate_edit(&original, &planned.content)
+        format
+            .validate_edit(&original, &planned.content)
             .map_err(|e| refused(format!("{shown} after edit: {e}")))?;
     }
     planned.unchanged.extend(unchanged);
@@ -500,8 +507,9 @@ impl Job<'_> {
             error,
         };
         let original = fs::read_to_string(&path).map_err(|e| fail(e.to_string()))?;
-        let mut edits = FileEdits::new(path.clone(), original.clone());
-        for loc in extract_uses_from_yaml(&original) {
+        let format = SourceFormat::from_path(&path);
+        let mut edits = FileEdits::new(path.clone(), original.clone(), format);
+        for loc in format.extract_uses(&original) {
             let Ok(Some(action)) = parse_uses(loc.value()) else {
                 continue;
             };
@@ -523,7 +531,8 @@ impl Job<'_> {
                 continue;
             }
             let style = self.config.policy_for(&action).pin;
-            let Some((pending, to)) = retarget(&loc, &action, &self.target, style) else {
+            let Some((pending, to)) = retarget(&edits.writable(&loc), &action, &self.target, style)
+            else {
                 outcome.skipped.push(Skipped {
                     site,
                     reason: SkipCause::Unplaceable,
@@ -535,7 +544,8 @@ impl Job<'_> {
         }
         let planned = plan(&original, edits).map_err(fail)?;
         if !planned.changes.is_empty() {
-            validate_edit(&original, &planned.content)
+            format
+                .validate_edit(&original, &planned.content)
                 .map_err(|e| fail(format!("edit refused: {shown} after edit: {e}")))?;
         }
         commit(outcome, self.root, &path, &shown, &original, planned, true);
@@ -623,7 +633,7 @@ mod tests {
     use super::*;
 
     fn loc(line_body: &str) -> Result<(UsesLocation, ActionRef), Box<dyn std::error::Error>> {
-        let found = extract_uses_from_yaml(line_body);
+        let found = SourceFormat::Yaml.extract_uses(line_body);
         let [loc] = found.as_slice() else {
             return Err(format!("expected one `uses:` in {line_body:?}").into());
         };
@@ -673,7 +683,7 @@ mod tests {
         };
         let first = PendingEdit::replace_range(1, 12..14, "v2".into());
         let second = PendingEdit::replace_range(1, 12..14, "v3".into());
-        let mut edits = FileEdits::new("f".into(), content.to_string());
+        let mut edits = FileEdits::new("f".into(), content.to_string(), SourceFormat::Yaml);
         edits.add(
             first.clone(),
             label(site(), &first, &l, action.ref_str(), "v2"),
@@ -693,12 +703,12 @@ mod tests {
         ));
 
         let breaking = PendingEdit::replace_range(1, 12..14, "v2\n".into());
-        let mut edits = FileEdits::new("f".into(), content.to_string());
+        let mut edits = FileEdits::new("f".into(), content.to_string(), SourceFormat::Yaml);
         edits.add(breaking.clone(), label(site(), &breaking, &l, "v1", "v2"));
         assert!(plan(content, edits).is_err());
 
         let unparsed = PendingEdit::replace_range(1, 8..9, "\"".into());
-        let mut edits = FileEdits::new("f".into(), content.to_string());
+        let mut edits = FileEdits::new("f".into(), content.to_string(), SourceFormat::Yaml);
         edits.add(unparsed.clone(), label(site(), &unparsed, &l, "v1", "v1"));
         assert!(plan(content, edits).is_err());
         Ok(())
@@ -719,7 +729,7 @@ mod tests {
         Ok(())
     }
     fn planned(content: &str, range: Range<usize>, new: &str) -> Planned {
-        let mut edits = FileEdits::new("f".into(), content.to_string());
+        let mut edits = FileEdits::new("f".into(), content.to_string(), SourceFormat::Yaml);
         edits.add(PendingEdit::replace_range(2, range, new.to_string()), ());
         let plan = edits.plan();
         Planned {
@@ -843,7 +853,7 @@ mod tests {
             action: "a/b@v1".into(),
         };
         let edit = PendingEdit::replace_range(2, 14..16, "v2".into());
-        let mut edits = FileEdits::new(path.clone(), scanned.to_string());
+        let mut edits = FileEdits::new(path.clone(), scanned.to_string(), SourceFormat::Yaml);
         edits.add(edit.clone(), label(site, &edit, &l, action.ref_str(), "v2"));
         let planned = plan(scanned, edits)?;
         let mut outcome = Outcome::default();
