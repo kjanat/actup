@@ -364,6 +364,31 @@ fn refused(message: impl std::fmt::Display) -> CallToolError {
     CallToolError::from_message(message.to_string())
 }
 
+fn located_uses(format: SourceFormat, text: &str) -> Vec<(UsesLocation, ActionRef)> {
+    format
+        .extract_uses(text)
+        .into_iter()
+        .filter_map(|loc| {
+            let action = parse_uses(loc.value()).ok().flatten()?;
+            Some((loc, action))
+        })
+        .collect()
+}
+
+fn refuse_skips(skipped: &[Skipped]) -> Result<(), CallToolError> {
+    if skipped.is_empty() {
+        return Ok(());
+    }
+    let skips: Vec<String> = skipped
+        .iter()
+        .map(|skip| format!("line {}: edit skipped ({:?})", skip.site.line, skip.reason))
+        .collect();
+    Err(refused(format!(
+        "{}; nothing was written",
+        skips.join("; ")
+    )))
+}
+
 /// `updateFile`: replace the refs of named `uses:` values in one file, all or none.
 ///
 /// # Errors
@@ -386,14 +411,7 @@ pub fn update_file(
     let original = fs::read_to_string(&path).map_err(|e| refused(format!("{shown}: {e}")))?;
     let format = SourceFormat::from_path(&path);
     let default_host = registry.default_host().unwrap_or_default();
-    let locations: Vec<(UsesLocation, ActionRef)> = format
-        .extract_uses(&original)
-        .into_iter()
-        .filter_map(|loc| {
-            let action = parse_uses(loc.value()).ok().flatten()?;
-            Some((loc, action))
-        })
-        .collect();
+    let locations = located_uses(format, &original);
 
     let mut edits = FileEdits::new(path.clone(), original.clone(), format);
     let mut unchanged = Vec::new();
@@ -456,17 +474,7 @@ pub fn update_file(
     };
 
     let mut planned = plan(&original, edits).map_err(refused)?;
-    if !planned.skipped.is_empty() {
-        let skips: Vec<String> = planned
-            .skipped
-            .iter()
-            .map(|skip| format!("line {}: edit skipped ({:?})", skip.site.line, skip.reason))
-            .collect();
-        return Err(refused(format!(
-            "{}; nothing was written",
-            skips.join("; ")
-        )));
-    }
+    refuse_skips(&planned.skipped)?;
     if args.validate_yaml && !planned.changes.is_empty() {
         format
             .validate_edit(&original, &planned.content)
