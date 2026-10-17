@@ -5,8 +5,5 @@
                 (string_scalar) @name))
     value:
         (flow_node
-            [
-                (plain_scalar
-                    (string_scalar) @context)
-                (expression) @context
-            ])?) @item
+            (plain_scalar
+                (string_scalar) @context))?) @item
