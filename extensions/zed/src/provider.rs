@@ -219,7 +219,8 @@ fn build_version_set(tags: &[GitRef]) -> version::Set {
             continue;
         }
 
-        let info = Arc::new(version::Info::new(ver.clone(), &tag.sha));
+        let info = Arc::new(version::Info::new(ver, &tag.sha));
+        let ver = info.version();
         semver_tags.push(Arc::clone(&info));
 
         // Track major-only tags (e.g., "v4", "v5")
@@ -233,7 +234,7 @@ fn build_version_set(tags: &[GitRef]) -> version::Set {
         if let Some(major) = ver.major() {
             let is_newer = latest_per_major
                 .get(&major)
-                .is_none_or(|existing| ver > *existing.version());
+                .is_none_or(|existing| ver > existing.version());
             if is_newer {
                 latest_per_major.insert(major, Arc::clone(&info));
             }
@@ -243,7 +244,7 @@ fn build_version_set(tags: &[GitRef]) -> version::Set {
         if !ver.is_prerelease() {
             let is_newer = overall_latest
                 .as_ref()
-                .is_none_or(|existing| ver > *existing.version());
+                .is_none_or(|existing| ver > existing.version());
             if is_newer {
                 overall_latest = Some(Arc::clone(&info));
             }

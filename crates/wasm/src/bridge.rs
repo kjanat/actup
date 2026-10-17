@@ -161,8 +161,11 @@ fn build_version_set(js: VersionSet, clock: &dyn actup_core::Clock) -> version::
     let mut latest: Option<Arc<version::Info>> = None;
 
     for tag in js.semver_tags {
-        let ver = version::Version::parse(&tag.version);
-        let info = Arc::new(version::Info::new(ver.clone(), tag.sha));
+        let info = Arc::new(version::Info::new(
+            version::Version::parse(&tag.version),
+            tag.sha,
+        ));
+        let ver = info.version();
 
         // Track major-only tags
         if ver.is_major_only()

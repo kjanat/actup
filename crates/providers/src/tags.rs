@@ -59,56 +59,52 @@ pub fn process_tags<T: TagLike>(tags: impl IntoIterator<Item = T>) -> version::S
 
     for tag in tags {
         let version = version::Version::parse(tag.name());
-        if !version.is_semver() {
+        let version::Version::Semver { major, .. } = version else {
             other_tags.insert(tag.name().to_string(), tag.sha().to_string());
+            continue;
+        };
+
+        // Wrap in Arc for cheap cloning into multiple collections
+        let info = Arc::new(version::Info::new(version, tag.sha()));
+        let version = info.version();
+        // Always add to semver_tags (prereleases are filtered at query time)
+        semver_tags.push(Arc::clone(&info));
+
+        // Track major-only tags (v1, v2, v6 - no minor/patch)
+        if version.is_major_only() {
+            major_tags.insert(major, Arc::clone(&info));
         }
 
-        // Only create Info for semver tags to avoid allocations for non-semver
-        if let version::Version::Semver {
-            major, prerelease, ..
-        } = &version
-        {
-            // Wrap in Arc for cheap cloning into multiple collections
-            let info = Arc::new(version::Info::new(version.clone(), tag.sha()));
-            // Always add to semver_tags (prereleases are filtered at query time)
-            semver_tags.push(Arc::clone(&info));
+        // Only update "latest" trackers for non-prerelease versions
+        // (prereleases are filtered at query time via allow_prerelease flag)
+        if !version.is_prerelease() {
+            // Determine if current `version` is dominated by existing trackers.
+            // `dominated_by_latest`: true if global `latest` >= this `version`
+            // `dominated_by_major`: true if `latest_per_major[major]` >= this `version`
+            let dominated_by_latest = latest.as_ref().is_some_and(|l| l.version() >= version);
+            let dominated_by_major = latest_per_major
+                .get(&major)
+                .is_some_and(|c| c.version() >= version);
 
-            // Track major-only tags (v1, v2, v6 - no minor/patch)
-            if version.is_major_only() {
-                major_tags.insert(*major, Arc::clone(&info));
-            }
-
-            // Only update "latest" trackers for non-prerelease versions
-            // (prereleases are filtered at query time via allow_prerelease flag)
-            if prerelease.is_none() {
-                // Determine if current `version` is dominated by existing trackers.
-                // `dominated_by_latest`: true if global `latest` >= this `version`
-                // `dominated_by_major`: true if `latest_per_major[major]` >= this `version`
-                let dominated_by_latest = latest.as_ref().is_some_and(|l| l.version() >= &version);
-                let dominated_by_major = latest_per_major
-                    .get(major)
-                    .is_some_and(|c| c.version() >= &version);
-
-                // Two-way update logic for `latest` and `latest_per_major`:
-                //
-                // 1. Neither dominated: `info` is the new overall latest AND new latest for
-                //    this `major`. Update both `latest` and `latest_per_major[major]`.
-                //
-                // 2. `dominated_by_latest` but NOT `dominated_by_major`: Global latest is
-                //    higher (different major), but this is a new latest for THIS major.
-                //    Only update `latest_per_major[major]`.
-                //
-                // 3. Both dominated: `info` is older than existing trackers; no updates.
-                //
-                // Note: The case where `dominated_by_major` is true but `dominated_by_latest`
-                // is false is unreachable because `latest` is always >= any `latest_per_major`
-                // value (global max >= per-major max).
-                if !dominated_by_latest && !dominated_by_major {
-                    latest_per_major.insert(*major, Arc::clone(&info));
-                    latest = Some(info);
-                } else if !dominated_by_major {
-                    latest_per_major.insert(*major, Arc::clone(&info));
-                }
+            // Two-way update logic for `latest` and `latest_per_major`:
+            //
+            // 1. Neither dominated: `info` is the new overall latest AND new latest for
+            //    this `major`. Update both `latest` and `latest_per_major[major]`.
+            //
+            // 2. `dominated_by_latest` but NOT `dominated_by_major`: Global latest is
+            //    higher (different major), but this is a new latest for THIS major.
+            //    Only update `latest_per_major[major]`.
+            //
+            // 3. Both dominated: `info` is older than existing trackers; no updates.
+            //
+            // Note: The case where `dominated_by_major` is true but `dominated_by_latest`
+            // is false is unreachable because `latest` is always >= any `latest_per_major`
+            // value (global max >= per-major max).
+            if !dominated_by_latest && !dominated_by_major {
+                latest_per_major.insert(major, Arc::clone(&info));
+                latest = Some(Arc::clone(&info));
+            } else if !dominated_by_major {
+                latest_per_major.insert(major, Arc::clone(&info));
             }
         }
     }
@@ -280,6 +276,49 @@ mod tests {
         let latest = result.latest().ok_or("expected latest")?;
         assert_eq!(latest.version().as_str(), "v1.0.1+build.7");
         assert_eq!(latest.sha(), "d");
+        Ok(())
+    }
+
+    #[test]
+    fn process_tags_shares_one_info_per_tag() -> Result<(), Box<dyn std::error::Error>> {
+        let result = process_tags(vec![
+            TestTag::new("v1.0.0", "a"),
+            TestTag::new("v2", "b"),
+            TestTag::new("v2.1.0", "b"),
+        ]);
+
+        let latest = result.latest().ok_or("expected latest")?;
+        let per_major = result
+            .latest_per_major()
+            .get(&2)
+            .ok_or("expected major 2")?;
+        let listed = result
+            .semver_tags()
+            .iter()
+            .find(|t| t.version().as_str() == "v2.1.0")
+            .ok_or("expected v2.1.0")?;
+        let indexed = result
+            .tags_on("b")
+            .iter()
+            .find(|t| t.version().as_str() == "v2.1.0")
+            .ok_or("expected v2.1.0 on b")?;
+        assert!(Arc::ptr_eq(latest, per_major));
+        assert!(Arc::ptr_eq(latest, listed));
+        assert!(Arc::ptr_eq(latest, indexed));
+
+        let major = result.major_tags().get(&2).ok_or("expected v2")?;
+        let major_listed = result
+            .semver_tags()
+            .iter()
+            .find(|t| t.version().as_str() == "v2")
+            .ok_or("expected v2 listed")?;
+        let major_indexed = result
+            .tags_on("b")
+            .iter()
+            .find(|t| t.version().as_str() == "v2")
+            .ok_or("expected v2 on b")?;
+        assert!(Arc::ptr_eq(major, major_listed));
+        assert!(Arc::ptr_eq(major, major_indexed));
         Ok(())
     }
 
