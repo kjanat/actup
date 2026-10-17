@@ -149,14 +149,7 @@ pub async fn batch_fetch_versions(
     config: &Config,
     registry: &provider::Registry,
 ) -> Versions {
-    let cache = Arc::new(if config.cache.enabled {
-        config.cache.path.as_ref().map_or_else(
-            || FileCache::new(config.cache.ttl),
-            |path| FileCache::with_path(path.clone(), config.cache.ttl),
-        )
-    } else {
-        FileCache::disabled()
-    });
+    let cache = Arc::new(FileCache::from_config(config));
 
     let spinner = Spinner::stderr();
     let versions = actup_provider_github::fetch_versions_with_registry(

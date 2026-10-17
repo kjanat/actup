@@ -313,11 +313,19 @@ pinned commit. `pin --unpin` skips actions that `scan.ignore` matches. Neither
    (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)
 
 A repo config arrives with the repository, so actup ignores the keys in it that
-choose where a token goes or which files get rewritten: `default_host`,
-`scan.extra_paths`, `hosts.<host>.api_base` and `hosts.<host>.token_env`. actup
-warns with the key and the file, and `actup config` lists the ignored keys. Set
-them in the user config or in a file passed with `--config` or `configPath`. A
-non-preset host that only the repo config declares gets no token.
+choose where a token goes, which files get rewritten or where cached SHAs come
+from: `default_host`, `scan.extra_paths`, `hosts.<host>.api_base`,
+`hosts.<host>.token_env` and `cache.path`. actup warns with the key and the
+file, and `actup config` lists the ignored keys. Set them in the user config or
+in a file passed with `--config` or `configPath`. A non-preset host that only
+the repo config declares gets no token.
+
+The disk cache lives in `cache.path`, else in the OS cache dir
+(`~/.cache/actup`, `~/Library/Caches/actup`, `%LOCALAPPDATA%\actup\cache`). With
+neither, the CLI and the LSP warn once and run without a disk cache, and
+`actup cache info` and `actup cache path` report that there is no cache dir.
+`actup cache clear` deletes only the entry files actup writes and keeps every
+other file in the directory.
 
 An unknown key in a config file or in an `ACTUP_*` variable is an error (exit
 code 2). The message names the file or the variable and suggests the closest

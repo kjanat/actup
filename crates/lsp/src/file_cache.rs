@@ -6,7 +6,7 @@
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
 use actup_core::{
-    ActionRepoId,
+    ActionRepoId, Config,
     cache::{self, Cache},
     provider, version, write_atomic,
 };
@@ -25,14 +25,24 @@ pub struct FileCache {
 }
 
 impl FileCache {
-    /// Create a new file cache with the default OS cache directory.
+    /// Create the file cache that `config.cache` selects.
+    ///
+    /// The cache lives in `cache.path`, else in [`cache::default_dir`]. With
+    /// neither, it logs [`cache::NO_DIR_WARNING`] and is disabled.
     #[must_use]
-    pub fn new(ttl: Duration) -> Self {
-        Self {
-            cache_dir: default_cache_dir(),
-            ttl,
-            enabled: true,
+    pub fn from_config(config: &Config) -> Self {
+        Self::in_dir(config, cache::dir(config.cache.path.as_deref()))
+    }
+
+    fn in_dir(config: &Config, dir: Option<PathBuf>) -> Self {
+        if !config.cache.enabled {
+            return Self::disabled();
         }
+        let Some(dir) = dir else {
+            tracing::warn!("{}", cache::NO_DIR_WARNING);
+            return Self::disabled();
+        };
+        Self::with_path(dir, config.cache.ttl)
     }
 
     /// Create a file cache with a custom directory path.
@@ -55,22 +65,8 @@ impl FileCache {
         }
     }
 
-    /// Convert a cache key to a filesystem path.
-    ///
-    /// Uses FNV-1a (64-bit) which is deterministic across processes/runs,
-    /// unlike `DefaultHasher` (`SipHash` with per-process random seed).
-    /// The hex-encoded hash avoids filename collisions that `sanitize_filename`
-    /// can cause (e.g. `a::b/c` and `a__b_c` mapping to the same name).
     fn key_to_path(&self, key: &str) -> PathBuf {
-        // FNV-1a 64-bit: deterministic, no dependencies.
-        const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
-        const FNV_PRIME: u64 = 0x0100_0000_01b3;
-        let mut hash = FNV_OFFSET;
-        for byte in key.as_bytes() {
-            hash ^= u64::from(*byte);
-            hash = hash.wrapping_mul(FNV_PRIME);
-        }
-        self.cache_dir.join(format!("{hash:016x}.json"))
+        self.cache_dir.join(cache::entry_file_name(key))
     }
 
     /// Ensure the cache directory exists.
@@ -80,20 +76,6 @@ impl FileCache {
             .map_err(|e| cache::Error::Io(format!("failed to create cache dir: {e}")))?;
         Ok(())
     }
-}
-
-/// Returns the default OS cache directory for actup.
-#[must_use]
-pub fn default_cache_dir() -> PathBuf {
-    dirs::cache_dir().map_or_else(
-        || PathBuf::from(".actup-cache"),
-        |p| {
-            let base = p.join("actup");
-            #[cfg(windows)]
-            let base = base.join("cache");
-            base
-        },
-    )
 }
 
 /// Fetch versions for a single repo, checking file cache first.
@@ -235,7 +217,11 @@ impl Cache for FileCache {
                 .map_err(|e| cache::Error::Io(e.to_string()))?
             {
                 let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(cache::is_entry_file_name)
+                {
                     tokio::fs::remove_file(&path).await.map_err(|e| {
                         cache::Error::Io(format!("failed to remove {}: {e}", path.display()))
                     })?;
@@ -332,33 +318,12 @@ mod tests {
     }
 
     #[test]
-    fn key_to_path_produces_filesystem_safe_hash() {
-        let (cache, _temp) = make_test_cache(3600);
-        let path = cache.key_to_path("github::github.com/actions/checkout");
-        let filename = path.file_name().unwrap().to_str().unwrap();
-        // Hash filename should be hex digits + .json extension.
-        assert!(
-            std::path::Path::new(filename)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
-        );
-        let stem = filename.strip_suffix(".json").unwrap();
-        assert!(stem.len() == 16, "expected 16-char hex hash, got: {stem}");
-        assert!(
-            stem.chars().all(|c| c.is_ascii_hexdigit()),
-            "expected hex chars, got: {stem}"
-        );
-    }
-
-    #[test]
-    fn key_to_path_avoids_collisions() {
-        let (cache, _temp) = make_test_cache(3600);
-        // These two keys would collide under sanitize_filename but not under hashing.
-        let path_a = cache.key_to_path("github::github.com/actions/checkout");
-        let path_b = cache.key_to_path("github__github.com_actions_checkout");
-        assert_ne!(
-            path_a, path_b,
-            "different keys must produce different paths"
+    fn key_to_path_uses_the_shared_entry_name() {
+        let (cache, temp) = make_test_cache(3600);
+        let key = "github::github.com/actions/checkout";
+        assert_eq!(
+            cache.key_to_path(key),
+            temp.path().join(cache::entry_file_name(key))
         );
     }
 
@@ -430,15 +395,78 @@ mod tests {
         assert!(cache.clear().await.is_ok());
     }
 
+    #[tokio::test]
+    async fn clear_keeps_files_it_did_not_write() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
+        for name in ["package.json", "tsconfig.json", "notes.txt"] {
+            std::fs::write(temp.path().join(name), "{}")?;
+        }
+        cache
+            .set("key", cache::Entry::new(version::Set::default()))
+            .await?;
+
+        cache.clear().await?;
+
+        let mut names: Vec<_> = std::fs::read_dir(temp.path())?
+            .map(|entry| entry.map(|e| e.file_name()))
+            .collect::<Result<_, _>>()?;
+        names.sort();
+        assert_eq!(names, ["notes.txt", "package.json", "tsconfig.json"]);
+        Ok(())
+    }
+
     #[test]
-    fn default_cache_dir_ends_with_actup() {
-        let dir = default_cache_dir();
-        let dir_str = dir.to_string_lossy();
-        // Should end with "actup" (or "actup/cache" on Windows).
-        assert!(
-            dir_str.contains("actup"),
-            "expected 'actup' in path, got: {dir_str}"
-        );
+    fn without_a_cache_dir_the_cache_is_off_with_one_warning()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::default();
+        let (cache, log) = logged(|| FileCache::in_dir(&config, None))?;
+        assert!(!cache.is_enabled());
+        assert_eq!(log, format!(" WARN {}\n", cache::NO_DIR_WARNING));
+
+        let temp = TempDir::new()?;
+        let (cache, log) = logged(|| FileCache::in_dir(&config, Some(temp.path().to_path_buf())))?;
+        assert!(cache.is_enabled());
+        assert_eq!(cache.cache_dir, temp.path());
+        assert_eq!(log, "");
+
+        let mut off = Config::default();
+        off.cache.enabled = false;
+        let (cache, log) = logged(|| FileCache::in_dir(&off, None))?;
+        assert!(!cache.is_enabled());
+        assert_eq!(log, "");
+        Ok(())
+    }
+
+    fn logged(
+        make: impl FnOnce() -> FileCache,
+    ) -> Result<(FileCache, String), Box<dyn std::error::Error>> {
+        #[derive(Clone, Default)]
+        struct Buffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .map_err(|e| std::io::Error::other(e.to_string()))?
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buffer = Buffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .finish();
+        let cache = tracing::subscriber::with_default(subscriber, make);
+        let bytes = buffer.0.lock().map_err(|e| e.to_string())?.clone();
+        Ok((cache, String::from_utf8(bytes)?))
     }
 
     #[tokio::test]

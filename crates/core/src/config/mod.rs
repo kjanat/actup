@@ -473,6 +473,8 @@ pub struct Cache {
     pub ttl: Duration,
 
     /// Custom cache directory (None = use OS default)
+    ///
+    /// An auto-discovered repo config cannot set it.
     pub path: Option<PathBuf>,
 
     /// Whether caching is enabled
@@ -844,6 +846,11 @@ impl RepoFile {
                     && scan.remove("extra_paths").is_some()
                 {
                     ignored.push("scan.extra_paths".to_owned());
+                }
+                if let Some(Value::Dict(_, cache)) = dict.get_mut("cache")
+                    && cache.remove("path").is_some()
+                {
+                    ignored.push("cache.path".to_owned());
                 }
                 if let Some(Value::Dict(_, table)) = dict.get_mut("hosts") {
                     for (host, value) in table.iter_mut() {

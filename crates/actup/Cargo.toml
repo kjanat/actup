@@ -25,7 +25,6 @@ dirs                  = { workspace = true }  # Directory paths
 indicatif             = { workspace = true }  # Progress spinner
 itertools             = { workspace = true }  # Iterator utilities
 owo-colors            = { workspace = true }  # Terminal colors
-sanitize-filename     = { workspace = true }  # Safe filenames
 schemars              = { workspace = true }  # JSON schema
 serde                 = { workspace = true }  # Serialization
 serde_json            = { workspace = true }  # JSON

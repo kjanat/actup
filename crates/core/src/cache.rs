@@ -3,7 +3,10 @@
 //! This module defines the caching interface. The actual storage
 //! implementation is left to the caller (file-based, in-memory, etc.).
 
-use std::time::{Duration, SystemTime};
+use std::{
+    path::PathBuf,
+    time::{Duration, SystemTime},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -179,6 +182,43 @@ impl Cache for Noop {
     }
 }
 
+/// The warning logged when the disk cache is off because no cache directory is known.
+pub const NO_DIR_WARNING: &str = "no OS cache directory, so the disk cache is off for this run; set `cache.path` in the user config or `ACTUP_CACHE__PATH`";
+
+/// Return the OS cache directory for actup, or `None` when the OS reports none.
+#[must_use]
+pub fn default_dir() -> Option<PathBuf> {
+    let base = dirs::cache_dir()?.join("actup");
+    #[cfg(windows)]
+    let base = base.join("cache");
+    Some(base)
+}
+
+/// Return the directory for the disk cache: `path` when set, else [`default_dir`].
+#[must_use]
+pub fn dir(path: Option<&std::path::Path>) -> Option<PathBuf> {
+    path.map(std::path::Path::to_path_buf).or_else(default_dir)
+}
+
+/// Return the disk cache file name for `key`: its 64-bit FNV-1a hash in hex, then `.json`.
+#[must_use]
+pub fn entry_file_name(key: &str) -> String {
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0100_0000_01b3;
+    let hash = key.bytes().fold(FNV_OFFSET, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+    });
+    format!("{hash:016x}.json")
+}
+
+/// Return whether `name` has the form [`entry_file_name`] writes.
+#[must_use]
+pub fn is_entry_file_name(name: &str) -> bool {
+    name.strip_suffix(".json").is_some_and(|stem| {
+        stem.len() == 16 && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
 /// Helper to build cache keys
 #[must_use]
 pub fn build_cache_key(provider_namespace: &str, host: &str, repo: &ActionRepoId) -> String {
@@ -189,6 +229,32 @@ pub fn build_cache_key(provider_namespace: &str, host: &str, repo: &ActionRepoId
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn entry_file_names_are_hashed_and_recognized() {
+        let name = entry_file_name("github::github.com/actions/checkout");
+        assert!(is_entry_file_name(&name), "{name}");
+        assert_eq!(name.len(), 21);
+        assert_ne!(name, entry_file_name("github__github.com_actions_checkout"));
+        assert_eq!(name, entry_file_name("github::github.com/actions/checkout"));
+        for foreign in [
+            "package.json",
+            "tsconfig.json",
+            "0123456789ABCDEF.json",
+            "0123456789abcde.json",
+            "0123456789abcdef.toml",
+            "0123456789abcdef",
+        ] {
+            assert!(!is_entry_file_name(foreign), "{foreign}");
+        }
+    }
+
+    #[test]
+    fn dir_prefers_the_configured_path() {
+        let path = std::path::Path::new("/custom/cache");
+        assert_eq!(dir(Some(path)), Some(path.to_path_buf()));
+        assert_eq!(dir(None), default_dir());
+    }
 
     // Entry tests
 

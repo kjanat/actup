@@ -76,7 +76,7 @@ impl Provider for Offline {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::Path, sync::Arc, time::Duration};
+    use std::{sync::Arc, time::Duration};
 
     use actup_core::{Config, cache::Cache, provider};
 
@@ -188,13 +188,8 @@ mod tests {
                 actup_core::cache::Entry::new(versions),
             )
             .await?;
-        let config = Config::from_contents(
-            Some((
-                Path::new("actup.toml"),
-                &format!("[cache]\npath = {:?}\n", cache_dir.display().to_string()),
-            )),
-            actup_core::config::EnvOverrides::default(),
-        )?;
+        let mut config = Config::default();
+        config.cache.path = Some(cache_dir.clone());
         let mut registry = provider::Registry::new();
         registry.set_default_host("github.com");
         registry.register(Box::new(Unreachable));

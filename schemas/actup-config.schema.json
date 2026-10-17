@@ -120,7 +120,7 @@
           "default": true
         },
         "path": {
-          "description": "Custom cache directory (None = use OS default)",
+          "description": "Custom cache directory (None = use OS default)\n\nAn auto-discovered repo config cannot set it.",
           "type": [
             "string",
             "null"

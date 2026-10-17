@@ -50,7 +50,6 @@ js-sys                     = "0.3.95"  # wasm js interop
 json_comments              = "0.2"  # jsonc
 owo-colors                 = "4"  # colors
 rust-mcp-sdk               = "0.9"  # mcp
-sanitize-filename          = "0.6"  # filesystem
 saphyr-parser              = "0.0.6"  # yaml
 schemars                   = "1"  # schema
 serde_json                 = "1"  # json

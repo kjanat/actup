@@ -1,32 +1,40 @@
 //! Cache command - manage the version cache
 
 use anstream::{eprintln, println};
-use std::{path::PathBuf, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
-use actup_core::{Config, cache::Cache, sanitize_for_terminal, sanitize_line};
+use actup_core::{
+    Config,
+    cache::{self, Cache},
+    sanitize_for_terminal, sanitize_line,
+};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
 use crate::{
     cli::{CacheAction, OutputFormat},
-    file_cache::{FileCache, default_cache_dir},
+    file_cache::FileCache,
 };
 
 /// Cache info for JSON output
 #[derive(Serialize)]
 struct CacheInfo {
-    path: String,
+    path: Option<String>,
     enabled: bool,
     ttl_secs: u64,
     entry_count: usize,
     total_size_bytes: u64,
 }
 
-/// Output for cache clear when cache is disabled
+/// Output for cache clear when the cache is disabled or has no directory
 #[derive(Serialize)]
 struct DisabledOutput {
     cleared: u64,
     disabled: bool,
+    path: Option<String>,
 }
 
 /// Output for cache clear operations
@@ -38,22 +46,29 @@ struct ClearedOutput {
 /// Output for cache path command
 #[derive(Serialize)]
 struct PathOutput {
-    path: String,
+    path: Option<String>,
 }
 
 /// Run the cache command
 pub async fn run(action: &CacheAction, format: OutputFormat, config: &Config) -> i32 {
+    let dir = cache::dir(config.cache.path.as_deref());
     match action {
-        CacheAction::Info => info(format, config),
-        CacheAction::Clear => clear(format, config).await,
-        CacheAction::Path => path(format, config),
+        CacheAction::Info => info(format, config, dir.as_deref()),
+        CacheAction::Clear => clear(format, config, dir).await,
+        CacheAction::Path => path(format, dir.as_deref()),
     }
 }
 
+fn dir_text(dir: Option<&Path>) -> String {
+    dir.map_or_else(
+        || format!("none ({})", cache::NO_DIR_WARNING),
+        |dir| sanitize_line(&dir.display().to_string()).into_owned(),
+    )
+}
+
 /// Show cache info
-fn info(format: OutputFormat, config: &Config) -> i32 {
-    let cache_dir = get_cache_dir(config);
-    let (entry_count, total_size) = match get_cache_stats(&cache_dir) {
+fn info(format: OutputFormat, config: &Config, cache_dir: Option<&Path>) -> i32 {
+    let (entry_count, total_size) = match cache_dir.map_or(Ok((0, 0)), get_cache_stats) {
         Ok(stats) => stats,
         Err(e) => return report_failure("Error reading cache directory", &e),
     };
@@ -62,11 +77,7 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
         OutputFormat::Human => {
             println!("{}", "Cache Information".bold());
             println!();
-            println!(
-                "  {:<12} {}",
-                "Path:".dimmed(),
-                sanitize_line(&cache_dir.display().to_string())
-            );
+            println!("  {:<12} {}", "Path:".dimmed(), dir_text(cache_dir));
             println!(
                 "  {:<12} {}",
                 "Enabled:".dimmed(),
@@ -86,7 +97,7 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
         }
         OutputFormat::Json => {
             let info = CacheInfo {
-                path: cache_dir.to_string_lossy().into_owned(),
+                path: cache_dir.map(|dir| dir.to_string_lossy().into_owned()),
                 enabled: config.cache.enabled,
                 ttl_secs: config.cache.ttl.as_secs(),
                 entry_count,
@@ -102,7 +113,7 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
         }
         OutputFormat::Toml => {
             let info = CacheInfo {
-                path: cache_dir.to_string_lossy().into_owned(),
+                path: cache_dir.map(|dir| dir.to_string_lossy().into_owned()),
                 enabled: config.cache.enabled,
                 ttl_secs: config.cache.ttl.as_secs(),
                 entry_count,
@@ -122,35 +133,37 @@ fn info(format: OutputFormat, config: &Config) -> i32 {
 }
 
 /// Clear the cache
-async fn clear(format: OutputFormat, config: &Config) -> i32 {
-    let cache = if config.cache.enabled {
-        config.cache.path.as_ref().map_or_else(
-            || FileCache::new(config.cache.ttl),
-            |path| FileCache::with_path(path.clone(), config.cache.ttl),
-        )
-    } else {
-        let output = DisabledOutput {
-            cleared: 0,
-            disabled: true,
-        };
-        match format {
-            OutputFormat::Human => println!("{}", "Cache is disabled".yellow()),
-            OutputFormat::Json => match serde_json::to_string(&output) {
-                Ok(json) => println!("{json}"),
-                Err(e) => {
-                    eprintln!("{}: {}", "Error serializing output".red(), e);
-                    return 3;
+async fn clear(format: OutputFormat, config: &Config, cache_dir: Option<PathBuf>) -> i32 {
+    let cache = match cache_dir {
+        Some(dir) if config.cache.enabled => FileCache::with_path(dir, config.cache.ttl),
+        dir => {
+            let output = DisabledOutput {
+                cleared: 0,
+                disabled: !config.cache.enabled,
+                path: dir.map(|dir| dir.to_string_lossy().into_owned()),
+            };
+            match format {
+                OutputFormat::Human if output.disabled => {
+                    println!("{}", "Cache is disabled".yellow());
                 }
-            },
-            OutputFormat::Toml => match toml::to_string_pretty(&output) {
-                Ok(toml) => println!("{toml}"),
-                Err(e) => {
-                    eprintln!("{}: {}", "Error serializing output".red(), e);
-                    return 3;
-                }
-            },
+                OutputFormat::Human => println!("{}", dir_text(None).yellow()),
+                OutputFormat::Json => match serde_json::to_string(&output) {
+                    Ok(json) => println!("{json}"),
+                    Err(e) => {
+                        eprintln!("{}: {}", "Error serializing output".red(), e);
+                        return 3;
+                    }
+                },
+                OutputFormat::Toml => match toml::to_string_pretty(&output) {
+                    Ok(toml) => println!("{toml}"),
+                    Err(e) => {
+                        eprintln!("{}: {}", "Error serializing output".red(), e);
+                        return 3;
+                    }
+                },
+            }
+            return 0;
         }
-        return 0;
     };
 
     let cache_dir = cache.cache_dir().clone();
@@ -220,16 +233,14 @@ async fn clear(format: OutputFormat, config: &Config) -> i32 {
 }
 
 /// Print cache path
-fn path(format: OutputFormat, config: &Config) -> i32 {
-    let cache_dir = get_cache_dir(config);
-
+fn path(format: OutputFormat, cache_dir: Option<&Path>) -> i32 {
     let output = PathOutput {
-        path: cache_dir.to_string_lossy().into_owned(),
+        path: cache_dir.map(|dir| dir.to_string_lossy().into_owned()),
     };
 
     match format {
         OutputFormat::Human => {
-            println!("{}", sanitize_line(&cache_dir.display().to_string()));
+            println!("{}", dir_text(cache_dir));
         }
         OutputFormat::Json => match serde_json::to_string(&output) {
             Ok(json) => println!("{json}"),
@@ -259,15 +270,10 @@ fn report_failure(what: &str, error: &dyn std::fmt::Display) -> i32 {
     3
 }
 
-/// Get cache directory from config or default
-fn get_cache_dir(config: &Config) -> PathBuf {
-    config.cache.path.clone().unwrap_or_else(default_cache_dir)
-}
-
-/// Get cache statistics (entry count, total size)
+/// Get the count and total size of the cache entry files in `cache_dir`.
 ///
 /// Returns an error if the cache directory exists but cannot be read.
-fn get_cache_stats(cache_dir: &PathBuf) -> std::io::Result<(usize, u64)> {
+fn get_cache_stats(cache_dir: &Path) -> std::io::Result<(usize, u64)> {
     if !cache_dir.exists() {
         return Ok((0, 0));
     }
@@ -277,8 +283,11 @@ fn get_cache_stats(cache_dir: &PathBuf) -> std::io::Result<(usize, u64)> {
 
     for entry in std::fs::read_dir(cache_dir)? {
         let entry = entry?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "json") {
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(cache::is_entry_file_name)
+        {
             count += 1;
             if let Ok(meta) = entry.metadata() {
                 size += meta.len();
@@ -322,7 +331,57 @@ fn format_size(bytes: u64) -> String {
 
 #[cfg(test)]
 mod tests {
+    use actup_core::version;
+
     use super::*;
+
+    #[tokio::test]
+    async fn clear_counts_and_removes_only_cache_entries() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = tempfile::tempdir()?;
+        let config = Config::default();
+        let cache = FileCache::with_path(temp.path().to_path_buf(), config.cache.ttl);
+        for key in ["a", "b"] {
+            cache
+                .set(key, cache::Entry::new(version::Set::default()))
+                .await?;
+        }
+        for name in ["package.json", "tsconfig.json"] {
+            std::fs::write(temp.path().join(name), "{}")?;
+        }
+        assert_eq!(get_cache_stats(temp.path())?.0, 2);
+
+        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
+            assert_eq!(info(format, &config, Some(temp.path())), 0);
+        }
+        assert_eq!(
+            clear(OutputFormat::Json, &config, Some(temp.path().to_path_buf())).await,
+            0
+        );
+
+        let mut names: Vec<_> = std::fs::read_dir(temp.path())?
+            .map(|entry| entry.map(|e| e.file_name()))
+            .collect::<Result<_, _>>()?;
+        names.sort();
+        assert_eq!(names, ["package.json", "tsconfig.json"]);
+        assert_eq!(get_cache_stats(temp.path())?, (0, 0));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn commands_without_a_cache_dir_report_it_and_succeed() {
+        let config = Config::default();
+        let mut off = Config::default();
+        off.cache.enabled = false;
+        for format in [OutputFormat::Human, OutputFormat::Json, OutputFormat::Toml] {
+            assert_eq!(info(format, &config, None), 0);
+            assert_eq!(path(format, None), 0);
+            assert_eq!(clear(format, &config, None).await, 0);
+            assert_eq!(clear(format, &off, None).await, 0);
+        }
+        assert_eq!(dir_text(None), format!("none ({})", cache::NO_DIR_WARNING));
+        assert_eq!(dir_text(Some(Path::new("/c/actup"))), "/c/actup");
+    }
 
     #[test]
     fn test_format_duration() {

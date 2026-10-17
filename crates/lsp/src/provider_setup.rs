@@ -51,14 +51,7 @@ impl Providers {
 /// Respects `config.cache.enabled`, `config.cache.path`, and `config.cache.ttl`.
 #[must_use]
 pub fn build_file_cache(config: &Config) -> crate::file_cache::FileCache {
-    if config.cache.enabled {
-        config.cache.path.as_ref().map_or_else(
-            || crate::file_cache::FileCache::new(config.cache.ttl),
-            |path| crate::file_cache::FileCache::with_path(path.clone(), config.cache.ttl),
-        )
-    } else {
-        crate::file_cache::FileCache::disabled()
-    }
+    crate::file_cache::FileCache::from_config(config)
 }
 
 #[cfg(test)]

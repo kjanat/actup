@@ -8,6 +8,7 @@
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
 use actup_core::{
+    Config,
     cache::{self, Cache},
     write_atomic,
 };
@@ -21,20 +22,24 @@ pub struct FileCache {
 }
 
 impl FileCache {
-    /// Create a new file cache with default location
+    /// Create the file cache that `config.cache` selects.
     ///
-    /// Uses OS-appropriate cache directory:
-    /// - Linux: `~/.cache/actup/`
-    /// - macOS: `~/Library/Caches/actup/`
-    /// - Windows: `%LOCALAPPDATA%\actup\cache\`
+    /// The cache lives in `cache.path`, else in [`cache::default_dir`]. With
+    /// neither, it logs [`cache::NO_DIR_WARNING`] and is disabled.
     #[must_use]
-    pub fn new(ttl: Duration) -> Self {
-        let cache_dir = default_cache_dir();
-        Self {
-            cache_dir,
-            ttl,
-            enabled: true,
+    pub fn from_config(config: &Config) -> Self {
+        Self::in_dir(config, cache::dir(config.cache.path.as_deref()))
+    }
+
+    fn in_dir(config: &Config, dir: Option<PathBuf>) -> Self {
+        if !config.cache.enabled {
+            return Self::disabled();
         }
+        let Some(dir) = dir else {
+            tracing::warn!("{}", cache::NO_DIR_WARNING);
+            return Self::disabled();
+        };
+        Self::with_path(dir, config.cache.ttl)
     }
 
     /// Create a file cache with custom directory
@@ -49,7 +54,6 @@ impl FileCache {
 
     /// Create a disabled cache (no-op)
     #[must_use]
-    #[allow(dead_code)] // Part of public API for future use
     pub const fn disabled() -> Self {
         Self {
             cache_dir: PathBuf::new(),
@@ -64,12 +68,8 @@ impl FileCache {
         &self.cache_dir
     }
 
-    /// Convert a cache key to a file path
     fn key_to_path(&self, key: &str) -> PathBuf {
-        // Sanitize key for filesystem using sanitize-filename crate
-        // This handles all OS-specific invalid characters (including Windows: : * ? " < > |)
-        let safe_key = sanitize_filename::sanitize(key);
-        self.cache_dir.join(format!("{safe_key}.json"))
+        self.cache_dir.join(cache::entry_file_name(key))
     }
 
     /// Ensure cache directory exists
@@ -80,28 +80,6 @@ impl FileCache {
             .map_err(|e| cache::Error::Io(format!("failed to create cache dir: {e}")))?;
         Ok(())
     }
-}
-
-/// Get the default cache directory for the current OS
-///
-/// - Linux: `~/.cache/actup/`
-/// - macOS: `~/Library/Caches/actup/`
-/// - Windows: `%LOCALAPPDATA%\actup\cache\`
-#[must_use]
-pub fn default_cache_dir() -> PathBuf {
-    dirs::cache_dir().map_or_else(
-        || {
-            // Fallback to current directory if no cache dir available
-            PathBuf::from(".actup-cache")
-        },
-        |p| {
-            let base = p.join("actup");
-            // Windows uses an extra "cache" subdirectory per convention
-            #[cfg(windows)]
-            let base = base.join("cache");
-            base
-        },
-    )
 }
 
 impl Cache for FileCache {
@@ -215,7 +193,11 @@ impl Cache for FileCache {
                 .map_err(|e| cache::Error::Io(e.to_string()))?
             {
                 let path = entry.path();
-                if path.extension().is_some_and(|ext| ext == "json") {
+                if entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(cache::is_entry_file_name)
+                {
                     tokio::fs::remove_file(&path).await.map_err(|e| {
                         cache::Error::Io(format!("failed to remove {}: {e}", path.display()))
                     })?;
@@ -357,19 +339,91 @@ mod tests {
     }
 
     #[test]
-    fn test_key_to_path_sanitization() {
-        let (cache, _temp) = make_test_cache(3600);
-
-        // Keys with :: and / should be sanitized
-        let path = cache.key_to_path("github::github.com/actions/checkout");
-        let filename = path.file_name().unwrap().to_str().unwrap();
-
-        assert!(!filename.contains("::"));
-        assert!(!filename.contains('/'));
-        assert!(
-            std::path::Path::new(filename)
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("json"))
+    fn key_to_path_uses_the_shared_entry_name() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
+        let key = "github::github.com/actions/checkout";
+        assert_eq!(
+            cache.key_to_path(key),
+            temp.path().join(cache::entry_file_name(key))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn clear_keeps_files_it_did_not_write() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
+        for name in ["package.json", "tsconfig.json", "notes.txt"] {
+            std::fs::write(temp.path().join(name), "{}")?;
+        }
+        cache
+            .set(
+                "key",
+                actup_core::cache::Entry::new(version::Set::default()),
+            )
+            .await?;
+
+        cache.clear().await?;
+
+        let mut names: Vec<_> = std::fs::read_dir(temp.path())?
+            .map(|entry| entry.map(|e| e.file_name()))
+            .collect::<Result<_, _>>()?;
+        names.sort();
+        assert_eq!(names, ["notes.txt", "package.json", "tsconfig.json"]);
+        Ok(())
+    }
+
+    fn logged(
+        make: impl FnOnce() -> FileCache,
+    ) -> Result<(FileCache, String), Box<dyn std::error::Error>> {
+        #[derive(Clone, Default)]
+        struct Buffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Buffer {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .map_err(|e| std::io::Error::other(e.to_string()))?
+                    .extend_from_slice(buf);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let buffer = Buffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .finish();
+        let cache = tracing::subscriber::with_default(subscriber, make);
+        let bytes = buffer.0.lock().map_err(|e| e.to_string())?.clone();
+        Ok((cache, String::from_utf8(bytes)?))
+    }
+
+    #[test]
+    fn without_a_cache_dir_the_cache_is_off_with_one_warning()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let config = Config::default();
+        let (cache, log) = logged(|| FileCache::in_dir(&config, None))?;
+        assert!(!cache.is_enabled());
+        assert_eq!(log, format!(" WARN {}\n", cache::NO_DIR_WARNING));
+
+        let temp = TempDir::new()?;
+        let (cache, log) = logged(|| FileCache::in_dir(&config, Some(temp.path().to_path_buf())))?;
+        assert!(cache.is_enabled());
+        assert_eq!(cache.cache_dir(), temp.path());
+        assert_eq!(log, "");
+
+        let mut off = Config::default();
+        off.cache.enabled = false;
+        let (cache, log) = logged(|| FileCache::in_dir(&off, None))?;
+        assert!(!cache.is_enabled());
+        assert_eq!(log, "");
+        Ok(())
     }
 }
