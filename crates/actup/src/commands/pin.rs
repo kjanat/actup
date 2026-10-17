@@ -291,6 +291,7 @@ mod tests {
 
     struct RepoShaProvider {
         shas: HashMap<&'static str, char>,
+        rewrite: Option<(std::path::PathBuf, String)>,
     }
 
     impl Provider for RepoShaProvider {
@@ -314,6 +315,11 @@ mod tests {
             repo: &ActionRepoId,
             ref_name: &str,
         ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
+            if let Some((file, content)) = &self.rewrite
+                && let Err(e) = std::fs::write(file, content)
+            {
+                panic!("rewrite {}: {e}", file.display());
+            }
             let sha = self
                 .shas
                 .get(repo.repo())
@@ -374,8 +380,45 @@ mod tests {
                 ("h", 'f'),
                 ("i", '1'),
             ]),
+            rewrite: None,
         }));
         registry
+    }
+
+    #[tokio::test]
+    async fn test_run_refuses_a_file_changed_during_lookup()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let changed = "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@v5\n";
+        let file = workflow(dir.path(), &changed.replace("@v5", "@v4"))?;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(RepoShaProvider {
+            shas: HashMap::from([("checkout", 'a')]),
+            rewrite: Some((file.clone(), changed.to_string())),
+        }));
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &Config::default(),
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        assert_eq!(result.edited, []);
+        let kinds: Vec<ErrorKind> = result.errored.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, [ErrorKind::Changed]);
+        assert_eq!(
+            result.exit_code(false),
+            i32::from(CliExitCode::EnvironmentError)
+        );
+        assert_eq!(std::fs::read_to_string(&file)?, changed);
+        Ok(())
     }
 
     #[tokio::test]
@@ -624,7 +667,7 @@ mod tests {
                 "actions/deploy-pages@v4"
             ]
         );
-        assert_eq!(file_edits.plan().content, expected);
+        assert_eq!(file_edits.plan().content(), expected);
     }
 
     #[tokio::test]
@@ -662,7 +705,7 @@ mod tests {
 
         assert_eq!(hosts, [Some("github.com".to_owned())]);
         assert_eq!(
-            file_edits.plan().content,
+            file_edits.plan().content(),
             format!("steps:\n  - uses: GitHub.COM/actions/checkout@{sha} # v4\n")
         );
         Ok(())
@@ -763,7 +806,7 @@ mod tests {
         }
 
         assert_eq!(
-            file_edits.plan().content,
+            file_edits.plan().content(),
             format!("steps:\n  - uses: actions/cache@{new} # v4.2.0\n")
         );
         Ok(())

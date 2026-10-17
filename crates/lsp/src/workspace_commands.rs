@@ -257,11 +257,7 @@ async fn prepare_file(
     failures: &mut Vec<(String, String)>,
 ) -> PreparedFile {
     let path = file.path();
-    let rel = path
-        .strip_prefix(workspace_root)
-        .unwrap_or(path)
-        .display()
-        .to_string();
+    let rel = relative_display(file, workspace_root);
 
     let Some(uri) = Uri::from_file_path(path) else {
         tracing::warn!(path = %rel, "failed to convert path to URI");
@@ -494,7 +490,16 @@ async fn scan_files(
         };
 
         acc.total_actions += outcome.actions_checked;
-        if let Some((uri, version, edits)) = outcome.edits {
+        if let (PreparedFile::Loaded(loaded), Some(_)) = (prepared, &outcome.edits)
+            && changed_since_scan(loaded, ctx.documents).await
+        {
+            let rel = relative_display(&loaded.file, ctx.workspace_root);
+            tracing::warn!(path = %rel, "file changed since scan");
+            acc.failures.push((
+                rel.clone(),
+                format!("edit refused: {rel} changed since scan"),
+            ));
+        } else if let Some((uri, version, edits)) = outcome.edits {
             acc.total_refs += edits.len();
             acc.all_edits.push(VersionedFileEdits {
                 uri,
@@ -519,6 +524,28 @@ async fn scan_files(
     // see total coverage, not just the last increment.
     acc.files_completed = file_count;
     acc.into_result(file_count, ctx.supports_document_changes, false)
+}
+
+async fn changed_since_scan(loaded: &LoadedFile, documents: &DashMap<Uri, DocumentState>) -> bool {
+    let open = documents
+        .get(&loaded.uri)
+        .map(|doc| (doc.version, doc.text == loaded.text));
+    match (loaded.version, open) {
+        (Some(version), Some((current, _))) => current != version,
+        (Some(_), None) => true,
+        (None, Some((_, same_text))) => !same_text,
+        (None, None) => tokio::fs::read_to_string(loaded.file.path())
+            .await
+            .map_or(true, |text| text != loaded.text),
+    }
+}
+
+fn relative_display(file: &DiscoveredFile, workspace_root: &Path) -> String {
+    file.path()
+        .strip_prefix(workspace_root)
+        .unwrap_or_else(|_| file.path())
+        .display()
+        .to_string()
 }
 
 /// Report per-file progress to the client.
@@ -940,6 +967,100 @@ mod tests {
         let file_edits = &changes[&uri];
         assert_eq!(file_edits.len(), 1);
         assert_eq!(file_edits[0].new_text, "v4");
+    }
+
+    #[tokio::test]
+    async fn scan_files_refuses_a_disk_file_changed_since_scan() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let workflows_dir = temp.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows_dir).unwrap();
+        let changed = workflows_dir.join("a.yml");
+        let kept = workflows_dir.join("b.yml");
+        let yaml = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v3\n";
+        std::fs::write(&changed, yaml).unwrap();
+        std::fs::write(&kept, yaml).unwrap();
+        let edited = yaml.replace("@v3", "@main");
+
+        let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions)
+            .with_rewrite(changed.clone(), &edited);
+        let registry = test_utils::mock_registry(provider);
+        let cache = FileCache::disabled();
+        let documents = DashMap::new();
+        let cancelled = Cancelled::new();
+        let discovered = discover_files(temp.path(), &[]);
+        let config = Config::default();
+        let ctx = ScanContext {
+            workspace_root: temp.path(),
+            config: &config,
+            registry: &registry,
+            file_cache: &cache,
+            documents: &documents,
+            cancelled: &cancelled,
+            supports_document_changes: false,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let result = scan_files(&discovered, &ctx, None).await;
+
+        assert_eq!(
+            result.failures,
+            [(
+                ".github/workflows/a.yml".to_string(),
+                "edit refused: .github/workflows/a.yml changed since scan".to_string()
+            )]
+        );
+        assert_eq!((result.files_changed, result.refs_updated), (1, 1));
+        let edit_map = result.edit.changes.unwrap();
+        let uris: Vec<&Uri> = edit_map.keys().collect();
+        assert_eq!(uris, [&Uri::from_file_path(&kept).unwrap()]);
+        assert_eq!(std::fs::read_to_string(&changed).unwrap(), edited);
+    }
+
+    fn loaded(text: &str, version: Option<i32>) -> LoadedFile {
+        let path = std::path::PathBuf::from("/test/ci.yml");
+        LoadedFile {
+            uri: Uri::from_file_path(&path).unwrap(),
+            file: DiscoveredFile::new(path, actup_core::FileKind::Workflow),
+            text: text.to_string(),
+            version,
+        }
+    }
+
+    fn open_document(documents: &DashMap<Uri, DocumentState>, text: &str, version: i32) {
+        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        documents.insert(uri, DocumentState::new(text.to_string(), version));
+    }
+
+    #[tokio::test]
+    async fn changed_since_scan_compares_open_documents() {
+        let documents = DashMap::new();
+        assert!(changed_since_scan(&loaded("a", Some(3)), &documents).await);
+
+        open_document(&documents, "a", 3);
+        assert!(!changed_since_scan(&loaded("a", Some(3)), &documents).await);
+        assert!(!changed_since_scan(&loaded("a", None), &documents).await);
+
+        open_document(&documents, "b", 4);
+        assert!(changed_since_scan(&loaded("a", Some(3)), &documents).await);
+        assert!(changed_since_scan(&loaded("a", None), &documents).await);
+    }
+
+    #[tokio::test]
+    async fn changed_since_scan_rereads_a_closed_file() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("ci.yml");
+        std::fs::write(&path, "a").unwrap();
+        let mut file = loaded("a", None);
+        file.file = DiscoveredFile::new(path.clone(), actup_core::FileKind::Workflow);
+        file.uri = Uri::from_file_path(&path).unwrap();
+        let documents = DashMap::new();
+
+        assert!(!changed_since_scan(&file, &documents).await);
+        std::fs::write(&path, "b").unwrap();
+        assert!(changed_since_scan(&file, &documents).await);
+        std::fs::remove_file(&path).unwrap();
+        assert!(changed_since_scan(&file, &documents).await);
     }
 
     #[tokio::test]

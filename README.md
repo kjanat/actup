@@ -70,8 +70,13 @@ provider serving the ref, or the default host when the ref names none. An
 `edited` entry adds `to` (the ref written) and `comment` when the line gets a
 version comment. A `skipped` entry adds `reason` (`unplaceable`, `overlap` or
 `out_of_bounds`). An `errors` entry adds `kind` (such as `not_found`,
-`rate_limited`, `provider_not_found` or `write`) and `message`. With no workflow
-files, the report has empty lists and `check` prints no findings.
+`rate_limited`, `provider_not_found`, `write` or `changed`) and `message`. With
+no workflow files, the report has empty lists and `check` prints no findings.
+
+`update` and `pin` re-read each file before writing it. When a line they edit
+differs from the scan, they leave the file untouched, report each of its refs
+with kind `changed` and the message `edit refused: <path> changed since scan`,
+and exit 3.
 
 ## Configuration
 

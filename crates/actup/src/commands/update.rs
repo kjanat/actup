@@ -177,6 +177,7 @@ mod tests {
 
     struct TagProvider {
         latest: &'static str,
+        rewrite: Option<(std::path::PathBuf, String)>,
     }
 
     impl Provider for TagProvider {
@@ -192,6 +193,11 @@ mod tests {
             &self,
             repo: &ActionRepoId,
         ) -> BoxFuture<'_, actup_core::Result<version::Set>> {
+            if let Some((file, content)) = &self.rewrite
+                && let Err(e) = std::fs::write(file, content)
+            {
+                panic!("rewrite {}: {e}", file.display());
+            }
             if repo.repo() == "missing" {
                 let err = actup_core::Error::NotFound {
                     owner: repo.owner().to_string(),
@@ -283,8 +289,50 @@ mod tests {
     fn registry(latest: &'static str) -> provider::Registry {
         let mut registry = provider::Registry::new();
         registry.set_default_host("github.com");
-        registry.register(Box::new(TagProvider { latest }));
+        registry.register(Box::new(TagProvider {
+            latest,
+            rewrite: None,
+        }));
         registry
+    }
+
+    #[tokio::test]
+    async fn test_run_refuses_a_file_changed_during_lookup()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let file = workflows.join("ci.yml");
+        let changed = "on: push\njobs:\n  b:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@main\n";
+        std::fs::write(&file, changed.replace("@main", "@v4.0.0"))?;
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(TagProvider {
+            latest: "v4.2.0",
+            rewrite: Some((file.clone(), changed.to_string())),
+        }));
+
+        let Some(result) = edit(
+            dir.path(),
+            false,
+            OutputFormat::Json,
+            &Config::default(),
+            &registry,
+        )
+        .await
+        else {
+            panic!("no workflow found");
+        };
+
+        assert_eq!(result.edited, []);
+        let kinds: Vec<ErrorKind> = result.errored.iter().map(|e| e.kind).collect();
+        assert_eq!(kinds, [ErrorKind::Changed]);
+        assert_eq!(
+            result.exit_code(false),
+            i32::from(CliExitCode::EnvironmentError)
+        );
+        assert_eq!(std::fs::read_to_string(&file)?, changed);
+        Ok(())
     }
 
     #[tokio::test]
@@ -478,7 +526,7 @@ mod tests {
         if !matches!(plan.entries.as_slice(), [((), EditOutcome::Applied { .. })]) {
             return Err(format!("edit did not apply: {:?}", plan.entries).into());
         }
-        Ok(plan.content.trim_start_matches('\n').to_string())
+        Ok(plan.content().trim_start_matches('\n').to_string())
     }
 
     #[test]
@@ -617,7 +665,7 @@ mod tests {
         }
         assert_eq!(seen, 6);
 
-        let updated = file_edits.plan().content;
+        let updated = file_edits.plan().content();
         assert_eq!(updated, expected);
 
         let refs: Vec<String> = WorkflowScanner::extract_actions(&updated)

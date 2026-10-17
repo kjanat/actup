@@ -119,6 +119,7 @@ pub struct MockProvider {
     /// Pre-configured version sets, keyed by `"owner/repo"`.
     versions: HashMap<String, Result<version::Set, CoreError>>,
     calls: Arc<AtomicUsize>,
+    rewrite: Option<(std::path::PathBuf, String)>,
 }
 
 impl MockProvider {
@@ -129,7 +130,14 @@ impl MockProvider {
             host: host.to_string(),
             versions: HashMap::new(),
             calls: Arc::new(AtomicUsize::new(0)),
+            rewrite: None,
         }
+    }
+
+    /// Overwrite `path` with `content` on every version lookup.
+    pub fn with_rewrite(mut self, path: std::path::PathBuf, content: &str) -> Self {
+        self.rewrite = Some((path, content.to_string()));
+        self
     }
 
     /// Add a version set for a specific repo.
@@ -165,6 +173,9 @@ impl Provider for MockProvider {
 
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<version::Set>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if let Some((path, content)) = &self.rewrite {
+            std::fs::write(path, content).unwrap();
+        }
         let key = Self::repo_key(repo);
         let result = self.versions.get(&key).map_or_else(
             || Ok(version::Set::default()),

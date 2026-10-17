@@ -64,7 +64,7 @@ pub struct DocumentState {
 
 impl DocumentState {
     /// Create initial state from a newly opened document.
-    fn new(text: String, version: i32) -> Self {
+    pub(crate) fn new(text: String, version: i32) -> Self {
         Self {
             text,
             version,

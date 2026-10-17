@@ -299,6 +299,8 @@ pub enum ErrorKind {
     Internal,
     /// Writing the file failed.
     Write,
+    /// The file changed between the scan and the write.
+    Changed,
 }
 
 impl From<&CoreError> for ErrorKind {
@@ -399,10 +401,44 @@ pub struct FileEdits<L> {
 pub struct EditPlan<L> {
     /// Absolute path to the file.
     pub path: PathBuf,
-    /// The file content with every applied edit.
-    pub content: String,
     /// Each label with its outcome, in insertion order.
     pub entries: Vec<(L, EditOutcome)>,
+    /// The applied edits, ready to place on the file as it is at write time.
+    pub splices: Splices,
+}
+
+/// The byte splices of an [`EditPlan`] with the scanned lines they rewrite.
+pub struct Splices {
+    scanned: String,
+    edits: Vec<(Range<usize>, String)>,
+    lines: Vec<(Range<usize>, bool)>,
+}
+
+impl Splices {
+    /// Apply the splices to `current`, or `None` when a rewritten line differs from the scan.
+    #[must_use]
+    pub fn apply(&self, current: &str) -> Option<String> {
+        let intact = self.lines.iter().all(|(line, unterminated)| {
+            current.get(line.clone()) == self.scanned.get(line.clone())
+                && (!unterminated || current.len() == line.end)
+        });
+        intact.then(|| splice(current, &self.edits))
+    }
+}
+
+#[cfg(test)]
+impl<L> EditPlan<L> {
+    pub(crate) fn content(&self) -> String {
+        splice(&self.splices.scanned, &self.splices.edits)
+    }
+}
+
+fn splice(text: &str, edits: &[(Range<usize>, String)]) -> String {
+    let mut content = text.to_string();
+    for (range, new) in edits.iter().rev() {
+        content.replace_range(range.clone(), new);
+    }
+    content
 }
 
 impl<L> FileEdits<L> {
@@ -495,20 +531,37 @@ impl<L> FileEdits<L> {
         }
 
         splices.sort_by_key(|(range, is_comment, _)| (range.start, range.end, *is_comment));
-        let mut content = self.content.clone();
-        for (range, _, text) in splices.into_iter().rev() {
-            content.replace_range(range, text);
-        }
-
+        let edits: Vec<(Range<usize>, String)> = splices
+            .into_iter()
+            .map(|(range, _, text)| (range, text.to_string()))
+            .collect();
+        let edited_lines: BTreeSet<usize> = applied
+            .iter()
+            .filter_map(|&i| self.edits[i].0.line.checked_sub(1))
+            .collect();
+        let lines = edited_lines
+            .into_iter()
+            .filter_map(|idx| {
+                let span = spans.get(idx)?;
+                let end = spans
+                    .get(idx + 1)
+                    .map_or(self.content.len(), |next| next.start);
+                Some((span.start..end, span.end == self.content.len()))
+            })
+            .collect();
         EditPlan {
             path: self.path,
-            content,
             entries: self
                 .edits
                 .into_iter()
                 .zip(outcomes)
                 .map(|((_, label), outcome)| (label, outcome))
                 .collect(),
+            splices: Splices {
+                scanned: self.content,
+                edits,
+                lines,
+            },
         }
     }
 }
@@ -554,9 +607,10 @@ impl Change {
 
 /// Plan `file_edits`, report its skipped edits, and write it unless `dry_run`.
 ///
-/// Returns each written change with its version comment, and records them in
-/// `result`. A failed write records each change as an errored ref and returns
-/// nothing.
+/// The write re-reads the file and places the edits on it. A rewritten line
+/// that differs from the scan refuses the whole file. Returns each written
+/// change with its version comment, and records them in `result`. A refused or
+/// failed write records each change as an errored ref and returns nothing.
 pub fn commit_file(
     file_edits: FileEdits<Change>,
     dry_run: bool,
@@ -564,8 +618,8 @@ pub fn commit_file(
 ) -> Vec<(Change, Option<String>)> {
     let EditPlan {
         path,
-        content,
         entries,
+        splices,
     } = file_edits.plan();
     let mut written = Vec::new();
     for (change, outcome) in entries {
@@ -577,14 +631,15 @@ pub fn commit_file(
     if written.is_empty() {
         return written;
     }
-    if !dry_run && let Err(e) = fs::write(&path, content) {
-        eprintln!("{}: {} - {e}", "Error writing file".red(), path.display());
+    if !dry_run && let Err(refusal) = write_splices(&path, &splices) {
+        let message = refusal.message(&path);
+        eprintln!("{}: {message}", "Error".red());
         for (change, _) in written {
             result.errors.record_env();
             result.errored.push(ErroredRef {
                 site: change.site,
-                kind: ErrorKind::Write,
-                message: e.to_string(),
+                kind: refusal.kind(),
+                message: message.clone(),
             });
         }
         return Vec::new();
@@ -597,6 +652,33 @@ pub fn commit_file(
             comment: comment.as_deref().map(|c| c.trim_start().to_string()),
         }));
     written
+}
+
+enum WriteRefusal {
+    Io(std::io::Error),
+    Changed,
+}
+
+impl WriteRefusal {
+    const fn kind(&self) -> ErrorKind {
+        match self {
+            Self::Io(_) => ErrorKind::Write,
+            Self::Changed => ErrorKind::Changed,
+        }
+    }
+
+    fn message(&self, path: &Path) -> String {
+        match self {
+            Self::Io(e) => format!("writing {} failed: {e}", path.display()),
+            Self::Changed => format!("edit refused: {} changed since scan", path.display()),
+        }
+    }
+}
+
+fn write_splices(path: &Path, splices: &Splices) -> Result<(), WriteRefusal> {
+    let current = fs::read_to_string(path).map_err(WriteRefusal::Io)?;
+    let content = splices.apply(&current).ok_or(WriteRefusal::Changed)?;
+    fs::write(path, content).map_err(WriteRefusal::Io)
 }
 
 // WorkflowScanner - shared file discovery and action extraction
@@ -921,7 +1003,7 @@ mod tests {
         fe.add(edit, ());
         let plan = fe.plan();
         match plan.entries.as_slice() {
-            [((), EditOutcome::Applied { .. })] => Some(plan.content),
+            [((), EditOutcome::Applied { .. })] => Some(plan.content()),
             _ => None,
         }
     }
@@ -1206,7 +1288,7 @@ mod tests {
     fn test_file_edits_empty() {
         let plan = FileEdits::<()>::new(PathBuf::from("/test"), "content".to_string()).plan();
         assert_eq!(plan.entries.len(), 0);
-        assert_eq!(plan.content, "content");
+        assert_eq!(plan.content(), "content");
     }
 
     #[test]
@@ -1217,7 +1299,7 @@ mod tests {
         fe.add(PendingEdit::replace_range(2, 10..12, "v2".to_string()), ());
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "line1\nuses: foo@v2\nline3\n");
+        assert_eq!(plan.content(), "line1\nuses: foo@v2\nline3\n");
         assert_eq!(plan.entries, [((), EditOutcome::Applied { comment: None })]);
     }
 
@@ -1229,7 +1311,7 @@ mod tests {
         fe.add(PendingEdit::replace_range(1, 4..5, "UNO".to_string()), 2);
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "lineONE\nline2\n");
+        assert_eq!(plan.content(), "lineONE\nline2\n");
         assert_eq!(
             plan.entries,
             [
@@ -1249,7 +1331,7 @@ mod tests {
         fe.add(PendingEdit::replace_range(1, 12..14, String::new()), 'b');
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "x: [a@1111, bb@, ccc@3]\n");
+        assert_eq!(plan.content(), "x: [a@1111, bb@, ccc@3]\n");
         assert!(
             plan.entries
                 .iter()
@@ -1284,7 +1366,7 @@ mod tests {
         );
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "abXZghijQ\n");
+        assert_eq!(plan.content(), "abXZghijQ\n");
         assert_eq!(
             plan.entries,
             [
@@ -1314,7 +1396,7 @@ mod tests {
 
         let plan = fe.plan();
         assert_eq!(
-            plan.content,
+            plan.content(),
             "a: [{ uses: a/b@S1 }, { uses: c/d@S2 }]\nb:\n  - uses: e/f@S3 # v3\n"
         );
         assert_eq!(
@@ -1346,7 +1428,7 @@ mod tests {
         );
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "a@X b@Y");
+        assert_eq!(plan.content(), "a@X b@Y");
         assert_eq!(
             plan.entries,
             [
@@ -1370,13 +1452,13 @@ mod tests {
             );
 
             let plan = fe.plan();
-            assert_eq!(plan.content, content.replace("@v1", "@v2"), "{content:?}");
+            assert_eq!(plan.content(), content.replace("@v1", "@v2"), "{content:?}");
             assert_eq!(
                 plan.entries,
                 [((), EditOutcome::Applied { comment: None })],
                 "{content:?}"
             );
-            let refs: Vec<String> = extract_uses_from_yaml(&plan.content)
+            let refs: Vec<String> = extract_uses_from_yaml(&plan.content())
                 .iter()
                 .map(|loc| loc.value().to_string())
                 .collect();
@@ -1394,18 +1476,18 @@ mod tests {
         );
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "uses: a@2 # 2\nnext: x\n");
+        assert_eq!(plan.content(), "uses: a@2 # 2\nnext: x\n");
     }
 
     #[test]
     fn test_file_edits_preserves_trailing_newline() {
         let with_newline = "line1\nline2\n";
         let fe = FileEdits::<()>::new(PathBuf::from("/test"), with_newline.to_string());
-        assert_eq!(fe.plan().content, with_newline);
+        assert_eq!(fe.plan().content(), with_newline);
 
         let without_newline = "line1\nline2";
         let fe2 = FileEdits::<()>::new(PathBuf::from("/test"), without_newline.to_string());
-        assert_eq!(fe2.plan().content, without_newline);
+        assert_eq!(fe2.plan().content(), without_newline);
     }
 
     #[test]
@@ -1422,7 +1504,7 @@ mod tests {
         );
 
         let plan = fe.plan();
-        assert_eq!(plan.content, content);
+        assert_eq!(plan.content(), content);
         assert!(
             plan.entries
                 .iter()
@@ -1437,7 +1519,7 @@ mod tests {
         fe.add(PendingEdit::replace_range(1, 1..2, "x".to_string()), ());
 
         let plan = fe.plan();
-        assert_eq!(plan.content, "é@1\n");
+        assert_eq!(plan.content(), "é@1\n");
         assert_eq!(
             plan.entries,
             [((), EditOutcome::Skipped(SkipReason::OutOfBounds))]
@@ -1453,7 +1535,7 @@ mod tests {
         fe.add(PendingEdit::replace_range(2, 29..31, "v5".to_string()), ());
 
         assert_eq!(
-            fe.plan().content,
+            fe.plan().content(),
             "  - uses: actions/checkout@v4\n  - uses: actions/setup-node@v5\n"
         );
     }
@@ -1476,7 +1558,7 @@ mod tests {
 
         let plan = fe.plan();
         assert_eq!(
-            plan.content.as_bytes(),
+            plan.content().as_bytes(),
             "\u{feff}uses: a/b@NEW # c\r\nx:\r  - uses: c/d@NEW # c\r\n  - uses: e/f@NEW # c\n  - uses: g/h@NEW # c"
                 .as_bytes()
         );
@@ -1583,6 +1665,111 @@ mod tests {
         assert_eq!((errored.site.line, errored.kind), (1, ErrorKind::Write));
         assert_eq!(result.errors.exit_code(), CliExitCode::EnvironmentError);
         assert!(!path.exists());
+        Ok(())
+    }
+
+    fn plan_v2(content: &str) -> EditPlan<()> {
+        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string());
+        fe.add(
+            PendingEdit::replace_range(1, 10..12, "v2".to_string()).with_comment(" # v2".into()),
+            (),
+        );
+        fe.plan()
+    }
+
+    #[test]
+    fn test_splices_apply_keeps_changes_outside_edited_lines() {
+        let plan = plan_v2("uses: a/b@v1\nname: a\n");
+
+        assert_eq!(
+            plan.splices.apply("uses: a/b@v1\nname: longer\nnext: x\n"),
+            Some("uses: a/b@v2 # v2\nname: longer\nnext: x\n".to_string())
+        );
+        assert_eq!(
+            plan.splices.apply("uses: a/b@v1\n"),
+            Some("uses: a/b@v2 # v2\n".to_string())
+        );
+    }
+
+    #[test]
+    fn test_splices_apply_refuses_a_changed_edited_line() {
+        let plan = plan_v2("uses: a/b@v1\nname: a\n");
+
+        for current in [
+            "uses: a/b@v3\nname: a\n",
+            "name: a\nuses: a/b@v1\n",
+            "uses: a/b@v1 # c\nname: a\n",
+            "uses: a/b@v1\r\nname: a\n",
+            "uses: a/b",
+            "",
+        ] {
+            assert_eq!(plan.splices.apply(current), None, "{current:?}");
+        }
+    }
+
+    #[test]
+    fn test_splices_apply_refuses_an_extended_last_line() {
+        let plan = plan_v2("uses: a/b@v1");
+
+        assert_eq!(
+            plan.splices.apply("uses: a/b@v1"),
+            Some("uses: a/b@v2 # v2".to_string())
+        );
+        assert_eq!(plan.splices.apply("uses: a/b@v1 # c"), None);
+        assert_eq!(plan.splices.apply("uses: a/b@v1\n"), None);
+    }
+
+    #[test]
+    fn test_commit_file_refuses_a_file_changed_since_scan() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let scanned = "uses: a/b@v1\n";
+        let changed = "uses: a/b@main\n";
+        fs::write(&path, changed)?;
+        let mut fe = FileEdits::new(path.clone(), scanned.to_string());
+        fe.add(
+            PendingEdit::replace_range(1, 10..12, "v2".to_string()),
+            change(1, "v2", false),
+        );
+
+        let mut result = EditResult::default();
+        let written = commit_file(fe, false, &mut result);
+
+        assert!(written.is_empty());
+        assert_eq!(result.edited, []);
+        let [errored] = result.errored.as_slice() else {
+            panic!("expected one errored ref: {:?}", result.errored);
+        };
+        assert_eq!(errored.kind, ErrorKind::Changed);
+        assert_eq!(
+            errored.message,
+            format!("edit refused: {} changed since scan", path.display())
+        );
+        assert_eq!(result.errors.exit_code(), CliExitCode::EnvironmentError);
+        assert_eq!(fs::read_to_string(&path)?, changed);
+        Ok(())
+    }
+
+    #[test]
+    fn test_commit_file_keeps_changes_made_elsewhere_since_scan()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let scanned = "uses: a/b@v1\nname: a\n";
+        fs::write(&path, "uses: a/b@v1\nname: renamed\n")?;
+        let mut fe = FileEdits::new(path.clone(), scanned.to_string());
+        fe.add(
+            PendingEdit::replace_range(1, 10..12, "v2".to_string()),
+            change(1, "v2", false),
+        );
+
+        let mut result = EditResult::default();
+        let written = commit_file(fe, false, &mut result);
+
+        assert_eq!(written.len(), 1);
+        assert_eq!(result.errors.total(), 0);
+        assert_eq!(fs::read_to_string(&path)?, "uses: a/b@v2\nname: renamed\n");
         Ok(())
     }
 
