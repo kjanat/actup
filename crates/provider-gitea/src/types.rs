@@ -67,8 +67,6 @@ pub struct GiteaRepository {
     pub ssh_url: String,
     /// HTML URL
     pub html_url: String,
-    /// Owner information
-    pub owner: GiteaUser,
 }
 
 /// The archive flag of a repository
@@ -77,21 +75,6 @@ pub struct GiteaArchive {
     /// Whether the repository is archived
     #[serde(default)]
     pub archived: bool,
-}
-
-/// User/organization information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GiteaUser {
-    /// User ID
-    pub id: u64,
-    /// Username/login
-    pub login: String,
-    /// Full name
-    pub full_name: Option<String>,
-    /// Email address
-    pub email: Option<String>,
-    /// Avatar URL
-    pub avatar_url: String,
 }
 
 /// Branch information
@@ -152,30 +135,6 @@ pub struct GiteaCommit {
     pub url: String,
     /// HTML URL
     pub html_url: String,
-    /// Commit details
-    pub commit: GiteaCommitDetails,
-}
-
-/// Detailed commit information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GiteaCommitDetails {
-    /// Commit message
-    pub message: String,
-    /// Author information
-    pub author: GiteaCommitAuthor,
-    /// Committer information
-    pub committer: GiteaCommitAuthor,
-}
-
-/// Author/committer information in commit
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GiteaCommitAuthor {
-    /// Name
-    pub name: String,
-    /// Email
-    pub email: String,
-    /// Timestamp
-    pub date: String,
 }
 
 /// API error response

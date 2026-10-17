@@ -44,7 +44,7 @@ fn tag(name: &str, commit: &str) -> String {
 
 fn repository(default_branch: &str) -> String {
     format!(
-        r#"{{"id": 1, "name": "r", "full_name": "o/r", "description": null, "empty": false, "private": false, "fork": false, "default_branch": "{default_branch}", "clone_url": "c", "ssh_url": "s", "html_url": "h", "owner": {{"id": 2, "login": "o", "full_name": null, "email": null, "avatar_url": "a"}}}}"#
+        r#"{{"id": 1, "name": "r", "full_name": "o/r", "description": null, "empty": false, "private": false, "fork": false, "default_branch": "{default_branch}", "clone_url": "c", "ssh_url": "s", "html_url": "h"}}"#
     )
 }
 
@@ -63,10 +63,7 @@ fn content(name: &str, text: &str) -> String {
 }
 
 fn commit(sha: &str) -> String {
-    let author = r#"{"name": "a", "email": "a@example.com", "date": "2026-01-01T00:00:00Z"}"#;
-    format!(
-        r#"{{"sha": "{sha}", "url": "u", "html_url": "h", "commit": {{"message": "m", "author": {author}, "committer": {author}}}}}"#
-    )
+    format!(r#"{{"sha": "{sha}", "url": "u", "html_url": "h"}}"#)
 }
 
 async fn serve_repository(server: &MockServer) {

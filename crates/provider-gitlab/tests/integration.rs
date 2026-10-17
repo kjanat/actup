@@ -38,7 +38,7 @@ async fn get(server: &MockServer, url: &str, status: u16, body: &str) {
 
 fn tag(name: &str, commit: &str) -> String {
     format!(
-        r#"{{"name": "{name}", "target": "{TAG_OBJECT}", "commit": {{"id": "{commit}", "short_id": "{}", "title": "t", "message": "m", "author_name": "a", "created_at": "2026-01-01T00:00:00Z"}}, "release": null}}"#,
+        r#"{{"name": "{name}", "target": "{TAG_OBJECT}", "commit": {{"id": "{commit}", "short_id": "{}", "title": "t", "message": "m", "author_name": "a", "created_at": "2026-01-01T00:00:00Z"}}, "release": {{"tag_name": 1}}}}"#,
         &commit[..7]
     )
 }

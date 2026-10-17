@@ -48,7 +48,7 @@ pub use client::GitLabClient;
 pub use provider::GitLabProvider;
 pub use types::{
     GitLabBranch, GitLabBranchCommit, GitLabCommit, GitLabError, GitLabFile, GitLabProject,
-    GitLabRelease, GitLabTag,
+    GitLabTag,
 };
 
 /// Default GitLab host

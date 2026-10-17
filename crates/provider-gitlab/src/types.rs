@@ -12,8 +12,6 @@ pub struct GitLabTag {
     pub target: String,
     /// Commit details
     pub commit: Option<GitLabCommit>,
-    /// Release information if this is a release tag
-    pub release: Option<GitLabRelease>,
 }
 
 impl TagLike for GitLabTag {
@@ -42,15 +40,6 @@ pub struct GitLabCommit {
     pub author_name: String,
     /// Commit timestamp
     pub created_at: String,
-}
-
-/// Release information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitLabRelease {
-    /// Release tag name
-    pub tag_name: String,
-    /// Release description
-    pub description: Option<String>,
 }
 
 /// Project (repository) information
