@@ -255,7 +255,7 @@
           "default": "ignore"
         },
         "bump": {
-          "description": "How far to bump outdated version refs.\n\n`patch` stays on `major.minor`, `minor` stays on `major`, `major`\nallows a new major, `latest` takes the newest stable overall.\n\n```toml\nbump = \"minor\"   # v1.2.3 -> v1.5.0, never v2\n```",
+          "description": "How far to bump outdated version refs.\n\n`patch` stays on `major.minor`, `minor` stays on `major`, `latest`\ntakes the newest version overall, and `major` is an alias of `latest`.\n\n```toml\nbump = \"minor\"   # v1.2.3 -> v1.5.0, never v2\n```",
           "$ref": "#/$defs/Update",
           "default": "latest"
         },
@@ -270,7 +270,7 @@
           "default": false
         },
         "track": {
-          "description": "Version granularity of an updated tag ref.\n\n`keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),\n`major` writes the major-only tag when it points at the target commit,\n`exact` always writes the full version.\n\n```toml\ntrack = \"exact\"   # actions/checkout@v4 -> @v6.0.2\n```",
+          "description": "Version granularity of an updated tag ref.\n\n`keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),\n`major` writes the major-only tag when it points at the target commit\nand `bump` allows that whole major, `exact` always writes the full\nversion.\n\n```toml\ntrack = \"exact\"   # actions/checkout@v4 -> @v6.0.2\n```",
           "$ref": "#/$defs/Track",
           "default": "keep"
         }
@@ -390,7 +390,7 @@
           "const": "keep"
         },
         {
-          "description": "Write the major-only tag (`v6`) when it points at the target commit, else the full version.",
+          "description": "Write the major-only tag (`v6`) when it points at the target commit and `bump`\nallows that whole major, else the full version.",
           "type": "string",
           "const": "major"
         },
@@ -402,7 +402,7 @@
       ]
     },
     "Update": {
-      "description": "Update policy determines what version bumps are allowed.\n\n# Workflow Examples\n\n```yaml\n# With bump = \"patch\" (1.2.3 -> 1.2.4 only)\n- uses: actions/checkout@v4.1.0  # stays at v4.1.x\n\n# With bump = \"minor\" (1.2.x -> 1.3.x)\n- uses: actions/checkout@v4.1.0  # can update to v4.2.0\n\n# With bump = \"major\" (1.x -> 2.x)\n- uses: actions/checkout@v3      # can update to v4\n\n# With bump = \"latest\" (always newest)\n- uses: actions/checkout@v2      # updates to v4\n```",
+      "description": "Update policy determines what version bumps are allowed.\n\n# Workflow Examples\n\n```yaml\n# With bump = \"patch\" (1.2.3 -> 1.2.4 only)\n- uses: actions/checkout@v4.1.0  # stays at v4.1.x\n\n# With bump = \"minor\" (1.2.x -> 1.3.x)\n- uses: actions/checkout@v4.1.0  # can update to v4.2.0\n\n# With bump = \"latest\" or its alias \"major\" (any newer version)\n- uses: actions/checkout@v2      # updates to v4\n```",
       "oneOf": [
         {
           "description": "Only patch updates within same major.minor (1.2.3 -> 1.2.4).\n\n```yaml\n# Before:\n- uses: actions/checkout@v4.1.0\n\n# After (bump = \"patch\"):\n- uses: actions/checkout@v4.1.1\n```",
@@ -415,12 +415,12 @@
           "const": "minor"
         },
         {
-          "description": "Major updates allowed (1.x -> 2.x).\n\n```yaml\n# Before:\n- uses: actions/checkout@v3\n\n# After (bump = \"major\"):\n- uses: actions/checkout@v4\n```",
+          "description": "Alias of `latest`: any newer version, across majors.\n\n```yaml\n# Before:\n- uses: actions/checkout@v2\n\n# After (bump = \"major\"):\n- uses: actions/checkout@v4\n```",
           "type": "string",
           "const": "major"
         },
         {
-          "description": "Always update to absolute latest, regardless of major version.\n\n```yaml\n# Before:\n- uses: actions/checkout@v2\n\n# After (bump = \"latest\"):\n- uses: actions/checkout@v4\n```",
+          "description": "Any newer version, across majors.\n\n```yaml\n# Before:\n- uses: actions/checkout@v2\n\n# After (bump = \"latest\"):\n- uses: actions/checkout@v4\n```",
           "type": "string",
           "const": "latest"
         }

@@ -21,10 +21,7 @@ use serde::{
 /// # With bump = "minor" (1.2.x -> 1.3.x)
 /// - uses: actions/checkout@v4.1.0  # can update to v4.2.0
 ///
-/// # With bump = "major" (1.x -> 2.x)
-/// - uses: actions/checkout@v3      # can update to v4
-///
-/// # With bump = "latest" (always newest)
+/// # With bump = "latest" or its alias "major" (any newer version)
 /// - uses: actions/checkout@v2      # updates to v4
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, JsonSchema)]
@@ -53,18 +50,18 @@ pub enum Update {
     /// ```
     Minor,
 
-    /// Major updates allowed (1.x -> 2.x).
+    /// Alias of `latest`: any newer version, across majors.
     ///
     /// ```yaml
     /// # Before:
-    /// - uses: actions/checkout@v3
+    /// - uses: actions/checkout@v2
     ///
     /// # After (bump = "major"):
     /// - uses: actions/checkout@v4
     /// ```
     Major,
 
-    /// Always update to absolute latest, regardless of major version.
+    /// Any newer version, across majors.
     ///
     /// ```yaml
     /// # Before:
@@ -257,7 +254,8 @@ pub enum Track {
     #[default]
     Keep,
 
-    /// Write the major-only tag (`v6`) when it points at the target commit, else the full version.
+    /// Write the major-only tag (`v6`) when it points at the target commit and `bump`
+    /// allows that whole major, else the full version.
     Major,
 
     /// Write the full version (`v6.0.2`).

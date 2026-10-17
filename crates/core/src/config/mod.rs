@@ -212,8 +212,8 @@ pub struct Config {
 pub struct Policy {
     /// How far to bump outdated version refs.
     ///
-    /// `patch` stays on `major.minor`, `minor` stays on `major`, `major`
-    /// allows a new major, `latest` takes the newest stable overall.
+    /// `patch` stays on `major.minor`, `minor` stays on `major`, `latest`
+    /// takes the newest version overall, and `major` is an alias of `latest`.
     ///
     /// ```toml
     /// bump = "minor"   # v1.2.3 -> v1.5.0, never v2
@@ -234,8 +234,9 @@ pub struct Policy {
     /// Version granularity of an updated tag ref.
     ///
     /// `keep` follows the current ref (`v4` -> `v6`, `v4.1.0` -> `v6.0.2`),
-    /// `major` writes the major-only tag when it points at the target commit,
-    /// `exact` always writes the full version.
+    /// `major` writes the major-only tag when it points at the target commit
+    /// and `bump` allows that whole major, `exact` always writes the full
+    /// version.
     ///
     /// ```toml
     /// track = "exact"   # actions/checkout@v4 -> @v6.0.2

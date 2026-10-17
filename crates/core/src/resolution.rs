@@ -406,8 +406,8 @@ fn status_for_non_semver(
 ///
 /// Returns the major-only tag for the target's major (v6) when the track asks
 /// for one and the repo has it. [`policy::Track::Major`] takes that tag only
-/// when it points at the latest version's commit. Otherwise returns the full
-/// version.
+/// when it points at the latest version's commit and `bump` allows every
+/// version of that major. Otherwise returns the full version.
 fn find_best_target(
     versions: &version::Set,
     current: &version::Version,
@@ -419,9 +419,10 @@ fn find_best_target(
         .major()
         .and_then(|major| versions.major_tags().get(&major));
 
+    let whole_major = policy.bump != policy::Update::Patch || current.minor().is_none();
     let target = match (policy.track, major_tag) {
         (policy::Track::Keep, Some(tag)) if current.is_major_only() => tag,
-        (policy::Track::Major, Some(tag)) if tag.sha() == latest.sha() => tag,
+        (policy::Track::Major, Some(tag)) if whole_major && tag.sha() == latest.sha() => tag,
         _ => latest,
     };
     Some(Arc::clone(target))
@@ -1783,6 +1784,58 @@ mod tests {
             assert_eq!(target.version().as_str(), want, "bump = {bump}");
             assert_eq!(target.sha(), sha.repeat(40), "bump = {bump}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn test_track_major_keeps_patch_bumps_off_the_major_tag()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tags = |major_on: &str| {
+            let v4 = make_version_info("v4", &major_on.repeat(40));
+            make_version_set(
+                vec![
+                    make_version_info("v4.1.0", &"1".repeat(40)),
+                    make_version_info("v4.1.3", &"2".repeat(40)),
+                    make_version_info("v4.9.3", &"3".repeat(40)),
+                    v4.clone(),
+                ],
+                None,
+                HashMap::new(),
+                HashMap::from([(4, v4)]),
+            )
+        };
+        let full = make_action_ref("actions", "checkout", "v4.1.0");
+        let major = make_action_ref("actions", "checkout", "v4");
+        for (bump, major_on, action, want) in [
+            ("patch", "2", &full, Some("v4.1.3")),
+            ("minor", "2", &full, Some("v4.9.3")),
+            ("minor", "3", &full, Some("v4")),
+            ("patch", "3", &major, None),
+        ] {
+            let config = format!("{}\ntrack = \"major\"", bump_config(bump));
+            assert_eq!(
+                target_under(&config, action, &tags(major_on))?.as_deref(),
+                want,
+                "bump = {bump}, v4 on {major_on}, ref {}",
+                action.ref_str()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_patch_bump_never_downgrades_a_missing_ref() -> Result<(), Box<dyn std::error::Error>> {
+        let versions = bump_versions(false);
+        let action = make_action_ref("actions", "checkout", "v4.1.9");
+        let config: Config = toml::from_str(&bump_config("patch"))?;
+        assert_eq!(
+            check_action(&action, &versions, &config).status(),
+            &unresolvable(NO_VERSIONS_FOUND_REASON, false)
+        );
+        assert_eq!(
+            target_under(&bump_config("minor"), &action, &versions)?.as_deref(),
+            Some("v4.9.3")
+        );
         Ok(())
     }
 
