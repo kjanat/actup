@@ -7,7 +7,10 @@
 
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
-use actup_core::cache::{self, Cache};
+use actup_core::{
+    cache::{self, Cache},
+    write_atomic,
+};
 use tracing::debug;
 
 /// File-based cache implementation
@@ -159,8 +162,10 @@ impl Cache for FileCache {
             let content =
                 serde_json::to_string(&entry).map_err(|e| cache::Error::Serde(e.to_string()))?;
 
-            tokio::fs::write(&path, content)
+            let target = path.clone();
+            tokio::task::spawn_blocking(move || write_atomic(&target, content.as_bytes()))
                 .await
+                .map_err(|e| cache::Error::Io(e.to_string()))?
                 .map_err(|e| cache::Error::Io(e.to_string()))?;
 
             debug!(key = %key, path = %path.display(), "cache entry written");

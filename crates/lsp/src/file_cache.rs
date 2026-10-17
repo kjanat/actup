@@ -8,7 +8,7 @@ use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 use actup_core::{
     ActionRepoId,
     cache::{self, Cache},
-    provider, version,
+    provider, version, write_atomic,
 };
 
 /// File-based cache implementation that persists version data to disk.
@@ -185,20 +185,10 @@ impl Cache for FileCache {
             let content =
                 serde_json::to_string(&entry).map_err(|e| cache::Error::Serde(e.to_string()))?;
 
-            // Write to a temporary file then atomically rename to avoid
-            // readers seeing partial/corrupt JSON if the process is
-            // interrupted mid-write.
-            // TODO: tmp_path is deterministic per key, so concurrent set() calls
-            // for the same key race on the same tmp file. Current callers are
-            // sequential, but if parallelized (see diagnostics.rs Phase 2 TODO),
-            // either randomize the tmp suffix or add per-key locking.
-            let tmp_path = path.with_extension("json.tmp");
-            tokio::fs::write(&tmp_path, content)
+            tokio::task::spawn_blocking(move || write_atomic(&path, content.as_bytes()))
                 .await
+                .map_err(|e| cache::Error::Io(e.to_string()))?
                 .map_err(|e| cache::Error::Io(e.to_string()))?;
-            tokio::fs::rename(&tmp_path, &path)
-                .await
-                .map_err(|e| cache::Error::Io(format!("atomic rename failed: {e}")))?;
 
             tracing::debug!(key = %key, "cache entry written");
             Ok(())
@@ -457,8 +447,11 @@ mod tests {
         cache.set("atomic_test", entry).await.unwrap();
 
         let path = cache.key_to_path("atomic_test");
-        let tmp_path = path.with_extension("json.tmp");
-        assert!(!tokio::fs::try_exists(&tmp_path).await.unwrap());
+        let names: Vec<std::ffi::OsString> = std::fs::read_dir(&cache.cache_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(names, [path.file_name().unwrap()]);
     }
 
     #[tokio::test]

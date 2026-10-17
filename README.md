@@ -74,14 +74,18 @@ version comment. A `skipped` entry adds `reason` (`unplaceable`, `overlap` or
 `message`. With no workflow files, the report has empty lists and `check` prints
 no findings.
 
-`update` and `pin` re-read each file before writing it. When a line they edit
-differs from the scan, they leave the file untouched, report each of its refs
-with kind `changed` and the message `edit refused: <path> changed since scan`,
-and exit 3. They also parse the edited text before writing it. When it is not
-valid YAML or holds a different number of `uses:` values, they leave the file
-untouched, report each of its refs with kind `invalid_edit`, and exit 2. A dry
-run reports the same refusal. The LSP command `actup-lsp/fixAllInWorkspace`
-applies both checks and leaves out a refused file.
+`update` and `pin` write each file to a temp file in its directory, flush it,
+give it the mode of the original and rename it over the original. A failed write
+leaves the original intact. A write through a symlink replaces the file it
+points to, and a leading byte order mark stays. They re-read each file before
+writing it. When a line they edit differs from the scan, they leave the file
+untouched, report each of its refs with kind `changed` and the message
+`edit refused: <path> changed since scan`, and exit 3. They also parse the
+edited text before writing it. When it is not valid YAML or holds a different
+number of `uses:` values, they leave the file untouched, report each of its refs
+with kind `invalid_edit`, and exit 2. A dry run reports the same refusal. The
+LSP command `actup-lsp/fixAllInWorkspace` applies both checks and leaves out a
+refused file.
 
 ## Configuration
 

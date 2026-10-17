@@ -11,6 +11,8 @@
 #![warn(missing_docs)]
 
 pub mod action_ref;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod atomic_write;
 pub mod cache;
 pub mod caching_provider;
 pub mod clock;
@@ -26,6 +28,8 @@ pub mod version;
 
 // Re-export primary types at crate root
 pub use action_ref::{ActionRef, ActionRepoId};
+#[cfg(not(target_arch = "wasm32"))]
+pub use atomic_write::{rewrite_atomic, write_atomic};
 pub use caching_provider::{CacheStats, CachingProvider};
 pub use clock::{Clock, SystemClock};
 pub use compat::{BoxFuture, MaybeSend, MaybeSync};

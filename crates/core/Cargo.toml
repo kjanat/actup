@@ -22,6 +22,7 @@ wasm-bindgen  = { workspace = true, optional = true }  # required by tsify-next 
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tempfile   = { workspace = true }
 tokio      = { workspace = true }
 toml       = { workspace = true }
 

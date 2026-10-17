@@ -13,7 +13,7 @@ use std::{
 use actup_core::{
     ActionRef, Config, DiscoveredFile, EditValidationError, Error as CoreError, Provider,
     UsesLocation, discover_files, extract_uses_from_yaml, line_spans, lines_ending_in_scalars,
-    parse_uses, provider, validate_edit, version,
+    parse_uses, provider, rewrite_atomic, validate_edit, version,
 };
 use owo_colors::OwoColorize;
 use serde::Serialize;
@@ -702,11 +702,18 @@ impl WriteRefusal {
     }
 }
 
+impl From<std::io::Error> for WriteRefusal {
+    fn from(e: std::io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
 fn write_splices(path: &Path, splices: &Splices) -> Result<(), WriteRefusal> {
-    let current = fs::read_to_string(path).map_err(WriteRefusal::Io)?;
-    let content = splices.apply(&current).ok_or(WriteRefusal::Changed)?;
-    validate_edit(&current, &content).map_err(WriteRefusal::Invalid)?;
-    fs::write(path, content).map_err(WriteRefusal::Io)
+    rewrite_atomic(path, |current| {
+        let content = splices.apply(current).ok_or(WriteRefusal::Changed)?;
+        validate_edit(current, &content).map_err(WriteRefusal::Invalid)?;
+        Ok(content)
+    })
 }
 
 // WorkflowScanner - shared file discovery and action extraction
@@ -1648,6 +1655,31 @@ mod tests {
         assert_eq!(result.skipped[0].reason, SkipReason::Overlap);
         assert_eq!(result.errors.total(), 0);
         assert_eq!(fs::read_to_string(&path)?, "uses: a/b@v2 # c\n");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_commit_file_keeps_mode_and_bom() -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("ci.yml");
+        let content = "\u{feff}uses: a/b@v1\n";
+        fs::write(&path, content)?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        let mut fe = FileEdits::new(path.clone(), content.to_string());
+        fe.add(
+            PendingEdit::replace_range(1, 13..15, "v2".to_string()),
+            change(1, "v2", false),
+        );
+
+        let mut result = EditResult::default();
+        let written = commit_file(fe, false, &mut result);
+
+        assert_eq!(written.len(), 1);
+        assert_eq!(fs::read(&path)?, "\u{feff}uses: a/b@v2\n".as_bytes());
+        assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o7777, 0o600);
         Ok(())
     }
 
