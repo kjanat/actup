@@ -31,12 +31,11 @@ DEFAULT_CMD="${DEFAULT_CMD:-tree-sitter}"    # what bare-invocation runs
 if [ -t 1 ] && [ -t 2 ]; then
 	C_USED=$'\033[31m'    # red fg = currently in use
 	C_PLANNED=$'\033[33m' # yellow fg = the cap we're about to allocate
-	C_FREE=$'\033[32m'    # green fg = free / remaining
 	C_TRACK=$'\033[2;37m' # dim grey = empty bar track
 	C_RESET=$'\033[0m'
 	C_DIM=$'\033[2m'
 else
-	C_USED='' C_PLANNED='' C_FREE='' C_TRACK='' C_RESET='' C_DIM=''
+	C_USED='' C_PLANNED='' C_TRACK='' C_RESET='' C_DIM=''
 fi
 
 # Format a megabyte count for display: "X.Y GB" when |mb| > 1024, else "N MB".
