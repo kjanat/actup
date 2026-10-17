@@ -347,7 +347,8 @@ mod tests {
                   \"uses\":\"json/style@v3\",\n\
                   uses:\n\
                   print(\"- uses: esc/aped@v5\\n\")\n\
-                  grep -q 'uses: a/b@v4\\.1\\.0' && x='uses: c/d@v\\d+'\n";
+                  grep -q 'uses: a/b@v4\\.1\\.0' && x='uses: c/d@v\\d+'\n\
+                  w(\"uses: r/s@v6\\r\"); w(\"uses: t/u@v7\\tx\"); w(\"uses: q/e@v8\\\"x\")\n";
         assert_eq!(
             found(SourceFormat::Text, ts),
             [
@@ -359,6 +360,9 @@ mod tests {
                 (10, "esc/aped@v5".into(), Some("v5".into())),
                 (11, "a/b@v4\\.1\\.0".into(), Some("v4\\.1\\.0".into())),
                 (11, "c/d@v\\d+".into(), Some("v\\d+".into())),
+                (12, "r/s@v6".into(), Some("v6".into())),
+                (12, "t/u@v7".into(), Some("v7".into())),
+                (12, "q/e@v8".into(), Some("v8".into())),
             ]
         );
     }
