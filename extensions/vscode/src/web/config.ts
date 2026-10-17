@@ -115,8 +115,18 @@ export function watchConfig(store: ConfigStore, reload: () => void): vscode.Disp
 			disposable.dispose();
 		}
 		const configPath = configPathSetting();
-		explicit = configPath === undefined ? [] : (vscode.workspace.workspaceFolders ?? []).flatMap((folder) => {
-			const file = resolveConfigPath(folder.uri, configPath);
+		const targets = configPath === undefined
+			? []
+			: (vscode.workspace.workspaceFolders ?? []).map(folder => resolveConfigPath(folder.uri, configPath));
+		const files = new Map<string, vscode.Uri>();
+		for (const file of targets) {
+			const covered = vscode.workspace.getWorkspaceFolder(file) !== undefined
+				&& repoConfigCandidates().some(candidate => file.path.endsWith(`/${candidate}`));
+			if (!covered) {
+				files.set(file.toString(), file);
+			}
+		}
+		explicit = [...files.values()].flatMap((file) => {
 			const name = file.path.slice(file.path.lastIndexOf("/") + 1);
 			const pattern = new vscode.RelativePattern(vscode.Uri.joinPath(file, ".."), name);
 			return watch(vscode.workspace.createFileSystemWatcher(pattern));

@@ -153,17 +153,26 @@ describe("watchConfig", () => {
 		const targets = () =>
 			explicit().map(watcher => typeof watcher.glob === "string" ? "" : `${watcher.glob.base.toString()} ${watcher.glob.pattern}`);
 
-		expect(targets()).toEqual(["file:///shared actup.toml", "file:///shared actup.toml"]);
+		expect(targets()).toEqual(["file:///shared actup.toml"]);
 		explicit()[0]?.changed.fire(MockUri.parse("file:///shared/actup.toml"));
-		explicit()[1]?.deleted.fire(MockUri.parse("file:///shared/actup.toml"));
+		explicit()[0]?.deleted.fire(MockUri.parse("file:///shared/actup.toml"));
 		expect(reloads).toBe(2);
 
 		mockWorkspace.settings.set("actup.configPath", "/cfg/actup.json");
 		mockWorkspace.configurationChanges.fire({ affectsConfiguration: section => section === "actup.configPath" });
-		expect(targets()).toEqual(["file:///cfg actup.json", "file:///cfg actup.json"]);
+		expect(targets()).toEqual(["file:///cfg actup.json"]);
 		expect(reloads).toBe(3);
 
+		mockWorkspace.settings.set("actup.configPath", "ci/settings.toml");
+		mockWorkspace.folderChanges.fire(undefined);
+		expect(targets()).toEqual(["file:///repo/ci settings.toml", "file:///other/ci settings.toml"]);
+
+		mockWorkspace.settings.set("actup.configPath", "ci/actup.json");
+		mockWorkspace.folderChanges.fire(undefined);
+		expect(targets()).toEqual([]);
+
 		mockWorkspace.folders.splice(1);
+		mockWorkspace.settings.set("actup.configPath", "/cfg/actup.json");
 		mockWorkspace.folderChanges.fire(undefined);
 		expect(targets()).toEqual(["file:///cfg actup.json"]);
 
@@ -171,9 +180,9 @@ describe("watchConfig", () => {
 		mockWorkspace.configurationChanges.fire({ affectsConfiguration: section => section === "actup.configPath" });
 		expect(targets()).toEqual([]);
 
-		mockWorkspace.settings.set("actup.configPath", "ci/actup.json");
+		mockWorkspace.settings.set("actup.configPath", "ci/settings.toml");
 		mockWorkspace.folderChanges.fire(undefined);
-		expect(targets()).toEqual(["file:///repo/ci actup.json"]);
+		expect(targets()).toEqual(["file:///repo/ci settings.toml"]);
 		for (const disposable of disposables) {
 			disposable.dispose();
 		}
