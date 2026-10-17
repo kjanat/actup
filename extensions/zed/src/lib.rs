@@ -489,6 +489,8 @@ enum Anchor<'a> {
     Relative,
     Rooted,
     Prefixed(Vec<&'a str>),
+    DriveRelative(&'a str),
+    Device,
 }
 
 impl PathStyle {
@@ -506,7 +508,7 @@ impl PathStyle {
     fn same_name(self, a: &str, b: &str) -> bool {
         match self {
             Self::Posix => a == b,
-            Self::Windows => a.to_lowercase() == b.to_lowercase(),
+            Self::Windows => a.chars().map(upcase).eq(b.chars().map(upcase)),
         }
     }
 
@@ -516,14 +518,28 @@ impl PathStyle {
 
     fn anchor(self, path: &str) -> (Anchor<'_>, &str) {
         let bytes = path.as_bytes();
+        let separator_at = |i: usize| {
+            bytes
+                .get(i)
+                .is_some_and(|&b| self.is_separator(char::from(b)))
+        };
         if self == Self::Windows && bytes.len() >= 2 {
-            if self.is_separator(char::from(bytes[0])) && self.is_separator(char::from(bytes[1])) {
+            if separator_at(0) && separator_at(1) {
+                if matches!(bytes.get(2), Some(b'?' | b'.')) && separator_at(3) {
+                    return (Anchor::Device, &path[4..]);
+                }
                 let mut share = path[2..].splitn(3, |c| self.is_separator(c));
                 let prefix = share.by_ref().take(2).collect();
                 return (Anchor::Prefixed(prefix), share.next().unwrap_or(""));
             }
             if bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
-                return (Anchor::Prefixed(vec![&path[..2]]), &path[2..]);
+                let drive = &path[..2];
+                let anchor = if separator_at(2) {
+                    Anchor::Prefixed(vec![drive])
+                } else {
+                    Anchor::DriveRelative(drive)
+                };
+                return (anchor, &path[2..]);
             }
         }
         let anchor = if path.starts_with(|c| self.is_separator(c)) {
@@ -547,6 +563,17 @@ impl PathStyle {
     }
 }
 
+fn upcase(c: char) -> char {
+    if u32::from(c) > 0xFFFF {
+        return c;
+    }
+    let mut upper = c.to_uppercase();
+    match (upper.next(), upper.next()) {
+        (Some(upper), None) => upper,
+        _ => c,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorktreePath {
     style: PathStyle,
@@ -566,10 +593,12 @@ fn worktree_relative(
     root: &str,
     config_path: &str,
 ) -> Result<WorktreePath, String> {
+    let outside = || format!("configPath `{config_path}` is outside the worktree `{root}`");
     let (root_anchor, root_rest) = style.anchor(root);
     let root_prefix = match root_anchor {
         Anchor::Prefixed(prefix) => prefix,
-        Anchor::Relative | Anchor::Rooted => Vec::new(),
+        Anchor::DriveRelative(drive) => vec![drive],
+        Anchor::Relative | Anchor::Rooted | Anchor::Device => Vec::new(),
     };
     let mut root_parts = Vec::new();
     style.push_components(&mut root_parts, root_rest);
@@ -577,8 +606,17 @@ fn worktree_relative(
     let (anchor, rest) = style.anchor(config_path);
     let (prefix, mut parts) = match anchor {
         Anchor::Relative => (root_prefix.clone(), root_parts.clone()),
+        Anchor::DriveRelative(drive) if style.same_parts(&[drive], &root_prefix) => {
+            (root_prefix.clone(), root_parts.clone())
+        }
+        Anchor::DriveRelative(_) => return Err(outside()),
         Anchor::Rooted => (root_prefix.clone(), Vec::new()),
         Anchor::Prefixed(prefix) => (prefix, Vec::new()),
+        Anchor::Device => {
+            return Err(format!(
+                "configPath `{config_path}` is a Windows device path"
+            ));
+        }
     };
     style.push_components(&mut parts, rest);
 
@@ -586,9 +624,7 @@ fn worktree_relative(
         && parts.len() >= root_parts.len()
         && style.same_parts(&parts[..root_parts.len()], &root_parts);
     if !inside {
-        return Err(format!(
-            "configPath `{config_path}` is outside the worktree `{root}`"
-        ));
+        return Err(outside());
     }
     let relative = &parts[root_parts.len()..];
     if relative.is_empty() {
@@ -1219,6 +1255,10 @@ mod tests {
         assert!(PathStyle::Windows.same_name("ÄRGER", "ärger"));
         assert!(!PathStyle::Posix.same_name("ÄRGER", "ärger"));
         assert!(!PathStyle::Windows.same_name("ärger", "ärgern"));
+        assert!(PathStyle::Windows.same_name("σ", "ς"));
+        assert!(!PathStyle::Windows.same_name("\u{212A}", "k"));
+        assert!(!PathStyle::Windows.same_name("\u{1E9E}", "ß"));
+        assert!(!PathStyle::Windows.same_name("\u{10428}", "\u{10400}"));
     }
 
     fn assert_maps(style: PathStyle, root: &str, cases: &[(&str, &str)]) -> Result<(), String> {
@@ -1283,7 +1323,27 @@ mod tests {
             PathStyle::Windows,
             "C:\\Ärger",
             &[("c:\\ärger\\actup.toml", "actup.toml")],
+        )?;
+        assert_maps(
+            PathStyle::Windows,
+            "C:\\repo",
+            &[
+                ("C:actup.toml", "actup.toml"),
+                ("c:actup.toml", "actup.toml"),
+                ("C:repo\\actup.toml", "repo/actup.toml"),
+                ("C:..\\repo\\ci\\actup.toml", "ci/actup.toml"),
+            ],
         )
+    }
+
+    #[test]
+    fn worktree_relative_rejects_windows_device_paths() {
+        for written in ["\\\\?\\C:\\repo\\actup.toml", "//./C:/repo/actup.toml"] {
+            assert_eq!(
+                worktree_relative(PathStyle::Windows, "C:\\repo", written),
+                Err(format!("configPath `{written}` is a Windows device path"))
+            );
+        }
     }
 
     #[test]
@@ -1365,6 +1425,12 @@ mod tests {
                 PathStyle::Posix,
                 "/home/u/repo",
                 "/home/u/Repo/actup.toml",
+                "is outside the worktree",
+            ),
+            (
+                PathStyle::Windows,
+                "C:\\repo",
+                "D:actup.toml",
                 "is outside the worktree",
             ),
         ];
