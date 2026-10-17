@@ -54,7 +54,7 @@ ghcr.io/o/i:v1.0.0-beta_exp
 EOF'
 
 long="v1.0.0-$(printf 'a%.0s' {1..122})"
-for tag in "v1.0.0~x" "release/v1" ".v1" "${long}"; do
+for tag in "v1.0.0~x" "release/v1" ".v1" "v1.0.0-é" "${long}"; do
 	if ! decide "${tag}" && grep -q "::error::tag ${tag} gives the invalid image tag" "${work}/out" \
 		&& [[ ! -s "${work}/output" ]]; then
 		pass "${tag:0:20} fails before any output"

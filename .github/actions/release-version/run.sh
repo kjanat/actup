@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+export LC_ALL=C
 
 tag="${RELEASE_TAG:?RELEASE_TAG required}"
 image="${IMAGE:?IMAGE required}"
