@@ -4,10 +4,10 @@ use zed_extension_api::{self as zed};
 
 mod provider;
 
-use std::{env, fmt::Write as _, fs, path::Path};
+use std::{collections::HashMap, env, fmt::Write as _, fs, path::Path};
 
 use actup_core::{
-    ActionRef, CheckResult, CheckStatus, Config, UsesLocation,
+    ActionRef, CachingProvider, CheckResult, CheckStatus, Config, UsesLocation,
     config::{EnvOverrides, repo_candidates},
     extract_uses_from_yaml,
 };
@@ -242,46 +242,26 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         return Ok(no_refs_output(&config, files.len()));
     }
 
-    // Deduplicate repos to minimize API calls. Key by (host, owner, repo) so the
-    // same `owner/repo` on different hosts (e.g. GitHub.com vs GHE) does not collide.
-    let mut unique_repos: std::collections::HashMap<(String, String, String), RepoFetch> =
-        std::collections::HashMap::new();
-    for (_, _, action_ref) in &all_refs {
-        let host = action_ref.host().unwrap_or("github.com").to_string();
-        let owner = action_ref.owner().to_string();
-        let repo = action_ref.repo().to_string();
-        let api_base = api_base_for_host(&host);
-        let entry = unique_repos
-            .entry((host, owner.clone(), repo.clone()))
-            .or_insert(RepoFetch {
-                owner,
-                repo,
-                api_base,
-                with_branches: false,
-            });
-        entry.with_branches |= names_branch(action_ref);
-    }
+    let unique_repos = plan_fetches(all_refs.iter().map(|(_, _, action_ref)| action_ref));
 
     // Resolve GitHub token from shell environment
     let token = shell_env
         .iter()
         .find(|(k, _)| k == "GITHUB_TOKEN")
-        .map(|(_, v)| v.as_str());
+        .map(|(_, v)| v.clone());
+    let http = provider::ZedHttp::new(token.clone());
 
     // Fetch versions for each unique (host, owner, repo)
-    let mut version_cache: std::collections::HashMap<
-        (String, String, String),
-        actup_core::version::Set,
-    > = std::collections::HashMap::new();
+    let mut version_cache: HashMap<RepoKey, actup_core::version::Set> = HashMap::new();
     let mut fetch_errors: Vec<(String, String)> = Vec::new();
 
     for (key, fetch) in &unique_repos {
         match provider::fetch_version_set(
+            &http,
             &fetch.owner,
             &fetch.repo,
-            token,
             &fetch.api_base,
-            3,
+            provider::MAX_PAGES,
             fetch.with_branches,
         ) {
             Ok(versions) => {
@@ -293,17 +273,20 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
         }
     }
 
-    // Check each ref
+    let mut providers: HashMap<String, CachingProvider<provider::RestProvider<provider::ZedHttp>>> =
+        HashMap::new();
     let mut results: Vec<(String, UsesLocation, CheckResult)> = Vec::new();
     for (path, uses_loc, action_ref) in &all_refs {
-        let host = action_ref.host().unwrap_or("github.com").to_string();
-        let key = (
-            host,
-            action_ref.owner().to_string(),
-            action_ref.repo().to_string(),
-        );
+        let key = repo_key(action_ref);
         if let Some(versions) = version_cache.get(&key) {
-            let result = actup_core::check_action(action_ref, versions, &config);
+            let lookup = providers.entry(key.0.clone()).or_insert_with(|| {
+                CachingProvider::new(provider::RestProvider::new(
+                    provider::ZedHttp::new(token.clone()),
+                    api_base_for_host(&key.0),
+                    key.0.clone(),
+                ))
+            });
+            let result = provider::check(action_ref, versions, &config, lookup);
             results.push((path.clone(), uses_loc.clone(), result));
         }
     }
@@ -324,6 +307,33 @@ struct RepoFetch {
     repo: String,
     api_base: String,
     with_branches: bool,
+}
+
+type RepoKey = (String, String, String);
+
+fn repo_key(action_ref: &ActionRef) -> RepoKey {
+    (
+        action_ref.host().unwrap_or("github.com").to_string(),
+        action_ref.owner().to_string(),
+        action_ref.repo().to_string(),
+    )
+}
+
+fn plan_fetches<'a>(refs: impl IntoIterator<Item = &'a ActionRef>) -> HashMap<RepoKey, RepoFetch> {
+    let mut unique_repos: HashMap<RepoKey, RepoFetch> = HashMap::new();
+    for action_ref in refs {
+        let key = repo_key(action_ref);
+        let entry = unique_repos
+            .entry(key.clone())
+            .or_insert_with(|| RepoFetch {
+                owner: key.1,
+                repo: key.2,
+                api_base: api_base_for_host(&key.0),
+                with_branches: false,
+            });
+        entry.with_branches |= names_branch(action_ref);
+    }
+    unique_repos
 }
 
 fn names_branch(action_ref: &ActionRef) -> bool {
@@ -632,6 +642,35 @@ mod tests {
                 .map(|contents| (*contents).to_owned())
                 .ok_or_else(|| format!("{path}: not found"))
         }
+    }
+
+    #[test]
+    fn plan_fetches_lists_branches_when_any_ref_names_one() {
+        let refs = [
+            ActionRef::new(None, "actions", "checkout", None, "v4"),
+            ActionRef::new(None, "actions", "checkout", None, "main"),
+            ActionRef::new(None, "actions", "checkout", None, "v4.2.0"),
+            ActionRef::new(None, "actions", "cache", None, "v4"),
+            ActionRef::new(Some("ghe.corp".into()), "actions", "checkout", None, "v4"),
+        ];
+        let plan = plan_fetches(&refs);
+        let fetch = |host: &str, repo: &str| {
+            plan.get(&(host.to_string(), "actions".to_string(), repo.to_string()))
+                .map(|f| (f.with_branches, f.api_base.clone()))
+        };
+        assert_eq!(plan.len(), 3);
+        assert_eq!(
+            fetch("github.com", "checkout"),
+            Some((true, "https://api.github.com".to_string()))
+        );
+        assert_eq!(
+            fetch("github.com", "cache"),
+            Some((false, "https://api.github.com".to_string()))
+        );
+        assert_eq!(
+            fetch("ghe.corp", "checkout"),
+            Some((false, "https://ghe.corp/api/v3".to_string()))
+        );
     }
 
     #[test]
