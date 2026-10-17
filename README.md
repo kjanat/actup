@@ -10,7 +10,8 @@ GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 - **Check** workflows for outdated action versions
 - **Update** to latest versions (respecting semver policy)
 - **Pin** refs to immutable commit SHAs for security
-- **Multi-provider**: GitHub, GitLab, Gitea/Forgejo
+- **Providers**: GitHub and GitHub Enterprise. GitLab and Gitea/Forgejo are not
+  wired yet (#48)
 - **LSP**: Editor diagnostics and code actions
 - **MCP**: Tools for AI agents
 
@@ -100,11 +101,6 @@ max_tags_per_repo = 10  # Tags to fetch per repo (1-255)
 kind      = "github"
 api_base  = "https://ghe.example.com/api/v3"
 token_env = "GHE_TOKEN"
-
-# GitLab
-[hosts."gitlab.com"]
-kind      = "gitlab"
-token_env = "GITLAB_TOKEN"
 ```
 
 ### Config Discovery
@@ -120,8 +116,6 @@ token_env = "GITLAB_TOKEN"
 **Authentication:**
 
 - `GITHUB_TOKEN` - GitHub API authentication
-- `GITLAB_TOKEN` - GitLab API authentication
-- `GITEA_TOKEN` - Gitea/Forgejo API authentication
 
 **CLI defaults:**
 

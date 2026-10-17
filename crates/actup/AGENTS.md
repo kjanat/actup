@@ -57,17 +57,16 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 - `--format json` for machine output; schema must be stable
 - `--verbose` enables debug tracing
 - `--dry-run` for update/fix/pin shows changes without applying
-- Feature flags: `gitea`, `gitlab` for optional providers
-- `github` feature is a no-op; `actup-provider-github` is always compiled in
+- Feature flags `github`, `gitlab`, `gitea` are placeholders that compile
+  nothing; `default = ["github"]`
+- `actup-provider-github` is always compiled in
 
 ## Provider Wiring
 
 `main.rs` builds the provider `Registry`:
 
 - GitHub: always registered (non-optional)
-- GitLab: `#[cfg(feature = "gitlab")]` (optional)
-- Gitea: `#[cfg(feature = "gitea")]` (optional)
-- All features enabled by default
+- GitLab, Gitea: not registered; their crates export no `REGISTRATION` (#48)
 
 ## Tests
 

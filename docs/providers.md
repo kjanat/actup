@@ -86,7 +86,7 @@ let version_set: version::Set = process_tags(tags);
 major-only tags (`v1`, `v2`) and builds the `version::Set`. GitHub, GitLab and
 Gitea get identical version semantics from this one function.
 
-## Supported Providers
+## Providers
 
 ### GitHub (`actup-provider-github`)
 
@@ -115,9 +115,12 @@ token_env = "GHE_TOKEN"
 
 ### GitLab (`actup-provider-gitlab`)
 
-**Status**: ✅ Complete, ready for use
+**Status**: Not wired (#48). The crate implements `Provider`, but it exports no
+`REGISTRATION`, and neither the CLI nor the LSP registers it. A `[hosts]` entry
+with `kind = "gitlab"` stops every run with
+`provider GitLab not compiled in (available: github)`.
 
-**Features**:
+**Crate features**:
 
 - GitLab.com and self-hosted GitLab support
 - Personal access tokens and project access tokens
@@ -125,16 +128,17 @@ token_env = "GHE_TOKEN"
 - Project path URL encoding (handles namespaces correctly)
 - Base64 content decoding
 
-**Configuration**:
+**Planned configuration** (#48). `api_base` is the full API root:
 
 ```toml
 [hosts."gitlab.com"]
 kind      = "gitlab"
+api_base  = "https://gitlab.com/api/v4"
 token_env = "GITLAB_TOKEN"
 
 [hosts."gitlab.example.com"]
 kind      = "gitlab"
-api_base  = "https://gitlab.example.com"
+api_base  = "https://gitlab.example.com/api/v4"
 token_env = "GITLAB_PRIVATE_TOKEN"
 ```
 
@@ -149,9 +153,12 @@ token_env = "GITLAB_PRIVATE_TOKEN"
 
 ### Gitea/Forgejo (`actup-provider-gitea`)
 
-**Status**: ✅ Complete, ready for use
+**Status**: Not wired (#48). The crate implements `Provider`, but it exports no
+`REGISTRATION`, and neither the CLI nor the LSP registers it. A `[hosts]` entry
+with `kind = "gitea"` stops every run with
+`provider Gitea not compiled in (available: github)`.
 
-**Features**:
+**Crate features**:
 
 - Gitea and Forgejo support (same API)
 - API token authentication
@@ -159,18 +166,18 @@ token_env = "GITLAB_PRIVATE_TOKEN"
 - Base64 content decoding
 - Compatible with Gitea API v1
 
-**Configuration**:
+**Planned configuration** (#48). `api_base` is the full API root:
 
 ```toml
 [hosts."gitea.example.com"]
 kind      = "gitea"
-api_base  = "https://gitea.example.com"
+api_base  = "https://gitea.example.com/api/v1"
 token_env = "GITEA_TOKEN"
 
 # Forgejo is a soft fork of Gitea with identical API
 [hosts."forgejo.example.com"]
 kind      = "gitea"  # Uses "gitea" kind
-api_base  = "https://forgejo.example.com"
+api_base  = "https://forgejo.example.com/api/v1"
 token_env = "FORGEJO_TOKEN"
 ```
 
@@ -183,13 +190,14 @@ token_env = "FORGEJO_TOKEN"
 - Stop pagination when empty array returned
 - API versioned at `/api/v1`
 
-## Multi-Provider Workflows
+## Host Routing
 
-Actup automatically routes action references to the appropriate provider based
-on the host:
+Actup routes each action reference to the provider registered for its host. The
+default build registers GitHub only, so github.com and GitHub Enterprise hosts
+resolve. GitLab and Gitea hosts resolve once #48 wires their providers.
 
 ```yaml
-# .github/workflows/multi-platform.yml
+# .github/workflows/build.yml
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -197,34 +205,8 @@ jobs:
       # GitHub.com (default provider)
       - uses: actions/checkout@v4
 
-      # GitHub Enterprise
+      # GitHub Enterprise, with a `[hosts."github.enterprise.com"]` entry
       - uses: github.enterprise.com/internal/setup@v2
-
-      # GitLab.com
-      - uses: gitlab.com/my-org/deploy-action@v1.5.0
-
-      # Self-hosted GitLab
-      - uses: gitlab.example.com/team/build-action@v3
-
-      # Gitea
-      - uses: gitea.example.com/community/test@v2.1.0
-
-      # Forgejo
-      - uses: forgejo.example.com/tools/release@v4
-```
-
-**Running actup check:**
-
-```bash
-$ actup check
-✓ actions/checkout@v4 (github.com) up to date
-✓ github.enterprise.com/internal/setup@v2 up to date
-⚠ gitlab.com/my-org/deploy-action@v1.5.0 → v1.6.0 available
-✓ gitlab.example.com/team/build-action@v3 up to date
-✓ gitea.example.com/community/test@v2.1.0 up to date
-⚠ forgejo.example.com/tools/release@v4 → v5.0.0 available (major)
-
-Scanned 6 actions: 4 up to date, 0 ignored, 2 outdated
 ```
 
 ## Provider Selection Algorithm
@@ -263,18 +245,11 @@ The provider architecture is designed to make this straightforward.
 
 ## Feature Flags
 
-Providers beyond GitHub are feature-gated for minimal compile times:
-
-```bash
-# Default: all providers enabled
-cargo build
-
-# GitHub only:
-cargo build --no-default-features --features github
-
-# Specific providers:
-cargo build --features "github gitlab"
-```
+`crates/actup` declares the features `github`, `gitlab` and `gitea`. The default
+build enables `github` and is GitHub-only. All three features are placeholders.
+`actup-provider-github` is a non-optional dependency of the CLI and the LSP, and
+`gitlab` and `gitea` compile nothing until #48 wires them. The LSP declares no
+provider features.
 
 ## Provider Quality Checklist
 
@@ -302,7 +277,7 @@ When implementing or reviewing a provider:
 
 ### For Users
 
-- **Unified CLI**: Same commands work across all platforms
+- **Unified CLI**: Same commands work for every registered provider
 - **Consistent behavior**: Version resolution works identically everywhere
 - **Easy migration**: Switch platforms without changing workflows
 
@@ -317,7 +292,6 @@ When implementing or reviewing a provider:
 
 - **Core stability**: Platform changes don't affect core
 - **Independent versioning**: Providers can evolve separately
-- **Feature flags**: Users only compile what they need
 - **Testability**: Mock providers for testing core logic
 
 ## Migration from Old Config Format

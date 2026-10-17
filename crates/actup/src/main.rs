@@ -141,16 +141,13 @@ async fn run(cli: Cli) -> i32 {
     }
 }
 
-/// Returns all provider registrations enabled by Cargo features.
+/// Returns all compiled-in provider registrations.
 ///
 /// Each compiled-in provider crate contributes its static [`Registration`].
 /// The returned list is validated: duplicate preset hostnames across
 /// providers cause a panic (programmer invariant).
 ///
-/// Feature gates:
-/// - GitHub is always included (`actup-provider-github` is non-optional)
-/// - GitLab included when `gitlab` feature is enabled
-/// - Gitea included when `gitea` feature is enabled
+/// Only GitHub is included (`actup-provider-github` is non-optional).
 ///
 /// # Panics
 ///

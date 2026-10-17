@@ -50,7 +50,8 @@ Binary crate (no `lib.rs`). All modules declared in `main.rs`. Uses
 
 ## Architecture Notes
 
-- **Only supports GitHub provider** — no GitLab/Gitea wiring yet (unlike CLI)
+- **Only supports GitHub provider**: GitLab/Gitea are not wired in the LSP or
+  the CLI (#48)
 - Tracing goes to **stderr** (stdout is LSP protocol channel)
 - `DashMap` for concurrent document state
 - `tokio::RwLock` for shared provider/config access

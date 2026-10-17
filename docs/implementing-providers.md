@@ -37,6 +37,9 @@ serde           = { workspace = true }
 serde_json      = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
+
+[lints]
+workspace = true
 ```
 
 ### 2. Define API Response Types
@@ -210,12 +213,19 @@ use actup_providers::{filename_label, parse_action_yml, process_tags};
 
 use crate::client::YourClient;
 
+/// YourPlatform implementation of [`Provider`].
 pub struct YourProvider {
     client: YourClient,
     host: String,
 }
 
 impl YourProvider {
+    /// Creates a provider for the API root `api_base` serving `host`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the token is not a valid header value or the HTTP
+    /// client cannot be built.
     pub fn new(api_base: &str, host: &str, token: Option<&str>) -> Result<Self> {
         Ok(Self {
             client: YourClient::new(api_base, host, token)?,
@@ -312,8 +322,8 @@ impl Provider for YourProvider {
                         let text = decode_base64_content(&content)?;
                         return Ok(Some(text));
                     }
-                    Err(Error::NotFound { .. }) => continue, // Try next filename
-                    Err(e) => return Err(e), // Propagate auth/rate-limit/network errors
+                    Err(Error::NotFound { .. }) => {} // Try next filename
+                    Err(e) => return Err(e),          // Propagate auth/rate-limit/network errors
                 }
             }
             Ok(None)
@@ -345,8 +355,8 @@ impl Provider for YourProvider {
                         let raw = decode_base64_content(&content)?;
                         return parse_action_yml(&raw, filename_label(&path));
                     }
-                    Err(Error::NotFound { .. }) => continue, // Try action.yaml
-                    Err(e) => return Err(e), // Propagate auth/rate-limit/network errors
+                    Err(Error::NotFound { .. }) => {} // Try action.yaml
+                    Err(e) => return Err(e),          // Propagate auth/rate-limit/network errors
                 }
             }
 
@@ -361,6 +371,8 @@ impl Provider for YourProvider {
 ```
 
 ### 5. Helper Functions
+
+Add to `src/provider.rs`:
 
 ```rust
 use base64::{Engine, engine::general_purpose::STANDARD};
@@ -386,15 +398,24 @@ Parse `action.yml` content with the shared
 `actup_providers::parse_action_yml(raw, path)`. Pass the loaded filename as
 `path` through `actup_providers::filename_label`. Parse errors name that file.
 
-### 6. Export REGISTRATION
+### 6. Declare Modules and Export REGISTRATION
 
-Each provider crate must export a static `REGISTRATION` that supplies presets,
-inference logic, and a factory function. This enables zero-config for preset
-hosts and automatic `api_base` inference for self-hosted instances.
+`src/lib.rs` declares the modules, re-exports `YourProvider`, and exports a
+static `REGISTRATION` that supplies presets, inference logic, and a factory
+function. This enables zero-config for preset hosts and automatic `api_base`
+inference for self-hosted instances.
 
 ```rust
-use actup_core::{Capabilities, HostKind, Preset, ProviderConfig, Registration};
+//! YourPlatform provider for actup.
 
+mod client;
+mod provider;
+mod types;
+
+use actup_core::{Capabilities, HostKind, Preset, Provider, ProviderConfig, Registration};
+pub use provider::YourProvider;
+
+/// Provider registration for YourPlatform.
 pub static REGISTRATION: Registration = Registration {
     kind: HostKind::YourPlatform,
     presets: &[Preset {
@@ -417,18 +438,72 @@ pub static REGISTRATION: Registration = Registration {
     create: create_provider,
 };
 
-fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn actup_core::Provider>> {
-    let token = std::env::var(&config.token_env).ok();
-    let provider = YourProvider::new(&config.api_base, &config.host, token.as_deref())?;
+fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provider>> {
+    let ProviderConfig {
+        api_base,
+        host,
+        token_env,
+        ..
+    } = config;
+    let token = std::env::var(&token_env).ok();
+    let provider = YourProvider::new(&api_base, &host, token.as_deref())?;
     Ok(Box::new(provider))
 }
 ```
 
-Add `HostKind::YourPlatform` to `actup_core::HostKind` alongside
-`provider::Kind::YourPlatform`. Then add `REGISTRATION` to
-`available_registrations()` in both `crates/actup/src/main.rs` and
-`crates/lsp/src/provider_setup.rs`. In the CLI, put the entry behind a Cargo
-feature named after the provider.
+### 7. Wire the Provider
+
+Add `YourPlatform` variants to `actup_core::HostKind` and
+`actup_core::provider::Kind`, with arms in their `Display` impls and in
+`Kind::cache_namespace`. Run `just schema` to regenerate
+`schemas/actup-config.schema.json`, which lists every `HostKind`.
+
+In the workspace `Cargo.toml`, add the crate to `default-members` and to
+`[workspace.dependencies]`. `members` already matches it through the `crates/*`
+glob:
+
+```toml
+[workspace]
+default-members = [
+  # ...
+  "crates/provider-yourplatform",
+]
+
+[workspace.dependencies]
+actup-provider-yourplatform.path = "crates/provider-yourplatform"
+```
+
+In `crates/actup/Cargo.toml`, add the crate as an optional dependency behind a
+feature named after the provider:
+
+```toml
+[dependencies]
+actup-provider-yourplatform = { workspace = true, optional = true }
+
+[features]
+yourplatform = ["dep:actup-provider-yourplatform"]
+```
+
+In `crates/lsp/Cargo.toml`, add the crate as a dependency:
+
+```toml
+[dependencies]
+actup-provider-yourplatform = { workspace = true }
+```
+
+Add `REGISTRATION` to `available_registrations()` in `crates/actup/src/main.rs`,
+gated on the feature:
+
+```rust
+let registrations = vec![
+    &actup_provider_github::REGISTRATION,
+    #[cfg(feature = "yourplatform")]
+    &actup_provider_yourplatform::REGISTRATION,
+];
+```
+
+Add it to `available_registrations()` in `crates/lsp/src/provider_setup.rs`
+without the `#[cfg]` line.
 
 ## Common Patterns
 
@@ -533,6 +608,8 @@ tag list and are filtered at query time. Version processing lives only in
 Create `tests/integration.rs` with tests for your provider:
 
 ```rust
+//! Integration tests for the YourPlatform provider.
+
 use actup_core::provider::{Kind, Provider};
 use actup_provider_yourplatform::YourProvider;
 
@@ -616,10 +693,16 @@ if encoding == "base64" {
 - [ ] Error handling uses proper `actup_core::Error` variants
 - [ ] SHAs validated with `Sha40::new()`
 - [ ] `REGISTRATION` static exported with presets, inference, and capabilities
+- [ ] `src/lib.rs` declares the modules and re-exports `YourProvider`
+- [ ] `HostKind` and `provider::Kind` variants added, schema regenerated with
+      `just schema`
+- [ ] Crate added to `default-members` and `[workspace.dependencies]` in the
+      workspace `Cargo.toml`
+- [ ] Optional dependency and feature added to `crates/actup/Cargo.toml`
+- [ ] Dependency added to `crates/lsp/Cargo.toml`
 - [ ] `REGISTRATION` wired into both `available_registrations()` functions
 - [ ] Tests added to `tests/integration.rs`
 - [ ] Documentation includes usage examples
-- [ ] Added to workspace `Cargo.toml` members
 - [ ] Follows Rust API guidelines (C-CASE, C-GETTER, etc.)
 
 ## Reference Implementations
