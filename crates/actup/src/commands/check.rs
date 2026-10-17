@@ -3,7 +3,7 @@
 use std::{collections::HashMap, path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, ActionRepoId, CheckStatus, Config, NO_VERSIONS_FOUND_REASON,
+    ActionRef, ActionRepoId, CheckResult, CheckStatus, Config, NO_VERSIONS_FOUND_REASON,
     check_action_with_provider, provider, version,
 };
 use itertools::Itertools;
@@ -60,33 +60,38 @@ async fn check_action_with_versions(
     config: &Config,
     registry: &provider::Registry,
 ) -> Finding {
-    let status = match versions_result {
-        None => {
+    let (status, result) = match (versions_result, registry.find_for_repo(&action.repo_id)) {
+        (None, _) => {
             // No fetch attempted (shouldn't happen in normal flow)
-            FindingStatus::Unresolvable {
+            let status = FindingStatus::Unresolvable {
                 reason: "no version fetch attempted".to_string(),
                 is_environment_error: true,
-            }
+            };
+            (status, None)
         }
-        Some(Err(e)) => {
+        (Some(Err(e)), _) => {
             // Fetch failed - use core's error classification
-            FindingStatus::Unresolvable {
+            let status = FindingStatus::Unresolvable {
                 reason: e.to_string(),
                 is_environment_error: e.is_environment_error(),
-            }
+            };
+            (status, None)
         }
-        Some(Ok(versions)) => match registry.find_for_repo(&action.repo_id) {
-            Some(provider) => {
-                let result =
-                    check_action_with_provider(&action.action_ref, versions, config, provider)
-                        .await;
-                to_finding_status(result.status().clone(), Some(versions))
-            }
-            None => FindingStatus::Unresolvable {
+        (Some(Ok(_)), None) => {
+            let status = FindingStatus::Unresolvable {
                 reason: "no provider for fetched repo".to_string(),
                 is_environment_error: true,
-            },
-        },
+            };
+            (status, None)
+        }
+        (Some(Ok(versions)), Some(provider)) => {
+            let result =
+                check_action_with_provider(&action.action_ref, versions, config, provider).await;
+            (
+                to_finding_status(result.status().clone(), Some(versions)),
+                Some(result),
+            )
+        }
     };
 
     Finding::new(
@@ -96,6 +101,10 @@ async fn check_action_with_versions(
         status,
         action.provider.clone(),
         action.host.clone(),
+    )
+    .with_ref(
+        result.as_ref().and_then(CheckResult::ref_kind),
+        result.as_ref().and_then(|r| r.same_commit().cloned()),
     )
 }
 
@@ -936,6 +945,117 @@ mod tests {
             "{:?}",
             named.status()
         );
+    }
+
+    fn branch_v1_at(head: &str) -> version::Set {
+        let mut versions = version::Set::build(
+            vec![
+                make_version_info("v1.0.4", &"4".repeat(40)),
+                make_version_info("v1.0.5", &"5".repeat(40)),
+            ],
+            HashMap::new(),
+            HashMap::new(),
+            None,
+        );
+        versions.set_branches(HashMap::from([("v1".to_string(), head.to_string())]));
+        versions
+    }
+
+    fn policy_config(
+        branch: actup_core::policy::Branch,
+        track: actup_core::policy::Track,
+    ) -> Config {
+        Config {
+            policy: actup_core::config::Policy {
+                branch,
+                track,
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn check_labels_branch_on_the_target_commit_as_same_commit() {
+        use actup_core::policy::{Branch, Track};
+
+        let registry = test_registry();
+        let config = policy_config(Branch::Update, Track::Keep);
+        let on_target = check_action_with_versions(
+            &collected("v1"),
+            Some(&Ok(branch_v1_at(&"5".repeat(40)))),
+            &config,
+            &registry,
+        )
+        .await;
+        assert!(
+            matches!(on_target.status(), FindingStatus::PinBranch { .. }),
+            "{:?}",
+            on_target.status()
+        );
+        assert_eq!(on_target.ref_kind(), Some(actup_core::RefKind::Branch));
+        assert_eq!(
+            on_target.same_commit().map(|t| t.version().as_str()),
+            Some("v1.0.5")
+        );
+
+        let behind = check_action_with_versions(
+            &collected("v1"),
+            Some(&Ok(branch_v1_at(&"4".repeat(40)))),
+            &config,
+            &registry,
+        )
+        .await;
+        assert_eq!(behind.ref_kind(), Some(actup_core::RefKind::Branch));
+        assert!(behind.same_commit().is_none());
+    }
+
+    #[tokio::test]
+    async fn check_tags_tag_and_sha_refs_with_their_kind() {
+        use actup_core::policy::{Branch, Track};
+
+        let (old, new) = ("4".repeat(40), "5".repeat(40));
+        let versions = version::Set::build(
+            vec![
+                make_version_info("v1", &new),
+                make_version_info("v1.0.4", &old),
+                make_version_info("v1.0.5", &new),
+            ],
+            HashMap::new(),
+            HashMap::from([(1, make_version_info("v1", &new))]),
+            None,
+        );
+        let registry = test_registry();
+        let exact = policy_config(Branch::Ignore, Track::Exact);
+
+        let tag = check_action_with_versions(
+            &collected("v1"),
+            Some(&Ok(versions.clone())),
+            &exact,
+            &registry,
+        )
+        .await;
+        assert!(
+            matches!(tag.status(), FindingStatus::Outdated { .. }),
+            "{:?}",
+            tag.status()
+        );
+        assert_eq!(tag.ref_kind(), Some(actup_core::RefKind::Tag));
+        assert_eq!(
+            tag.same_commit().map(|t| t.version().as_str()),
+            Some("v1.0.5")
+        );
+
+        let sha =
+            check_action_with_versions(&collected(&old), Some(&Ok(versions)), &exact, &registry)
+                .await;
+        assert!(
+            matches!(sha.status(), FindingStatus::Outdated { .. }),
+            "{:?}",
+            sha.status()
+        );
+        assert_eq!(sha.ref_kind(), Some(actup_core::RefKind::Sha));
+        assert!(sha.same_commit().is_none());
     }
 
     /// Test [`CollectedAction`] structure (ensures proper collection).

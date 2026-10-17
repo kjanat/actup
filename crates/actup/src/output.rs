@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use actup_core::{ActionRef, version};
+use actup_core::{ActionRef, RefKind, version};
 use owo_colors::OwoColorize;
 use serde::Serialize;
 
@@ -32,6 +32,10 @@ struct JsonFinding {
     pinned_tag: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ref_kind: Option<RefKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    same_commit: Option<String>,
 }
 
 impl From<&Finding> for JsonFinding {
@@ -130,6 +134,8 @@ impl From<&Finding> for JsonFinding {
             exact_version,
             pinned_tag,
             reason,
+            ref_kind: f.ref_kind(),
+            same_commit: f.same_commit().map(|t| t.version().to_string()),
         }
     }
 }
@@ -145,6 +151,8 @@ pub struct Finding {
     provider: String,
     /// Host of the provider serving the reference
     host: String,
+    ref_kind: Option<RefKind>,
+    same_commit: Option<Arc<version::Info>>,
 }
 
 impl Finding {
@@ -165,7 +173,21 @@ impl Finding {
             status,
             provider,
             host,
+            ref_kind: None,
+            same_commit: None,
         }
+    }
+
+    /// Record the kind of ref and the suggested target on its current commit.
+    #[must_use]
+    pub fn with_ref(
+        mut self,
+        ref_kind: Option<RefKind>,
+        same_commit: Option<Arc<version::Info>>,
+    ) -> Self {
+        self.ref_kind = ref_kind;
+        self.same_commit = same_commit;
+        self
     }
 
     /// Get the file path
@@ -202,6 +224,18 @@ impl Finding {
     #[must_use]
     pub fn host(&self) -> &str {
         &self.host
+    }
+
+    /// Get the kind of ref, when the version set lists it
+    #[must_use]
+    pub const fn ref_kind(&self) -> Option<RefKind> {
+        self.ref_kind
+    }
+
+    /// Get the suggested target, when it sits on the commit the ref already names
+    #[must_use]
+    pub const fn same_commit(&self) -> Option<&Arc<version::Info>> {
+        self.same_commit.as_ref()
     }
 }
 
@@ -280,6 +314,9 @@ fn print_finding_line(finding: &Finding) {
     let action_str = finding.action_ref().to_string();
 
     match finding.status() {
+        _ if let Some(label) = same_commit_label(finding) => {
+            println!("{}{}  {}", line_prefix.dimmed(), action_str, label.cyan());
+        }
         FindingStatus::UpToDate => {
             println!(
                 "{}{}  {}",
@@ -308,10 +345,11 @@ fn print_finding_line(finding: &Finding) {
                 .map(|ev| format!(" ({ev})"))
                 .unwrap_or_default();
             println!(
-                "{}{}  {} -> {}{}",
+                "{}{}  {}{} -> {}{}",
                 line_prefix.dimmed(),
                 action_str.yellow(),
                 current.red(),
+                kind_note(finding).dimmed(),
                 version_str.green(),
                 suffix.dimmed()
             );
@@ -373,6 +411,26 @@ fn print_finding_line(finding: &Finding) {
     }
 }
 
+fn kind_note(finding: &Finding) -> String {
+    finding
+        .ref_kind()
+        .map_or_else(String::new, |k| format!(" ({k})"))
+}
+
+fn same_commit_label(finding: &Finding) -> Option<String> {
+    let target = finding.same_commit()?;
+    let kind = finding
+        .ref_kind()
+        .map(|k| format!("{k} "))
+        .unwrap_or_default();
+    Some(format!(
+        "pin available, same commit: {kind}{} = {} ({})",
+        finding.action_ref().ref_str(),
+        target.version(),
+        target.sha().get(..7).unwrap_or_else(|| target.sha()),
+    ))
+}
+
 fn print_json(findings: &[Finding]) {
     let json_findings: Vec<JsonFinding> = findings.iter().map(JsonFinding::from).collect();
     match serde_json::to_string_pretty(&json_findings) {
@@ -409,6 +467,7 @@ struct StatusCounts {
     up_to_date: usize,
     ignored: usize,
     outdated: usize,
+    same_commit: usize,
     pinned: usize,
     floating: usize,
     to_pin: usize,
@@ -420,9 +479,17 @@ impl StatusCounts {
     fn tally(findings: &[Finding]) -> Self {
         let mut counts = Self::default();
         for finding in findings {
+            let same_commit = finding.same_commit().is_some();
             let bucket = match finding.status() {
                 FindingStatus::UpToDate => &mut counts.up_to_date,
                 FindingStatus::Ignored => &mut counts.ignored,
+                FindingStatus::Outdated { .. }
+                | FindingStatus::Floating { .. }
+                | FindingStatus::PinBranch { .. }
+                    if same_commit =>
+                {
+                    &mut counts.same_commit
+                }
                 FindingStatus::Outdated { .. } => &mut counts.outdated,
                 FindingStatus::Pinned { .. } => &mut counts.pinned,
                 FindingStatus::Floating { .. } => &mut counts.floating,
@@ -439,6 +506,7 @@ impl StatusCounts {
         self.up_to_date
             + self.ignored
             + self.outdated
+            + self.same_commit
             + self.pinned
             + self.floating
             + self.to_pin
@@ -454,6 +522,7 @@ fn summary_line(findings: &[Finding]) -> String {
         up_to_date,
         ignored,
         outdated,
+        same_commit,
         pinned,
         floating,
         to_pin,
@@ -463,7 +532,7 @@ fn summary_line(findings: &[Finding]) -> String {
     let sha_pinned = findings.iter().filter(|f| f.action_ref().is_sha()).count();
 
     format!(
-        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {pinned} pinned, {floating} floating, {to_pin} branch refs to pin, {unknown} unknown, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
+        "Scanned {total} action{}: {up_to_date} up to date, {ignored} ignored, {outdated} outdated, {same_commit} same commit, {pinned} pinned, {floating} floating, {to_pin} branch refs to pin, {unknown} unknown, {unresolvable} unresolvable; {sha_pinned} of {total} SHA-pinned",
         if total == 1 { "" } else { "s" }
     )
 }
@@ -539,6 +608,80 @@ mod tests {
             "github".to_string(),
             host,
         )
+    }
+
+    const REPRO_SHA: &str = "c6f97d42243bad5fab37ca0427f495c86d5b1a18";
+
+    fn same_commit_finding() -> Finding {
+        make_finding(
+            "ci.yml",
+            3,
+            make_action_ref("rust-lang", "crates-io-auth-action", "v1"),
+            FindingStatus::PinBranch {
+                ref_name: "v1".to_string(),
+                sha: REPRO_SHA.to_string(),
+            },
+        )
+        .with_ref(
+            Some(RefKind::Branch),
+            Some(make_version_info("v1.0.5", REPRO_SHA)),
+        )
+    }
+
+    fn bump_finding() -> Finding {
+        make_finding(
+            "ci.yml",
+            4,
+            make_action_ref("docker", "setup-buildx-action", "v3"),
+            FindingStatus::Outdated {
+                current: "v3".to_string(),
+                latest: make_version_info("v4", "abc123"),
+                exact_version: None,
+            },
+        )
+        .with_ref(Some(RefKind::Tag), None)
+    }
+
+    #[test]
+    fn json_marks_ref_kind_and_same_commit() -> Result<(), Box<dyn std::error::Error>> {
+        let same = serde_json::to_value(JsonFinding::from(&same_commit_finding()))?;
+        assert_eq!(same["status"], "pin_branch");
+        assert_eq!(same["ref_kind"], "branch");
+        assert_eq!(same["same_commit"], "v1.0.5");
+
+        let bump = serde_json::to_value(JsonFinding::from(&bump_finding()))?;
+        assert_eq!(bump["status"], "outdated");
+        assert_eq!(bump["ref_kind"], "tag");
+        assert!(bump.get("same_commit").is_none(), "{bump}");
+
+        let unlisted = serde_json::to_value(JsonFinding::from(&make_finding(
+            "ci.yml",
+            5,
+            make_action_ref("actions", "checkout", "v4"),
+            FindingStatus::UpToDate,
+        )))?;
+        assert!(unlisted.get("ref_kind").is_none(), "{unlisted}");
+        Ok(())
+    }
+
+    #[test]
+    fn same_commit_label_replaces_the_bump_arrow() {
+        assert_eq!(
+            same_commit_label(&same_commit_finding()).as_deref(),
+            Some("pin available, same commit: branch v1 = v1.0.5 (c6f97d4)")
+        );
+        assert_eq!(same_commit_label(&bump_finding()), None);
+        assert_eq!(kind_note(&bump_finding()), " (tag)");
+    }
+
+    #[test]
+    fn summary_counts_same_commit_apart_from_outdated() {
+        let findings = vec![same_commit_finding(), bump_finding()];
+        assert_eq!(
+            summary_line(&findings),
+            "Scanned 2 actions: 0 up to date, 0 ignored, 1 outdated, 1 same commit, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 2 SHA-pinned"
+        );
+        print_human(&findings);
     }
 
     #[test]
@@ -1064,7 +1207,7 @@ mod tests {
         print_summary(&findings);
         assert_eq!(
             summary_line(&findings),
-            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 1 SHA-pinned"
+            "Scanned 1 action: 1 up to date, 0 ignored, 0 outdated, 0 same commit, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 1 SHA-pinned"
         );
     }
 
@@ -1124,7 +1267,7 @@ mod tests {
 
         assert_eq!(
             summary_line(&findings),
-            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 0 floating, 1 branch refs to pin, 0 unknown, 1 unresolvable; 1 of 6 SHA-pinned"
+            "Scanned 6 actions: 1 up to date, 1 ignored, 1 outdated, 0 same commit, 1 pinned, 0 floating, 1 branch refs to pin, 0 unknown, 1 unresolvable; 1 of 6 SHA-pinned"
         );
     }
 
@@ -1176,6 +1319,7 @@ mod tests {
                 up_to_date: 1,
                 ignored: 1,
                 outdated: 1,
+                same_commit: 0,
                 pinned: 1,
                 floating: 1,
                 to_pin: 1,
@@ -1186,7 +1330,7 @@ mod tests {
         assert_eq!(counts.total(), findings.len());
         assert_eq!(
             summary_line(&findings),
-            "Scanned 9 actions: 1 up to date, 1 ignored, 1 outdated, 1 pinned, 1 floating, 1 branch refs to pin, 1 unknown, 2 unresolvable; 0 of 9 SHA-pinned"
+            "Scanned 9 actions: 1 up to date, 1 ignored, 1 outdated, 0 same commit, 1 pinned, 1 floating, 1 branch refs to pin, 1 unknown, 2 unresolvable; 0 of 9 SHA-pinned"
         );
     }
 
@@ -1195,7 +1339,7 @@ mod tests {
         let findings: Vec<Finding> = vec![];
         assert_eq!(
             summary_line(&findings),
-            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 0 SHA-pinned"
+            "Scanned 0 actions: 0 up to date, 0 ignored, 0 outdated, 0 same commit, 0 pinned, 0 floating, 0 branch refs to pin, 0 unknown, 0 unresolvable; 0 of 0 SHA-pinned"
         );
     }
 
@@ -1459,6 +1603,8 @@ mod tests {
             status: FindingStatus::UpToDate,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1489,6 +1635,8 @@ mod tests {
             },
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1514,6 +1662,8 @@ mod tests {
             },
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1541,6 +1691,8 @@ mod tests {
             },
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1563,6 +1715,8 @@ mod tests {
             status: FindingStatus::Ignored,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1586,6 +1740,8 @@ mod tests {
             },
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1611,6 +1767,8 @@ mod tests {
             },
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1633,6 +1791,8 @@ mod tests {
             },
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);
@@ -1654,6 +1814,8 @@ mod tests {
             status: FindingStatus::UpToDate,
             provider: "github".to_string(),
             host: "github.com".to_string(),
+            ref_kind: None,
+            same_commit: None,
         };
 
         let json_finding = JsonFinding::from(&finding);

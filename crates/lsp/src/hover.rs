@@ -7,7 +7,8 @@ use std::{fmt::Write as _, sync::Arc};
 
 use actup_core::{
     ActionRef, Config, check_action_with_provider, extract_uses_from_yaml, parse_uses, provider,
-    resolution::CheckStatus, version,
+    resolution::{CheckResult, CheckStatus},
+    version,
 };
 use dashmap::DashMap;
 use tower_lsp_server::ls_types::{
@@ -256,11 +257,27 @@ fn format_version_status(status: &CheckStatus) -> String {
     }
 }
 
+fn format_check_result(result: &CheckResult) -> String {
+    let Some(target) = result.same_commit() else {
+        return format_version_status(result.status());
+    };
+    let kind = result
+        .ref_kind()
+        .map(|k| format!("{k} "))
+        .unwrap_or_default();
+    format!(
+        "**Pin available**, same commit: {kind}`{}` = {} (`{}`)",
+        result.action_ref().ref_str(),
+        target.version(),
+        target.sha().get(..7).unwrap_or_else(|| target.sha()),
+    )
+}
+
 /// Build the full hover markdown content.
 fn build_hover_content(
     action_ref: &ActionRef,
     meta: Option<&CachedActionMeta>,
-    status: &CheckStatus,
+    result: &CheckResult,
     latest_version: Option<&str>,
     default_host: Option<&str>,
 ) -> String {
@@ -301,7 +318,7 @@ fn build_hover_content(
         let _ = writeln!(md, "| **Latest** | `{latest}` |");
     }
 
-    let _ = writeln!(md, "| **Status** | {} |", format_version_status(status));
+    let _ = writeln!(md, "| **Status** | {} |", format_check_result(result));
 
     // Runtime
     if let Some(meta) = meta
@@ -342,7 +359,7 @@ pub async fn compute_hover(
     let repo_id = located.action_ref.to_repo_id().without_subpath();
 
     let versions = resolve_hover_versions(&repo_id, document_versions, ctx).await;
-    let status = compute_hover_status(
+    let result = compute_hover_status(
         &located.action_ref,
         &repo_id,
         versions.as_ref().map(Option::as_ref),
@@ -361,7 +378,7 @@ pub async fn compute_hover(
     let content = build_hover_content(
         &located.action_ref,
         meta.as_deref(),
-        &status,
+        &result,
         latest_version.as_deref(),
         ctx.registry.default_host(),
     );
@@ -421,28 +438,25 @@ async fn compute_hover_status(
     repo_id: &actup_core::ActionRepoId,
     versions: Result<Option<&version::Set>, &actup_core::Error>,
     ctx: &HoverContext<'_>,
-) -> CheckStatus {
-    let no_provider = || CheckStatus::Unresolvable {
-        reason: "no provider available".into(),
-        is_environment_error: true,
+) -> CheckResult {
+    let unresolvable = |reason: String| {
+        CheckResult::new(
+            action_ref.clone(),
+            CheckStatus::Unresolvable {
+                reason,
+                is_environment_error: true,
+            },
+        )
     };
     let v = match versions {
         Ok(Some(v)) => v,
-        Ok(None) => return no_provider(),
-        Err(e) => {
-            return CheckStatus::Unresolvable {
-                reason: e.to_string(),
-                is_environment_error: true,
-            };
-        }
+        Ok(None) => return unresolvable("no provider available".into()),
+        Err(e) => return unresolvable(e.to_string()),
     };
     let Some(provider) = ctx.registry.find_for_repo(repo_id) else {
-        return no_provider();
+        return unresolvable("no provider available".into());
     };
-    check_action_with_provider(action_ref, v, ctx.config, provider)
-        .await
-        .status()
-        .clone()
+    check_action_with_provider(action_ref, v, ctx.config, provider).await
 }
 
 #[cfg(test)]
@@ -667,12 +681,12 @@ mod tests {
             deprecated_inputs: vec![("path".into(), "Use working-directory instead".into())],
             runtime: Some("node20".into()),
         };
-        let status = CheckStatus::UpToDate;
+        let result = CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
 
         let content = build_hover_content(
             &action_ref,
             Some(&meta),
-            &status,
+            &result,
             Some("v4.2.0"),
             Some("github.com"),
         );
@@ -693,9 +707,9 @@ mod tests {
     #[test]
     fn build_hover_content_without_meta() {
         let action_ref = ActionRef::simple("actions", "setup-node", "v4");
-        let status = CheckStatus::UpToDate;
+        let result = CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
 
-        let content = build_hover_content(&action_ref, None, &status, None, Some("github.com"));
+        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
 
         // Falls back to owner/repo as header.
         assert!(content.contains("### actions/setup-node"));
@@ -713,15 +727,18 @@ mod tests {
             version::Version::parse("v4.2.0"),
             "abc1234567890abcdef1234567890abcdef123456",
         ));
-        let status = CheckStatus::Outdated {
-            current: "v3".into(),
-            target,
-        };
+        let result = CheckResult::new(
+            action_ref.clone(),
+            CheckStatus::Outdated {
+                current: "v3".into(),
+                target,
+            },
+        );
 
         let content = build_hover_content(
             &action_ref,
             None,
-            &status,
+            &result,
             Some("v4.2.0"),
             Some("github.com"),
         );
@@ -729,6 +746,38 @@ mod tests {
         assert!(content.contains("Outdated"));
         assert!(content.contains("v3"));
         assert!(content.contains("v4.2.0"));
+    }
+
+    #[test]
+    fn build_hover_content_same_commit_branch() {
+        use crate::test_utils::DUMMY_SHA;
+
+        let action_ref = ActionRef::simple("rust-lang", "crates-io-auth-action", "v1");
+        let mut versions = version::Set::build(
+            vec![crate::test_utils::make_version_info("v1.0.5", DUMMY_SHA)],
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            None,
+        );
+        versions.set_branches(std::collections::HashMap::from([(
+            "v1".to_string(),
+            DUMMY_SHA.to_string(),
+        )]));
+        let config = actup_core::Config {
+            policy: actup_core::config::Policy {
+                branch: actup_core::policy::Branch::Update,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let result = actup_core::check_action(&action_ref, &versions, &config);
+
+        let content = build_hover_content(&action_ref, None, &result, None, Some("github.com"));
+
+        assert!(
+            content.contains("**Pin available**, same commit: branch `v1` = v1.0.5 (`abc1234`)"),
+            "{content}"
+        );
     }
 
     // --- compute_hover async tests ---
@@ -955,7 +1004,7 @@ mod tests {
         let content = build_hover_content(
             &action_ref,
             Some(&meta),
-            &CheckStatus::UpToDate,
+            &CheckResult::new(action_ref.clone(), CheckStatus::UpToDate),
             None,
             Some("github.com"),
         );

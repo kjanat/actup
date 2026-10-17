@@ -359,9 +359,8 @@ async fn compute_diagnostics_for_actions(
             _ => None,
         };
 
-        if let Some(mut diag) =
-            status_to_diagnostic(result.status(), range, &action.uses_value, edit)
-        {
+        if let Some(diag) = status_to_diagnostic(result.status(), range, &action.uses_value, edit) {
+            let mut diag = same_commit_diagnostic(diag, &result, &action.uses_value);
             if !action.editable {
                 diag.data = None;
             }
@@ -539,6 +538,27 @@ fn status_to_diagnostic(
             });
             Some(diag)
         }
+    }
+}
+
+fn same_commit_diagnostic(diag: Diagnostic, result: &CheckResult, uses_value: &str) -> Diagnostic {
+    let Some(target) = result.same_commit() else {
+        return diag;
+    };
+    let kind = result
+        .ref_kind()
+        .map(|k| format!("{k} "))
+        .unwrap_or_default();
+    Diagnostic {
+        severity: Some(DiagnosticSeverity::INFORMATION),
+        code: Some(NumberOrString::String("same-commit".into())),
+        message: format!(
+            "{uses_value}: pin available, same commit: {kind}{} = {} ({})",
+            result.action_ref().ref_str(),
+            target.version(),
+            target.sha().get(..7).unwrap_or_else(|| target.sha()),
+        ),
+        ..diag
     }
 }
 
@@ -1162,6 +1182,128 @@ jobs:
     }
 
     // --- compute_diagnostics with mock provider ---
+
+    async fn diagnostics_under(
+        yaml: &str,
+        versions: version::Set,
+        policy: actup_core::config::Policy,
+    ) -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
+        let provider = test_utils::MockProvider::new("github.com").with_versions(
+            "rust-lang",
+            "crates-io-auth-action",
+            versions,
+        );
+        let registry = test_utils::mock_registry(provider);
+        let config = Config {
+            policy,
+            ..Default::default()
+        };
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        Ok(compute_diagnostics(
+            yaml,
+            &uri,
+            &config,
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await
+        .diagnostics)
+    }
+
+    fn v1_versions(v1_tag: Option<&str>, branch_head: Option<&str>) -> version::Set {
+        let mut tags = vec![
+            test_utils::make_version_info("v1.0.4", DUMMY_SHA_2),
+            test_utils::make_version_info("v1.0.5", DUMMY_SHA),
+        ];
+        tags.extend(v1_tag.map(|sha| test_utils::make_version_info("v1", sha)));
+        let mut versions = version::Set::build(
+            tags,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            None,
+        );
+        if let Some(head) = branch_head {
+            versions.set_branches(std::collections::HashMap::from([(
+                "v1".to_string(),
+                head.to_string(),
+            )]));
+        }
+        versions
+    }
+
+    #[tokio::test]
+    async fn branch_on_the_target_commit_gets_same_commit_info()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let policy = actup_core::config::Policy {
+            branch: actup_core::policy::Branch::Update,
+            ..Default::default()
+        };
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@v1\n";
+
+        let same = diagnostics_under(yaml, v1_versions(None, Some(DUMMY_SHA)), policy).await?;
+        let [diag] = same.as_slice() else {
+            return Err(format!("expected one diagnostic, got {same:?}").into());
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::INFORMATION));
+        assert_eq!(
+            diag.code,
+            Some(NumberOrString::String("same-commit".into()))
+        );
+        assert_eq!(
+            diag.message,
+            format!(
+                "rust-lang/crates-io-auth-action@v1: pin available, same commit: branch v1 = v1.0.5 ({})",
+                &DUMMY_SHA[..7]
+            )
+        );
+
+        let behind = diagnostics_under(yaml, v1_versions(None, Some(DUMMY_SHA_2)), policy).await?;
+        let [diag] = behind.as_slice() else {
+            return Err(format!("expected one diagnostic, got {behind:?}").into());
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(diag.code, Some(NumberOrString::String("pin-branch".into())));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tag_on_the_target_commit_keeps_its_quickfix() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use tower_lsp_server::ls_types::CodeActionOrCommand;
+
+        let policy = actup_core::config::Policy {
+            track: actup_core::policy::Track::Exact,
+            ..Default::default()
+        };
+        let yaml = "    - uses: rust-lang/crates-io-auth-action@v1\n";
+        let diags = diagnostics_under(yaml, v1_versions(Some(DUMMY_SHA), None), policy).await?;
+        let [diag] = diags.as_slice() else {
+            return Err(format!("expected one diagnostic, got {diags:?}").into());
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::INFORMATION));
+        assert_eq!(
+            diag.code,
+            Some(NumberOrString::String("same-commit".into()))
+        );
+        assert!(diag.message.contains("tag v1 = v1.0.5"), "{}", diag.message);
+
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let actions =
+            crate::code_actions::code_actions_for_diagnostics(&uri, Some(1), &diags, true);
+        let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
+            return Err(format!("expected one action, got {actions:?}").into());
+        };
+        assert_eq!(action.title, "Update to v1.0.5");
+
+        let behind = diagnostics_under(yaml, v1_versions(Some(DUMMY_SHA_2), None), policy).await?;
+        let [diag] = behind.as_slice() else {
+            return Err(format!("expected one diagnostic, got {behind:?}").into());
+        };
+        assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
+        assert_eq!(diag.code, Some(NumberOrString::String("outdated".into())));
+        Ok(())
+    }
 
     #[tokio::test]
     async fn compute_diagnostics_empty_text_returns_empty() {

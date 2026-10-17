@@ -32,13 +32,88 @@ pub struct CheckResult {
     action_ref: ActionRef,
     /// The check status
     status: CheckStatus,
+    /// What the ref names, when the version set lists it
+    #[serde(default)]
+    ref_kind: Option<RefKind>,
+    /// The suggested target, when it sits on the commit the ref already names
+    #[serde(default)]
+    same_commit: Option<Arc<version::Info>>,
+}
+
+/// Kind of ref a `uses:` reference names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "tsify", derive(tsify_next::Tsify))]
+#[serde(rename_all = "lowercase")]
+pub enum RefKind {
+    /// A git tag
+    Tag,
+    /// A git branch
+    Branch,
+    /// A full commit SHA
+    Sha,
+}
+
+impl std::fmt::Display for RefKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Tag => "tag",
+            Self::Branch => "branch",
+            Self::Sha => "sha",
+        })
+    }
 }
 
 impl CheckResult {
     /// Create a new check result
     #[must_use]
     pub const fn new(action_ref: ActionRef, status: CheckStatus) -> Self {
-        Self { action_ref, status }
+        Self {
+            action_ref,
+            status,
+            ref_kind: None,
+            same_commit: None,
+        }
+    }
+
+    fn described(
+        action_ref: &ActionRef,
+        status: CheckStatus,
+        versions: &version::Set,
+        config: &Config,
+    ) -> Self {
+        let Some((kind, sha)) = current_commit(action_ref, versions) else {
+            return Self::new(action_ref.clone(), status);
+        };
+        let target = match &status {
+            CheckStatus::Outdated { target, .. } => Some(Arc::clone(target)),
+            CheckStatus::Floating { .. } | CheckStatus::PinBranch { .. } => {
+                let current = version::Version::parse(action_ref.ref_str());
+                current
+                    .is_semver()
+                    .then(|| find_best_target(versions, &current, config.policy_for(action_ref)))
+                    .flatten()
+            }
+            _ => None,
+        };
+        let same_commit = target.filter(|t| t.sha() == sha);
+        Self {
+            action_ref: action_ref.clone(),
+            status,
+            ref_kind: Some(kind),
+            same_commit,
+        }
+    }
+
+    /// Get the kind of ref, when the version set lists it
+    #[must_use]
+    pub const fn ref_kind(&self) -> Option<RefKind> {
+        self.ref_kind
+    }
+
+    /// Get the suggested target, when it sits on the commit the ref already names
+    #[must_use]
+    pub const fn same_commit(&self) -> Option<&Arc<version::Info>> {
+        self.same_commit.as_ref()
     }
 
     /// Get the action reference
@@ -239,7 +314,7 @@ pub async fn check_action_with_provider(
 ) -> CheckResult {
     let (status, lookup) = classify(action_ref, versions, config);
     let Some(lookup) = lookup else {
-        return CheckResult::new(action_ref.clone(), status);
+        return CheckResult::described(action_ref, status, versions, config);
     };
 
     let repo_id = action_ref.to_repo_id().without_subpath();
@@ -257,7 +332,7 @@ pub async fn check_action_with_provider(
         },
         Err(_) => lookup.missing,
     };
-    CheckResult::new(action_ref.clone(), status)
+    CheckResult::described(action_ref, status, versions, config)
 }
 
 /// Check action against already-fetched versions.
@@ -269,7 +344,24 @@ pub fn check_action(
     versions: &version::Set,
     config: &Config,
 ) -> CheckResult {
-    CheckResult::new(action_ref.clone(), classify(action_ref, versions, config).0)
+    let status = classify(action_ref, versions, config).0;
+    CheckResult::described(action_ref, status, versions, config)
+}
+
+fn current_commit<'a>(
+    action_ref: &'a ActionRef,
+    versions: &'a version::Set,
+) -> Option<(RefKind, &'a str)> {
+    let name = action_ref.ref_str();
+    if action_ref.is_sha() {
+        return Some((RefKind::Sha, name));
+    }
+    versions
+        .tag(name)
+        .map(|t| t.sha())
+        .or_else(|| versions.other_tag_sha(name))
+        .map(|sha| (RefKind::Tag, sha))
+        .or_else(|| versions.branch_sha(name).map(|sha| (RefKind::Branch, sha)))
 }
 
 fn classify(
@@ -2659,6 +2751,177 @@ mod tests {
                 "{order:?}"
             );
         }
+    }
+
+    fn branch_v1_at(head: &str) -> version::Set {
+        let mut versions = versions_in_order(&[
+            ("v1.0.4", "4".repeat(40).as_str()),
+            ("v1.0.5", "5".repeat(40).as_str()),
+        ]);
+        versions.set_branches(HashMap::from([("v1".to_string(), head.to_string())]));
+        versions
+    }
+
+    #[tokio::test]
+    async fn test_branch_on_the_target_commit_is_same_commit()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let head = "5".repeat(40);
+        let versions = branch_v1_at(&head);
+        let action = make_action_ref("rust-lang", "crates-io-auth-action", "v1");
+        for (branch, want) in [
+            (
+                policy::Branch::Warn,
+                CheckStatus::Floating {
+                    ref_name: "v1".to_string(),
+                },
+            ),
+            (
+                policy::Branch::Update,
+                CheckStatus::PinBranch {
+                    ref_name: "v1".to_string(),
+                    sha: head.clone(),
+                },
+            ),
+        ] {
+            let provider = ResolveMockProvider::with(Resolve::Missing);
+            let result =
+                check_action_with_provider(&action, &versions, &branch_config(branch), &provider)
+                    .await;
+            assert_eq!(result.status(), &want, "{branch}");
+            assert_eq!(result.ref_kind(), Some(RefKind::Branch), "{branch}");
+            assert_eq!(
+                result.same_commit().map(|t| t.version().as_str()),
+                Some("v1.0.5"),
+                "{branch}"
+            );
+            assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+            let json = serde_json::to_value(&result)?;
+            assert_eq!(json["ref_kind"], "branch");
+            assert_eq!(serde_json::from_value::<CheckResult>(json)?, result);
+        }
+
+        let ignored = check_action(&action, &versions, &branch_config(policy::Branch::Ignore));
+        assert_eq!(ignored.status(), &CheckStatus::UpToDate);
+        assert_eq!(ignored.ref_kind(), Some(RefKind::Branch));
+        assert_eq!(ignored.same_commit(), None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_branch_behind_the_target_is_not_same_commit() {
+        let versions = branch_v1_at(&"4".repeat(40));
+        let action = make_action_ref("rust-lang", "crates-io-auth-action", "v1");
+        for branch in [policy::Branch::Warn, policy::Branch::Update] {
+            let result = check_action(&action, &versions, &branch_config(branch));
+            assert!(
+                matches!(
+                    result.status(),
+                    CheckStatus::Floating { .. } | CheckStatus::PinBranch { .. }
+                ),
+                "{branch}: {:?}",
+                result.status()
+            );
+            assert_eq!(result.ref_kind(), Some(RefKind::Branch), "{branch}");
+            assert_eq!(result.same_commit(), None, "{branch}");
+        }
+    }
+
+    #[test]
+    fn test_tag_on_the_target_commit_is_same_commit() {
+        let (old, new) = ("4".repeat(40), "5".repeat(40));
+        let versions = versions_in_order(&[
+            ("v1", new.as_str()),
+            ("v1.0.4", old.as_str()),
+            ("v1.0.5", new.as_str()),
+        ]);
+        let result_for = |ref_str: &str, track| {
+            check_action(
+                &make_action_ref("actions", "checkout", ref_str),
+                &versions,
+                &track_config(track),
+            )
+        };
+
+        let exact = result_for("v1", policy::Track::Exact);
+        assert!(
+            matches!(exact.status(), CheckStatus::Outdated { current, target }
+                if current == "v1" && target.version().as_str() == "v1.0.5"),
+            "{:?}",
+            exact.status()
+        );
+        assert_eq!(exact.ref_kind(), Some(RefKind::Tag));
+        assert_eq!(
+            exact.same_commit().map(|t| t.version().as_str()),
+            Some("v1.0.5")
+        );
+
+        let keep = result_for("v1", policy::Track::Keep);
+        assert_eq!(keep.status(), &CheckStatus::UpToDate);
+        assert_eq!(keep.ref_kind(), Some(RefKind::Tag));
+        assert_eq!(keep.same_commit(), None);
+
+        let behind = result_for("v1.0.4", policy::Track::Keep);
+        assert!(
+            matches!(behind.status(), CheckStatus::Outdated { target, .. } if target.sha() == new),
+            "{:?}",
+            behind.status()
+        );
+        assert_eq!(behind.ref_kind(), Some(RefKind::Tag));
+        assert_eq!(behind.same_commit(), None);
+
+        let unlisted = result_for("v2", policy::Track::Keep);
+        assert_eq!(unlisted.ref_kind(), None);
+        assert_eq!(unlisted.same_commit(), None);
+    }
+
+    #[test]
+    fn test_sha_ref_is_never_same_commit() {
+        let (old, new) = ("4".repeat(40), "5".repeat(40));
+        let versions = versions_in_order(&[("v1.0.4", old.as_str()), ("v1.0.5", new.as_str())]);
+        let config = track_config(policy::Track::Keep);
+
+        let behind = check_action(
+            &make_action_ref("actions", "checkout", &old),
+            &versions,
+            &config,
+        );
+        assert!(
+            matches!(behind.status(), CheckStatus::Outdated { target, .. } if target.sha() == new),
+            "{:?}",
+            behind.status()
+        );
+        assert_eq!(behind.ref_kind(), Some(RefKind::Sha));
+        assert_eq!(behind.same_commit(), None);
+
+        let latest = check_action(
+            &make_action_ref("actions", "checkout", &new),
+            &versions,
+            &config,
+        );
+        assert!(
+            matches!(latest.status(), CheckStatus::Pinned { .. }),
+            "{:?}",
+            latest.status()
+        );
+        assert_eq!(latest.ref_kind(), Some(RefKind::Sha));
+        assert_eq!(latest.same_commit(), None);
+    }
+
+    #[test]
+    fn test_check_result_without_ref_facts_deserializes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let result = CheckResult::new(
+            make_action_ref("actions", "checkout", "v4"),
+            CheckStatus::UpToDate,
+        );
+        let mut json = serde_json::to_value(&result)?;
+        let Some(fields) = json.as_object_mut() else {
+            panic!("expected a JSON object");
+        };
+        fields.remove("ref_kind");
+        fields.remove("same_commit");
+        assert_eq!(serde_json::from_value::<CheckResult>(json)?, result);
+        Ok(())
     }
 
     #[test]

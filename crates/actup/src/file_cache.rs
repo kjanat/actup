@@ -126,8 +126,13 @@ impl Cache for FileCache {
                 Err(e) => return Err(cache::Error::Io(e.to_string())),
             };
 
-            let entry: cache::Entry =
-                serde_json::from_str(&content).map_err(|e| cache::Error::Serde(e.to_string()))?;
+            let entry: cache::Entry = match serde_json::from_str(&content) {
+                Ok(entry) => entry,
+                Err(e) => {
+                    debug!(key = %key, error = %e, "unreadable cache entry");
+                    return Err(cache::Error::NotFound);
+                }
+            };
 
             // Check TTL
             if entry.is_expired(self.ttl) {
@@ -326,6 +331,29 @@ mod tests {
         // Get should return Disabled
         let result = cache.get("test_key").await;
         assert!(matches!(result, Err(actup_core::cache::Error::Disabled)));
+    }
+
+    #[tokio::test]
+    async fn old_format_entry_is_a_cache_miss() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = TempDir::new()?;
+        let cache = FileCache::with_path(temp.path().to_path_buf(), Duration::from_hours(1));
+        let key = "github::github.com/rust-lang/crates-io-auth-action";
+        tokio::fs::write(
+            cache.key_to_path(key),
+            r#"{"versions":{"semver_tags":[{"version":{"Semver":{"major":1}},"sha":"c6f97d4"}]}}"#,
+        )
+        .await?;
+
+        assert!(matches!(
+            cache.get(key).await,
+            Err(actup_core::cache::Error::NotFound)
+        ));
+
+        cache
+            .set(key, actup_core::cache::Entry::new(version::Set::default()))
+            .await?;
+        assert!(cache.get(key).await.is_ok());
+        Ok(())
     }
 
     #[test]
