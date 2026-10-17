@@ -7,7 +7,7 @@ use actup_core::{
     UsesLocation, classify_uses, discover_files, line_spans, parse_action_path,
     patch::{
         EditKind, EditOutcome, FileEdits, PendingEdit, SkipReason, Splices, retag_edit,
-        retarget_edit, sha_edit,
+        retarget_edit, sha_edit, unpin_edit,
     },
     policy::Style,
     provider::Registry,
@@ -404,9 +404,14 @@ fn remote_values(format: SourceFormat, content: &str) -> Vec<(UsesLocation, Acti
 
 /// The edit that writes `reference` over the ref at `loc`, if the rewritten value parses.
 ///
-/// A SHA drops the version of a trailing version comment and keeps its note.
-/// Any other ref takes the place of that version.
-fn ref_edit(loc: &UsesLocation, reference: &str) -> Result<PendingEdit, String> {
+/// A SHA, or a tag over a SHA pin, drops the version of a trailing version
+/// comment and keeps its note. A tag over another ref takes the place of that
+/// version.
+fn ref_edit(
+    loc: &UsesLocation,
+    current_is_sha: bool,
+    reference: &str,
+) -> Result<PendingEdit, String> {
     let value = loc.value();
     let Some((base, _)) = value.split_once('@') else {
         return Err(format!("`{value}` has no `@`"));
@@ -423,6 +428,8 @@ fn ref_edit(loc: &UsesLocation, reference: &str) -> Result<PendingEdit, String> 
     };
     let edit = if action.is_sha() {
         sha_edit(loc, reference)
+    } else if current_is_sha {
+        unpin_edit(loc, reference)
     } else {
         retag_edit(loc, reference)
     };
@@ -491,7 +498,7 @@ pub fn update_file(
             });
             continue;
         }
-        let pending = match ref_edit(loc, &edit.reference) {
+        let pending = match ref_edit(loc, action.is_sha(), &edit.reference) {
             Ok(pending) => pending,
             Err(problem) => {
                 problems.push(format!("line {line}: {problem}"));
@@ -730,7 +737,9 @@ mod tests {
         let [loc] = found.as_slice() else {
             return Err(format!("expected one `uses:` in {line_body:?}"));
         };
-        let edit = ref_edit(loc, reference)?;
+        let current_is_sha =
+            matches!(classify_uses(loc.value()), Uses::Action(action) if action.is_sha());
+        let edit = ref_edit(loc, current_is_sha, reference)?;
         let EditKind::ReplaceRange { range, new } = &edit.kind;
         assert_eq!(edit.comment, None, "{line_body:?}");
         let mut line = line_body.to_string();
@@ -741,6 +750,10 @@ mod tests {
     #[test]
     fn ref_edit_refreshes_version_comments_and_keeps_notes() {
         let sha = "b".repeat(40);
+        let old = "a".repeat(40);
+        let pinned_keep = format!("- uses: o/r@{old} # v4.0.0 keep");
+        let pinned = format!("- uses: o/r@{old} # v4.0.0");
+        let pinned_step = format!("- uses: o/r@{old} # 1st step");
         let cases = [
             ("- uses: o/r@a~1", "v1", "- uses: o/r@v1".to_string()),
             (
@@ -767,6 +780,17 @@ mod tests {
                 "- uses: o/r@v4.0.0 # 1st step",
                 &sha,
                 format!("- uses: o/r@{sha} # 1st step"),
+            ),
+            (
+                &pinned_keep,
+                "v4.2.0",
+                "- uses: o/r@v4.2.0 # keep".to_string(),
+            ),
+            (&pinned, "v4.2.0", "- uses: o/r@v4.2.0".to_string()),
+            (
+                &pinned_step,
+                "v4.2.0",
+                "- uses: o/r@v4.2.0 # 1st step".to_string(),
             ),
         ];
         for (line_body, reference, expected) in cases {
