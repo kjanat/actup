@@ -421,4 +421,31 @@ try {
 
 console.log("PASS: fetch provider reports a short SHA ref");
 
+// Test 18: a prerelease newer than the latest stable tag is no target, and a listed non-semver tag needs no lookup.
+let lookups = 0;
+const prereleaseProvider = {
+	...mockProvider,
+	async getVersions() {
+		return {
+			semverTags: [
+				{ version: "v4.0.0", sha: "a".repeat(40) },
+				{ version: "v4.1.0-rc.1", sha: "f".repeat(40) },
+				{ version: "nightly", sha: "e".repeat(40) },
+			],
+		};
+	},
+	async resolveRefToSha() {
+		lookups++;
+		return "a".repeat(40);
+	},
+};
+const [stableResult] = await checkRefs(outdatedYaml, prereleaseProvider);
+assert.equal(statusName(stableResult.status), "UpToDate", `got ${JSON.stringify(stableResult.status)}`);
+const nightlyYaml = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@nightly\n";
+const [nightlyResult] = await checkRefs(nightlyYaml, prereleaseProvider);
+assert.equal(statusName(nightlyResult.status), "UpToDate", `got ${JSON.stringify(nightlyResult.status)}`);
+assert.equal(lookups, 0, "listed tags need no provider lookup");
+
+console.log("PASS: prereleases and non-semver tags follow core tag processing");
+
 console.log("\nAll npm package integration tests PASSED");

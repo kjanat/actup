@@ -8,7 +8,6 @@ use std::{
     collections::HashMap,
     future::Future,
     pin::pin,
-    sync::Arc,
     task::{Context, Poll, Waker},
 };
 
@@ -98,7 +97,7 @@ pub fn fetch_version_set(
 ) -> Result<version::Set, String> {
     let base = format!("{api_base}/repos/{owner}/{repo}");
     let tags = fetch_all(fetch, &format!("{base}/tags?per_page=100"), max_pages)?;
-    let mut set = build_version_set(&tags);
+    let mut set = version::Set::from_tags(tags.into_iter().map(|tag| (tag.name, tag.sha)));
     if with_branches
         && let Ok(branches) = fetch_all(fetch, &format!("{base}/branches?per_page=100"), max_pages)
     {
@@ -202,58 +201,6 @@ fn extract_next_url(headers: &[(String, String)]) -> Option<String> {
         }
     }
     None
-}
-
-/// Build a [`version::Set`] from raw tag data.
-fn build_version_set(tags: &[GitRef]) -> version::Set {
-    let mut semver_tags: Vec<Arc<version::Info>> = Vec::new();
-    let mut latest_per_major: HashMap<u32, Arc<version::Info>> = HashMap::new();
-    let mut major_tags: HashMap<u32, Arc<version::Info>> = HashMap::new();
-    let mut overall_latest: Option<Arc<version::Info>> = None;
-    let mut other_tags: HashMap<String, String> = HashMap::new();
-
-    for tag in tags {
-        let ver = version::Version::parse(&tag.name);
-        if !ver.is_semver() {
-            other_tags.insert(tag.name.clone(), tag.sha.clone());
-            continue;
-        }
-
-        let info = Arc::new(version::Info::new(ver, &tag.sha));
-        let ver = info.version();
-        semver_tags.push(Arc::clone(&info));
-
-        // Track major-only tags (e.g., "v4", "v5")
-        if ver.is_major_only()
-            && let Some(major) = ver.major()
-        {
-            major_tags.insert(major, Arc::clone(&info));
-        }
-
-        // Track latest per major
-        if let Some(major) = ver.major() {
-            let is_newer = latest_per_major
-                .get(&major)
-                .is_none_or(|existing| ver > existing.version());
-            if is_newer {
-                latest_per_major.insert(major, Arc::clone(&info));
-            }
-        }
-
-        // Track overall latest (skip prerelease for overall)
-        if !ver.is_prerelease() {
-            let is_newer = overall_latest
-                .as_ref()
-                .is_none_or(|existing| ver > existing.version());
-            if is_newer {
-                overall_latest = Some(Arc::clone(&info));
-            }
-        }
-    }
-
-    let mut set = version::Set::build(semver_tags, latest_per_major, major_tags, overall_latest);
-    set.set_other_tags(other_tags);
-    set
 }
 
 /// [`Provider`] that resolves refs through a GitHub-compatible REST API.
@@ -431,7 +378,7 @@ fn ready<T>(future: impl Future<Output = T>) -> Option<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
 
     use actup_core::policy;
 
@@ -600,7 +547,7 @@ mod tests {
             ..Default::default()
         };
         let action = ActionRef::new(None, "actions", "checkout", None, ref_str);
-        check(&action, &build_version_set(&[]), &config, &provider)
+        check(&action, &version::Set::new(), &config, &provider)
             .status()
             .clone()
     }
@@ -613,12 +560,7 @@ mod tests {
         let cached = actup_core::CachingProvider::new(rest(fetch));
         let action = ActionRef::new(None, "actions", "checkout", None, "nope");
         for _ in 0..2 {
-            let result = check(
-                &action,
-                &build_version_set(&[]),
-                &Config::default(),
-                &cached,
-            );
+            let result = check(&action, &version::Set::new(), &Config::default(), &cached);
             assert_eq!(
                 result.status(),
                 &CheckStatus::Unresolvable {
@@ -709,7 +651,7 @@ mod tests {
             {"name": "main", "commit": {"sha": "head-main", "url": "u"}, "protected": true},
             {"name": "release/v1", "commit": {"sha": "head-r1", "url": "u"}, "protected": false}
         ]"#;
-        let mut set = build_version_set(&[]);
+        let mut set = version::Set::new();
         set.set_branches(branch_map(parse_refs_json(json)?));
         assert_eq!(set.branch_sha("main"), Some("head-main"));
         assert_eq!(set.branch_sha("release/v1"), Some("head-r1"));
@@ -751,49 +693,34 @@ mod tests {
     }
 
     #[test]
-    fn test_build_version_set() -> Result<(), &'static str> {
-        let tags = vec![
-            GitRef {
-                name: "v4.2.2".to_string(),
-                sha: "sha422".to_string(),
-            },
-            GitRef {
-                name: "v4.1.0".to_string(),
-                sha: "sha410".to_string(),
-            },
-            GitRef {
-                name: "v4".to_string(),
-                sha: "sha4".to_string(),
-            },
-            GitRef {
-                name: "v3.5.0".to_string(),
-                sha: "sha350".to_string(),
-            },
-            GitRef {
-                name: "not-semver".to_string(),
-                sha: "xyz".to_string(),
-            },
-        ];
-        let set = build_version_set(&tags);
+    fn fetch_skips_a_newer_prerelease_for_latest() -> Result<(), String> {
+        let tags = r#"[
+            {"name": "v4.3.0-rc.1", "commit": {"sha": "sha43rc"}},
+            {"name": "v4.2.2", "commit": {"sha": "sha422"}},
+            {"name": "v4", "commit": {"sha": "sha4"}},
+            {"name": "v5.0.0-beta.1", "commit": {"sha": "sha5b"}},
+            {"name": "v3.5.0", "commit": {"sha": "sha350"}},
+            {"name": "not-semver", "commit": {"sha": "xyz"}}
+        ]"#;
+        let fetch = MockFetch::default().route(TAGS_URL, tags);
+        let set = fetch_version_set(&fetch, "o", "r", API, MAX_PAGES, false)?;
 
-        // 4 semver tags (not-semver excluded)
-        assert_eq!(set.semver_tags().len(), 4);
-
-        // latest overall should be v4.2.2
+        let order: Vec<&str> = set
+            .semver_tags()
+            .iter()
+            .map(|t| t.version().as_str())
+            .collect();
+        assert_eq!(
+            order,
+            ["v5.0.0-beta.1", "v4.3.0-rc.1", "v4.2.2", "v4", "v3.5.0"]
+        );
         let latest = set.latest().ok_or("expected latest")?;
-        assert_eq!(latest.version().to_string(), "v4.2.2");
-
-        // latest per major: v3 -> v3.5.0, v4 -> v4.2.2
-        let v3 = set.latest_per_major().get(&3).ok_or("expected major 3")?;
-        assert_eq!(v3.version().to_string(), "v3.5.0");
-
+        assert_eq!(latest.version().as_str(), "v4.2.2");
         let v4 = set.latest_per_major().get(&4).ok_or("expected major 4")?;
-        assert_eq!(v4.version().to_string(), "v4.2.2");
-
-        // major tag: v4 exists
+        assert_eq!(v4.version().as_str(), "v4.2.2");
+        assert!(set.latest_per_major().get(&5).is_none());
         assert!(set.major_tags().contains_key(&4));
-        let major4 = set.major_tags().get(&4).ok_or("expected major tag 4")?;
-        assert_eq!(major4.version().to_string(), "v4");
+        assert_eq!(set.other_tag_sha("not-semver"), Some("xyz"));
         Ok(())
     }
 }

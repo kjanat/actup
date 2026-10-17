@@ -596,6 +596,66 @@ impl Set {
         }
     }
 
+    /// Build a version set from `(tag name, commit SHA)` pairs (uses [`SystemClock`]).
+    ///
+    /// Semver tags are sorted newest first. `latest` and `latest_per_major`
+    /// skip prereleases. Non-semver tags go to the non-semver tag map.
+    #[must_use]
+    pub fn from_tags(tags: impl IntoIterator<Item = (String, String)>) -> Self {
+        Self::from_tags_with_clock(tags, &SystemClock)
+    }
+
+    /// Build a version set like [`Set::from_tags`], stamped by `clock`.
+    #[must_use]
+    pub fn from_tags_with_clock(
+        tags: impl IntoIterator<Item = (String, String)>,
+        clock: &dyn Clock,
+    ) -> Self {
+        let mut semver_tags: Vec<Arc<Info>> = Vec::new();
+        let mut latest_per_major: std::collections::HashMap<u32, Arc<Info>> =
+            std::collections::HashMap::new();
+        let mut major_tags: std::collections::HashMap<u32, Arc<Info>> =
+            std::collections::HashMap::new();
+        let mut latest: Option<Arc<Info>> = None;
+        let mut other_tags: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        for (name, sha) in tags {
+            let version = Version::parse(&name);
+            let Version::Semver { major, .. } = version else {
+                other_tags.insert(name, sha);
+                continue;
+            };
+            let info = Arc::new(Info::new(version, sha));
+            let version = info.version();
+            semver_tags.push(Arc::clone(&info));
+            if version.is_major_only() {
+                major_tags.insert(major, Arc::clone(&info));
+            }
+            if !version.is_prerelease() {
+                if latest_per_major
+                    .get(&major)
+                    .is_none_or(|existing| existing.version() < version)
+                {
+                    latest_per_major.insert(major, Arc::clone(&info));
+                }
+                if latest
+                    .as_ref()
+                    .is_none_or(|existing| existing.version() < version)
+                {
+                    latest = Some(Arc::clone(&info));
+                }
+            }
+        }
+
+        semver_tags.sort_by(|a, b| b.version().cmp(a.version()));
+
+        let mut set =
+            Self::build_with_clock(semver_tags, latest_per_major, major_tags, latest, clock);
+        set.set_other_tags(other_tags);
+        set
+    }
+
     /// Get all semver tags
     #[must_use]
     pub fn semver_tags(&self) -> &[Arc<Info>] {
@@ -1247,6 +1307,32 @@ mod tests {
         assert!(!parse("v1").is_more_specific_than(&parse("v1.0.5")));
         assert!(!parse("v1").is_more_specific_than(&parse("main")));
         assert!(!parse("v1.0.5").is_more_specific_than(&parse("v1.0.4")));
+    }
+
+    #[test]
+    fn from_tags_skips_a_newer_prerelease_for_latest() -> Result<(), Box<dyn std::error::Error>> {
+        let set = Set::from_tags(
+            [
+                ("v1.0.0", "a"),
+                ("v2.0.0-rc.1", "b"),
+                ("v1.1.0", "c"),
+                ("nightly", "d"),
+            ]
+            .map(|(name, sha)| (name.to_string(), sha.to_string())),
+        );
+        let order: Vec<&str> = set
+            .semver_tags()
+            .iter()
+            .map(|t| t.version().as_str())
+            .collect();
+        assert_eq!(order, ["v2.0.0-rc.1", "v1.1.0", "v1.0.0"]);
+        assert_eq!(
+            set.latest().ok_or("expected latest")?.version().as_str(),
+            "v1.1.0"
+        );
+        assert!(set.latest_per_major().get(&2).is_none());
+        assert_eq!(set.other_tag_sha("nightly"), Some("d"));
+        Ok(())
     }
 
     #[test]

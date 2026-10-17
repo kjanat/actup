@@ -15,19 +15,20 @@ Shared utility layer between `actup-core` and individual provider crates
 
 ## Where to Look
 
-| Task                     | Start Here                 |
-| ------------------------ | -------------------------- |
-| Change tag normalization | `tags.rs` → `process_tags` |
-| Parse action metadata    | `action_yml.rs`            |
-| Change git ref listing   | `ls_refs.rs` → `list_refs` |
-| Modify HTTP defaults     | `client.rs`                |
+| Task                     | Start Here                                   |
+| ------------------------ | -------------------------------------------- |
+| Change tag normalization | `actup-core` `version.rs` → `Set::from_tags` |
+| Parse action metadata    | `action_yml.rs`                              |
+| Change git ref listing   | `ls_refs.rs` → `list_refs`                   |
+| Modify HTTP defaults     | `client.rs`                                  |
 
 ## Conventions
 
 - All provider crates depend on this crate
 - `TagLike` trait: providers implement to normalize their tag API responses
 - `process_tags` converts any iterator of `TagLike` items into an
-  `actup_core::version::Set`
+  `actup_core::version::Set` through `Set::from_tags`, which the wasm bridge and
+  the Zed extension call directly
 - `parse_action_yml(raw, path)` takes the loaded filename from `filename_label`
   for its error messages
 

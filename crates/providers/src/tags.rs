@@ -3,8 +3,6 @@
 //! Provides the `TagLike` trait and generic tag processing logic
 //! shared across all provider implementations.
 
-use std::{collections::HashMap, sync::Arc};
-
 use actup_core::version;
 
 /// Trait for provider-specific tag types
@@ -51,75 +49,17 @@ pub trait TagLike {
 /// A [`version::Set`] containing the processed version information.
 #[must_use]
 pub fn process_tags<T: TagLike>(tags: impl IntoIterator<Item = T>) -> version::Set {
-    let mut semver_tags: Vec<Arc<version::Info>> = Vec::new();
-    let mut latest_per_major: HashMap<u32, Arc<version::Info>> = HashMap::new();
-    let mut major_tags: HashMap<u32, Arc<version::Info>> = HashMap::new();
-    let mut latest: Option<Arc<version::Info>> = None;
-    let mut other_tags: HashMap<String, String> = HashMap::new();
-
-    for tag in tags {
-        let version = version::Version::parse(tag.name());
-        let version::Version::Semver { major, .. } = version else {
-            other_tags.insert(tag.name().to_string(), tag.sha().to_string());
-            continue;
-        };
-
-        // Wrap in Arc for cheap cloning into multiple collections
-        let info = Arc::new(version::Info::new(version, tag.sha()));
-        let version = info.version();
-        // Always add to semver_tags (prereleases are filtered at query time)
-        semver_tags.push(Arc::clone(&info));
-
-        // Track major-only tags (v1, v2, v6 - no minor/patch)
-        if version.is_major_only() {
-            major_tags.insert(major, Arc::clone(&info));
-        }
-
-        // Only update "latest" trackers for non-prerelease versions
-        // (prereleases are filtered at query time via allow_prerelease flag)
-        if !version.is_prerelease() {
-            // Determine if current `version` is dominated by existing trackers.
-            // `dominated_by_latest`: true if global `latest` >= this `version`
-            // `dominated_by_major`: true if `latest_per_major[major]` >= this `version`
-            let dominated_by_latest = latest.as_ref().is_some_and(|l| l.version() >= version);
-            let dominated_by_major = latest_per_major
-                .get(&major)
-                .is_some_and(|c| c.version() >= version);
-
-            // Two-way update logic for `latest` and `latest_per_major`:
-            //
-            // 1. Neither dominated: `info` is the new overall latest AND new latest for
-            //    this `major`. Update both `latest` and `latest_per_major[major]`.
-            //
-            // 2. `dominated_by_latest` but NOT `dominated_by_major`: Global latest is
-            //    higher (different major), but this is a new latest for THIS major.
-            //    Only update `latest_per_major[major]`.
-            //
-            // 3. Both dominated: `info` is older than existing trackers; no updates.
-            //
-            // Note: The case where `dominated_by_major` is true but `dominated_by_latest`
-            // is false is unreachable because `latest` is always >= any `latest_per_major`
-            // value (global max >= per-major max).
-            if !dominated_by_latest && !dominated_by_major {
-                latest_per_major.insert(major, Arc::clone(&info));
-                latest = Some(Arc::clone(&info));
-            } else if !dominated_by_major {
-                latest_per_major.insert(major, Arc::clone(&info));
-            }
-        }
-    }
-
-    // Sort semver tags descending
-    semver_tags.sort_by(|a, b| b.version().cmp(a.version()));
-
-    let mut set = version::Set::build(semver_tags, latest_per_major, major_tags, latest);
-    set.set_other_tags(other_tags);
-    set
+    version::Set::from_tags(
+        tags.into_iter()
+            .map(|tag| (tag.name().to_string(), tag.sha().to_string())),
+    )
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     /// Simple tag type for testing

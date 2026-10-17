@@ -4,8 +4,6 @@
 //! The JS side implements a simple async interface (`getVersions`, etc.)
 //! and the adapter handles serde round-trips across the WASM boundary.
 
-use std::{collections::HashMap, sync::Arc};
-
 use actup_core::{
     ActionRepoId, Provider,
     compat::BoxFuture,
@@ -155,55 +153,11 @@ fn js_err(val: &JsValue) -> actup_core::Error {
 
 /// Convert [`VersionSet`] into [`version::Set`].
 fn build_version_set(js: VersionSet, clock: &dyn actup_core::Clock) -> version::Set {
-    let mut infos: Vec<Arc<version::Info>> = Vec::with_capacity(js.semver_tags.len());
-    let mut latest_per_major: HashMap<u32, Arc<version::Info>> = HashMap::new();
-    let mut major_tags: HashMap<u32, Arc<version::Info>> = HashMap::new();
-    let mut latest: Option<Arc<version::Info>> = None;
-
-    for tag in js.semver_tags {
-        let info = Arc::new(version::Info::new(
-            version::Version::parse(&tag.version),
-            tag.sha,
-        ));
-        let ver = info.version();
-
-        // Track major-only tags
-        if ver.is_major_only()
-            && let Some(major) = ver.major()
-        {
-            major_tags.insert(major, Arc::clone(&info));
-        }
-
-        // Track latest per major
-        if ver.is_semver() {
-            if let Some(major) = ver.major() {
-                let is_newer = latest_per_major
-                    .get(&major)
-                    .is_none_or(|existing| info.version() > existing.version());
-                if is_newer {
-                    latest_per_major.insert(major, Arc::clone(&info));
-                }
-            }
-
-            // Track overall latest
-            let is_latest = latest
-                .as_ref()
-                .is_none_or(|existing| info.version() > existing.version());
-            if is_latest {
-                latest = Some(Arc::clone(&info));
-            }
-        }
-
-        infos.push(info);
-    }
-
-    let mut set =
-        version::Set::build_with_clock(infos, latest_per_major, major_tags, latest, clock);
-
+    let tags = js.semver_tags.into_iter().map(|tag| (tag.version, tag.sha));
+    let mut set = version::Set::from_tags_with_clock(tags, clock);
     if let Some(branch) = js.default_branch {
         set.set_default_branch(version::BranchInfo::new(branch.name, branch.sha));
     }
-
     set
 }
 
