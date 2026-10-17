@@ -947,7 +947,8 @@ jobs:
     }
 
     #[test]
-    fn extract_located_actions_without_verbatim_value_cover_the_line() {
+    fn extract_located_actions_without_verbatim_value_cover_the_line()
+    -> Result<(), std::num::TryFromIntError> {
         for yaml in [
             "steps:\n  - uses: \"actions/checkout@v\\x34\"\n",
             "steps:\n  - uses: 'a/b@v''4'\n",
@@ -967,10 +968,11 @@ jobs:
             assert!(!action.editable, "{yaml:?}");
             assert_eq!(
                 (action.col_start, action.col_end, action.trailing),
-                (0, u32::try_from(line_len).unwrap(), TrailingComment::None),
+                (0, u32::try_from(line_len)?, TrailingComment::None),
                 "{yaml:?}"
             );
         }
+        Ok(())
     }
 
     #[test]
@@ -1324,14 +1326,15 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_drops_edits_for_value_not_written_verbatim() {
+    async fn compute_diagnostics_drops_edits_for_value_not_written_verbatim()
+    -> Result<(), Box<dyn std::error::Error>> {
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
 
         let yaml = "    - uses: \"actions/checkout@v\\x33\"\n    - uses: actions/checkout@v3\n";
         let result = compute_diagnostics(
@@ -1364,6 +1367,7 @@ jobs:
             crate::code_actions::fix_all_in_file(&uri, Some(1), &result.diagnostics, true)
                 .is_none()
         );
+        Ok(())
     }
 
     #[tokio::test]

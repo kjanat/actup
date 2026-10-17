@@ -214,10 +214,10 @@ fn last_uses_key(prefix: &str) -> Option<usize> {
     let mut i = 0;
     while let Some(&b) = bytes.get(i) {
         let prev = i.checked_sub(1).and_then(|p| bytes.get(p)).copied();
-        let at_boundary =
-            prev.is_none_or(|p| matches!(p, b' ' | b'\t' | b'-' | b'[' | b'{' | b','));
+        let at_boundary = prev.is_none_or(|p| matches!(p, b' ' | b'\t' | b'[' | b'{' | b','));
         match quote {
             Some(b'"') if b == b'\\' => i += 1,
+            Some(b'\'') if b == b'\'' && bytes.get(i + 1) == Some(&b'\'') => i += 1,
             Some(q) if b == q => quote = None,
             None if b == b'#' && prev.is_none_or(|p| p == b' ' || p == b'\t') => break,
             None if matches!(b, b'"' | b'\'') && (at_boundary || prev == Some(b':')) => {
@@ -1159,6 +1159,35 @@ mod tests {
             let pos = Position { line: 0, character };
             assert_eq!(detect_completion_context(text, pos, ENC), None, "{text}");
         }
+    }
+
+    #[test]
+    fn detect_context_ignores_uses_in_escaped_quotes_and_dashed_keys()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for text in [
+            "      - { uses: a/b@v1, name: 'it''s uses: x' }\n",
+            "      - { uses: a/b@v1, pre-uses: x }\n",
+        ] {
+            let x = text.rfind('x').ok_or("no x")?;
+            let pos = Position {
+                line: 0,
+                character: u32::try_from(x + 1)?,
+            };
+            assert_eq!(detect_completion_context(text, pos, ENC), None, "{text}");
+        }
+        let text = "      - { name: 'it''s', uses: a/b@v }\n";
+        let pos = Position {
+            line: 0,
+            character: u32::try_from(text.rfind('v').ok_or("no v")? + 1)?,
+        };
+        assert_eq!(
+            detect_completion_context(text, pos, ENC),
+            Some(CompletionContext::VersionRef {
+                repo_id: ActionRepoId::simple("a", "b"),
+                version_prefix: "v".into(),
+            })
+        );
+        Ok(())
     }
 
     #[test]
