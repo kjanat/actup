@@ -119,6 +119,8 @@ pub struct MockProvider {
     /// Pre-configured version sets, keyed by `"owner/repo"`.
     versions: HashMap<String, Result<version::Set, CoreError>>,
     calls: Arc<AtomicUsize>,
+    resolve: Result<String, CoreError>,
+    resolve_calls: Arc<AtomicUsize>,
     rewrite: Option<(std::path::PathBuf, String)>,
 }
 
@@ -130,8 +132,19 @@ impl MockProvider {
             host: host.to_string(),
             versions: HashMap::new(),
             calls: Arc::new(AtomicUsize::new(0)),
+            resolve: Ok(DUMMY_SHA.to_string()),
+            resolve_calls: Arc::new(AtomicUsize::new(0)),
             rewrite: None,
         }
+    }
+
+    pub fn with_resolve(mut self, result: Result<&str, CoreError>) -> Self {
+        self.resolve = result.map(str::to_string);
+        self
+    }
+
+    pub fn resolve_count(&self) -> Arc<AtomicUsize> {
+        Arc::clone(&self.resolve_calls)
     }
 
     /// Overwrite `path` with `content` on every version lookup.
@@ -192,7 +205,15 @@ impl Provider for MockProvider {
         _repo: &ActionRepoId,
         _ref_name: &str,
     ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
-        Box::pin(async { Ok(Sha40::new(DUMMY_SHA.to_string()).unwrap()) })
+        self.resolve_calls.fetch_add(1, Ordering::SeqCst);
+        let result = match &self.resolve {
+            Ok(sha) => Sha40::new(sha.clone()).ok_or_else(|| CoreError::Internal {
+                context: "mock resolve".to_string(),
+                message: format!("invalid SHA {sha}"),
+            }),
+            Err(e) => Err(clone_core_error(e)),
+        };
+        Box::pin(async move { result })
     }
 
     fn get_default_branch(

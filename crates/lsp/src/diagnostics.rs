@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat,
-    check_action_with_provider, expand_short_sha, parse_uses, provider,
+    check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus},
     rewrite::{Rewrite, Trailing},
 };
@@ -352,7 +352,12 @@ async fn expand_edit(
     provider: Option<&dyn provider::Provider>,
     versions: Option<&actup_core::version::Set>,
 ) -> Option<OutdatedEdit> {
-    let sha = expand_short_sha(&action.action_ref, provider?).await?;
+    let repo_id = action.action_ref.to_repo_id().without_subpath();
+    let sha = provider?
+        .resolve_ref_to_sha(&repo_id, action.action_ref.ref_str())
+        .await
+        .ok()
+        .filter(|sha| action.action_ref.abbreviates(sha.as_str()))?;
     let sha = sha.as_str();
     let untagged = || OutdatedEdit {
         target_ref: sha.to_string(),
@@ -1928,6 +1933,91 @@ jobs:
     async fn hex_ref_naming_another_commit_gets_no_short_sha_diagnostic() {
         let diags = short_sha_diagnostics("    - uses: actions/checkout@deadbee", DUMMY_SHA).await;
         assert_eq!(diags, []);
+    }
+
+    fn complete_provider() -> test_utils::MockProvider {
+        let mut versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        versions.set_listing(version::Listing::Complete);
+        test_utils::MockProvider::new("github.com").with_versions("actions", "checkout", versions)
+    }
+
+    async fn diagnostics_from(
+        provider: test_utils::MockProvider,
+        yaml: &str,
+    ) -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
+        let registry = test_utils::mock_registry(provider);
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        Ok(compute_diagnostics(
+            yaml,
+            &uri,
+            &Config::default(),
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await
+        .diagnostics)
+    }
+
+    #[tokio::test]
+    async fn short_sha_expands_only_to_the_commit_it_abbreviates()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let missing = CoreError::RefNotFound {
+            owner: "actions".to_string(),
+            repo: "checkout".to_string(),
+            ref_name: "fedcba9".to_string(),
+            host: None,
+        };
+        for (ref_name, provider) in [
+            ("fedcba9", complete_provider()),
+            ("abc1234", complete_provider().with_resolve(Err(missing))),
+        ] {
+            let resolves = provider.resolve_count();
+            let yaml = format!("    - uses: actions/checkout@{ref_name}\n");
+            let diags = diagnostics_from(provider, &yaml).await?;
+            let [diag] = diags.as_slice() else {
+                return Err(format!("expected one diagnostic, got {diags:?}").into());
+            };
+            assert!(diag.message.ends_with(SHORT_SHA_REASON), "{}", diag.message);
+            assert!(
+                !matches!(expand_data(diag), Some(DiagnosticData::ExpandSha { .. })),
+                "{ref_name}: {:?}",
+                diag.data
+            );
+            assert_eq!(resolves.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn non_editable_short_sha_skips_the_expand_lookup()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = complete_provider();
+        let resolves = provider.resolve_count();
+        let yaml = "    - uses: \"actions/checkout@abc\\x31234\"\n";
+        let diags = diagnostics_from(provider, yaml).await?;
+        let [diag] = diags.as_slice() else {
+            return Err(format!("expected one diagnostic, got {diags:?}").into());
+        };
+        assert_eq!(
+            diag.message,
+            format!("actions/checkout@abc1234: {SHORT_SHA_REASON}")
+        );
+        assert_eq!(diag.data, None);
+        assert_eq!(resolves.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let provider = complete_provider();
+        let resolves = provider.resolve_count();
+        let diags = diagnostics_from(provider, "    - uses: actions/checkout@abc1234\n").await?;
+        assert!(
+            matches!(
+                diags.first().and_then(expand_data),
+                Some(DiagnosticData::ExpandSha { .. })
+            ),
+            "{diags:?}"
+        );
+        assert_eq!(resolves.load(std::sync::atomic::Ordering::SeqCst), 1);
+        Ok(())
     }
 
     #[tokio::test]

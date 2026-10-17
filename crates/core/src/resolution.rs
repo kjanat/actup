@@ -511,32 +511,6 @@ fn classify_short_sha(
     )
 }
 
-/// Resolve a short SHA ref to the full commit SHA it abbreviates.
-///
-/// Returns `None` when the ref is no short SHA, names a tag or branch on
-/// another commit, or the provider cannot resolve it.
-#[cfg_attr(
-    target_arch = "wasm32",
-    allow(
-        clippy::future_not_send,
-        reason = "wasm32 providers intentionally use non-Send boxed futures"
-    )
-)]
-pub async fn expand_short_sha(
-    action_ref: &ActionRef,
-    provider: &dyn provider::Provider,
-) -> Option<provider::Sha40> {
-    if !action_ref.is_short_sha() {
-        return None;
-    }
-    let repo_id = action_ref.to_repo_id().without_subpath();
-    provider
-        .resolve_ref_to_sha(&repo_id, action_ref.ref_str())
-        .await
-        .ok()
-        .filter(|sha| action_ref.abbreviates(sha.as_str()))
-}
-
 /// Determine status for a SHA-pinned ref.
 ///
 /// If the SHA matches a known tag's commit, the most specific tag on it is the
@@ -2389,33 +2363,6 @@ mod tests {
                 ref_name: "deadbee".to_string(),
                 sha: "b".repeat(40),
             }
-        );
-    }
-
-    #[tokio::test]
-    async fn test_expand_short_sha_returns_only_the_abbreviated_commit() {
-        let short = make_action_ref("actions", "checkout", "abc1234");
-        let expanded = expand_short_sha(
-            &short,
-            &ResolveMockProvider::with(Resolve::To(SHORT_SHA_COMMIT)),
-        )
-        .await;
-        assert_eq!(expanded.as_ref().map(Sha40::as_str), Some(SHORT_SHA_COMMIT));
-        assert!(
-            expand_short_sha(&short, &ResolveMockProvider::with(Resolve::Found))
-                .await
-                .is_none()
-        );
-        assert!(
-            expand_short_sha(&short, &ResolveMockProvider::with(Resolve::Missing))
-                .await
-                .is_none()
-        );
-        let tag = make_action_ref("actions", "checkout", "v4");
-        assert!(
-            expand_short_sha(&tag, &ResolveMockProvider::with(Resolve::Found))
-                .await
-                .is_none()
         );
     }
 

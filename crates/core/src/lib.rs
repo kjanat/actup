@@ -57,7 +57,7 @@ pub use policy::Update;
 pub use provider::Provider;
 pub use resolution::{
     CheckResult, CheckStatus, NO_VERSIONS_FOUND_REASON, RefKind, SHORT_SHA_REASON, check_action,
-    check_action_remote, check_action_with_provider, expand_short_sha,
+    check_action_remote, check_action_with_provider,
 };
 pub use syntax::SourceFormat;
 pub use version::{BranchInfo, Info, Version};
