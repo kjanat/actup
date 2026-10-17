@@ -1168,6 +1168,7 @@ mod tests {
             "  - { uses: o/i@AAA } # v4.1.0",
             "  - uses: \"o/j@AAA\" # v4.1.0",
             "  - uses: 'o/k@AAA' # v4 keep me",
+            "  - { uses: o/x@AAA, with: { x: 1 } } # v4.1.0 keep",
             "",
         ]
         .join("\n")
@@ -1186,6 +1187,13 @@ mod tests {
             .replace(
                 &format!("{{ uses: o/i@{} }} # v4.1.0", sha('a')),
                 "{ uses: o/i@v4.1.0 }",
+            )
+            .replace(
+                &format!(
+                    "{{ uses: o/x@{}, with: {{ x: 1 }} }} # v4.1.0 keep",
+                    sha('a')
+                ),
+                "{ uses: o/x@v4.1.0, with: { x: 1 } } # keep",
             );
         let file = workflow(dir.path(), &content)?;
         let config = Config::from_contents(
@@ -1221,7 +1229,8 @@ mod tests {
                 (3, "v4"),
                 (10, "v4.1.0"),
                 (11, "v4.1.0"),
-                (12, "v4")
+                (12, "v4"),
+                (13, "v4.1.0")
             ]
         );
         let skipped: Vec<(usize, SkipCause)> = result

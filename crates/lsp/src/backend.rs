@@ -1775,6 +1775,17 @@ mod tests {
             .as_deref(),
             Some("actup: unpin to `v4.1.0`:   - { uses: actions/checkout@v4.1.0 } # keep")
         );
+        assert_eq!(
+            unpinned(
+                &format!("  - {{ uses: actions/checkout@{a}, with: {{ x: 1 }} }} # v4.1.0 keep"),
+                &versions
+            )
+            .await?
+            .as_deref(),
+            Some(
+                "actup: unpin to `v4.1.0`:   - { uses: actions/checkout@v4.1.0, with: { x: 1 } } # keep"
+            )
+        );
         Ok(())
     }
 

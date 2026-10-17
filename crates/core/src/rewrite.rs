@@ -63,11 +63,14 @@ pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
 
 /// The byte offset of the first `#` in `rest` that starts a YAML comment.
 ///
-/// `rest` starts right after a ref, so a leading quote closes the value.
+/// `rest` starts right after a ref, so a leading quote closes the value. A
+/// later quote opens a quoted scalar only where a flow scalar starts: after
+/// `{`, `[`, `,` or `:` and spaces.
 fn comment_start(rest: &str) -> usize {
     let mut quote: Option<char> = None;
     let mut escaped = false;
     let mut after_space = false;
+    let mut last = None;
     for (i, c) in rest.char_indices() {
         match quote {
             _ if i == 0 && matches!(c, '"' | '\'') => {}
@@ -75,10 +78,15 @@ fn comment_start(rest: &str) -> usize {
             Some('"') if c == '\\' => escaped = true,
             Some(q) if c == q => quote = None,
             None if c == '#' && after_space => return i,
-            None if matches!(c, '"' | '\'') => quote = Some(c),
+            None if matches!(c, '"' | '\'') && matches!(last, Some('{' | '[' | ',' | ':')) => {
+                quote = Some(c);
+            }
             Some(_) | None => {}
         }
         after_space = c.is_whitespace();
+        if !after_space {
+            last = Some(c);
+        }
     }
     rest.len()
 }
@@ -540,6 +548,16 @@ mod tests {
                 Trailing::Version { note: "keep me" },
             ),
             ("  - uses: a/b@v1#x", "#x", Trailing::Foreign),
+            (
+                "  - { uses: a/b@v1, with: { msg: it's } } # v1.0.0",
+                ", with: { msg: it's } } ",
+                VERSION,
+            ),
+            (
+                "  - { uses: a/b@v1, with: { a: it's, b: 'x # v9' } }",
+                ", with: { a: it's, b: 'x # v9' } }",
+                Trailing::Foreign,
+            ),
         ] {
             let ref_end = line.find("@v1").map_or(0, |at| at + 3);
             assert_eq!(closer(line, ref_end), closing, "{line}");

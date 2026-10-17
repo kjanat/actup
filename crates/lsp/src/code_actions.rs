@@ -1767,7 +1767,7 @@ mod tests {
     {
         let old = "a".repeat(40);
         let text = format!(
-            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n  - {{ uses: o/k@{old}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{old}, with: {{ x: 1 }} }} # v1.0.0\n"
+            "steps:\n  - uses: \"o/b@main\"\n  - uses: 'o/t@nightly' # v1.0.0\n  - uses: \"o/s@{old}\" # v1.0.0\n  - uses: 'o/u@{old}'\n  - {{ uses: o/f@main }}\n  - [{{ uses: 'o/g@{old}' }}] # v1.0.0\n  - [{{ uses: o/h@main }}, {{ uses: o/i@main }}]\n  - {{ uses: o/k@{old}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{old}, with: {{ x: 1 }} }} # v1.0.0\n  - {{ uses: o/m@{old}, with: {{ msg: it's }} }} # v1.0.0\n  - {{ uses: o/n@{old}, with: {{ a: it's, b: 'x # v9' }} }}\n"
         );
         let new = test_utils::make_version_info("v1.2.0", &"b".repeat(40));
         let mut versions = actup_core::version::Set::build(
@@ -1782,7 +1782,7 @@ mod tests {
         versions.set_branches(HashMap::from([("main".to_string(), "c".repeat(40))]));
         versions.set_other_tags(HashMap::from([("nightly".to_string(), "d".repeat(40))]));
         let mut provider = test_utils::MockProvider::new("github.com");
-        for repo in ["b", "t", "s", "u", "f", "g", "h", "i", "k", "l"] {
+        for repo in ["b", "t", "s", "u", "f", "g", "h", "i", "k", "l", "m", "n"] {
             provider = provider.with_versions("o", repo, versions.clone());
         }
         let registry = test_utils::mock_registry(provider);
@@ -1812,7 +1812,7 @@ mod tests {
         assert_eq!(
             fixed,
             format!(
-                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n  - {{ uses: o/k@{b}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{b}, with: {{ x: 1 }} }} # v1.2.0\n",
+                "steps:\n  - uses: \"o/b@{c}\" # main\n  - uses: 'o/t@{d}' # nightly\n  - uses: \"o/s@{b}\" # v1.2.0\n  - uses: 'o/u@{b}' # v1.2.0\n  - {{ uses: o/f@{c} }} # main\n  - [{{ uses: 'o/g@{b}' }}] # v1.2.0\n  - [{{ uses: o/h@{c} }}, {{ uses: o/i@{c} }}]\n  - {{ uses: o/k@{b}, with: {{ x: 1 }} }}\n  - {{ uses: o/l@{b}, with: {{ x: 1 }} }} # v1.2.0\n  - {{ uses: o/m@{b}, with: {{ msg: it's }} }} # v1.2.0\n  - {{ uses: o/n@{b}, with: {{ a: it's, b: 'x # v9' }} }}\n",
                 b = "b".repeat(40),
                 c = "c".repeat(40),
                 d = "d".repeat(40),

@@ -406,17 +406,19 @@ jobs:
       - [{ uses: ./local }, { uses: actions/checkout@${oldSha} }]
       - { uses: actions/checkout@${oldSha}, with: { x: 1 } }
       - { uses: actions/checkout@${oldSha}, with: { x: 1 } } # v4.0.0
+      - { uses: actions/checkout@${oldSha}, with: { msg: it's } } # v4.0.0
+      - { uses: actions/checkout@${oldSha}, with: { a: it's, b: 'x # v9' } }
 `;
 const closerResults = await checkRefs(closerYaml, mockProvider);
 const closerEdits = planUpdates(closerResults);
 assert.equal(
 	applyEdits(closerYaml, closerEdits),
-	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@${newSha}" # v4.2.0\n      - uses: 'actions/checkout@${newSha}' # v4.2.0\n      - { uses: actions/checkout@${newSha} } # v4.2.0\n      - [{ uses: actions/checkout@${newSha} }, { uses: actions/checkout@${newSha} }]\n      - [{ uses: ./local }, { uses: actions/checkout@${newSha} }]\n      - { uses: actions/checkout@${newSha}, with: { x: 1 } }\n      - { uses: actions/checkout@${newSha}, with: { x: 1 } } # v4.2.0\n`,
+	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@${newSha}" # v4.2.0\n      - uses: 'actions/checkout@${newSha}' # v4.2.0\n      - { uses: actions/checkout@${newSha} } # v4.2.0\n      - [{ uses: actions/checkout@${newSha} }, { uses: actions/checkout@${newSha} }]\n      - [{ uses: ./local }, { uses: actions/checkout@${newSha} }]\n      - { uses: actions/checkout@${newSha}, with: { x: 1 } }\n      - { uses: actions/checkout@${newSha}, with: { x: 1 } } # v4.2.0\n      - { uses: actions/checkout@${newSha}, with: { msg: it's } } # v4.2.0\n      - { uses: actions/checkout@${newSha}, with: { a: it's, b: 'x # v9' } }\n`,
 	"SHA pins write the closer before the comment, and a line with two values or other keys gets none",
 );
 assert.equal(
 	applyEdits(closerYaml, planUpdates(closerResults, { policy: { pin: "tag" } })),
-	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@v4.2.0"\n      - uses: 'actions/checkout@v4.2.0'\n      - { uses: actions/checkout@v4.2.0 }\n      - [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@v4.2.0 }]\n      - [{ uses: ./local }, { uses: actions/checkout@v4.2.0 }]\n      - { uses: actions/checkout@v4.2.0, with: { x: 1 } }\n      - { uses: actions/checkout@v4.2.0, with: { x: 1 } }\n`,
+	`jobs:\n  build:\n    steps:\n      - uses: "actions/checkout@v4.2.0"\n      - uses: 'actions/checkout@v4.2.0'\n      - { uses: actions/checkout@v4.2.0 }\n      - [{ uses: actions/checkout@v4.2.0 }, { uses: actions/checkout@v4.2.0 }]\n      - [{ uses: ./local }, { uses: actions/checkout@v4.2.0 }]\n      - { uses: actions/checkout@v4.2.0, with: { x: 1 } }\n      - { uses: actions/checkout@v4.2.0, with: { x: 1 } }\n      - { uses: actions/checkout@v4.2.0, with: { msg: it's } }\n      - { uses: actions/checkout@v4.2.0, with: { a: it's, b: 'x # v9' } }\n`,
 	"unpinned tags keep the closer",
 );
 
