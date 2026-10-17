@@ -7,7 +7,7 @@ Model Context Protocol server for AI agents, served over stdio with
 
 | File                      | Purpose                                                             |
 | ------------------------- | ------------------------------------------------------------------- |
-| `src/main.rs`             | Binary: `--root`, `--config`, `Registry::from_config`, stdio        |
+| `src/main.rs`             | Binary: `--root`, `--config`, registry, `FileCache`, stdio          |
 | `src/lib.rs`              | `Server` (`ServerHandler`), tool list, `INSTRUCTIONS`, read cache   |
 | `src/args.rs`             | Tool argument structs, `schemars` input schemas, ref validation     |
 | `src/read.rs`             | `actionGetReadme`, `actionGetActionYml`, `getVersions`, `getLatest` |
@@ -44,8 +44,11 @@ Model Context Protocol server for AI agents, served over stdio with
   are tool errors (`isError`) without a status.
 - Read results are memoized for `cache.ttl` when the provider answered.
   `Registry::from_config` gets `Retention::expiring(config.cache.ttl)`.
-  `updateAllUsesToVersion` resolves `targetRef` with `refresh_ref_to_sha` on
-  every call.
+  `main.rs` builds `FileCache::from_config` and passes it to `Server::new`;
+  `getVersions` and `getLatest` read version sets through `FileCache::versions`,
+  the disk cache the CLI and LSP use. `updateAllUsesToVersion` resolves
+  `targetRef` with `refresh_ref_to_sha` on every call unless `scan.ignore`
+  matches every matching ref.
 
 ## Tests
 

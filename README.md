@@ -372,10 +372,10 @@ the repo config declares gets no token.
 
 The disk cache lives in `cache.path`, else in the OS cache dir
 (`~/.cache/actup`, `~/Library/Caches/actup`, `%LOCALAPPDATA%\actup\cache`). With
-neither, the CLI and the LSP warn once and run without a disk cache, and
-`actup cache info` and `actup cache path` report that there is no cache dir.
-`actup cache clear` deletes only the entry files actup writes and keeps every
-other file in the directory.
+neither, the CLI, the LSP and `actup-mcp` warn once and run without a disk
+cache, and `actup cache info` and `actup cache path` report that there is no
+cache dir. `actup cache clear` deletes only the entry files actup writes and
+keeps every other file in the directory.
 
 An unknown key in a config file or in an `ACTUP_*` variable is an error (exit
 code 2). The message names the file or the variable and suggests the closest
