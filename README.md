@@ -338,6 +338,13 @@ but a label comment at the end of the line is still rewritten and keeps its
 note. `actup pin` and `branch = "update"` place their `# <ref>` comment the same
 way. The CLI, the LSP, the MCP server and the wasm package follow the same rule.
 
+On a line that takes no new comment, such as a line of a plain-text file, a
+label comment right after the value is still rewritten. Writers read the word
+after `#` as the label and the next word as the note, and leave the rest of the
+line as written: `run("uses: o/p@<sha> # v4.0.0 keep this")` re-pinned becomes
+`run("uses: o/p@<new> # v4.2.0 keep this")`. A word ends at whitespace, a quote,
+a backslash, a bracket, `<`, `>`, `;` or `,`.
+
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose
 comment starts with a tag, and only when the fetched tags hold that tag on the

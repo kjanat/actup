@@ -920,7 +920,7 @@ mod tests {
 
         let md_expected = "# Usage\n\n```yaml\nsteps:\n  - uses: o/p@NEW # v4.2.0\n  - uses: actions/checkout@v4.2.0\n```\n\nProse uses: o/q@v4.0.0\n"
             .replace("NEW", &sha40('b'));
-        let ts_expected = "const workflow = `\n  - uses: o/p@NEW # v4.0.0\n  - uses: actions/checkout@v4.2.0\n`;\nexport const step = { uses: \"o/r@v4.2.0\" };\nprint(\"- uses: o/p@NEW # v4.0.0\\n\");\n"
+        let ts_expected = "const workflow = `\n  - uses: o/p@NEW # v4.2.0\n  - uses: actions/checkout@v4.2.0\n`;\nexport const step = { uses: \"o/r@v4.2.0\" };\nprint(\"- uses: o/p@NEW # v4.2.0\\n\");\n"
             .replace("NEW", &sha40('b'));
         for _ in 0..2 {
             let code = run(

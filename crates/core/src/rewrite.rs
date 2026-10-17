@@ -117,6 +117,48 @@ pub fn after_value(raw_line: &str, ref_end: usize) -> &str {
     &rest[comment_start(rest)..]
 }
 
+/// The length of the `# <label> [<word>]` comment that starts `rest`, the text after a value, or 0.
+///
+/// The comment needs whitespace before its `#`. A word ends at whitespace, a
+/// quote, a backslash, a bracket, `<`, `>`, `;` or `,`, and the word after the label is
+/// read as its note. A writer reads this span on a line that takes no new
+/// comment and leaves the rest of the line as written.
+#[must_use]
+pub fn label_span(rest: &str) -> usize {
+    let is_word = |c: char| {
+        !c.is_whitespace()
+            && !matches!(
+                c,
+                '"' | '\'' | '`' | '\\' | '(' | ')' | '[' | ']' | '{' | '}' | '<' | '>' | ';' | ','
+            )
+    };
+    let word_end = |from: usize| {
+        rest.get(from..)
+            .and_then(|tail| tail.find(|c: char| !is_word(c)))
+            .map_or(rest.len(), |len| from + len)
+    };
+    let gap_end = |from: usize| {
+        rest.get(from..)
+            .map_or(from, |tail| from + tail.len() - tail.trim_start().len())
+    };
+    let hash = gap_end(0);
+    if hash == 0 || rest.get(hash..hash + 1) != Some("#") {
+        return 0;
+    }
+    let label_start = gap_end(hash + 1);
+    let label_end = word_end(label_start);
+    if label_end == label_start {
+        return 0;
+    }
+    let note_start = gap_end(label_end);
+    let note_end = word_end(note_start);
+    if note_start > label_end && note_end > note_start {
+        note_end
+    } else {
+        label_end
+    }
+}
+
 /// The byte offset of the first `#` in `rest` that starts a YAML comment.
 ///
 /// `rest` starts right after a ref, so a leading quote closes the value. A
@@ -514,6 +556,22 @@ mod tests {
             Trailing::after(line, ref_end, &unfetched),
             Trailing::Foreign
         );
+    }
+
+    #[test]
+    fn label_span_covers_the_label_and_one_note_word() {
+        fn span(rest: &str) -> Option<&str> {
+            rest.get(..label_span(rest))
+        }
+        assert_eq!(span(" # v4.0.0\");"), Some(" # v4.0.0"));
+        assert_eq!(span(" # v4.0.0 keep this\");"), Some(" # v4.0.0 keep"));
+        assert_eq!(span("  #v4 keep`"), Some("  #v4 keep"));
+        assert_eq!(span(" # main, x"), Some(" # main"));
+        assert_eq!(span(" # v4 \");"), Some(" # v4"));
+        assert_eq!(span(" # v4.0.0\\n\");"), Some(" # v4.0.0"));
+        for rest in ["", "\");", "# v4", " #", " # \")", " x # v4", "\" # v4"] {
+            assert_eq!(label_span(rest), 0, "{rest:?}");
+        }
     }
 
     #[test]

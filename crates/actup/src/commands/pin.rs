@@ -1856,11 +1856,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_unpin_fetches_nothing_for_a_marker_cut_from_plain_text()
+    async fn test_unpin_fetches_nothing_without_a_marked_pin_in_plain_text()
     -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("gen.py");
-        let content = format!("f.write(\"  - uses: o/a@{} # v4.1.0\\n\")\n", sha('a'));
+        let content = format!(
+            "f.write(\"  - uses: o/a@{}\\n\")\nf.write(\"  - uses: o/c@{} # mine\\n\")\n",
+            sha('a'),
+            sha('b')
+        );
         std::fs::write(&file, &content)?;
         let mut registry = provider::Registry::new();
         registry.set_default_host("github.com");
@@ -1893,20 +1897,20 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let file = dir.path().join("gen.py");
         let line = |a: &str, g: &str| {
-            format!(
-                "f.write(\"  - uses: o/a@{a} # v4.1.0\\n\")\nf.write(\"  - uses: o/g@{g} # v4.0.0\\n\")\n"
-            )
+            format!("f.write(\"  - uses: o/a@{a} keep\\n\")\nf.write(\"  - uses: o/g@{g}\\n\")\n")
         };
-        std::fs::write(&file, line(&sha('a'), "v4"))?;
-        let pinned = line(&sha('b'), &sha('a'));
-        let repinned = line(&sha('b'), &sha('b'));
+        let (old, new) = (sha('a'), sha('b'));
+        std::fs::write(&file, line(&format!("{old} # v4.1.0"), "v4 # v4.0.0"))?;
+        let pinned = line(&format!("{new} # v4.2.0"), &format!("{old} # v4"));
+        let repinned = line(&format!("{new} # v4.2.0"), &format!("{new} # v4.2.0"));
+        let unpinned = line("v4.2.0 #", "v4.2.0");
         let registry = unpin_registry()?;
         let config = uncached();
 
         for (mode, expected) in [
             (Mode::Pin, &pinned),
             (Mode::Pin, &repinned),
-            (Mode::Unpin, &repinned),
+            (Mode::Unpin, &unpinned),
         ] {
             let code = run(
                 &file,

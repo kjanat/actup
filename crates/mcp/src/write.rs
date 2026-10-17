@@ -509,7 +509,7 @@ pub fn update_file(
             });
             continue;
         }
-        let pending = match ref_edit(loc, action.is_sha(), &edit.reference) {
+        let pending = match ref_edit(&edits.writable(loc), action.is_sha(), &edit.reference) {
             Ok(pending) => pending,
             Err(problem) => {
                 problems.push(format!("line {line}: {problem}"));

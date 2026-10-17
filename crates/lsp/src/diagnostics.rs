@@ -9,7 +9,7 @@ use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
     check_action_with_provider, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
-    rewrite::{Labels, Rewrite, Trailing, after_value, closer},
+    rewrite::{Labels, Rewrite, Trailing, after_value, closer, label_span},
 };
 use serde::{Deserialize, Serialize};
 use tower_lsp_server::ls_types::{
@@ -134,15 +134,16 @@ pub struct LocatedAction {
     pub editable: bool,
     /// The original `uses:` value string (for diagnostic messages).
     uses_value: String,
-    /// The [`closer`] of the value, empty when the line takes no comment.
+    /// The [`closer`] of the value, read up to its [`label_span`] when the line takes no comment.
     pub closer: String,
-    /// The text after the value on its line, empty when the ref is not editable
-    /// or the line takes no comment.
+    /// The comment after the value on its line, empty when the ref is not
+    /// editable, and only its [`label_span`] when the line takes no comment.
     pub tail: String,
     /// Whether the line may take a version comment.
     takes_comment: bool,
-    /// 0-indexed end-of-line column (negotiated encoding), used to overwrite a
-    /// stale version comment when re-pinning.
+    /// 0-indexed column (negotiated encoding) where a rewrite after the ref
+    /// ends: the line end, or the end of the [`label_span`] on a line that
+    /// takes no comment.
     pub line_end_col: u32,
 }
 
@@ -156,17 +157,20 @@ pub fn uri_format(uri: &Uri) -> SourceFormat {
 }
 
 impl LocatedAction {
-    /// What follows the ref on its line read with the labels `versions` lists, [`Trailing::Foreign`] on a line that takes no comment.
+    /// What follows the ref on its line read with the labels `versions` lists.
+    ///
+    /// On a line that takes no comment, only a label comment right after the
+    /// value counts, and anything else is [`Trailing::Foreign`].
     pub fn trailing(&self, versions: Option<&actup_core::version::Set>) -> Trailing<'_> {
-        if !self.takes_comment {
-            return Trailing::Foreign;
-        }
         let current = self.action_ref.ref_str();
         let labels = versions.map_or_else(
             || Labels::unfetched(current),
             |versions| Labels::fetched(current, versions),
         );
-        Trailing::of(&self.closer, &self.tail, &labels)
+        match Trailing::of(&self.closer, &self.tail, &labels) {
+            Trailing::None if !self.takes_comment => Trailing::Foreign,
+            trailing => trailing,
+        }
     }
 }
 
@@ -227,9 +231,9 @@ struct LocatedUses {
 ///
 /// Column positions are converted from byte offsets to the negotiated
 /// LSP position encoding. A ref on a line outside
-/// [`SourceFormat::comment_lines`] gets [`Trailing::Foreign`], an empty
-/// closer and an empty tail, so no edit appends, rewrites or reads a comment
-/// there.
+/// [`SourceFormat::comment_lines`] reads only the [`label_span`] after its
+/// value, so no edit appends a comment there and a rewrite of a label
+/// comment leaves the rest of the line alone.
 fn locate_uses(
     text: &str,
     format: SourceFormat,
@@ -286,28 +290,28 @@ fn locate_uses(
                 continue;
             }
         };
-        let (col_start, col_end, editable, takes_comment, closing, tail) =
-            loc.ref_range()
-                .map_or((0, line_end_col, false, true, "", ""), |r| {
-                    let takes_comment = commentable.contains(&loc.line());
-                    let (col_start, col_end) = ref_cols.unwrap_or((0, line_end_col));
-                    (
-                        col_start,
-                        col_end,
-                        true,
-                        takes_comment,
-                        if takes_comment {
-                            closer(raw_line, r.end)
-                        } else {
-                            ""
-                        },
-                        if takes_comment {
-                            after_value(raw_line, r.end)
-                        } else {
-                            ""
-                        },
-                    )
-                });
+        let (col_start, col_end, editable, takes_comment, closing, tail, rewrite_end_col) = loc
+            .ref_range()
+            .map_or((0, line_end_col, false, true, "", "", line_end_col), |r| {
+                let takes_comment = commentable.contains(&loc.line());
+                let (col_start, col_end) = ref_cols.unwrap_or((0, line_end_col));
+                let read = if takes_comment {
+                    raw_line
+                } else {
+                    raw_line
+                        .get(..r.end + label_span(raw_line.get(r.end..).unwrap_or("")))
+                        .unwrap_or(raw_line)
+                };
+                (
+                    col_start,
+                    col_end,
+                    true,
+                    takes_comment,
+                    closer(read, r.end),
+                    after_value(read, r.end),
+                    crate::position::byte_to_col(raw_line, read.len(), encoding),
+                )
+            });
         located.actions.push(LocatedAction {
             action_ref,
             line,
@@ -318,7 +322,7 @@ fn locate_uses(
             closer: closing.to_string(),
             tail: tail.to_string(),
             takes_comment,
-            line_end_col,
+            line_end_col: rewrite_end_col,
         });
     }
 
@@ -2787,20 +2791,27 @@ jobs:
     }
 
     #[test]
-    fn located_actions_read_no_tail_on_lines_without_comments() {
+    fn located_actions_read_only_a_label_on_lines_without_comments() {
         let sha = "a".repeat(40);
         let encoding = crate::position::PositionEncoding::Utf16;
-        let text = extract_located_actions(
-            &format!("run(\"uses: o/p@{sha} # v4\");\n"),
-            SourceFormat::Text,
-            encoding,
-        );
-        let [action] = text.as_slice() else {
-            panic!("expected one action, got {}", text.len());
-        };
+        let line = format!("run(\"uses: o/p@{sha} # v4 keep this\"); x(\"uses: o/q@v1\");\n");
+        let text = extract_located_actions(&line, SourceFormat::Text, encoding);
+        let read: Vec<(Trailing<'_>, &str, u32)> = text
+            .iter()
+            .map(|a| (a.trailing(None), a.tail.as_str(), a.line_end_col))
+            .collect();
+        let label_end = line.find(" this").and_then(|end| u32::try_from(end).ok());
+        let value_end = line.rfind("v1").and_then(|at| u32::try_from(at + 2).ok());
         assert_eq!(
-            (action.trailing(None), action.tail.as_str()),
-            (Trailing::Foreign, "")
+            read,
+            [
+                (
+                    Trailing::Label { note: "keep" },
+                    "# v4 keep",
+                    label_end.unwrap_or_default()
+                ),
+                (Trailing::Foreign, "", value_end.unwrap_or_default()),
+            ]
         );
         let yaml = extract_located_actions(
             &format!("- uses: o/p@{sha} # v4\n"),
@@ -2973,6 +2984,49 @@ jobs:
         )
         .await
         .diagnostics)
+    }
+
+    #[tokio::test]
+    async fn outdated_pin_in_a_text_file_rewrites_only_its_label()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let text = format!("run(\"uses: actions/checkout@{DUMMY_SHA_2} # v4.0.0 keep this\");\n");
+        let latest = test_utils::make_version_info("v4.2.0", DUMMY_SHA);
+        let old = test_utils::make_version_info("v4.0.0", DUMMY_SHA_2);
+        let mut versions = version::Set::build(
+            vec![Arc::clone(&latest), old],
+            HashMap::from([(4, Arc::clone(&latest))]),
+            HashMap::new(),
+            Some(latest),
+        );
+        versions.set_listing(version::Listing::Complete);
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let diags = diagnostics_at(provider, "/test/index.ts", &text).await?;
+        let data: Vec<Option<DiagnosticData>> = diags
+            .iter()
+            .map(|d| {
+                d.data
+                    .clone()
+                    .and_then(|data| serde_json::from_value(data).ok())
+            })
+            .collect();
+        let [
+            Some(DiagnosticData::Outdated {
+                target_ref,
+                repin_comment,
+                replace_end_col,
+            }),
+        ] = data.as_slice()
+        else {
+            return Err(format!("expected one outdated diagnostic, got {diags:?}").into());
+        };
+        assert_eq!(target_ref, DUMMY_SHA);
+        assert_eq!(repin_comment.as_deref(), Some(" # v4.2.0 keep"));
+        assert_eq!(
+            *replace_end_col,
+            text.find(" this").and_then(|end| u32::try_from(end).ok())
+        );
+        Ok(())
     }
 
     #[tokio::test]

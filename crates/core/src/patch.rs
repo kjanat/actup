@@ -11,7 +11,7 @@ use serde::Serialize;
 use crate::{
     SourceFormat, UsesLocation, line_spans,
     policy::Style,
-    rewrite::{Labels, Named, Rewrite, Trailing, after_value, closer},
+    rewrite::{Labels, Named, Rewrite, Trailing, after_value, closer, label_span},
     version,
 };
 
@@ -324,16 +324,18 @@ impl<L> FileEdits<L> {
         }
     }
 
-    /// Return `loc` with its line cut after the value when that line takes no comment.
+    /// Return `loc` with its line cut after the value and its [`label_span`] when that line takes no comment.
     ///
-    /// An edit built from the result leaves the text after the ref alone on a
-    /// line outside [`SourceFormat::comment_lines`].
+    /// On a line outside [`SourceFormat::comment_lines`], an edit built from
+    /// the result reads a label comment right after the value as a YAML
+    /// comment and leaves the rest of the line alone.
     #[must_use]
     pub fn writable(&self, loc: &UsesLocation) -> UsesLocation {
+        let raw = loc.raw_line();
         let head = loc
             .value_range()
             .filter(|_| !self.comment_lines.contains(&loc.line()))
-            .and_then(|range| loc.raw_line().get(..range.end));
+            .and_then(|range| raw.get(..range.end + label_span(raw.get(range.end..)?)));
         head.map_or_else(
             || loc.clone(),
             |head| {
@@ -1191,89 +1193,130 @@ mod tests {
         assert!(repin_sha_edit(&loc, &target, &NO_REFS).is_none());
     }
 
+    fn text_retargeted(
+        format: SourceFormat,
+        content: &str,
+        current_is_sha: bool,
+        style: Style,
+        labels: &Labels<'_>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
+        let target = version::Info::new(version::Version::parse("v4.2.0"), sha40('b'));
+        let [loc] = format
+            .extract_uses(content)
+            .try_into()
+            .map_err(|_| "one `uses:`")?;
+        let mut fe = FileEdits::new(PathBuf::from("/test"), content.to_string(), format);
+        let edit = retarget_edit(
+            &fe.writable(&loc),
+            current_is_sha,
+            &target,
+            Named::Tag,
+            style,
+            labels,
+        )
+        .ok_or("no edit")?;
+        fe.add(edit, ());
+        Ok(fe.plan().content())
+    }
+
     #[test]
-    fn test_writable_keeps_text_after_the_ref_on_lines_without_comments()
+    fn test_writable_rewrites_the_label_of_a_pin_on_a_line_without_comments()
     -> Result<(), Box<dyn std::error::Error>> {
         let old = sha40('a');
         let new = sha40('b');
-        let target = version::Info::new(version::Version::parse("v4.2.0"), &new);
         let text = format!("run(\"uses: o/p@{old} # v4.0.0\");\n");
+        let noted = format!("run(\"uses: o/p@{old} # v4.0.0 keep this\");\n");
+        let foreign = format!("run(\"uses: o/p@{old} # TODO fix\");\n");
         let markdown = format!("```yaml\n- uses: o/p@{old} # v4.0.0\n```\n");
         let cases = [
             (
                 SourceFormat::Text,
                 &text,
-                1,
                 Style::Preserve,
-                format!("run(\"uses: o/p@{new} # v4.0.0\");\n"),
+                format!("run(\"uses: o/p@{new} # v4.2.0\");\n"),
             ),
             (
                 SourceFormat::Text,
                 &text,
-                1,
                 Style::Tag,
-                "run(\"uses: o/p@v4.2.0 # v4.0.0\");\n".to_string(),
+                "run(\"uses: o/p@v4.2.0\");\n".to_string(),
+            ),
+            (
+                SourceFormat::Text,
+                &noted,
+                Style::Preserve,
+                format!("run(\"uses: o/p@{new} # v4.2.0 keep this\");\n"),
+            ),
+            (
+                SourceFormat::Text,
+                &noted,
+                Style::Tag,
+                "run(\"uses: o/p@v4.2.0 # keep this\");\n".to_string(),
+            ),
+            (
+                SourceFormat::Text,
+                &foreign,
+                Style::Preserve,
+                format!("run(\"uses: o/p@{new} # TODO fix\");\n"),
             ),
             (
                 SourceFormat::Markdown,
                 &markdown,
-                2,
                 Style::Preserve,
                 format!("```yaml\n- uses: o/p@{new} # v4.2.0\n```\n"),
             ),
             (
                 SourceFormat::Markdown,
                 &markdown,
-                2,
                 Style::Tag,
                 "```yaml\n- uses: o/p@v4.2.0\n```\n".to_string(),
             ),
         ];
-        for (format, content, line, style, expected) in cases {
-            let [loc] = format
-                .extract_uses(content)
-                .try_into()
-                .map_err(|_| "one `uses:`")?;
-            assert_eq!(loc.line(), line);
-            let mut fe = FileEdits::new(PathBuf::from("/test"), content.clone(), format);
-            let edit = retarget_edit(
-                &fe.writable(&loc),
-                true,
-                &target,
-                Named::Tag,
-                style,
-                &NO_REFS,
-            )
-            .ok_or("no edit")?;
-            fe.add(edit, ());
-            assert_eq!(fe.plan().content(), expected, "{format:?} {style}");
+        for (format, content, style, expected) in cases {
+            assert_eq!(
+                text_retargeted(format, content, true, style, &NO_REFS)?,
+                expected,
+                "{content:?} {style}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_writable_rewrites_the_label_of_a_tag_on_a_line_without_comments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (tagged, current, expected) in [
+            (
+                "run(\"uses: o/p@v4.0.0 # v4.0.0 keep\");\n",
+                "v4.0.0",
+                "run(\"uses: o/p@v4.2.0 # v4.2.0 keep\");\n",
+            ),
+            (
+                "run(\"uses: o/p@main # main keep\");\n",
+                "main",
+                "run(\"uses: o/p@v4.2.0 # v4.2.0 keep\");\n",
+            ),
+            (
+                "run(\"uses: o/p@main # lint keep\");\n",
+                "main",
+                "run(\"uses: o/p@v4.2.0 # lint keep\");\n",
+            ),
+        ] {
+            assert_eq!(
+                text_retargeted(
+                    SourceFormat::Text,
+                    tagged,
+                    false,
+                    Style::Preserve,
+                    &Labels::unfetched(current)
+                )?,
+                expected,
+                "{tagged:?}"
+            );
         }
 
-        let tagged = "run(\"uses: o/p@v4.0.0 # v4.0.0 keep\");\n";
-        let [loc] = SourceFormat::Text
-            .extract_uses(tagged)
-            .try_into()
-            .map_err(|_| "one `uses:`")?;
-        let mut fe = FileEdits::new(
-            PathBuf::from("/test"),
-            tagged.to_string(),
-            SourceFormat::Text,
-        );
-        let edit = retarget_edit(
-            &fe.writable(&loc),
-            false,
-            &target,
-            Named::Tag,
-            Style::Preserve,
-            &NO_REFS,
-        )
-        .ok_or("no edit")?;
-        fe.add(edit, ());
-        assert_eq!(
-            fe.plan().content(),
-            "run(\"uses: o/p@v4.2.0 # v4.0.0 keep\");\n"
-        );
-
+        let new = sha40('b');
+        let target = version::Info::new(version::Version::parse("v4.2.0"), &new);
         let fresh = "run(\"uses: o/p@v4.0.0\");\n";
         let [loc] = SourceFormat::Text
             .extract_uses(fresh)
