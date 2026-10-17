@@ -106,11 +106,10 @@ pub fn col_to_byte(line: &str, col: u32, encoding: PositionEncoding) -> usize {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
-    type TestResult = Result<(), std::num::TryFromIntError>;
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
 
     #[test]
     fn ascii_offsets_are_identity() -> TestResult {
@@ -128,7 +127,7 @@ mod tests {
     fn utf8_encoding_is_identity() -> TestResult {
         // "données" has é (2 bytes UTF-8, 1 UTF-16 code unit)
         let line = "uses: owner/repo/données/action@v1";
-        let byte_offset = line.find("action").unwrap();
+        let byte_offset = line.find("action").ok_or("needle not in line")?;
 
         // UTF-8: byte offset is the column
         assert_eq!(
@@ -146,7 +145,7 @@ mod tests {
     fn utf16_handles_multibyte_chars() -> TestResult {
         // "é" is 2 bytes UTF-8, 1 UTF-16 code unit
         let line = "uses: owner/repo/données/action@v1";
-        let e_acute_byte = line.find('é').unwrap();
+        let e_acute_byte = line.find('é').ok_or("needle not in line")?;
         let after_accent_byte = e_acute_byte + 'é'.len_utf8(); // byte after é
 
         // Before é: UTF-8 == UTF-16
@@ -167,7 +166,7 @@ mod tests {
     fn utf16_handles_non_bmp_emoji() -> TestResult {
         // 🎉 is 4 bytes UTF-8, 2 UTF-16 code units (surrogate pair)
         let line = "uses: owner/repo@release-🎉-v1";
-        let emoji_byte = line.find('🎉').unwrap();
+        let emoji_byte = line.find('🎉').ok_or("needle not in line")?;
         let after_emoji_byte = emoji_byte + '🎉'.len_utf8(); // +4 bytes
 
         // Before emoji: all ASCII, offsets match

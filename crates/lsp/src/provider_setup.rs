@@ -56,7 +56,6 @@ pub fn build_file_cache(config: &Config) -> crate::file_cache::FileCache {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::collections::HashSet;
 
@@ -86,15 +85,17 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_default_config_registers_github() {
+    fn build_registry_default_config_registers_github() -> Result<(), Box<dyn std::error::Error>> {
         let config = Config::default();
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert_eq!(registry.default_host(), Some("github.com"));
         assert!(registry.find(Some("github.com")).is_some());
+        Ok(())
     }
 
     #[test]
-    fn build_registry_ghe_host_registers_alongside_default() {
+    fn build_registry_ghe_host_registers_alongside_default()
+    -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe.corp.com".to_string(),
@@ -106,9 +107,10 @@ mod tests {
                 max_tags_per_repo: None,
             },
         );
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(registry.find(Some("github.com")).is_some());
         assert!(registry.find(Some("ghe.corp.com")).is_some());
+        Ok(())
     }
 
     #[test]
@@ -217,7 +219,7 @@ mod tests {
     }
 
     #[test]
-    fn build_registry_multiple_hosts() {
+    fn build_registry_multiple_hosts() -> Result<(), Box<dyn std::error::Error>> {
         let mut config = Config::default();
         config.hosts.insert(
             "ghe1.corp.com".to_string(),
@@ -240,9 +242,10 @@ mod tests {
             },
         );
 
-        let registry = build_registry(&config).unwrap();
+        let registry = build_registry(&config)?;
         assert!(registry.find(Some("github.com")).is_some());
         assert!(registry.find(Some("ghe1.corp.com")).is_some());
         assert!(registry.find(Some("ghe2.corp.com")).is_some());
+        Ok(())
     }
 }

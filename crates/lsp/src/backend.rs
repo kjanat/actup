@@ -1638,7 +1638,6 @@ fn hosts_differ(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -2138,10 +2137,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn schedule_diagnostics_registers_in_flight_handle() {
+    async fn schedule_diagnostics_registers_in_flight_handle()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Direct test: construct backend parts and verify in_flight tracking.
         let in_flight: DashMap<Uri, AbortHandle> = DashMap::new();
-        let uri = Uri::from_file_path("/test/file.yml").unwrap();
+        let uri = Uri::from_file_path("/test/file.yml").ok_or("invalid file path")?;
 
         // Simulate what schedule_diagnostics does: insert an abort handle.
         let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
@@ -2154,12 +2154,14 @@ mod tests {
             prev.abort();
         }
         assert!(!in_flight.contains_key(&uri));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn schedule_diagnostics_cancels_previous_task() {
+    async fn schedule_diagnostics_cancels_previous_task()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let in_flight: DashMap<Uri, AbortHandle> = DashMap::new();
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
 
         // Spawn a long-running task (simulating slow version check).
         let task1 = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
@@ -2174,16 +2176,18 @@ mod tests {
         in_flight.insert(uri.clone(), task2.abort_handle());
 
         // First task should be cancelled.
-        assert!(task1.await.unwrap_err().is_cancelled());
+        assert!(task1.await.err().ok_or("expected an error")?.is_cancelled());
 
         // Cleanup.
         task2.abort();
+        Ok(())
     }
 
     #[tokio::test]
-    async fn version_staleness_prevents_stale_publish() {
+    async fn version_staleness_prevents_stale_publish()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let documents: Arc<DashMap<Uri, DocumentState>> = Arc::new(DashMap::new());
-        let uri = Uri::from_file_path("/test/stale.yml").unwrap();
+        let uri = Uri::from_file_path("/test/stale.yml").ok_or("invalid file path")?;
 
         // Store document at version 5.
         documents.insert(
@@ -2210,16 +2214,19 @@ mod tests {
             false
         };
         assert!(should_publish);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn closed_document_prevents_publish() {
+    async fn closed_document_prevents_publish()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
         let documents: Arc<DashMap<Uri, DocumentState>> = Arc::new(DashMap::new());
-        let uri = Uri::from_file_path("/test/closed.yml").unwrap();
+        let uri = Uri::from_file_path("/test/closed.yml").ok_or("invalid file path")?;
 
         // Document not in map (was closed).
         let should_publish = documents.get(&uri).is_some();
         assert!(!should_publish);
+        Ok(())
     }
 
     fn relative_watchers(watchers: &[FileSystemWatcher]) -> Vec<(PathBuf, String)> {

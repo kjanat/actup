@@ -4,9 +4,6 @@
 //! need version resolution without network access, plus common helpers for
 //! constructing LSP types (ranges, diagnostics, version sets).
 
-#![allow(dead_code, clippy::unwrap_used)]
-// Test utilities are only used in #[cfg(test)] contexts where unwrap is acceptable.
-
 use std::{
     collections::HashMap,
     sync::{
@@ -79,20 +76,6 @@ pub fn make_unresolvable_diagnostic(range: Range, suggested: Option<&str>) -> Di
         source: Some(DIAGNOSTIC_SOURCE.into()),
         message: "bad/repo@v1: repository not found".into(),
         data: serde_json::to_value(data).ok(),
-        ..Default::default()
-    }
-}
-
-/// Build a `Pinned` diagnostic (no embedded data — pinned refs have no code action).
-pub fn make_pinned_diagnostic(range: Range, sha: &str, tag: Option<&str>) -> Diagnostic {
-    let tag_info = tag.map_or_else(|| "unknown version".into(), |t| format!("= {t}"));
-    let short_sha = sha.get(..7).unwrap_or(sha);
-    Diagnostic {
-        range,
-        severity: Some(DiagnosticSeverity::HINT),
-        code: Some(NumberOrString::String("pinned".into())),
-        source: Some(DIAGNOSTIC_SOURCE.into()),
-        message: format!("owner/repo@{short_sha}: pinned to {short_sha} ({tag_info})"),
         ..Default::default()
     }
 }

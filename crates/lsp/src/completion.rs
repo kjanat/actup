@@ -521,7 +521,6 @@ pub async fn compute_completions(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::sync::atomic::Ordering;
 
@@ -530,45 +529,47 @@ mod tests {
     const ENC: crate::position::PositionEncoding = crate::position::PositionEncoding::Utf16;
 
     #[test]
-    fn detect_context_empty_after_uses() {
+    fn detect_context_empty_after_uses() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: \n";
         let pos = Position {
             line: 0,
             character: 14,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::ActionName {
                 prefix: String::new()
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn detect_context_partial_action_name() {
+    fn detect_context_partial_action_name() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: actions/ch\n";
         let pos = Position {
             line: 0,
             character: 24,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::ActionName {
                 prefix: "actions/ch".into()
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn detect_context_version_ref() {
+    fn detect_context_version_ref() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: actions/checkout@v\n";
         let pos = Position {
             line: 0,
             character: 32,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -576,16 +577,17 @@ mod tests {
                 version_prefix: "v".into(),
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn detect_context_version_ref_empty_prefix() {
+    fn detect_context_version_ref_empty_prefix() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: actions/checkout@\n";
         let pos = Position {
             line: 0,
             character: 31,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -593,16 +595,17 @@ mod tests {
                 version_prefix: String::new(),
             }
         );
+        Ok(())
     }
 
     #[test]
-    fn detect_context_quoted_uses() {
+    fn detect_context_quoted_uses() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: \"actions/checkout@v\"\n";
         let pos = Position {
             line: 0,
             character: 33,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -610,6 +613,7 @@ mod tests {
                 version_prefix: "v".into(),
             }
         );
+        Ok(())
     }
 
     #[test]
@@ -877,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn version_completion_item_sha_label_detail() {
+    fn version_completion_item_sha_label_detail() -> Result<(), Box<dyn std::error::Error>> {
         let item = version_completion_item(
             "v4.0.0",
             None,
@@ -885,8 +889,9 @@ mod tests {
             false,
             0,
         );
-        let detail = item.label_details.as_ref().unwrap();
+        let detail = item.label_details.as_ref().ok_or("no label details")?;
         assert_eq!(detail.detail.as_deref(), Some(" abc1234"));
+        Ok(())
     }
 
     #[test]
@@ -899,7 +904,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_completions_returns_actions_for_empty_uses() {
+    async fn compute_completions_returns_actions_for_empty_uses()
+    -> Result<(), Box<dyn std::error::Error>> {
         let provider = crate::test_utils::MockProvider::new("github.com");
         let registry = crate::test_utils::mock_registry(provider);
         let file_cache = crate::file_cache::FileCache::disabled();
@@ -920,7 +926,7 @@ mod tests {
             &SearchDebounce::default(),
         )
         .await;
-        let response = result.unwrap();
+        let response = result.ok_or("no completion response")?;
         match response {
             CompletionResponse::List(list) => {
                 assert!(
@@ -934,6 +940,7 @@ mod tests {
                 assert_ne!(items, []);
             }
         }
+        Ok(())
     }
 
     fn summary(owner: &str, repo: &str, description: Option<&str>) -> provider::RepoSummary {
@@ -1207,7 +1214,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_completions_returns_versions_after_at() {
+    async fn compute_completions_returns_versions_after_at()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::test_utils::{self, DUMMY_SHA};
 
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
@@ -1232,7 +1240,7 @@ mod tests {
             &SearchDebounce::default(),
         )
         .await;
-        let response = result.unwrap();
+        let response = result.ok_or("no completion response")?;
         match response {
             CompletionResponse::List(list) => {
                 assert!(
@@ -1249,10 +1257,12 @@ mod tests {
                 assert_ne!(items, []);
             }
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn compute_completions_reuses_diagnostics_version_data() {
+    async fn compute_completions_reuses_diagnostics_version_data()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::test_utils::{self, DUMMY_SHA};
 
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
@@ -1262,7 +1272,8 @@ mod tests {
         let registry = test_utils::mock_registry(provider);
         let file_cache = crate::file_cache::FileCache::disabled();
         let config = actup_core::Config::default();
-        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml")
+            .ok_or("invalid file path")?;
         let diagnostics_text = "      - uses: actions/checkout@v3\n";
 
         let diagnostics = crate::diagnostics::compute_diagnostics(
@@ -1296,6 +1307,7 @@ mod tests {
 
         assert!(result.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     #[tokio::test]
@@ -1363,13 +1375,13 @@ mod tests {
     }
 
     #[test]
-    fn detect_context_multiline() {
+    fn detect_context_multiline() -> Result<(), Box<dyn std::error::Error>> {
         let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@\n";
         let pos = Position {
             line: 6,
             character: 31,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -1377,6 +1389,7 @@ mod tests {
                 version_prefix: String::new(),
             }
         );
+        Ok(())
     }
 
     #[test]
@@ -1396,13 +1409,13 @@ mod tests {
     }
 
     #[test]
-    fn detect_context_single_quoted_uses() {
+    fn detect_context_single_quoted_uses() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: 'actions/checkout@v'\n";
         let pos = Position {
             line: 0,
             character: 33,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
@@ -1410,6 +1423,7 @@ mod tests {
                 version_prefix: "v".into(),
             }
         );
+        Ok(())
     }
 
     #[test]
@@ -1436,13 +1450,26 @@ mod tests {
     }
 
     #[test]
-    fn version_completion_item_truncates_long_sha() {
+    fn version_completion_item_truncates_long_sha() -> Result<(), Box<dyn std::error::Error>> {
         let long_sha = "abc1234567890abcdef1234567890abcdef123456";
         let item = version_completion_item("v1.0.0", None, long_sha, false, 0);
-        let detail = item.label_details.as_ref().unwrap();
+        let detail = item.label_details.as_ref().ok_or("no label details")?;
         // Should show first 7 chars of SHA.
-        assert!(detail.detail.as_ref().unwrap().contains("abc1234"));
-        assert!(!detail.detail.as_ref().unwrap().contains("567890"));
+        assert!(
+            detail
+                .detail
+                .as_ref()
+                .ok_or("no detail text")?
+                .contains("abc1234")
+        );
+        assert!(
+            !detail
+                .detail
+                .as_ref()
+                .ok_or("no detail text")?
+                .contains("567890")
+        );
+        Ok(())
     }
 
     #[test]
@@ -1621,13 +1648,14 @@ mod tests {
     }
 
     #[test]
-    fn detect_context_trailing_spaces_after_at() {
+    fn detect_context_trailing_spaces_after_at() -> Result<(), Box<dyn std::error::Error>> {
         let text = "      - uses: actions/checkout@   \n";
         let pos = Position {
             line: 0,
             character: 32,
         };
-        let ctx = detect_completion_context(text, pos, ENC).unwrap();
+        let ctx = detect_completion_context(text, pos, ENC).ok_or("no completion context")?;
         assert!(matches!(ctx, CompletionContext::VersionRef { .. }));
+        Ok(())
     }
 }

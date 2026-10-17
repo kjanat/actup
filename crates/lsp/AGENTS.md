@@ -74,8 +74,8 @@ edits that pass on their own.
 ## Conventions
 
 - LSP `u32` positions use `u32::try_from`
-- `#[allow(deprecated)]` for backward-compat with `root_uri`/`root_path` LSP
-  fields
+- Tests return `Result<(), Box<dyn std::error::Error>>` and use `?`; no
+  `unwrap`, `expect` or lint allows
 - Diagnostics: Warning (outdated), Error (unresolvable), Info
   (network/rate-limited)
 - Send `window/showMessage` and `window/logMessage` through

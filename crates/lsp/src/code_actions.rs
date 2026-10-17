@@ -493,7 +493,6 @@ pub fn kind_allowed(only: Option<&[CodeActionKind]>, kind: &CodeActionKind) -> b
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::test_utils;
@@ -538,11 +537,7 @@ mod tests {
             edit.changes.is_none(),
             "versioned edits must not use unversioned `changes`"
         );
-        let doc_changes = edit
-            .document_changes
-            .as_ref()
-            .expect("expected document_changes");
-        let DocumentChanges::Edits(doc_edits) = doc_changes else {
+        let Some(DocumentChanges::Edits(doc_edits)) = &edit.document_changes else {
             panic!("expected DocumentChanges::Edits");
         };
         assert_eq!(doc_edits.len(), 1, "expected one TextDocumentEdit");
@@ -561,8 +556,8 @@ mod tests {
     }
 
     #[test]
-    fn outdated_diagnostic_produces_quickfix() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn outdated_diagnostic_produces_quickfix() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -575,15 +570,20 @@ mod tests {
         assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
         assert_eq!(action.is_preferred, Some(true));
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits.len(), 1);
         assert_eq!(edits[0].new_text, "v4.2.0");
         assert_eq!(edits[0].range, make_range(7, 31, 33));
+        Ok(())
     }
 
     #[test]
-    fn outdated_action_links_diagnostic() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn outdated_action_links_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         let actions =
@@ -593,15 +593,19 @@ mod tests {
         };
 
         // Code action must link back to the triggering diagnostic.
-        let linked = action.diagnostics.as_ref().unwrap();
+        let linked = action
+            .diagnostics
+            .as_ref()
+            .ok_or("action links no diagnostics")?;
         assert_eq!(linked.len(), 1);
         assert_eq!(linked[0].range, diag.range);
         assert_eq!(linked[0].message, diag.message);
+        Ok(())
     }
 
     #[test]
-    fn sha_target_shortens_title_keeps_full_sha_edit() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn sha_target_shortens_title_keeps_full_sha_edit() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let new_sha = "2".repeat(40);
         let old_sha = "1".repeat(40);
         let diag = make_outdated_diagnostic(
@@ -617,8 +621,13 @@ mod tests {
         // Title shows a short SHA, not 40 characters.
         assert_eq!(action.title, format!("Update to {}", &new_sha[..7]));
         // The edit still writes the full SHA.
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits[0].new_text, new_sha);
+        Ok(())
     }
 
     #[test]
@@ -652,8 +661,8 @@ mod tests {
     }
 
     #[test]
-    fn unresolvable_with_suggestion_produces_quickfix() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn unresolvable_with_suggestion_produces_quickfix() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -664,20 +673,23 @@ mod tests {
         };
         assert_eq!(action.title, "Change to v2.1.0");
         assert_eq!(action.is_preferred, Some(false));
+        Ok(())
     }
 
     #[test]
-    fn unresolvable_without_suggestion_produces_no_action() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn unresolvable_without_suggestion_produces_no_action() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), None);
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert_eq!(actions, []);
+        Ok(())
     }
 
     #[test]
-    fn foreign_diagnostic_source_ignored() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn foreign_diagnostic_source_ignored() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = Diagnostic {
             range: make_range(5, 0, 10),
             source: Some("other-tool".into()),
@@ -686,11 +698,12 @@ mod tests {
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert_eq!(actions, []);
+        Ok(())
     }
 
     #[test]
-    fn diagnostic_without_data_ignored() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn diagnostic_without_data_ignored() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = Diagnostic {
             range: make_range(5, 0, 10),
             source: Some(DIAGNOSTIC_SOURCE.into()),
@@ -700,11 +713,12 @@ mod tests {
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         assert_eq!(actions, []);
+        Ok(())
     }
 
     #[test]
-    fn multiple_diagnostics_produce_multiple_actions() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn multiple_diagnostics_produce_multiple_actions() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let diag2 =
@@ -722,6 +736,7 @@ mod tests {
         };
         assert_eq!(a1.title, "Update to v4.2.0");
         assert_eq!(a2.title, "Update to v4.0.0");
+        Ok(())
     }
 
     #[test]
@@ -751,8 +766,8 @@ mod tests {
     }
 
     #[test]
-    fn pin_actions_offer_sha_major_branch() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn pin_actions_offer_sha_major_branch() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
         let targets = PinTargets {
             sha: Some((sha.to_string(), "v7.2.3".to_string())),
@@ -790,9 +805,14 @@ mod tests {
         let CodeActionOrCommand::CodeAction(sha_action) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        let edits = extract_text_edits(sha_action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            sha_action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits[0].new_text, format!("{sha} # v7.2.3"));
         assert_eq!(sha_action.kind, Some(CodeActionKind::REFACTOR));
+        Ok(())
     }
 
     #[test]
@@ -941,8 +961,8 @@ mod tests {
     }
 
     #[test]
-    fn pin_actions_empty_when_no_targets() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn pin_actions_empty_when_no_targets() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let targets = PinTargets {
             sha: None,
             major: None,
@@ -960,17 +980,18 @@ mod tests {
             &targets,
         );
         assert_eq!(actions, []);
+        Ok(())
     }
 
     #[test]
-    fn diagnostic_data_roundtrips_through_json() {
+    fn diagnostic_data_roundtrips_through_json() -> Result<(), Box<dyn std::error::Error>> {
         let data = DiagnosticData::Outdated {
             target_ref: "v5.0.0".into(),
             repin_comment: None,
             replace_end_col: None,
         };
-        let json = serde_json::to_value(&data).unwrap();
-        let back: DiagnosticData = serde_json::from_value(json).unwrap();
+        let json = serde_json::to_value(&data)?;
+        let back: DiagnosticData = serde_json::from_value(json)?;
 
         match back {
             DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v5.0.0"),
@@ -980,17 +1001,18 @@ mod tests {
                 panic!("wrong variant")
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn unresolvable_data_roundtrips_through_json() {
+    fn unresolvable_data_roundtrips_through_json() -> Result<(), Box<dyn std::error::Error>> {
         let data = DiagnosticData::Unresolvable {
             suggested_ref: Some("v3.1.0".into()),
             repin_comment: None,
             replace_end_col: None,
         };
-        let json = serde_json::to_value(&data).unwrap();
-        let back: DiagnosticData = serde_json::from_value(json).unwrap();
+        let json = serde_json::to_value(&data)?;
+        let back: DiagnosticData = serde_json::from_value(json)?;
 
         match back {
             DiagnosticData::Unresolvable { suggested_ref, .. } => {
@@ -1002,43 +1024,49 @@ mod tests {
                 panic!("wrong variant")
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn fix_all_returns_none_for_single_outdated() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_returns_none_for_single_outdated() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         // Single outdated ref — quickfix already covers this, no fix-all needed.
         assert!(fix_all_in_file(&uri, TEST_VERSION, &[diag], true).is_none());
+        Ok(())
     }
 
     #[test]
-    fn fix_all_returns_none_for_empty_diagnostics() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_returns_none_for_empty_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         assert!(fix_all_in_file(&uri, TEST_VERSION, &[], true).is_none());
+        Ok(())
     }
 
     #[test]
-    fn fix_all_returns_none_for_non_outdated_diagnostics() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_returns_none_for_non_outdated_diagnostics() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
         let diag2 = make_unresolvable_diagnostic(make_range(5, 10, 15), None);
 
         // Only unresolvable diagnostics — fix-all only handles Outdated.
         assert!(fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).is_none());
+        Ok(())
     }
 
     #[test]
-    fn fix_all_aggregates_multiple_outdated() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_aggregates_multiple_outdated() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let diag2 =
             make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
         let diag3 = make_outdated_diagnostic(make_range(12, 20, 22), "actions/cache@v2", "v4.1.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3], true).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3], true)
+            .ok_or("no fix-all action")?;
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
@@ -1047,20 +1075,28 @@ mod tests {
         assert_eq!(action.kind, Some(SOURCE_FIX_ALL_ACTUP));
         assert_eq!(action.is_preferred, Some(false));
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits.len(), 3);
         assert_eq!(edits[0].new_text, "v4.2.0");
         assert_eq!(edits[1].new_text, "v4.0.0");
         assert_eq!(edits[2].new_text, "v4.1.0");
 
         // All 3 diagnostics linked.
-        let linked = action.diagnostics.as_ref().unwrap();
+        let linked = action
+            .diagnostics
+            .as_ref()
+            .ok_or("action links no diagnostics")?;
         assert_eq!(linked.len(), 3);
+        Ok(())
     }
 
     #[test]
-    fn fix_all_skips_foreign_and_non_outdated() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_skips_foreign_and_non_outdated() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let outdated1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let outdated2 =
@@ -1078,15 +1114,27 @@ mod tests {
             &[outdated1, foreign, unresolvable, outdated2],
             true,
         )
-        .unwrap();
+        .ok_or("no fix-all action")?;
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
 
         // Only the 2 outdated refs are in the edit.
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits.len(), 2);
-        assert_eq!(action.diagnostics.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            action
+                .diagnostics
+                .as_ref()
+                .ok_or("action links no diagnostics")?
+                .len(),
+            2
+        );
+        Ok(())
     }
 
     #[test]
@@ -1125,8 +1173,8 @@ mod tests {
     // --- Edit generation preserves formatting ---
 
     #[test]
-    fn edit_replaces_only_ref_range() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn edit_replaces_only_ref_range() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         // Range covers just "v3" (2 chars), not the entire `uses:` line.
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
@@ -1135,7 +1183,11 @@ mod tests {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits.len(), 1);
 
         // Only the ref portion is replaced, not the whole line.
@@ -1143,11 +1195,12 @@ mod tests {
         assert_eq!(edits[0].range.start.character, 31);
         assert_eq!(edits[0].range.end.character, 33);
         assert_eq!(edits[0].new_text, "v4.2.0");
+        Ok(())
     }
 
     #[test]
-    fn edit_handles_longer_replacement() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn edit_handles_longer_replacement() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         // Replacing "v3" (2 chars) with "v4.2.0" (6 chars).
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v3", "v4.2.0");
 
@@ -1156,51 +1209,65 @@ mod tests {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         // The range stays the same (2 chars), but the new_text is longer.
         // LSP handles the expansion — we just provide the replacement text.
         assert_eq!(edits[0].range, make_range(0, 10, 12));
         assert_eq!(edits[0].new_text, "v4.2.0");
+        Ok(())
     }
 
     #[test]
-    fn fix_all_edits_maintain_per_line_ranges() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_edits_maintain_per_line_ranges() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let diag2 =
             make_outdated_diagnostic(make_range(8, 34, 36), "actions/setup-node@v3", "v4.0.0");
         let diag3 = make_outdated_diagnostic(make_range(12, 20, 22), "actions/cache@v2", "v4.1.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3], true).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2, diag3], true)
+            .ok_or("no fix-all action")?;
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
 
         // Each edit preserves its specific range — no overlap or combined ranges.
         assert_eq!(edits[0].range, make_range(7, 31, 33));
         assert_eq!(edits[1].range, make_range(8, 34, 36));
         assert_eq!(edits[2].range, make_range(12, 20, 22));
+        Ok(())
     }
 
     #[test]
-    fn fix_all_title_includes_ref_count() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_title_includes_ref_count() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v2.0.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true)
+            .ok_or("no fix-all action")?;
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
         assert_eq!(action.title, "Fix all outdated actions (2 refs)");
+        Ok(())
     }
 
     #[test]
-    fn code_action_edit_targets_correct_uri() {
-        let uri = Uri::from_file_path("/project/.github/workflows/ci.yml").unwrap();
+    fn code_action_edit_targets_correct_uri() -> Result<(), Box<dyn std::error::Error>> {
+        let uri =
+            Uri::from_file_path("/project/.github/workflows/ci.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(0, 0, 2), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -1209,13 +1276,18 @@ mod tests {
         };
 
         // extract_text_edits already asserts URI matches.
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits.len(), 1);
+        Ok(())
     }
 
     #[test]
-    fn mixed_diagnostics_produce_correct_action_types() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn mixed_diagnostics_produce_correct_action_types() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let outdated = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let suggestion = make_unresolvable_diagnostic(make_range(1, 10, 15), Some("v3.0.0"));
         let no_suggestion = make_unresolvable_diagnostic(make_range(2, 10, 15), None);
@@ -1238,6 +1310,7 @@ mod tests {
         assert!(a1.title.starts_with("Change to"));
         assert_eq!(a0.is_preferred, Some(true));
         assert_eq!(a1.is_preferred, Some(false));
+        Ok(())
     }
 
     #[test]
@@ -1248,107 +1321,131 @@ mod tests {
     }
 
     #[test]
-    fn fix_all_preserves_diagnostic_order() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_preserves_diagnostic_order() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 = make_outdated_diagnostic(make_range(12, 20, 22), "a/c@v2", "v4.1.0");
         let diag2 = make_outdated_diagnostic(make_range(7, 31, 33), "a/b@v3", "v4.2.0");
 
-        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true).unwrap();
+        let action = fix_all_in_file(&uri, TEST_VERSION, &[diag1, diag2], true)
+            .ok_or("no fix-all action")?;
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
 
-        let edits = extract_text_edits(action.edit.as_ref().unwrap(), &uri, TEST_VERSION);
+        let edits = extract_text_edits(
+            action.edit.as_ref().ok_or("action has no edit")?,
+            &uri,
+            TEST_VERSION,
+        );
         assert_eq!(edits.len(), 2);
         assert_eq!(edits[0].range.start.line, 12);
         assert_eq!(edits[1].range.start.line, 7);
+        Ok(())
     }
 
     #[test]
-    fn diagnostic_data_json_has_kind_field() {
+    fn diagnostic_data_json_has_kind_field() -> Result<(), Box<dyn std::error::Error>> {
         let data = DiagnosticData::Outdated {
             target_ref: "v2.0.0".into(),
             repin_comment: None,
             replace_end_col: None,
         };
-        let json = serde_json::to_value(&data).unwrap();
-        assert_eq!(json.get("kind").unwrap().as_str(), Some("outdated"));
+        let json = serde_json::to_value(&data)?;
+        assert_eq!(
+            json.get("kind").ok_or("no kind field")?.as_str(),
+            Some("outdated")
+        );
+        Ok(())
     }
 
     #[test]
-    fn versioned_edit_does_not_use_unversioned_changes() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn versioned_edit_does_not_use_unversioned_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, Some(42), &[diag], true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        let edit = action.edit.as_ref().unwrap();
+        let edit = action.edit.as_ref().ok_or("action has no edit")?;
 
         // Must use document_changes, never unversioned changes.
         assert!(edit.changes.is_none());
         assert!(edit.document_changes.is_some());
 
         // Version must be exactly what was passed.
-        let DocumentChanges::Edits(doc_edits) = edit.document_changes.as_ref().unwrap() else {
+        let DocumentChanges::Edits(doc_edits) = edit
+            .document_changes
+            .as_ref()
+            .ok_or("edit has no document changes")?
+        else {
             panic!("expected Edits");
         };
         assert_eq!(doc_edits[0].text_document.version, Some(42));
+        Ok(())
     }
 
     #[test]
-    fn fallback_to_unversioned_changes_when_not_supported() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fallback_to_unversioned_changes_when_not_supported() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], false);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        let edit = action.edit.as_ref().unwrap();
+        let edit = action.edit.as_ref().ok_or("action has no edit")?;
 
         // Must use unversioned changes, not document_changes.
         assert!(edit.document_changes.is_none());
-        let changes = edit.changes.as_ref().expect("expected changes map");
-        let file_edits = changes.get(&uri).expect("expected edits for URI");
+        let changes = edit.changes.as_ref().ok_or("expected changes map")?;
+        let file_edits = changes.get(&uri).ok_or("expected edits for URI")?;
         assert_eq!(file_edits.len(), 1);
         assert_eq!(file_edits[0].new_text, "v2.0.0");
+        Ok(())
     }
 
     #[test]
-    fn fix_all_fallback_to_unversioned_changes() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn fix_all_fallback_to_unversioned_changes() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v3.0.0");
 
-        let action = fix_all_in_file(&uri, Some(5), &[diag1, diag2], false).unwrap();
+        let action =
+            fix_all_in_file(&uri, Some(5), &[diag1, diag2], false).ok_or("no fix-all action")?;
         let CodeActionOrCommand::CodeAction(action) = action else {
             panic!("expected CodeAction");
         };
-        let edit = action.edit.as_ref().unwrap();
+        let edit = action.edit.as_ref().ok_or("action has no edit")?;
 
         assert!(edit.document_changes.is_none());
-        let changes = edit.changes.as_ref().expect("expected changes map");
-        let file_edits = changes.get(&uri).expect("expected edits for URI");
+        let changes = edit.changes.as_ref().ok_or("expected changes map")?;
+        let file_edits = changes.get(&uri).ok_or("expected edits for URI")?;
         assert_eq!(file_edits.len(), 2);
+        Ok(())
     }
 
     #[test]
-    fn none_version_for_untracked_document() {
-        let uri = Uri::from_file_path("/test/workflow.yml").unwrap();
+    fn none_version_for_untracked_document() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, None, &[diag], true);
         let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
             panic!("expected CodeAction");
         };
-        let edit = action.edit.as_ref().unwrap();
-        let DocumentChanges::Edits(doc_edits) = edit.document_changes.as_ref().unwrap() else {
+        let edit = action.edit.as_ref().ok_or("action has no edit")?;
+        let DocumentChanges::Edits(doc_edits) = edit
+            .document_changes
+            .as_ref()
+            .ok_or("edit has no document changes")?
+        else {
             panic!("expected Edits");
         };
         // Untracked document should have version None (null).
         assert_eq!(doc_edits[0].text_document.version, None);
+        Ok(())
     }
 
     const VALIDATED: &str = "steps:\n  - uses: a/b@v1\n  - uses: a/c@v1\n";

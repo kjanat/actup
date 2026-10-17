@@ -541,7 +541,6 @@ async fn compute_hover_status(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::sync::atomic::Ordering;
 
@@ -550,7 +549,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn find_action_at_cursor_on_uses_line() {
+    fn find_action_at_cursor_on_uses_line() -> Result<(), Box<dyn std::error::Error>> {
         let yaml = "      - uses: actions/checkout@v4\n";
         let pos = Position {
             line: 0,
@@ -562,10 +561,11 @@ mod tests {
             pos,
             crate::position::PositionEncoding::Utf16,
         )
-        .unwrap();
+        .ok_or("no uses: value at the cursor")?;
         assert_eq!(located.action_ref.owner(), "actions");
         assert_eq!(located.action_ref.repo(), "checkout");
         assert_eq!(located.action_ref.ref_str(), "v4");
+        Ok(())
     }
 
     #[test]
@@ -718,7 +718,7 @@ mod tests {
     }
 
     #[test]
-    fn find_action_at_start_of_value() {
+    fn find_action_at_start_of_value() -> Result<(), Box<dyn std::error::Error>> {
         let yaml = "      - uses: actions/checkout@v4\n";
         let pos = Position {
             line: 0,
@@ -730,8 +730,9 @@ mod tests {
             pos,
             crate::position::PositionEncoding::Utf16,
         )
-        .unwrap();
+        .ok_or("no uses: value at the cursor")?;
         assert_eq!(located.action_ref.repo(), "checkout");
+        Ok(())
     }
 
     #[test]
@@ -1056,7 +1057,7 @@ mod tests {
     // --- compute_hover async tests ---
 
     #[tokio::test]
-    async fn compute_hover_returns_hover_for_uses_line() {
+    async fn compute_hover_returns_hover_for_uses_line() -> Result<(), Box<dyn std::error::Error>> {
         use crate::test_utils::{self, DUMMY_SHA};
 
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
@@ -1081,7 +1082,7 @@ mod tests {
             encoding: crate::position::PositionEncoding::Utf16,
         };
         let hover = compute_hover(text, SourceFormat::Yaml, position, None, &ctx).await;
-        let hover = hover.unwrap();
+        let hover = hover.ok_or("no hover")?;
 
         match &hover.contents {
             HoverContents::Markup(mc) => {
@@ -1092,8 +1093,9 @@ mod tests {
         }
 
         // Range should cover the uses value.
-        let range = hover.range.unwrap();
+        let range = hover.range.ok_or("hover has no range")?;
         assert_eq!(range.start.line, 0);
+        Ok(())
     }
 
     async fn archived_hover(
@@ -1232,7 +1234,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_hover_shows_outdated_status() {
+    async fn compute_hover_shows_outdated_status() -> Result<(), Box<dyn std::error::Error>> {
         use crate::test_utils::{self, DUMMY_SHA};
 
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
@@ -1258,7 +1260,7 @@ mod tests {
         };
         let hover = compute_hover(text, SourceFormat::Yaml, position, None, &ctx)
             .await
-            .unwrap();
+            .ok_or("no hover")?;
 
         match &hover.contents {
             HoverContents::Markup(mc) => {
@@ -1271,6 +1273,7 @@ mod tests {
             }
             other => panic!("expected Markup, got: {other:?}"),
         }
+        Ok(())
     }
 
     #[tokio::test]
@@ -1405,7 +1408,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn compute_hover_reuses_diagnostics_version_data() {
+    async fn compute_hover_reuses_diagnostics_version_data()
+    -> Result<(), Box<dyn std::error::Error>> {
         use crate::test_utils::{self, DUMMY_SHA};
 
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
@@ -1416,7 +1420,8 @@ mod tests {
         let file_cache = crate::file_cache::FileCache::disabled();
         let meta_cache = new_action_meta_cache();
         let config = Config::default();
-        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml")
+            .ok_or("invalid file path")?;
         let text = "      - uses: actions/checkout@v3\n";
 
         let diagnostics = crate::diagnostics::compute_diagnostics(
@@ -1453,10 +1458,11 @@ mod tests {
 
         assert!(hover.is_some());
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+        Ok(())
     }
 
     #[test]
-    fn action_meta_cache_stores_and_retrieves() {
+    fn action_meta_cache_stores_and_retrieves() -> Result<(), Box<dyn std::error::Error>> {
         let cache = new_action_meta_cache();
         let key = ActionMetaCacheKey {
             owner: "actions".into(),
@@ -1475,9 +1481,14 @@ mod tests {
         let ttl = Duration::from_secs(60);
         assert!(cache.get(&key, ttl).is_some());
         assert_eq!(
-            cache.get(&key, ttl).unwrap().name.as_deref(),
+            cache
+                .get(&key, ttl)
+                .ok_or("no cached metadata")?
+                .name
+                .as_deref(),
             Some("Checkout")
         );
+        Ok(())
     }
 
     #[test]

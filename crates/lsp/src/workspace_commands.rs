@@ -711,7 +711,6 @@ fn progress_id() -> u64 {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::sync::atomic::Ordering;
 
@@ -875,8 +874,8 @@ mod tests {
     }
 
     #[test]
-    fn build_workspace_edit_versioned_open_file() {
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+    fn build_workspace_edit_versioned_open_file() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
         let edits = vec![VersionedFileEdits {
             uri: uri.clone(),
             version: Some(7),
@@ -887,18 +886,22 @@ mod tests {
         }];
         let edit = build_workspace_edit(edits, true);
         assert!(edit.changes.is_none(), "must not use unversioned changes");
-        let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
+        let DocumentChanges::Edits(doc_edits) = edit
+            .document_changes
+            .ok_or("edit has no document changes")?
+        else {
             panic!("expected DocumentChanges::Edits");
         };
         assert_eq!(doc_edits.len(), 1);
         assert_eq!(doc_edits[0].text_document.uri, uri);
         assert_eq!(doc_edits[0].text_document.version, Some(7));
         assert_eq!(doc_edits[0].edits.len(), 1);
+        Ok(())
     }
 
     #[test]
-    fn build_workspace_edit_null_version_for_disk_file() {
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+    fn build_workspace_edit_null_version_for_disk_file() -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
         let edits = vec![VersionedFileEdits {
             uri,
             version: None,
@@ -908,16 +911,20 @@ mod tests {
             }],
         }];
         let edit = build_workspace_edit(edits, true);
-        let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
+        let DocumentChanges::Edits(doc_edits) = edit
+            .document_changes
+            .ok_or("edit has no document changes")?
+        else {
             panic!("expected DocumentChanges::Edits");
         };
         assert_eq!(doc_edits[0].text_document.version, None);
+        Ok(())
     }
 
     #[test]
-    fn build_workspace_edit_mixed_open_and_disk() {
-        let open_uri = Uri::from_file_path("/test/open.yml").unwrap();
-        let disk_uri = Uri::from_file_path("/test/disk.yml").unwrap();
+    fn build_workspace_edit_mixed_open_and_disk() -> Result<(), Box<dyn std::error::Error>> {
+        let open_uri = Uri::from_file_path("/test/open.yml").ok_or("invalid file path")?;
+        let disk_uri = Uri::from_file_path("/test/disk.yml").ok_or("invalid file path")?;
         let edits = vec![
             VersionedFileEdits {
                 uri: open_uri.clone(),
@@ -937,7 +944,10 @@ mod tests {
             },
         ];
         let edit = build_workspace_edit(edits, true);
-        let DocumentChanges::Edits(doc_edits) = edit.document_changes.unwrap() else {
+        let DocumentChanges::Edits(doc_edits) = edit
+            .document_changes
+            .ok_or("edit has no document changes")?
+        else {
             panic!("expected DocumentChanges::Edits");
         };
         assert_eq!(doc_edits.len(), 2);
@@ -945,6 +955,7 @@ mod tests {
         assert_eq!(doc_edits[0].text_document.version, Some(3));
         assert_eq!(doc_edits[1].text_document.uri, disk_uri);
         assert_eq!(doc_edits[1].text_document.version, None);
+        Ok(())
     }
 
     #[test]
@@ -1076,8 +1087,9 @@ mod tests {
     }
 
     #[test]
-    fn build_workspace_edit_fallback_to_unversioned_changes() {
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+    fn build_workspace_edit_fallback_to_unversioned_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
         let edits = vec![VersionedFileEdits {
             uri: uri.clone(),
             version: Some(7),
@@ -1091,10 +1103,11 @@ mod tests {
             edit.document_changes.is_none(),
             "must not use documentChanges when unsupported"
         );
-        let changes = edit.changes.unwrap();
+        let changes = edit.changes.ok_or("edit has no changes map")?;
         let file_edits = &changes[&uri];
         assert_eq!(file_edits.len(), 1);
         assert_eq!(file_edits[0].new_text, "v4");
+        Ok(())
     }
 
     #[test]
@@ -1367,16 +1380,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn scan_files_prefetches_versions_once_for_duplicate_repo() {
-        let temp = tempfile::TempDir::new().unwrap();
+    async fn scan_files_prefetches_versions_once_for_duplicate_repo()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::TempDir::new()?;
         let workflows_dir = temp.path().join(".github/workflows");
-        std::fs::create_dir_all(&workflows_dir).unwrap();
+        std::fs::create_dir_all(&workflows_dir)?;
 
         let workflow_a = workflows_dir.join("a.yml");
         let workflow_b = workflows_dir.join("b.yml");
         let yaml = "jobs:\n  test:\n    steps:\n      - uses: actions/checkout@v3\n";
-        std::fs::write(&workflow_a, yaml).unwrap();
-        std::fs::write(&workflow_b, yaml).unwrap();
+        std::fs::write(&workflow_a, yaml)?;
+        std::fs::write(&workflow_b, yaml)?;
 
         let versions = test_utils::simple_version_set("v4.2.0", test_utils::DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
@@ -1406,6 +1420,7 @@ mod tests {
         assert_eq!(result.files_scanned, 2);
         assert_eq!(result.files_changed, 2);
         assert_eq!(result.refs_updated, 2);
+        Ok(())
     }
 
     #[tokio::test]

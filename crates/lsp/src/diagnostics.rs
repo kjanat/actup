@@ -852,7 +852,6 @@ pub async fn compute_diagnostics(
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use std::sync::Arc;
 
@@ -879,7 +878,7 @@ mod tests {
     // --- CheckStatus -> Diagnostic severity mapping ---
 
     #[test]
-    fn outdated_maps_to_warning() {
+    fn outdated_maps_to_warning() -> Result<(), Box<dyn std::error::Error>> {
         let target = Arc::new(version::Info::new(
             version::Version::parse("v2.0.0"),
             DUMMY_SHA,
@@ -889,15 +888,16 @@ mod tests {
             target,
         };
         let diag = status_to_diagnostic(&status, make_range(0, 10, 16), "actions/checkout@v1.0.0")
-            .unwrap();
+            .ok_or("no diagnostic")?;
         assert_eq!(diag.severity, Some(DiagnosticSeverity::WARNING));
         assert_eq!(diag.code, Some(NumberOrString::String("outdated".into())));
         assert!(diag.message.contains("v1.0.0"));
         assert!(diag.message.contains("v2.0.0"));
+        Ok(())
     }
 
     #[test]
-    fn outdated_message_contains_short_sha() {
+    fn outdated_message_contains_short_sha() -> Result<(), Box<dyn std::error::Error>> {
         let target = Arc::new(version::Info::new(
             version::Version::parse("v3.0.0"),
             DUMMY_SHA,
@@ -906,16 +906,18 @@ mod tests {
             current: "v2.5.0".into(),
             target,
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v2.5.0").unwrap();
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v2.5.0")
+            .ok_or("no diagnostic")?;
         assert!(
             diag.message.contains(&DUMMY_SHA[..7]),
             "expected short SHA in message, got: {}",
             diag.message
         );
+        Ok(())
     }
 
     #[test]
-    fn outdated_embeds_diagnostic_data() {
+    fn outdated_embeds_diagnostic_data() -> Result<(), Box<dyn std::error::Error>> {
         let target = Arc::new(version::Info::new(
             version::Version::parse("v4.0.0"),
             DUMMY_SHA,
@@ -924,8 +926,10 @@ mod tests {
             current: "v3".into(),
             target,
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v3").unwrap();
-        let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
+        let diag =
+            status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v3").ok_or("no diagnostic")?;
+        let data: DiagnosticData =
+            serde_json::from_value(diag.data.ok_or("diagnostic has no data")?)?;
         match data {
             DiagnosticData::Outdated { target_ref, .. } => assert_eq!(target_ref, "v4.0.0"),
             DiagnosticData::Unresolvable { .. }
@@ -934,10 +938,11 @@ mod tests {
                 panic!("expected Outdated variant")
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn outdated_sha_pin_repins_to_sha_not_tag() {
+    fn outdated_sha_pin_repins_to_sha_not_tag() -> Result<(), Box<dyn std::error::Error>> {
         // A SHA pin that's behind must re-pin to the newer SHA, never unpin to a tag.
         let new_sha = "2222222222222222222222222222222222222222";
         let target = Arc::new(version::Info::new(
@@ -950,15 +955,18 @@ mod tests {
         };
         let old_sha = "1".repeat(40);
         let uses_value = format!("actions/checkout@{old_sha}");
-        let diag = status_to_diagnostic(&status, make_range(0, 31, 71), &uses_value).unwrap();
+        let diag = status_to_diagnostic(&status, make_range(0, 31, 71), &uses_value)
+            .ok_or("no diagnostic")?;
 
-        let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
+        let data: DiagnosticData =
+            serde_json::from_value(diag.data.ok_or("diagnostic has no data")?)?;
         let DiagnosticData::Outdated { target_ref, .. } = data else {
             panic!("expected Outdated data");
         };
         assert_eq!(target_ref, new_sha, "SHA pin must re-pin to the new SHA");
         // The human message still reads in versions, not raw SHAs.
         assert!(diag.message.contains("v7.0.1"), "got: {}", diag.message);
+        Ok(())
     }
 
     #[test]
@@ -1014,7 +1022,7 @@ mod tests {
     }
 
     #[test]
-    fn outdated_tag_still_updates_to_tag() {
+    fn outdated_tag_still_updates_to_tag() -> Result<(), Box<dyn std::error::Error>> {
         // Regression: a tag ref keeps updating to the tag, not the SHA.
         let target = Arc::new(version::Info::new(
             version::Version::parse("v4.2.0"),
@@ -1024,17 +1032,19 @@ mod tests {
             current: "v3".into(),
             target,
         };
-        let diag =
-            status_to_diagnostic(&status, make_range(0, 0, 5), "actions/checkout@v3").unwrap();
-        let data: DiagnosticData = serde_json::from_value(diag.data.unwrap()).unwrap();
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "actions/checkout@v3")
+            .ok_or("no diagnostic")?;
+        let data: DiagnosticData =
+            serde_json::from_value(diag.data.ok_or("diagnostic has no data")?)?;
         let DiagnosticData::Outdated { target_ref, .. } = data else {
             panic!("expected Outdated data");
         };
         assert_eq!(target_ref, "v4.2.0");
+        Ok(())
     }
 
     #[test]
-    fn pinned_maps_to_hint() {
+    fn pinned_maps_to_hint() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Pinned {
             sha: DUMMY_SHA.into(),
             tag: Some("v3.1.0".into()),
@@ -1044,14 +1054,15 @@ mod tests {
             make_range(5, 20, 60),
             &format!("actions/checkout@{DUMMY_SHA}"),
         )
-        .unwrap();
+        .ok_or("no diagnostic")?;
         assert_eq!(diag.severity, Some(DiagnosticSeverity::HINT));
         assert_eq!(diag.code, Some(NumberOrString::String("pinned".into())));
         assert!(diag.message.contains("v3.1.0"));
+        Ok(())
     }
 
     #[test]
-    fn pinned_unknown_tag() {
+    fn pinned_unknown_tag() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Pinned {
             sha: DUMMY_SHA.into(),
             tag: None,
@@ -1061,88 +1072,101 @@ mod tests {
             make_range(0, 0, 40),
             &format!("owner/repo@{DUMMY_SHA}"),
         )
-        .unwrap();
+        .ok_or("no diagnostic")?;
         assert!(diag.message.contains("unknown version"));
+        Ok(())
     }
 
     #[test]
-    fn pinned_has_no_embedded_data() {
+    fn pinned_has_no_embedded_data() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Pinned {
             sha: DUMMY_SHA.into(),
             tag: Some("v1.0.0".into()),
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 40), "o/r@sha").unwrap();
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 40), "o/r@sha")
+            .ok_or("no diagnostic")?;
         // Pinned diagnostics have no DiagnosticData (no code action target).
         assert!(diag.data.is_none());
+        Ok(())
     }
 
     #[test]
-    fn pinned_message_uses_short_sha() {
+    fn pinned_message_uses_short_sha() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Pinned {
             sha: DUMMY_SHA.into(),
             tag: Some("v2.0.0".into()),
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 40), "o/r@sha").unwrap();
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 40), "o/r@sha")
+            .ok_or("no diagnostic")?;
         assert!(
             diag.message.contains(&DUMMY_SHA[..7]),
             "expected short SHA, got: {}",
             diag.message
         );
+        Ok(())
     }
 
     #[test]
-    fn unresolvable_user_error_maps_to_error() {
+    fn unresolvable_user_error_maps_to_error() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Unresolvable {
             reason: "repository not found".into(),
             is_environment_error: false,
         };
-        let diag = status_to_diagnostic(&status, make_range(2, 8, 14), "bad/repo@v1").unwrap();
+        let diag = status_to_diagnostic(&status, make_range(2, 8, 14), "bad/repo@v1")
+            .ok_or("no diagnostic")?;
         assert_eq!(diag.severity, Some(DiagnosticSeverity::ERROR));
         assert!(diag.message.contains("repository not found"));
+        Ok(())
     }
 
     #[test]
-    fn unresolvable_user_error_code_is_unresolvable() {
+    fn unresolvable_user_error_code_is_unresolvable() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Unresolvable {
             reason: "not found".into(),
             is_environment_error: false,
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").unwrap();
+        let diag =
+            status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").ok_or("no diagnostic")?;
         assert_eq!(
             diag.code,
             Some(NumberOrString::String("unresolvable".into()))
         );
+        Ok(())
     }
 
     #[test]
-    fn unresolvable_env_error_maps_to_information() {
+    fn unresolvable_env_error_maps_to_information() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Unresolvable {
             reason: "rate limited".into(),
             is_environment_error: true,
         };
-        let diag =
-            status_to_diagnostic(&status, make_range(1, 5, 10), "actions/setup-node@v4").unwrap();
+        let diag = status_to_diagnostic(&status, make_range(1, 5, 10), "actions/setup-node@v4")
+            .ok_or("no diagnostic")?;
         assert_eq!(diag.severity, Some(DiagnosticSeverity::INFORMATION));
         assert!(
             diag.message.contains("(check failed: rate limited)"),
             "expected check-failed format, got: {}",
             diag.message
         );
+        Ok(())
     }
 
     #[test]
-    fn unresolvable_user_error_does_not_use_check_failed_format() {
+    fn unresolvable_user_error_does_not_use_check_failed_format()
+    -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Unresolvable {
             reason: "repository not found".into(),
             is_environment_error: false,
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 10), "bad/repo@v1").unwrap();
+        let diag = status_to_diagnostic(&status, make_range(0, 0, 10), "bad/repo@v1")
+            .ok_or("no diagnostic")?;
         assert!(
             !diag.message.contains("check failed"),
             "user errors should not use check-failed format, got: {}",
             diag.message
         );
         assert!(diag.message.contains("repository not found"));
+        Ok(())
     }
 
     #[test]
@@ -1170,7 +1194,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_source_is_actup() {
+    fn diagnostic_source_is_actup() -> Result<(), Box<dyn std::error::Error>> {
         let status = CheckStatus::Outdated {
             current: "v1".into(),
             target: Arc::new(version::Info::new(
@@ -1178,8 +1202,10 @@ mod tests {
                 "0000000000000000000000000000000000000000",
             )),
         };
-        let diag = status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").unwrap();
+        let diag =
+            status_to_diagnostic(&status, make_range(0, 0, 5), "o/r@v1").ok_or("no diagnostic")?;
         assert_eq!(diag.source.as_deref(), Some("actup"));
+        Ok(())
     }
 
     // --- Extraction from YAML ---
@@ -1424,13 +1450,13 @@ jobs:
     }
 
     #[tokio::test]
-    async fn invalid_refs_are_error_diagnostics() {
+    async fn invalid_refs_are_error_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
         let yaml = "runs:\n  steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n";
         let result = compute_diagnostics(
             yaml,
-            &Uri::from_file_path("/test/ci.yml").unwrap(),
+            &Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?,
             &Config::default(),
             &registry,
             &crate::file_cache::FileCache::disabled(),
@@ -1485,6 +1511,7 @@ jobs:
         );
         assert_eq!(result.refs_checked, 4);
         assert!(!result.errors.has_errors());
+        Ok(())
     }
 
     #[test]
@@ -1549,14 +1576,14 @@ jobs:
     // --- DiagnosticData serde edge cases ---
 
     #[test]
-    fn diagnostic_data_unresolvable_none_roundtrips() {
+    fn diagnostic_data_unresolvable_none_roundtrips() -> Result<(), Box<dyn std::error::Error>> {
         let data = DiagnosticData::Unresolvable {
             suggested_ref: None,
             repin_comment: None,
             replace_end_col: None,
         };
-        let json = serde_json::to_value(&data).unwrap();
-        let back: DiagnosticData = serde_json::from_value(json).unwrap();
+        let json = serde_json::to_value(&data)?;
+        let back: DiagnosticData = serde_json::from_value(json)?;
         match back {
             DiagnosticData::Unresolvable { suggested_ref, .. } => assert!(suggested_ref.is_none()),
             DiagnosticData::Outdated { .. }
@@ -1565,16 +1592,17 @@ jobs:
                 panic!("wrong variant")
             }
         }
+        Ok(())
     }
 
     #[test]
-    fn diagnostic_data_tagged_correctly() {
+    fn diagnostic_data_tagged_correctly() -> Result<(), Box<dyn std::error::Error>> {
         let outdated = DiagnosticData::Outdated {
             target_ref: "v1".into(),
             repin_comment: None,
             replace_end_col: None,
         };
-        let json = serde_json::to_value(&outdated).unwrap();
+        let json = serde_json::to_value(&outdated)?;
         assert_eq!(json["kind"], "outdated");
 
         let unresolvable = DiagnosticData::Unresolvable {
@@ -1582,8 +1610,9 @@ jobs:
             repin_comment: None,
             replace_end_col: None,
         };
-        let json = serde_json::to_value(&unresolvable).unwrap();
+        let json = serde_json::to_value(&unresolvable)?;
         assert_eq!(json["kind"], "unresolvable");
+        Ok(())
     }
 
     // --- compute_diagnostics with mock provider ---
@@ -2134,12 +2163,13 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_empty_text_returns_empty() {
+    async fn compute_diagnostics_empty_text_returns_empty() -> Result<(), Box<dyn std::error::Error>>
+    {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let result = compute_diagnostics(
             "name: CI\non: push\n",
@@ -2152,6 +2182,7 @@ jobs:
         .await;
         assert_eq!(result.diagnostics, []);
         assert!(!result.errors.has_errors());
+        Ok(())
     }
 
     #[tokio::test]
@@ -2202,14 +2233,15 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_outdated_ref_produces_warning() {
+    async fn compute_diagnostics_outdated_ref_produces_warning()
+    -> Result<(), Box<dyn std::error::Error>> {
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n";
         let result = compute_diagnostics(
@@ -2228,17 +2260,19 @@ jobs:
             Some(DiagnosticSeverity::WARNING)
         );
         assert!(result.diagnostics[0].message.contains("v4.2.0"));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_up_to_date_ref_no_diagnostic() {
+    async fn compute_diagnostics_up_to_date_ref_no_diagnostic()
+    -> Result<(), Box<dyn std::error::Error>> {
         let versions = test_utils::simple_version_set("v4.0.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v4.0.0\n";
         let result = compute_diagnostics(
@@ -2260,10 +2294,12 @@ jobs:
                 .map(|d| &d.message)
                 .collect::<Vec<_>>()
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_respects_branch_policy_for_v_major_ref() {
+    async fn compute_diagnostics_respects_branch_policy_for_v_major_ref()
+    -> Result<(), Box<dyn std::error::Error>> {
         let v2_0_4 = Arc::new(version::Info::new(
             version::Version::parse("v2.0.4"),
             DUMMY_SHA,
@@ -2290,7 +2326,7 @@ jobs:
             },
             ..Default::default()
         };
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: denoland/setup-deno@v2\n";
         let result = compute_diagnostics(
@@ -2312,6 +2348,7 @@ jobs:
                 .map(|diag| diag.message.as_str())
                 .collect::<Vec<_>>()
         );
+        Ok(())
     }
 
     #[tokio::test]
@@ -2394,7 +2431,8 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_provider_error_produces_env_diagnostic() {
+    async fn compute_diagnostics_provider_error_produces_env_diagnostic()
+    -> Result<(), Box<dyn std::error::Error>> {
         let provider = test_utils::MockProvider::new("github.com").with_error(
             "actions",
             "checkout",
@@ -2406,7 +2444,7 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v4\n";
         let result = compute_diagnostics(
@@ -2426,6 +2464,7 @@ jobs:
         );
         assert!(result.diagnostics[0].message.contains("check failed"));
         assert!(result.errors.has_errors());
+        Ok(())
     }
 
     #[tokio::test]
@@ -2509,7 +2548,7 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_deduplicates_repos() {
+    async fn compute_diagnostics_deduplicates_repos() -> Result<(), Box<dyn std::error::Error>> {
         // Same repo referenced twice — should only fetch versions once.
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
@@ -2517,7 +2556,7 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v2\n";
         let result = compute_diagnostics(
@@ -2532,10 +2571,11 @@ jobs:
 
         // Both refs should produce diagnostics (both outdated).
         assert_eq!(result.diagnostics.len(), 2);
+        Ok(())
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_mixed_repos() {
+    async fn compute_diagnostics_mixed_repos() -> Result<(), Box<dyn std::error::Error>> {
         let checkout_versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let node_versions = test_utils::simple_version_set("v4.0.0", DUMMY_SHA_2);
         let provider = test_utils::MockProvider::new("github.com")
@@ -2544,7 +2584,7 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/setup-node@v4.0.0\n";
         let result = compute_diagnostics(
@@ -2565,15 +2605,17 @@ jobs:
             .collect();
         assert_eq!(warnings.len(), 1, "only checkout should be outdated");
         assert!(warnings[0].message.contains("checkout"));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_local_refs_not_checked() {
+    async fn compute_diagnostics_local_refs_not_checked() -> Result<(), Box<dyn std::error::Error>>
+    {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: ./local-action\n    - uses: docker://node:16\n";
         let result = compute_diagnostics(
@@ -2587,6 +2629,7 @@ jobs:
         .await;
 
         assert_eq!(result.diagnostics, []);
+        Ok(())
     }
 
     // --- batch_fetch_versions ---
@@ -2631,14 +2674,14 @@ jobs:
     }
 
     #[tokio::test]
-    async fn batch_fetch_versions_caches_results() {
+    async fn batch_fetch_versions_caches_results() -> Result<(), Box<dyn std::error::Error>> {
         let versions = test_utils::simple_version_set("v1.0.0", DUMMY_SHA);
         let provider =
             test_utils::MockProvider::new("github.com").with_versions("owner", "repo", versions);
         let registry = test_utils::mock_registry(provider);
         let config = Config::default();
 
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = tempfile::TempDir::new()?;
         let cache = crate::file_cache::FileCache::with_path(
             temp.path().to_path_buf(),
             std::time::Duration::from_hours(1),
@@ -2654,19 +2697,21 @@ jobs:
         let results2 =
             batch_fetch_versions(std::slice::from_ref(&repo), &config, &registry, &cache).await;
         assert!(results2[&repo].is_ok());
+        Ok(())
     }
 
     // --- SHA-pinned refs ---
 
     #[tokio::test]
-    async fn compute_diagnostics_sha_pinned_produces_hint() {
+    async fn compute_diagnostics_sha_pinned_produces_hint() -> Result<(), Box<dyn std::error::Error>>
+    {
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         // Use a full 40-char SHA as the ref to trigger the Pinned code path.
         let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA}\n");
@@ -2695,6 +2740,7 @@ jobs:
             "expected tag in pinned message, got: {}",
             result.diagnostics[0].message
         );
+        Ok(())
     }
 
     async fn short_sha_diagnostics(line: &str, tag_sha: &str) -> Vec<Diagnostic> {
@@ -2991,7 +3037,8 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_sha_pinned_unknown_tag() {
+    async fn compute_diagnostics_sha_pinned_unknown_tag() -> Result<(), Box<dyn std::error::Error>>
+    {
         // SHA that doesn't match any known tag.
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
@@ -2999,7 +3046,7 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         // Use DUMMY_SHA_2 which doesn't match any tag in the version set.
         let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA_2}\n");
@@ -3023,6 +3070,7 @@ jobs:
             "expected 'unknown version' for unmatched SHA, got: {}",
             result.diagnostics[0].message
         );
+        Ok(())
     }
 
     #[tokio::test]
@@ -3060,12 +3108,12 @@ jobs:
     // --- Quiet mode ---
 
     #[tokio::test]
-    async fn quiet_mode_no_uses_keyword() {
+    async fn quiet_mode_no_uses_keyword() -> Result<(), Box<dyn std::error::Error>> {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/readme.md").unwrap();
+        let uri = Uri::from_file_path("/test/readme.md").ok_or("invalid file path")?;
 
         let text = "# README\nThis is not a workflow file.\n";
         let result = compute_diagnostics(
@@ -3078,6 +3126,7 @@ jobs:
         )
         .await;
         assert_eq!(result.diagnostics, []);
+        Ok(())
     }
 
     #[test]
@@ -3093,14 +3142,14 @@ jobs:
     }
 
     #[tokio::test]
-    async fn compute_diagnostics_counts_refs_checked() {
+    async fn compute_diagnostics_counts_refs_checked() -> Result<(), Box<dyn std::error::Error>> {
         let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
         let provider = test_utils::MockProvider::new("github.com")
             .with_versions("actions", "checkout", versions);
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").unwrap();
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v4.2.0\n";
         let result = compute_diagnostics(
@@ -3115,6 +3164,7 @@ jobs:
 
         // Both refs are checked even though one is up-to-date.
         assert_eq!(result.refs_checked, 2);
+        Ok(())
     }
 
     #[tokio::test]

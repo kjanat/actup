@@ -9,8 +9,6 @@
 //! provider is a [`test_utils::MockProvider`] and the file cache is disabled,
 //! so no test reaches the network or the user's cache.
 
-#![allow(clippy::unwrap_used, clippy::expect_used)]
-
 use std::{sync::Arc, time::Duration};
 
 use futures::{SinkExt as _, StreamExt as _};
@@ -37,16 +35,21 @@ use tower_lsp_server::{
 
 use crate::{backend::LspBackend, diagnostics::DIAGNOSTIC_SOURCE, test_utils};
 
+type TestResult<T = ()> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
+
 fn initialize_request(
     id: i64,
     workspace_root: Option<&str>,
     options: Option<serde_json::Value>,
-) -> Request {
+) -> TestResult<Request> {
+    let workspace_uri = workspace_root
+        .map(|root| Uri::from_file_path(root).ok_or("invalid workspace root"))
+        .transpose()?;
     let params = InitializeParams {
         initialization_options: options,
-        workspace_folders: workspace_root.map(|root| {
+        workspace_folders: workspace_uri.map(|uri| {
             vec![WorkspaceFolder {
-                uri: Uri::from_file_path(root).unwrap(),
+                uri,
                 name: "test".to_owned(),
             }]
         }),
@@ -66,19 +69,19 @@ fn initialize_request(
         },
         ..Default::default()
     };
-    Request::build("initialize")
+    Ok(Request::build("initialize")
         .id(id)
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
-fn initialized_notification() -> Request {
-    Request::build("initialized")
-        .params(serde_json::to_value(InitializedParams {}).unwrap())
-        .finish()
+fn initialized_notification() -> TestResult<Request> {
+    Ok(Request::build("initialized")
+        .params(serde_json::to_value(InitializedParams {})?)
+        .finish())
 }
 
-fn did_open_notification(uri: &Uri, text: &str, version: i32) -> Request {
+fn did_open_notification(uri: &Uri, text: &str, version: i32) -> TestResult<Request> {
     let params = DidOpenTextDocumentParams {
         text_document: TextDocumentItem {
             uri: uri.clone(),
@@ -87,9 +90,9 @@ fn did_open_notification(uri: &Uri, text: &str, version: i32) -> Request {
             text: text.to_owned(),
         },
     };
-    Request::build("textDocument/didOpen")
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+    Ok(Request::build("textDocument/didOpen")
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
 fn code_action_request(
@@ -97,7 +100,7 @@ fn code_action_request(
     uri: &Uri,
     range: Range,
     diagnostics: Vec<tower_lsp_server::ls_types::Diagnostic>,
-) -> Request {
+) -> TestResult<Request> {
     let params = CodeActionParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
         range,
@@ -109,19 +112,19 @@ fn code_action_request(
         work_done_progress_params: WorkDoneProgressParams::default(),
         partial_result_params: PartialResultParams::default(),
     };
-    Request::build("textDocument/codeAction")
+    Ok(Request::build("textDocument/codeAction")
         .id(id)
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
-fn did_close_notification(uri: &Uri) -> Request {
+fn did_close_notification(uri: &Uri) -> TestResult<Request> {
     let params = DidCloseTextDocumentParams {
         text_document: TextDocumentIdentifier { uri: uri.clone() },
     };
-    Request::build("textDocument/didClose")
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+    Ok(Request::build("textDocument/didClose")
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
 fn did_change_watched_files_notification(uri: &Uri) -> Request {
@@ -144,7 +147,7 @@ fn exit_notification() -> Request {
     Request::build("exit").finish()
 }
 
-fn hover_request(id: i64, uri: &Uri, position: Position) -> Request {
+fn hover_request(id: i64, uri: &Uri, position: Position) -> TestResult<Request> {
     let params = HoverParams {
         text_document_position_params: TextDocumentPositionParams {
             text_document: TextDocumentIdentifier { uri: uri.clone() },
@@ -152,10 +155,10 @@ fn hover_request(id: i64, uri: &Uri, position: Position) -> Request {
         },
         work_done_progress_params: WorkDoneProgressParams::default(),
     };
-    Request::build("textDocument/hover")
+    Ok(Request::build("textDocument/hover")
         .id(id)
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
 fn completion_request(
@@ -163,7 +166,7 @@ fn completion_request(
     uri: &Uri,
     position: Position,
     trigger_char: Option<&str>,
-) -> Request {
+) -> TestResult<Request> {
     let context = trigger_char.map(|ch| CompletionContext {
         trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
         trigger_character: Some(ch.to_owned()),
@@ -177,22 +180,26 @@ fn completion_request(
         partial_result_params: PartialResultParams::default(),
         context,
     };
-    Request::build("textDocument/completion")
+    Ok(Request::build("textDocument/completion")
         .id(id)
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
-fn execute_command_request(id: i64, command: &str, args: Vec<serde_json::Value>) -> Request {
+fn execute_command_request(
+    id: i64,
+    command: &str,
+    args: Vec<serde_json::Value>,
+) -> TestResult<Request> {
     let params = ExecuteCommandParams {
         command: command.to_owned(),
         arguments: args,
         work_done_progress_params: WorkDoneProgressParams::default(),
     };
-    Request::build("workspace/executeCommand")
+    Ok(Request::build("workspace/executeCommand")
         .id(id)
-        .params(serde_json::to_value(params).unwrap())
-        .finish()
+        .params(serde_json::to_value(params)?)
+        .finish())
 }
 
 /// Collected server→client messages.
@@ -248,15 +255,16 @@ impl TestHarness {
         }
     }
 
-    async fn request(&mut self, req: Request) -> Option<Response> {
-        self.service.call(req).await.unwrap()
+    async fn request(&mut self, req: Request) -> TestResult<Option<Response>> {
+        Ok(self.service.call(req).await?)
     }
 
-    async fn notify(&mut self, req: Request) {
-        let _ = self.service.call(req).await.unwrap();
+    async fn notify(&mut self, req: Request) -> TestResult {
+        self.service.call(req).await?;
+        Ok(())
     }
 
-    async fn initialize(&mut self, workspace_root: Option<&str>) -> InitializeResult {
+    async fn initialize(&mut self, workspace_root: Option<&str>) -> TestResult<InitializeResult> {
         self.initialize_with(workspace_root, None).await
     }
 
@@ -264,21 +272,20 @@ impl TestHarness {
         &mut self,
         workspace_root: Option<&str>,
         options: Option<serde_json::Value>,
-    ) -> InitializeResult {
+    ) -> TestResult<InitializeResult> {
         let resp = self
-            .request(initialize_request(1, workspace_root, options))
-            .await;
-        let resp = resp.expect("initialize should return a response");
+            .request(initialize_request(1, workspace_root, options)?)
+            .await?
+            .ok_or("initialize should return a response")?;
         let (_, body) = resp.into_parts();
-        let value = body.unwrap();
-        let result: InitializeResult = serde_json::from_value(value).unwrap();
+        let result: InitializeResult = serde_json::from_value(body?)?;
 
-        self.notify(initialized_notification()).await;
+        self.notify(initialized_notification()?).await?;
 
         // Give background tasks time to process setup messages.
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        result
+        Ok(result)
     }
 
     /// Wait for diagnostics to appear for a given URI, with timeout.
@@ -340,10 +347,9 @@ impl TestHarness {
         self.collected.lock().await.diagnostics.clear();
     }
 
-    async fn shutdown(mut self) {
-        let _ = self.request(shutdown_request(999)).await;
-        self.notify(exit_notification()).await;
-        // The socket task will end when the socket stream closes.
+    async fn shutdown(mut self) -> TestResult {
+        self.request(shutdown_request(999)).await?;
+        self.notify(exit_notification()).await
     }
 }
 
@@ -351,7 +357,10 @@ impl TestHarness {
 /// and collect `publishDiagnostics` notifications.
 async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMessages>>) {
     while let Some(req) = socket.next().await {
-        let parsed: serde_json::Value = serde_json::to_value(&req).unwrap();
+        let parsed = match serde_json::to_value(&req) {
+            Ok(parsed) => parsed,
+            Err(error) => panic!("server message must serialize: {error}"),
+        };
         let method = parsed.get("method").and_then(|m| m.as_str()).unwrap_or("");
 
         // Auto-respond to server requests that have an id.
@@ -391,11 +400,11 @@ async fn drain_socket(mut socket: ClientSocket, collected: Arc<Mutex<CollectedMe
 // Protocol tests
 
 #[tokio::test]
-async fn initialize_returns_capabilities() {
+async fn initialize_returns_capabilities() -> TestResult {
     let mut harness = TestHarness::new();
-    let result = harness.initialize(None).await;
+    let result = harness.initialize(None).await?;
 
-    let info = result.server_info.unwrap();
+    let info = result.server_info.ok_or("no server info")?;
     assert_eq!(info.name, "actup-lsp");
     assert!(info.version.is_some());
 
@@ -404,7 +413,7 @@ async fn initialize_returns_capabilities() {
     assert!(caps.code_action_provider.is_some());
     assert!(caps.hover_provider.is_some());
 
-    let completion = caps.completion_provider.unwrap();
+    let completion = caps.completion_provider.ok_or("no completion provider")?;
     assert!(
         completion
             .trigger_characters
@@ -412,24 +421,29 @@ async fn initialize_returns_capabilities() {
             .is_some_and(|tc| tc.contains(&"@".to_owned()))
     );
 
-    let exec = caps.execute_command_provider.unwrap();
+    let exec = caps
+        .execute_command_provider
+        .ok_or("no executeCommand provider")?;
     assert!(
         exec.commands
             .contains(&"actup-lsp/fixAllInWorkspace".to_owned())
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn did_open_no_uses_publishes_empty_diagnostics() {
+async fn did_open_no_uses_publishes_empty_diagnostics() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/no-uses.yml").unwrap();
+    let uri = Uri::from_file_path("/test/no-uses.yml").ok_or("invalid file path")?;
     let text = "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
 
     let diags = harness
         .wait_for_diagnostics(&uri, Duration::from_secs(2))
@@ -440,18 +454,21 @@ async fn did_open_no_uses_publishes_empty_diagnostics() {
         "expected empty diagnostics for file without uses:"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn did_open_with_uses_publishes_diagnostics() {
+async fn did_open_with_uses_publishes_diagnostics() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/with-uses.yml").unwrap();
+    let uri = Uri::from_file_path("/test/with-uses.yml").ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
 
     let diags = harness
         .wait_for_diagnostics(&uri, Duration::from_secs(5))
@@ -469,18 +486,20 @@ async fn did_open_with_uses_publishes_diagnostics() {
         }
     }
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn harness_serves_versions_from_the_mock_provider() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn harness_serves_versions_from_the_mock_provider() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let uri = Uri::from_file_path("/test/mocked.yml").ok_or("no uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     let published = harness
         .wait_for_diagnostics(&uri, Duration::from_secs(5))
         .await;
@@ -498,20 +517,22 @@ async fn harness_serves_versions_from_the_mock_provider() -> Result<(), Box<dyn 
         "{messages:?}"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn did_close_clears_diagnostics() {
+async fn did_close_clears_diagnostics() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/close-test.yml").unwrap();
+    let uri = Uri::from_file_path("/test/close-test.yml").ok_or("invalid file path")?;
     let text =
         "name: CI\non: push\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     harness
         .wait_for_diagnostics(&uri, Duration::from_secs(3))
         .await;
@@ -519,7 +540,7 @@ async fn did_close_clears_diagnostics() {
     // Clear collected diagnostics before close.
     harness.clear_diagnostics().await;
 
-    harness.notify(did_close_notification(&uri)).await;
+    harness.notify(did_close_notification(&uri)?).await?;
 
     // Wait for the close-triggered empty diagnostics.
     let diags = harness
@@ -532,18 +553,21 @@ async fn did_close_clears_diagnostics() {
         "didClose should publish empty diagnostics"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn code_action_returns_quickfix_for_outdated() {
+async fn code_action_returns_quickfix_for_outdated() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/codeaction.yml").unwrap();
+    let uri = Uri::from_file_path("/test/codeaction.yml").ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v3\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Build an outdated diagnostic as if the client received it.
@@ -553,12 +577,12 @@ async fn code_action_returns_quickfix_for_outdated() {
         "v4.2.0",
     );
 
-    let req = code_action_request(10, &uri, diag.range, vec![diag]);
-    let resp = harness.request(req).await;
+    let req = code_action_request(10, &uri, diag.range, vec![diag])?;
+    let resp = harness.request(req).await?;
 
-    let resp = resp.expect("codeAction should return a response");
+    let resp = resp.ok_or("codeAction should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     // The response must be non-null: our outdated diagnostic should produce
     // at least one quickfix code action. A null response means the diagnostic
@@ -568,7 +592,7 @@ async fn code_action_returns_quickfix_for_outdated() {
         "expected non-null code action response for outdated diagnostic"
     );
 
-    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value).unwrap();
+    let actions: Vec<CodeActionOrCommand> = serde_json::from_value(value)?;
     assert_ne!(actions, []);
 
     let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
@@ -577,10 +601,13 @@ async fn code_action_returns_quickfix_for_outdated() {
     assert_eq!(action.kind, Some(CodeActionKind::QUICKFIX));
     assert!(action.title.contains("v4.2.0"));
 
-    let edit = action.edit.as_ref().unwrap();
+    let edit = action.edit.as_ref().ok_or("action has no edit")?;
     // Edits must use versioned documentChanges, not unversioned changes.
     assert!(edit.changes.is_none());
-    let doc_changes = edit.document_changes.as_ref().unwrap();
+    let doc_changes = edit
+        .document_changes
+        .as_ref()
+        .ok_or("edit has no document changes")?;
     let DocumentChanges::Edits(doc_edits) = doc_changes else {
         panic!("expected DocumentChanges::Edits");
     };
@@ -598,18 +625,20 @@ async fn code_action_returns_quickfix_for_outdated() {
     assert_eq!(text_edits.len(), 1);
     assert_eq!(text_edits[0].new_text, "v4.2.0");
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn code_action_returns_quickfix_in_a_markdown_file() -> Result<(), Box<dyn std::error::Error>>
-{
+async fn code_action_returns_quickfix_in_a_markdown_file() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let uri = Uri::from_file_path("/test/README.md").ok_or("bad uri")?;
     let text = "# Usage\n\nRun it:\n\n```yaml\nsteps:\n  - uses: actions/checkout@v3\n```\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let diag = test_utils::make_outdated_diagnostic(
@@ -618,8 +647,8 @@ async fn code_action_returns_quickfix_in_a_markdown_file() -> Result<(), Box<dyn
         "v4.2.0",
     );
     let value = harness
-        .request(code_action_request(14, &uri, diag.range, vec![diag]))
-        .await
+        .request(code_action_request(14, &uri, diag.range, vec![diag])?)
+        .await?
         .ok_or("codeAction should return a response")?
         .into_parts()
         .1?;
@@ -647,26 +676,28 @@ async fn code_action_returns_quickfix_in_a_markdown_file() -> Result<(), Box<dyn
     assert_eq!(edits, [(test_utils::make_range(6, 27, 29), "v4.2.0")]);
     assert_eq!(doc_edits[0].text_document.uri, uri);
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn pin_action_edits_the_ref_in_a_markdown_file() -> Result<(), Box<dyn std::error::Error>> {
+async fn pin_action_edits_the_ref_in_a_markdown_file() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let uri = Uri::from_file_path("/test/USAGE.md").ok_or("bad uri")?;
     let text = "# Usage\n\n```yaml\nsteps:\n  - uses: actions/checkout@v4.2.0\n```\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     harness
         .wait_for_diagnostics(&uri, Duration::from_secs(5))
         .await;
 
     let at_ref = test_utils::make_range(4, 30, 30);
     let value = harness
-        .request(code_action_request(15, &uri, at_ref, vec![]))
-        .await
+        .request(code_action_request(15, &uri, at_ref, vec![])?)
+        .await?
         .ok_or("codeAction should return a response")?
         .into_parts()
         .1?;
@@ -704,19 +735,20 @@ async fn pin_action_edits_the_ref_in_a_markdown_file() -> Result<(), Box<dyn std
     assert_eq!(*start, Position::new(4, 27));
     assert!(new_text.starts_with(test_utils::DUMMY_SHA), "{new_text}");
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
--> Result<(), Box<dyn std::error::Error>> {
+async fn code_action_leaves_out_an_edit_that_breaks_the_yaml() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let uri = Uri::from_file_path("/test/corrupting.yml").ok_or("no uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let range = test_utils::make_range(3, 31, 33);
@@ -724,8 +756,13 @@ async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
     let corrupting =
         test_utils::make_outdated_diagnostic(range, "actions/checkout@v3", "v4\n      - [");
     let resp = harness
-        .request(code_action_request(12, &uri, range, vec![corrupting, good]))
-        .await
+        .request(code_action_request(
+            12,
+            &uri,
+            range,
+            vec![corrupting, good],
+        )?)
+        .await?
         .ok_or("codeAction should return a response")?;
     let (_, body) = resp.into_parts();
     let actions: Vec<CodeActionOrCommand> = serde_json::from_value(body?)?;
@@ -740,38 +777,39 @@ async fn code_action_leaves_out_an_edit_that_breaks_the_yaml()
         .collect();
     assert_eq!(quickfixes, ["Update to v4.2.0"]);
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn code_action_offers_nothing_for_an_unopened_document()
--> Result<(), Box<dyn std::error::Error>> {
+async fn code_action_offers_nothing_for_an_unopened_document() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let uri = Uri::from_file_path("/test/never-opened.yml").ok_or("no uri")?;
     let range = test_utils::make_range(3, 31, 33);
     let diag = test_utils::make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
     let resp = harness
-        .request(code_action_request(13, &uri, range, vec![diag]))
-        .await
+        .request(code_action_request(13, &uri, range, vec![diag])?)
+        .await?
         .ok_or("codeAction should return a response")?;
     let (_, body) = resp.into_parts();
     assert_eq!(body?, serde_json::Value::Null);
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn code_action_expands_short_sha() -> Result<(), Box<dyn std::error::Error>> {
+async fn code_action_expands_short_sha() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let uri = Uri::from_file_path("/test/shortsha.yml").ok_or("bad uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@abc1234\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let mut diag =
@@ -784,8 +822,8 @@ async fn code_action_expands_short_sha() -> Result<(), Box<dyn std::error::Error
     .ok();
 
     let resp = harness
-        .request(code_action_request(11, &uri, diag.range, vec![diag]))
-        .await
+        .request(code_action_request(11, &uri, diag.range, vec![diag])?)
+        .await?
         .ok_or("codeAction should return a response")?;
     let (_, body) = resp.into_parts();
     let actions: Vec<CodeActionOrCommand> =
@@ -815,63 +853,65 @@ async fn code_action_expands_short_sha() -> Result<(), Box<dyn std::error::Error
         )
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn code_action_empty_context_returns_none() {
+async fn code_action_empty_context_returns_none() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/empty.yml").unwrap();
+    let uri = Uri::from_file_path("/test/empty.yml").ok_or("invalid file path")?;
     harness
-        .notify(did_open_notification(&uri, "name: CI\non: push\n", 1))
-        .await;
+        .notify(did_open_notification(&uri, "name: CI\non: push\n", 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     let range = test_utils::make_range(0, 0, 10);
-    let req = code_action_request(20, &uri, range, vec![]);
-    let resp = harness.request(req).await;
+    let req = code_action_request(20, &uri, range, vec![])?;
+    let resp = harness.request(req).await?;
 
-    let resp = resp.expect("codeAction should return a response");
+    let resp = resp.ok_or("codeAction should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     assert!(
         value.is_null() || value.as_array().is_some_and(Vec::is_empty),
         "expected no code actions, got: {value}"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn shutdown_returns_ok() {
+async fn shutdown_returns_ok() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let resp = harness.request(shutdown_request(100)).await;
-    let resp = resp.expect("shutdown should return a response");
+    let resp = harness.request(shutdown_request(100)).await?;
+    let resp = resp.ok_or("shutdown should return a response")?;
     let (_, body) = resp.into_parts();
     assert!(body.is_ok());
 
-    harness.notify(exit_notification()).await;
+    harness.notify(exit_notification()).await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn full_lifecycle_open_change_close() {
+async fn full_lifecycle_open_change_close() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/lifecycle.yml").unwrap();
+    let uri = Uri::from_file_path("/test/lifecycle.yml").ok_or("invalid file path")?;
 
     // Open.
     let text_v1 =
         "name: CI\non: push\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
     harness
-        .notify(did_open_notification(&uri, text_v1, 1))
-        .await;
+        .notify(did_open_notification(&uri, text_v1, 1)?)
+        .await?;
     harness
         .wait_for_diagnostics(&uri, Duration::from_secs(3))
         .await;
@@ -892,9 +932,9 @@ async fn full_lifecycle_open_change_close() {
         }],
     };
     let change_req = Request::build("textDocument/didChange")
-        .params(serde_json::to_value(change_params).unwrap())
+        .params(serde_json::to_value(change_params)?)
         .finish();
-    harness.notify(change_req).await;
+    harness.notify(change_req).await?;
 
     let diags = harness
         .wait_for_diagnostics(&uri, Duration::from_secs(5))
@@ -903,7 +943,7 @@ async fn full_lifecycle_open_change_close() {
 
     // Close.
     harness.clear_diagnostics().await;
-    harness.notify(did_close_notification(&uri)).await;
+    harness.notify(did_close_notification(&uri)?).await?;
 
     let close_diags = harness
         .wait_for_diagnostics(&uri, Duration::from_secs(2))
@@ -914,19 +954,19 @@ async fn full_lifecycle_open_change_close() {
         "diagnostics should be cleared on close"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
--> Result<(), Box<dyn std::error::Error>> {
+async fn invalid_config_pauses_diagnostics_until_reload_succeeds() -> TestResult {
     let temp = tempfile::tempdir()?;
     let config_file = temp.path().join("actup.toml");
     std::fs::write(&config_file, "[policy]\nbump = \"sideways\"\n")?;
     let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
 
     let mut harness = TestHarness::new();
-    harness.initialize(Some(root)).await;
+    harness.initialize(Some(root)).await?;
 
     let config_path = actup_core::canonical_path(temp.path())
         .join("actup.toml")
@@ -948,7 +988,9 @@ async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
 
     let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: gitlab.com/owner/repo@v1\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
 
     let paused = harness
         .wait_for_diagnostics(&uri, Duration::from_secs(2))
@@ -968,8 +1010,8 @@ async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
         character: 20,
     };
     let resp = harness
-        .request(hover_request(40, &uri, position))
-        .await
+        .request(hover_request(40, &uri, position)?)
+        .await?
         .ok_or("hover returned no response")?;
     let (_, body) = resp.into_parts();
     assert_eq!(body?, serde_json::Value::Null);
@@ -980,8 +1022,8 @@ async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
             41,
             "actup-lsp/fixAllInWorkspace",
             vec![],
-        ))
-        .await;
+        )?)
+        .await?;
     let refused = harness
         .wait_until(Duration::from_secs(2), |c| {
             c.messages
@@ -996,7 +1038,7 @@ async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
     let config_uri = Uri::from_file_path(&config_file).ok_or("bad config uri")?;
     harness
         .notify(did_change_watched_files_notification(&config_uri))
-        .await;
+        .await?;
 
     let resumed = harness
         .wait_until(Duration::from_secs(5), |c| {
@@ -1007,23 +1049,25 @@ async fn invalid_config_pauses_diagnostics_until_reload_succeeds()
         .await;
     assert!(resumed, "diagnostics must resume after the config parses");
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn config_turning_invalid_clears_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+async fn config_turning_invalid_clears_diagnostics() -> TestResult {
     let temp = tempfile::tempdir()?;
     let config_file = temp.path().join("actup.toml");
     std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
     let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
 
     let mut harness = TestHarness::new();
-    harness.initialize(Some(root)).await;
+    harness.initialize(Some(root)).await?;
 
     let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: gitlab.com/owner/repo@v1\n";
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     let loaded = harness
         .wait_until(Duration::from_secs(5), |c| {
             c.diagnostics
@@ -1038,7 +1082,7 @@ async fn config_turning_invalid_clears_diagnostics() -> Result<(), Box<dyn std::
     let config_uri = Uri::from_file_path(&config_file).ok_or("bad config uri")?;
     harness
         .notify(did_change_watched_files_notification(&config_uri))
-        .await;
+        .await?;
 
     let shown = harness
         .wait_until(Duration::from_secs(2), |c| {
@@ -1058,25 +1102,25 @@ async fn config_turning_invalid_clears_diagnostics() -> Result<(), Box<dyn std::
         "invalid config must clear diagnostics: {cleared:?}"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn config_reload_rejects_renamed_key() -> Result<(), Box<dyn std::error::Error>> {
+async fn config_reload_rejects_renamed_key() -> TestResult {
     let temp = tempfile::tempdir()?;
     let config_file = temp.path().join("actup.toml");
     std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
     let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
 
     let mut harness = TestHarness::new();
-    harness.initialize(Some(root)).await;
+    harness.initialize(Some(root)).await?;
 
     std::fs::write(&config_file, "update_policy = \"patch\"\n")?;
     let config_uri = Uri::from_file_path(&config_file).ok_or("bad config uri")?;
     harness
         .notify(did_change_watched_files_notification(&config_uri))
-        .await;
+        .await?;
 
     let config_path = actup_core::canonical_path(temp.path())
         .join("actup.toml")
@@ -1094,7 +1138,7 @@ async fn config_reload_rejects_renamed_key() -> Result<(), Box<dyn std::error::E
         .await;
     assert!(shown, "expected an error showMessage naming the new key");
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -1133,19 +1177,16 @@ impl TestHarness {
         );
     }
 
-    async fn notify_changed(
-        &mut self,
-        file: &std::path::Path,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    async fn notify_changed(&mut self, file: &std::path::Path) -> TestResult {
         let uri = Uri::from_file_path(file).ok_or("bad config uri")?;
         self.notify(did_change_watched_files_notification(&uri))
-            .await;
+            .await?;
         Ok(())
     }
 }
 
 #[tokio::test]
-async fn invalid_github_yaml_config_reloads_on_change() -> Result<(), Box<dyn std::error::Error>> {
+async fn invalid_github_yaml_config_reloads_on_change() -> TestResult {
     let temp = tempfile::tempdir()?;
     std::fs::create_dir(temp.path().join(".github"))?;
     let config_file = temp.path().join(".github/actup.yaml");
@@ -1153,7 +1194,7 @@ async fn invalid_github_yaml_config_reloads_on_change() -> Result<(), Box<dyn st
     let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
 
     let mut harness = TestHarness::new();
-    harness.initialize(Some(root)).await;
+    harness.initialize(Some(root)).await?;
     assert!(
         harness
             .error_shown(
@@ -1169,8 +1210,8 @@ async fn invalid_github_yaml_config_reloads_on_change() -> Result<(), Box<dyn st
 
     let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
     harness
-        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
-        .await;
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1)?)
+        .await?;
     harness.assert_paused(&uri).await;
 
     harness.clear_diagnostics().await;
@@ -1181,12 +1222,12 @@ async fn invalid_github_yaml_config_reloads_on_change() -> Result<(), Box<dyn st
         "diagnostics must resume after .github/actup.yaml parses"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn invalid_user_config_reloads_on_change() -> Result<(), Box<dyn std::error::Error>> {
+async fn invalid_user_config_reloads_on_change() -> TestResult {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
     std::fs::create_dir(&repo)?;
@@ -1196,7 +1237,7 @@ async fn invalid_user_config_reloads_on_change() -> Result<(), Box<dyn std::erro
     let root = repo.to_str().ok_or("temp path is not UTF-8")?;
 
     let mut harness = TestHarness::with_user_config(Some(user.clone()));
-    harness.initialize(Some(root)).await;
+    harness.initialize(Some(root)).await?;
     assert!(
         harness.error_shown(&user.display().to_string()).await,
         "expected an error showMessage naming the user config"
@@ -1204,8 +1245,8 @@ async fn invalid_user_config_reloads_on_change() -> Result<(), Box<dyn std::erro
 
     let uri = Uri::from_file_path(repo.join("ci.yml")).ok_or("bad file uri")?;
     harness
-        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
-        .await;
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1)?)
+        .await?;
     harness.assert_paused(&uri).await;
 
     harness.clear_diagnostics().await;
@@ -1216,13 +1257,12 @@ async fn invalid_user_config_reloads_on_change() -> Result<(), Box<dyn std::erro
         "diagnostics must resume after the user config parses"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn invalid_config_path_beside_valid_repo_config_is_invalid()
--> Result<(), Box<dyn std::error::Error>> {
+async fn invalid_config_path_beside_valid_repo_config_is_invalid() -> TestResult {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
     std::fs::create_dir(&repo)?;
@@ -1235,7 +1275,7 @@ async fn invalid_config_path_beside_valid_repo_config_is_invalid()
     let mut harness = TestHarness::new();
     harness
         .initialize_with(Some(root), Some(json!({ "configPath": explicit_str })))
-        .await;
+        .await?;
     assert!(
         harness.error_shown(explicit_str).await,
         "expected an error showMessage naming configPath"
@@ -1243,8 +1283,8 @@ async fn invalid_config_path_beside_valid_repo_config_is_invalid()
 
     let uri = Uri::from_file_path(repo.join("ci.yml")).ok_or("bad file uri")?;
     harness
-        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
-        .await;
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1)?)
+        .await?;
     harness.assert_paused(&uri).await;
 
     harness.clear_diagnostics().await;
@@ -1255,13 +1295,12 @@ async fn invalid_config_path_beside_valid_repo_config_is_invalid()
         "diagnostics must resume after configPath parses"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn relative_config_path_resolves_against_workspace_root()
--> Result<(), Box<dyn std::error::Error>> {
+async fn relative_config_path_resolves_against_workspace_root() -> TestResult {
     let temp = tempfile::tempdir()?;
     let repo = temp.path().join("repo");
     std::fs::create_dir(&repo)?;
@@ -1273,7 +1312,7 @@ async fn relative_config_path_resolves_against_workspace_root()
     let mut harness = TestHarness::new();
     harness
         .initialize_with(Some(root), Some(json!({ "configPath": "custom.toml" })))
-        .await;
+        .await?;
     assert!(
         harness.error_shown(explicit_str).await,
         "expected an error showMessage naming the resolved configPath"
@@ -1288,8 +1327,8 @@ async fn relative_config_path_resolves_against_workspace_root()
 
     let uri = Uri::from_file_path(repo.join("ci.yml")).ok_or("bad file uri")?;
     harness
-        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
-        .await;
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1)?)
+        .await?;
     harness.assert_paused(&uri).await;
 
     harness.clear_diagnostics().await;
@@ -1324,7 +1363,7 @@ async fn relative_config_path_resolves_against_workspace_root()
                 .params(json!(change))
                 .finish(),
         )
-        .await;
+        .await?;
     assert!(
         harness.error_shown(second_explicit_str).await,
         "expected the new root's configPath to load"
@@ -1339,12 +1378,12 @@ async fn relative_config_path_resolves_against_workspace_root()
         "diagnostics must resume after the new root's configPath parses"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn missing_config_path_pauses_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+async fn missing_config_path_pauses_diagnostics() -> TestResult {
     let temp = tempfile::tempdir()?;
     std::fs::write(temp.path().join("actup.toml"), "[cache]\nenabled = false\n")?;
     let explicit = temp.path().join("deleted.toml");
@@ -1354,7 +1393,7 @@ async fn missing_config_path_pauses_diagnostics() -> Result<(), Box<dyn std::err
     let mut harness = TestHarness::new();
     harness
         .initialize_with(Some(root), Some(json!({ "configPath": explicit_str })))
-        .await;
+        .await?;
     assert!(
         harness.error_shown(explicit_str).await,
         "expected an error showMessage naming the missing configPath"
@@ -1362,16 +1401,16 @@ async fn missing_config_path_pauses_diagnostics() -> Result<(), Box<dyn std::err
 
     let uri = Uri::from_file_path(temp.path().join("ci.yml")).ok_or("bad file uri")?;
     harness
-        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1))
-        .await;
+        .notify(did_open_notification(&uri, UNRESOLVED_WORKFLOW, 1)?)
+        .await?;
     harness.assert_paused(&uri).await;
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn blank_config_path_falls_back_to_discovery() -> Result<(), Box<dyn std::error::Error>> {
+async fn blank_config_path_falls_back_to_discovery() -> TestResult {
     let temp = tempfile::tempdir()?;
     std::fs::write(
         temp.path().join("actup.toml"),
@@ -1383,25 +1422,25 @@ async fn blank_config_path_falls_back_to_discovery() -> Result<(), Box<dyn std::
         let mut harness = TestHarness::new();
         harness
             .initialize_with(Some(root), Some(json!({ "configPath": blank })))
-            .await;
+            .await?;
         assert!(
             harness.error_shown("sideways").await,
             "configPath {blank:?} must leave discovery to find the repo config"
         );
-        harness.shutdown().await;
+        harness.shutdown().await?;
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn unrelated_file_change_does_not_reload() -> Result<(), Box<dyn std::error::Error>> {
+async fn unrelated_file_change_does_not_reload() -> TestResult {
     let temp = tempfile::tempdir()?;
     let config_file = temp.path().join("actup.toml");
     std::fs::write(&config_file, "[cache]\nenabled = false\n")?;
     let root = temp.path().to_str().ok_or("temp path is not UTF-8")?;
 
     let mut harness = TestHarness::new();
-    harness.initialize(Some(root)).await;
+    harness.initialize(Some(root)).await?;
 
     std::fs::write(&config_file, "[policy]\nbump = \"sideways\"\n")?;
     harness
@@ -1415,7 +1454,7 @@ async fn unrelated_file_change_does_not_reload() -> Result<(), Box<dyn std::erro
     harness.notify_changed(&config_file).await?;
     assert!(harness.error_shown("sideways").await);
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
@@ -1446,7 +1485,7 @@ fn registered_relative_patterns(requests: &[(String, serde_json::Value)]) -> Vec
 }
 
 #[tokio::test]
-async fn config_watchers_follow_workspace_root() -> Result<(), Box<dyn std::error::Error>> {
+async fn config_watchers_follow_workspace_root() -> TestResult {
     let temp = tempfile::tempdir()?;
     let first = temp.path().join("first");
     let second = temp.path().join("second");
@@ -1460,7 +1499,7 @@ async fn config_watchers_follow_workspace_root() -> Result<(), Box<dyn std::erro
     let mut harness = TestHarness::with_user_config(Some(user.clone()));
     harness
         .initialize_with(Some(root), Some(json!({ "configPath": explicit_str })))
-        .await;
+        .await?;
 
     let uri = |path: &std::path::Path| {
         Uri::from_file_path(path)
@@ -1501,7 +1540,7 @@ async fn config_watchers_follow_workspace_root() -> Result<(), Box<dyn std::erro
                 .params(json!(change))
                 .finish(),
         )
-        .await;
+        .await?;
     let switched = harness
         .wait_until(Duration::from_secs(2), |c| {
             c.requests
@@ -1523,21 +1562,23 @@ async fn config_watchers_follow_workspace_root() -> Result<(), Box<dyn std::erro
     assert!(patterns.iter().any(|(base, _)| *base == second_github));
     assert!(!patterns.iter().any(|(base, _)| *base == first));
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 // Hover protocol tests
 
 #[tokio::test]
-async fn hover_on_uses_line_returns_response() {
+async fn hover_on_uses_line_returns_response() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/hover.yml").unwrap();
+    let uri = Uri::from_file_path("/test/hover.yml").ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     // Wait for diagnostics to ensure the document is fully processed.
     harness
         .wait_for_diagnostics(&uri, Duration::from_secs(3))
@@ -1548,8 +1589,8 @@ async fn hover_on_uses_line_returns_response() {
         line: 6,
         character: 20,
     };
-    let resp = harness.request(hover_request(10, &uri, position)).await;
-    let resp = resp.expect("hover should return a response");
+    let resp = harness.request(hover_request(10, &uri, position)?).await?;
+    let resp = resp.ok_or("hover should return a response")?;
     let (_, body) = resp.into_parts();
 
     // The response should be Ok — either Some(Hover) or null.
@@ -1557,13 +1598,14 @@ async fn hover_on_uses_line_returns_response() {
     // whether the provider can resolve (no token = likely error/null).
     assert!(body.is_ok(), "hover should not return a JSON-RPC error");
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn hover_reads_markdown_and_plain_text_documents() -> Result<(), Box<dyn std::error::Error>> {
+async fn hover_reads_markdown_and_plain_text_documents() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let cases = [
         (
@@ -1581,13 +1623,15 @@ async fn hover_reads_markdown_and_plain_text_documents() -> Result<(), Box<dyn s
     ];
     for (id, (path, text, position, range)) in (30..).zip(cases) {
         let uri = Uri::from_file_path(path).ok_or("bad uri")?;
-        harness.notify(did_open_notification(&uri, text, 1)).await;
+        harness
+            .notify(did_open_notification(&uri, text, 1)?)
+            .await?;
         harness
             .wait_for_diagnostics(&uri, Duration::from_secs(5))
             .await;
         let value = harness
-            .request(hover_request(id, &uri, position))
-            .await
+            .request(hover_request(id, &uri, position)?)
+            .await?
             .ok_or("hover should return a response")?
             .into_parts()
             .1?;
@@ -1600,19 +1644,21 @@ async fn hover_reads_markdown_and_plain_text_documents() -> Result<(), Box<dyn s
         assert!(markup.value.contains("v4.2.0"), "{path}: {}", markup.value);
     }
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 
 #[tokio::test]
-async fn hover_on_non_uses_line_returns_null() {
+async fn hover_on_non_uses_line_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/hover-null.yml").unwrap();
+    let uri = Uri::from_file_path("/test/hover-null.yml").ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Hover on a non-uses line (line 0 = "name: CI").
@@ -1620,54 +1666,58 @@ async fn hover_on_non_uses_line_returns_null() {
         line: 0,
         character: 3,
     };
-    let resp = harness.request(hover_request(11, &uri, position)).await;
-    let resp = resp.expect("hover should return a response");
+    let resp = harness.request(hover_request(11, &uri, position)?).await?;
+    let resp = resp.ok_or("hover should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     assert!(
         value.is_null(),
         "hover on non-uses line should return null, got: {value}"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn hover_without_open_document_returns_null() {
+async fn hover_without_open_document_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     // Request hover on a document that was never opened.
-    let uri = Uri::from_file_path("/test/not-opened.yml").unwrap();
+    let uri = Uri::from_file_path("/test/not-opened.yml").ok_or("invalid file path")?;
     let position = Position {
         line: 0,
         character: 0,
     };
-    let resp = harness.request(hover_request(12, &uri, position)).await;
-    let resp = resp.expect("hover should return a response");
+    let resp = harness.request(hover_request(12, &uri, position)?).await?;
+    let resp = resp.ok_or("hover should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     assert!(
         value.is_null(),
         "hover on unopened document should return null"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 // Completion protocol tests
 
 #[tokio::test]
-async fn completion_on_uses_line_returns_response() {
+async fn completion_on_uses_line_returns_response() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/completion.yml").unwrap();
+    let uri = Uri::from_file_path("/test/completion.yml").ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Trigger completion after "@" (line 6, after "actions/checkout@").
@@ -1676,9 +1726,9 @@ async fn completion_on_uses_line_returns_response() {
         character: 31,
     };
     let resp = harness
-        .request(completion_request(20, &uri, position, Some("@")))
-        .await;
-    let resp = resp.expect("completion should return a response");
+        .request(completion_request(20, &uri, position, Some("@"))?)
+        .await?;
+    let resp = resp.ok_or("completion should return a response")?;
     let (_, body) = resp.into_parts();
 
     // Protocol validation: the response should be Ok, not a JSON-RPC error.
@@ -1687,18 +1737,21 @@ async fn completion_on_uses_line_returns_response() {
         "completion should not return a JSON-RPC error"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn completion_on_non_uses_line_returns_null() {
+async fn completion_on_non_uses_line_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/completion-null.yml").unwrap();
+    let uri = Uri::from_file_path("/test/completion-null.yml").ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
 
-    harness.notify(did_open_notification(&uri, text, 1)).await;
+    harness
+        .notify(did_open_notification(&uri, text, 1)?)
+        .await?;
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     // Trigger completion on a non-uses line.
@@ -1707,65 +1760,67 @@ async fn completion_on_non_uses_line_returns_null() {
         character: 5,
     };
     let resp = harness
-        .request(completion_request(21, &uri, position, None))
-        .await;
-    let resp = resp.expect("completion should return a response");
+        .request(completion_request(21, &uri, position, None)?)
+        .await?;
+    let resp = resp.ok_or("completion should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     assert!(
         value.is_null(),
         "completion on non-uses line should return null, got: {value}"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn completion_without_open_document_returns_null() {
+async fn completion_without_open_document_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/completion-missing.yml").unwrap();
+    let uri = Uri::from_file_path("/test/completion-missing.yml").ok_or("invalid file path")?;
     let position = Position {
         line: 0,
         character: 0,
     };
     let resp = harness
-        .request(completion_request(22, &uri, position, None))
-        .await;
-    let resp = resp.expect("completion should return a response");
+        .request(completion_request(22, &uri, position, None)?)
+        .await?;
+    let resp = resp.ok_or("completion should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     assert!(
         value.is_null(),
         "completion on unopened document should return null"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 // executeCommand protocol tests
 
 #[tokio::test]
-async fn execute_command_fix_all_returns_response() {
+async fn execute_command_fix_all_returns_response() -> TestResult {
     let mut harness = TestHarness::new();
 
     // Use a temp dir as workspace root to avoid touching real files.
-    let temp = tempfile::tempdir().unwrap();
-    let workspace_root = temp.path().to_str().unwrap();
+    let temp = tempfile::tempdir()?;
+    let workspace_root = temp.path().to_str().ok_or("temp dir path is not UTF-8")?;
 
-    harness.initialize(Some(workspace_root)).await;
+    harness.initialize(Some(workspace_root)).await?;
 
     let resp = harness
         .request(execute_command_request(
             30,
             "actup-lsp/fixAllInWorkspace",
             vec![],
-        ))
-        .await;
-    let resp = resp.expect("executeCommand should return a response");
+        )?)
+        .await?;
+    let resp = resp.ok_or("executeCommand should return a response")?;
     let (_, body) = resp.into_parts();
 
     // Protocol validation: the handler should not produce a JSON-RPC error.
@@ -1774,24 +1829,25 @@ async fn execute_command_fix_all_returns_response() {
         "executeCommand should not return a JSON-RPC error"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn execute_command_unknown_command_returns_null() {
+async fn execute_command_unknown_command_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
 
     let resp = harness
         .request(execute_command_request(
             31,
             "actup.nonExistentCommand",
             vec![],
-        ))
-        .await;
-    let resp = resp.expect("executeCommand should return a response");
+        )?)
+        .await?;
+    let resp = resp.ok_or("executeCommand should return a response")?;
     let (_, body) = resp.into_parts();
-    let value = body.unwrap();
+    let value = body?;
 
     // Unknown commands return Ok(None) → JSON null (logged as warning).
     assert!(
@@ -1799,14 +1855,14 @@ async fn execute_command_unknown_command_returns_null() {
         "unknown command should return null, got: {value}"
     );
 
-    harness.shutdown().await;
+    harness.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn work_done_progress_cancel_cancels_the_running_command()
--> Result<(), Box<dyn std::error::Error>> {
+async fn work_done_progress_cancel_cancels_the_running_command() -> TestResult {
     let mut harness = TestHarness::new();
-    harness.initialize(None).await;
+    harness.initialize(None).await?;
     let running = harness.service.inner().progress.start();
     let other = harness.service.inner().progress.start();
 
@@ -1818,11 +1874,11 @@ async fn work_done_progress_cancel_cancels_the_running_command()
                 })?)
                 .finish(),
         )
-        .await;
+        .await?;
 
     assert!(running.cancelled.is_cancelled());
     assert!(!other.cancelled.is_cancelled());
-    harness.shutdown().await;
+    harness.shutdown().await?;
     Ok(())
 }
 

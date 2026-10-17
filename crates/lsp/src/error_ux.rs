@@ -229,7 +229,6 @@ pub async fn notify_errors(client: &Client, errors: &DiagnosticErrors, dedup: &E
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -441,7 +440,9 @@ mod tests {
         let handle = thread::spawn(move || dedup_clone.should_notify(ErrorCategory::RateLimit));
 
         let result1 = dedup.should_notify(ErrorCategory::Auth);
-        let result2 = handle.join().unwrap();
+        let result2 = handle
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
 
         // Both should succeed without panic; different categories are independent.
         assert!(result1);
