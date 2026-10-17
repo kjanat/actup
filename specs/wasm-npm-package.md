@@ -1,6 +1,6 @@
 # WASM + npm Package Spec v1.0
 
-**Status:** Draft\
+**Status:** Implemented except D10 (WASM-based MCP server)\
 **Type:** Feature\
 **Effort:** XL (phased: M + M + L + L)\
 **Breaking:** No (additive — new crate, no changes to existing public API)
@@ -12,8 +12,8 @@ Publish a thin TypeScript wrapper as `actup-wasm` on npm. Enable:
 
 - VS Code web extension (vscode.dev) — `wasm32-unknown-unknown` with JS
   `fetch()` bridge
-- Zed extension — `wasm32-wasip2` with WASI HTTP (future: embed logic instead of
-  shelling out)
+- Zed extension — `wasm32-wasip2`, embedding `actup-core` and fetching through
+  Zed's HTTP client
 - Standalone Node.js/Bun/Deno usage — `actup-wasm` as a library
 - MCP server in JS/TS — wrapping the WASM module
 
@@ -335,16 +335,16 @@ native impl already satisfies `Send + Sync`. Dropping `Send` would break
 
 ## Acceptance Criteria
 
-- [ ] `parseUsesRefs("uses: actions/checkout@v4")` returns correct
+- [x] `parseUsesRefs("uses: actions/checkout@v4")` returns correct
       `UsesLocation` from WASM
-- [ ] `checkRefs()` with a mock JS provider returns correct `CheckResult`
+- [x] `checkRefs()` with a mock JS provider returns correct `CheckResult`
 - [ ] `planUpdates()` returns minimal text edits matching native CLI output
 - [ ] npm package installs and runs in Node.js 18+ without native dependencies
 - [ ] npm package works in VS Code web extension host (vscode.dev)
-- [ ] WASM bundle size < 500KB gzipped (stretch: < 300KB)
+- [x] WASM bundle size < 500KB gzipped (stretch: < 300KB)
 - [ ] No `std::fs`, `tokio::fs`, `dirs`, `glob`, or `figment` in the WASM
       dependency tree
-- [ ] Existing native CLI, LSP, and tests unaffected (no regressions)
+- [x] Existing native CLI, LSP, and tests unaffected (no regressions)
 
 ## Test Strategy
 

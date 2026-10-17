@@ -301,13 +301,15 @@ This reuses the existing `resolve_sha` logic from the `pin` command.
 
 ## Non-Goals
 
-- **MCP implementation**: MCP is a stub. Define tool interface in this spec but
-  don't implement.
+- **MCP `pinToSha` tool**: `actup-mcp` has no dedicated pin tool. `updateFile`
+  accepts a full 40-character SHA as `ref`, and `updateAllUsesToVersion`
+  resolves the commit for SHA-pinned references.
 - **Inlay hints for SHA refs**: Complementary feature (show tag as ghost text).
   Separate spec.
 - **"Unpin to tag" code action**: Inverse operation. Separate feature.
-- **Closest-tag suggestion for Unresolvable**: Existing TODO, orthogonal to this
-  work.
+- **Closest-tag suggestion for Unresolvable**: Orthogonal to this work. It ships
+  separately: `actup-core` computes the suggestion in `suggest.rs`, and the LSP
+  offers it as a "Change to" quick fix.
 - **Short SHA support**: Always use full 40-char SHA. No short SHA output.
 
 ## Risks
@@ -319,9 +321,9 @@ This reuses the existing `resolve_sha` logic from the `pin` command.
 | Adding field to `CheckResult` breaks downstream `new()` call sites              | Low        | Low              | Additive change; add `with_sha()` builder or update `new()` signature with default                              |
 | Comment insertion on lines with existing trailing comments                      | Medium     | Low              | Check for existing `#` comment; skip or replace                                                                 |
 
-## MCP Tool Interface (future, not implemented)
+## MCP Tool Interface (not implemented)
 
-For completeness, the MCP `pinToSha` tool shape:
+The proposed MCP `pinToSha` tool shape, which `actup-mcp` does not implement:
 
 ```typescript
 pinToSha({

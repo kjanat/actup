@@ -1,6 +1,6 @@
 # Config Refactor Spec v2.3
 
-**Status:** Ready for implementation\
+**Status:** Implemented\
 **Type:** Refactoring\
 **Effort:** L (1-2 days)\
 **Breaking:** Yes (pre-alpha)

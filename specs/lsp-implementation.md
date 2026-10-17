@@ -47,7 +47,8 @@ Helix, Zed).
 |  actup-lsp                                                  |
 |  +---------------+   +----------------+   +---------------+ |
 |  | LspBackend    |-->| DocumentState  |-->| DiagnosticData| |
-|  | (tower-lsp)   |   | (DashMap)      |   | per-file      | |
+|  | (tower-lsp-   |   | (DashMap)      |   | per-file      | |
+|  |  server)      |   |                |   |               | |
 |  +-------+-------+   +----------------+   +---------------+ |
 |          |                                                  |
 |          |  uses                                            |
@@ -73,7 +74,7 @@ Helix, Zed).
 
 **Phase:** 1 | **Effort:** S | **Depends on:** -
 
-- Add `tower-lsp`, `dashmap`, `tokio` deps to `Cargo.toml`
+- Add `tower-lsp-server`, `dashmap`, `tokio` deps to `Cargo.toml`
 - Implement `LanguageServer` trait with `initialize`, `initialized`, `shutdown`
 - Declare capabilities: `textDocumentSync`, `codeActionProvider`
 - Stdio transport entry point
@@ -259,19 +260,18 @@ Helix, Zed).
 - **Snapshot tests:** Before/after YAML for code action edits
 - **No live network:** Mock providers in tests
 
-## Dependencies to Add
+## Dependencies
 
 ```toml
 [dependencies]
-actup-core = { path = "../core" }
-tower-lsp  = "0.20"
-lsp-types  = "0.95"
-tokio      = { version = "1", features = ["rt-multi-thread", "macros"] }
-dashmap    = "6"
-tracing    = "0.1"
+actup-core       = { path = "../core" }
+tower-lsp-server = "0.23"  # re-exports `ls_types`
+tokio            = { version = "1", features = ["full"] }
+dashmap          = "6"
+tracing          = "0.1"
 ```
 
 ---
 
-**Status:** Ready for implementation\
+**Status:** Implemented in `crates/lsp`\
 **Estimated Total Effort:** XL (5-7 days across 4 phases)
