@@ -1002,6 +1002,7 @@ mod tests {
             let sha = Sha40::new("b".repeat(40)).ok_or_else(|| actup_core::Error::Internal {
                 context: "test".into(),
                 message: "sha".into(),
+                source: None,
             });
             Box::pin(async move { sha })
         }

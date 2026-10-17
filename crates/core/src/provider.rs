@@ -1119,6 +1119,7 @@ mod tests {
             return Err(Error::Auth {
                 provider: config.host,
                 reason: "no token".into(),
+                source: None,
             });
         }
         Ok(Box::new(MockProvider {

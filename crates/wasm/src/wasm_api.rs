@@ -5,6 +5,7 @@ use std::sync::Arc;
 use actup_core::{
     ActionRef, UsesLocation,
     config::{Config, Policy},
+    error::chain,
     extract_uses_from_yaml, is_host_segment, parse_action_path, parse_uses,
     provider::{Kind, Registry},
     resolution::{CheckResult, CheckStatus, RefKind, check_action_remote},
@@ -93,7 +94,7 @@ pub fn parse_uses_refs(yaml: &str) -> Result<JsValue, JsValue> {
 /// Returns `JsValue` error when `value` is not a valid action reference.
 #[wasm_bindgen(js_name = "parseUses", unchecked_return_type = "ActionRef | null")]
 pub fn parse_uses_value(value: &str) -> Result<JsValue, JsValue> {
-    let parsed = parse_uses(value).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let parsed = parse_uses(value).map_err(|e| JsValue::from_str(&chain(&e)))?;
     to_js(&parsed)
 }
 
@@ -104,7 +105,7 @@ pub fn parse_uses_value(value: &str) -> Result<JsValue, JsValue> {
 /// Returns `JsValue` error when `path` does not name `owner/repo`.
 #[wasm_bindgen(js_name = "parseActionPath", unchecked_return_type = "ActionRepoId")]
 pub fn parse_action_path_value(path: &str) -> Result<JsValue, JsValue> {
-    let id = parse_action_path(path).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let id = parse_action_path(path).map_err(|e| JsValue::from_str(&chain(&e)))?;
     to_js(&id)
 }
 
@@ -214,7 +215,7 @@ pub fn check_refs(
                 Err(e) => CheckResult::new(
                     parsed,
                     CheckStatus::Unresolvable {
-                        reason: e.to_string(),
+                        reason: chain(&e),
                         is_environment_error: e.is_environment_error(),
                     },
                 ),

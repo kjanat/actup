@@ -660,6 +660,7 @@ mod tests {
                 "found" => Sha40::new("a".repeat(40)).ok_or_else(|| crate::Error::Internal {
                     context: "test".into(),
                     message: "sha".into(),
+                    source: None,
                 }),
                 "missing" => Err(crate::Error::RefNotFound {
                     owner: repo.owner().to_string(),
@@ -670,6 +671,7 @@ mod tests {
                 _ => Err(crate::Error::Network {
                     operation: "resolve".into(),
                     message: "offline".into(),
+                    source: None,
                 }),
             };
             Box::pin(async move { result })
@@ -1203,6 +1205,7 @@ mod tests {
                         Err(Error::Internal {
                             context: "test".to_string(),
                             message: "simulated leader error".to_string(),
+                            source: None,
                         })
                     } else {
                         Ok(version::Set::default())
@@ -1357,6 +1360,7 @@ mod tests {
                 .ok_or_else(|| crate::Error::Network {
                     operation: ref_name.to_string(),
                     message: "offline".into(),
+                    source: None,
                 });
             Box::pin(async move { result })
         }

@@ -383,7 +383,7 @@ pub async fn check_action_with_provider(
             }
         },
         Err(e) if e.is_environment_error() => CheckStatus::Unresolvable {
-            reason: e.to_string(),
+            reason: crate::error::chain(e),
             is_environment_error: true,
         },
         Err(_) => lookup.missing,
@@ -716,7 +716,7 @@ pub async fn check_action_remote(
                 return Ok(CheckResult::new(
                     action_ref.clone(),
                     CheckStatus::Unresolvable {
-                        reason: e.to_string(),
+                        reason: crate::error::chain(&e),
                         is_environment_error: true,
                     },
                 ));
@@ -796,6 +796,7 @@ mod tests {
                 Resolve::To(sha) => Sha40::new(sha).ok_or_else(|| Error::Internal {
                     context: "mock resolve".to_string(),
                     message: format!("invalid SHA {sha}"),
+                    source: None,
                 }),
                 Resolve::Missing => Err(Error::RefNotFound {
                     owner: repo.owner().to_string(),
@@ -805,7 +806,8 @@ mod tests {
                 }),
                 Resolve::Offline => Err(Error::Network {
                     operation: "resolve".to_string(),
-                    message: "offline".to_string(),
+                    message: String::new(),
+                    source: Some(Arc::new(std::io::Error::other("offline"))),
                 }),
             };
             Box::pin(async move { result })
@@ -2289,6 +2291,20 @@ mod tests {
                 "{branch}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn test_remote_fallback_environment_error_keeps_the_cause() -> Result<(), Error> {
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(ResolveMockProvider::with(Resolve::Offline)));
+        let action = make_action_ref("actions", "checkout", "v1");
+        let result = check_action_remote(&action, &Config::default(), &registry).await?;
+        assert_eq!(
+            result.status(),
+            &unresolvable("network error during resolve: offline", true)
+        );
+        Ok(())
     }
 
     #[tokio::test]

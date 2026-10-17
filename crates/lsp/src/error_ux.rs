@@ -122,7 +122,7 @@ impl DiagnosticErrors {
         if let Some(category) = ErrorCategory::from_core_error(err) {
             // Only keep one error per category within a single diagnostic run.
             if !self.errors.iter().any(|(c, _)| *c == category) {
-                self.errors.push((category, err.to_string()));
+                self.errors.push((category, actup_core::error::chain(err)));
             }
         }
     }
@@ -250,6 +250,7 @@ mod tests {
         let err = CoreError::Auth {
             provider: "github".into(),
             reason: "bad token".into(),
+            source: None,
         };
         assert_eq!(
             ErrorCategory::from_core_error(&err),
@@ -262,6 +263,7 @@ mod tests {
         let err = CoreError::Network {
             operation: "get_versions".into(),
             message: "timeout".into(),
+            source: None,
         };
         assert_eq!(
             ErrorCategory::from_core_error(&err),
@@ -380,8 +382,26 @@ mod tests {
         errors.record(&CoreError::Auth {
             provider: "github".into(),
             reason: "bad token".into(),
+            source: None,
         });
         assert_eq!(errors.category_count(), 2);
+    }
+
+    #[test]
+    fn diagnostic_errors_record_the_cause() {
+        let mut errors = DiagnosticErrors::default();
+        errors.record(&CoreError::Network {
+            operation: "GET request".into(),
+            message: String::new(),
+            source: Some(std::sync::Arc::new(std::io::Error::other(
+                "connection refused",
+            ))),
+        });
+        let recorded: Vec<&str> = errors.iter().map(|(_, text)| text.as_str()).collect();
+        assert_eq!(
+            recorded,
+            ["network error during GET request: connection refused"]
+        );
     }
 
     #[test]
@@ -405,6 +425,7 @@ mod tests {
         errors.record(&CoreError::Auth {
             provider: "github".into(),
             reason: "bad token".into(),
+            source: None,
         });
 
         assert_eq!(errors.iter().count(), 2);

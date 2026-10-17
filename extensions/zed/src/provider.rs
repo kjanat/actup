@@ -8,6 +8,7 @@ use std::{
     collections::HashMap,
     future::Future,
     pin::pin,
+    sync::Arc,
     task::{Context, Poll, Waker},
 };
 
@@ -52,6 +53,7 @@ impl FetchError {
                 return Error::Network {
                     operation: format!("GET {url}"),
                     message,
+                    source: None,
                 };
             }
         };
@@ -61,6 +63,7 @@ impl FetchError {
             401 => Error::Auth {
                 provider: "github".into(),
                 reason,
+                source: None,
             },
             403 => Error::Forbidden {
                 provider: "github".into(),
@@ -73,6 +76,7 @@ impl FetchError {
             _ => Error::Network {
                 operation: format!("GET {url}"),
                 message: format!("status code {code}"),
+                source: None,
             },
         }
     }
@@ -206,6 +210,7 @@ fn fetch_all(
             BodyError::Malformed(message) => Error::Network {
                 operation: format!("parse {url}"),
                 message,
+                source: None,
             },
         })?;
         all_tags.extend(tags);
@@ -319,7 +324,8 @@ impl<F: Fetch> RestProvider<F> {
         let value: serde_json::Value =
             serde_json::from_str(&response.body).map_err(|e| Error::Network {
                 operation: format!("parse {url}"),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?;
         if let Some(sha) = value
             .get("sha")
@@ -347,6 +353,7 @@ fn api_error(message: &str, not_found: &dyn Fn() -> Error) -> Error {
         Error::Auth {
             provider: "github".into(),
             reason: message.to_string(),
+            source: None,
         }
     } else if lower.contains("not found") || lower.contains("no commit found") {
         not_found()
@@ -354,6 +361,7 @@ fn api_error(message: &str, not_found: &dyn Fn() -> Error) -> Error {
         Error::Network {
             operation: "read GitHub response".into(),
             message: format!("unexpected GitHub response: {message}"),
+            source: None,
         }
     }
 }
@@ -362,6 +370,7 @@ fn unsupported<T>(operation: &str) -> actup_core::Result<T> {
     Err(Error::Internal {
         context: operation.to_string(),
         message: "not supported in the Zed extension".to_string(),
+        source: None,
     })
 }
 

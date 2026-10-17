@@ -205,7 +205,7 @@ async fn get_versions_of_a_missing_project_is_not_found() -> TestResult {
 async fn unauthorized_is_an_auth_error_with_the_message() -> TestResult {
     let error = versions_error(401, r#"{"message": "401 Unauthorized"}"#).await?;
     assert!(
-        matches!(&error, Error::Auth { provider, reason }
+        matches!(&error, Error::Auth { provider, reason, .. }
             if provider == "gitlab" && reason == "401 Unauthorized"),
         "{error:?}"
     );

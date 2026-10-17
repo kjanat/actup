@@ -111,6 +111,7 @@ impl Provider for GitLabProvider {
             Sha40::new(&commit_id).ok_or_else(|| actup_core::Error::Internal {
                 context: format!("commit SHA from GitLab: {commit_id}"),
                 message: "expected 40-character hex string".to_string(),
+                source: None,
             })
         })
     }

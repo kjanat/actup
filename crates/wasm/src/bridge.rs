@@ -159,6 +159,7 @@ fn js_err(
         Some("auth") => actup_core::Error::Auth {
             provider: provider.to_string(),
             reason: message,
+            source: None,
         },
         Some("forbidden") => actup_core::Error::Forbidden {
             provider: provider.to_string(),
@@ -167,6 +168,7 @@ fn js_err(
         _ => actup_core::Error::Network {
             operation: "js provider call".into(),
             message,
+            source: None,
         },
     }
 }
@@ -212,6 +214,7 @@ impl Provider for JsProviderAdapter {
                 actup_core::Error::Internal {
                     context: "deserialize VersionSet from JS".into(),
                     message: e.to_string(),
+                    source: None,
                 }
             })?;
             Ok(build_version_set(js_set, &crate::clock::JsClock))
@@ -244,11 +247,13 @@ impl Provider for JsProviderAdapter {
                 actup_core::Error::Internal {
                     context: "deserialize SHA from JS".into(),
                     message: e.to_string(),
+                    source: None,
                 }
             })?;
             Sha40::new(sha_str).ok_or_else(|| actup_core::Error::Internal {
                 context: "resolve_ref_to_sha".into(),
                 message: "JS provider returned invalid 40-char SHA".into(),
+                source: None,
             })
         })
     }
@@ -266,6 +271,7 @@ impl Provider for JsProviderAdapter {
             serde_wasm_bindgen::from_value(js_val).map_err(|e| actup_core::Error::Internal {
                 context: "deserialize default branch from JS".into(),
                 message: e.to_string(),
+                source: None,
             })
         })
     }
@@ -292,6 +298,7 @@ impl Provider for JsProviderAdapter {
                 actup_core::Error::Internal {
                     context: "deserialize readme from JS".into(),
                     message: e.to_string(),
+                    source: None,
                 }
             })?;
             Ok(Some(readme))
@@ -316,6 +323,7 @@ impl Provider for JsProviderAdapter {
             serde_wasm_bindgen::from_value(js_val).map_err(|e| actup_core::Error::Internal {
                 context: "deserialize ActionYml from JS".into(),
                 message: e.to_string(),
+                source: None,
             })
         })
     }

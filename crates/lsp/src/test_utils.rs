@@ -196,7 +196,7 @@ impl Provider for MockProvider {
             || Ok(version::Set::default()),
             |r| match r {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(clone_core_error(e)),
+                Err(e) => Err(e.clone()),
             },
         );
         Box::pin(async move { result })
@@ -212,8 +212,9 @@ impl Provider for MockProvider {
             Ok(sha) => Sha40::new(sha.clone()).ok_or_else(|| CoreError::Internal {
                 context: "mock resolve".to_string(),
                 message: format!("invalid SHA {sha}"),
+                source: None,
             }),
-            Err(e) => Err(clone_core_error(e)),
+            Err(e) => Err(e.clone()),
         };
         Box::pin(async move { result })
     }
@@ -346,69 +347,4 @@ pub fn simple_version_set(version_str: &str, sha: &str) -> version::Set {
         HashMap::new(),
         Some(info),
     )
-}
-
-/// Clone a `CoreError` (errors don't impl Clone, so we reconstruct).
-///
-/// Uses exhaustive matching so new variants cause a compile error here
-/// rather than silently falling through to a catch-all.
-fn clone_core_error(e: &CoreError) -> CoreError {
-    match e {
-        CoreError::RateLimited {
-            provider,
-            retry_after,
-        } => CoreError::RateLimited {
-            provider: provider.clone(),
-            retry_after: *retry_after,
-        },
-        CoreError::Auth { provider, reason } => CoreError::Auth {
-            provider: provider.clone(),
-            reason: reason.clone(),
-        },
-        CoreError::Network { operation, message } => CoreError::Network {
-            operation: operation.clone(),
-            message: message.clone(),
-        },
-        CoreError::ProviderNotFound { host } => CoreError::ProviderNotFound { host: host.clone() },
-        CoreError::Forbidden { provider, reason } => CoreError::Forbidden {
-            provider: provider.clone(),
-            reason: reason.clone(),
-        },
-        CoreError::NotFound { owner, repo, host } => CoreError::NotFound {
-            owner: owner.clone(),
-            repo: repo.clone(),
-            host: host.clone(),
-        },
-        CoreError::InvalidRef { input, reason } => CoreError::InvalidRef {
-            input: input.clone(),
-            reason: reason.clone(),
-        },
-        CoreError::InvalidConfig { path, reason } => CoreError::InvalidConfig {
-            path: path.clone(),
-            reason: reason.clone(),
-        },
-        CoreError::YamlParse { path, reason } => CoreError::YamlParse {
-            path: path.clone(),
-            reason: reason.clone(),
-        },
-        CoreError::RefNotFound {
-            owner,
-            repo,
-            ref_name,
-            host,
-        } => CoreError::RefNotFound {
-            owner: owner.clone(),
-            repo: repo.clone(),
-            ref_name: ref_name.clone(),
-            host: host.clone(),
-        },
-        CoreError::Cache { operation, reason } => CoreError::Cache {
-            operation: operation.clone(),
-            reason: reason.clone(),
-        },
-        CoreError::Internal { context, message } => CoreError::Internal {
-            context: context.clone(),
-            message: message.clone(),
-        },
-    }
 }

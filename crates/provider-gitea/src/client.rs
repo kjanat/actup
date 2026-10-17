@@ -5,7 +5,7 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
 use actup_providers::{
@@ -60,7 +60,8 @@ impl GiteaClient {
                 "Authorization",
                 HeaderValue::from_str(&auth_value).map_err(|e| Error::Auth {
                     provider: "gitea".to_string(),
-                    reason: format!("invalid token format: {e}"),
+                    reason: "invalid token format".into(),
+                    source: Some(Arc::new(e)),
                 })?,
             );
         }
@@ -71,7 +72,8 @@ impl GiteaClient {
             .build()
             .map_err(|e| Error::Network {
                 operation: "create HTTP client".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?;
 
         let api_base = api_base.trim_end_matches('/');
@@ -300,7 +302,8 @@ impl GiteaClient {
                 Err(e) => {
                     return Err(Error::Network {
                         operation: format!("GET {url}"),
-                        message: e.to_string(),
+                        message: String::new(),
+                        source: Some(Arc::new(e)),
                     });
                 }
             }
@@ -321,12 +324,14 @@ impl GiteaClient {
             StatusCode::OK => {
                 let text = response.text().await.map_err(|e| Error::Network {
                     operation: format!("read response from {url}"),
-                    message: e.to_string(),
+                    message: String::new(),
+                    source: Some(Arc::new(e)),
                 })?;
 
                 serde_json::from_str(&text).map_err(|e| Error::Internal {
                     context: "parse response".to_string(),
-                    message: format!("JSON parse error: {e}"),
+                    message: "JSON parse error".into(),
+                    source: Some(Arc::new(e)),
                 })
             }
             StatusCode::NOT_FOUND => Err(Error::NotFound {
@@ -349,6 +354,7 @@ impl GiteaClient {
                 Err(Error::Auth {
                     provider: "gitea".to_string(),
                     reason,
+                    source: None,
                 })
             }
             // Gitea doesn't provide GitHub-style rate-limit headers
@@ -361,6 +367,7 @@ impl GiteaClient {
                 Err(Error::Network {
                     operation: format!("GET {url}"),
                     message: format!("HTTP {status}: {}", error_text.unwrap_or_default()),
+                    source: None,
                 })
             }
         }

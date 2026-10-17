@@ -82,7 +82,7 @@ commit SHA the tag points to. For annotated tags, return the peeled commit SHA.
 Create `src/client.rs`:
 
 ```rust
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
 use reqwest::{
@@ -110,7 +110,8 @@ impl YourClient {
                 "Authorization",
                 HeaderValue::from_str(&format!("Bearer {t}")).map_err(|e| Error::Auth {
                     provider: "yourplatform".to_string(),
-                    reason: format!("invalid token format: {e}"),
+                    reason: "invalid token format".to_string(),
+                    source: Some(Arc::new(e)),
                 })?,
             );
         }
@@ -121,7 +122,8 @@ impl YourClient {
             .build()
             .map_err(|e| Error::Network {
                 operation: "create HTTP client".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?;
 
         // `api_base` is the full API root from `ProviderConfig`, e.g. `https://host/api/v1`
@@ -149,7 +151,8 @@ impl YourClient {
             .await
             .map_err(|e| Error::Network {
                 operation: "HTTP GET".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })
     }
 
@@ -163,12 +166,14 @@ impl YourClient {
             StatusCode::OK => {
                 let text = response.text().await.map_err(|e| Error::Network {
                     operation: "read response".to_string(),
-                    message: e.to_string(),
+                    message: String::new(),
+                    source: Some(Arc::new(e)),
                 })?;
 
                 serde_json::from_str(&text).map_err(|e| Error::Network {
                     operation: "parse response".to_string(),
-                    message: format!("JSON parse error: {e}"),
+                    message: "JSON parse error".to_string(),
+                    source: Some(Arc::new(e)),
                 })
             }
             StatusCode::NOT_FOUND => Err(Error::NotFound {
@@ -179,6 +184,7 @@ impl YourClient {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => Err(Error::Auth {
                 provider: "yourplatform".to_string(),
                 reason: "authentication required".to_string(),
+                source: None,
             }),
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited {
                 provider: "yourplatform".to_string(),
@@ -192,6 +198,7 @@ impl YourClient {
             _ => Err(Error::Network {
                 operation: format!("GET {}", response.url()),
                 message: format!("HTTP {}", response.status()),
+                source: None,
             }),
         }
     }
@@ -286,6 +293,7 @@ impl Provider for YourProvider {
             Sha40::new(&commit_sha).ok_or_else(|| Error::Internal {
                 context: format!("commit SHA from API: {commit_sha}"),
                 message: "expected 40-character hex string".to_string(),
+                source: None,
             })
         })
     }
@@ -375,6 +383,8 @@ impl Provider for YourProvider {
 Add to `src/provider.rs`:
 
 ```rust
+use std::sync::Arc;
+
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 /// Decode base64 file content, ignoring the line breaks GitHub inserts
@@ -385,11 +395,13 @@ fn decode_base64_content(content: &str) -> Result<String> {
         .collect();
     let bytes = STANDARD.decode(compact).map_err(|e| Error::Internal {
         context: "base64 decode".to_string(),
-        message: e.to_string(),
+        message: String::new(),
+        source: Some(Arc::new(e)),
     })?;
     String::from_utf8(bytes).map_err(|e| Error::Internal {
         context: "UTF-8 decode".to_string(),
-        message: e.to_string(),
+        message: String::new(),
+        source: Some(Arc::new(e)),
     })
 }
 ```
@@ -660,8 +672,11 @@ fn get_action_yml(&self, repo: &ActionRepoId, ref_name: &str) -> ... {
 
 - For JSON parsing API responses: Use
   `Error::Network { operation: "parse response", ... }`
-- For YAML parsing action files: Use `Error::YamlParse { path, reason }`
-- For unexpected data format: Use `Error::Internal { context, message }`
+- For YAML parsing action files: Use `Error::YamlParse { path, reason, source }`
+- For unexpected data format: Use `Error::Internal { context, message, source }`
+
+`source` holds the foreign error, shared as an `Arc`. `Display` leaves it out,
+and `actup_core::error::chain` renders the error with every cause.
 
 ### 3. SHA Validation
 
@@ -671,6 +686,7 @@ Always validate SHAs from API:
 Sha40::new(&commit_sha).ok_or_else(|| Error::Internal {
     context: format!("commit SHA from API: {commit_sha}"),
     message: "expected 40-character hex string".to_string(),
+    source: None,
 })
 ```
 

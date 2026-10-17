@@ -50,7 +50,7 @@ async fn main() -> ExitCode {
         Some(root.path()),
     ) {
         Ok(config) => config,
-        Err(e) => return fail(2, &e.to_string()),
+        Err(e) => return fail(2, &actup_core::error::chain(&e)),
     };
     let registry = match Registry::from_config(
         &config,
@@ -58,7 +58,15 @@ async fn main() -> ExitCode {
         &Retention::expiring(config.cache.ttl),
     ) {
         Ok(registry) => registry,
-        Err(e) => return fail(3, &format!("cannot initialize providers: {e}")),
+        Err(e) => {
+            return fail(
+                3,
+                &format!(
+                    "cannot initialize providers: {}",
+                    actup_core::error::chain(&e)
+                ),
+            );
+        }
     };
 
     tracing::info!(root = %root.path().display(), "actup-mcp serving on stdio");

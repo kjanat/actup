@@ -4,8 +4,13 @@
 //! - **User errors**: Invalid input, typos, misconfiguration (user can fix)
 //! - **Environment errors**: Network, rate limits, auth (external factors)
 
+use std::sync::Arc;
+
 /// Result type alias using [`Error`]
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// The foreign error behind an [`Error`].
+pub type Source = Arc<dyn std::error::Error + Send + Sync>;
 
 /// Primary error type for actup-core operations
 ///
@@ -30,6 +35,8 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`Network`]: Error::Network
 /// [`Internal`]: Error::Internal
 /// [`YamlParse`]: Error::YamlParse
+///
+/// `Display` leaves out the text of `source`, and [`chain`] renders every cause.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum Error {
     /// Invalid `uses:` reference syntax
@@ -98,21 +105,25 @@ pub enum Error {
     },
 
     /// YAML parsing failed
-    #[error("failed to parse YAML '{path}': {reason}")]
+    #[error("failed to parse YAML '{path}'{}", detail(.reason))]
     YamlParse {
         /// File path
         path: String,
-        /// Parse error details
+        /// Parse error details, without the text of `source`
         reason: String,
+        /// The parser error
+        source: Option<Source>,
     },
 
     /// Network request failed
-    #[error("network error during {operation}: {message}")]
+    #[error("network error during {operation}{}", detail(.message))]
     Network {
         /// What we were trying to do
         operation: String,
-        /// Underlying error message
+        /// What went wrong, without the text of `source`
         message: String,
+        /// The transport or decoding error
+        source: Option<Source>,
     },
 
     /// API rate limit exceeded
@@ -159,21 +170,25 @@ pub enum Error {
     /// // Invalid token format:
     /// Err(Error::Auth {
     ///     provider: "github".to_string(),
-    ///     reason: format!("invalid token format: {e}"),
+    ///     reason: "invalid token format".to_string(),
+    ///     source: Some(Arc::new(e)),
     /// })
     ///
     /// // HTTP 401 (unauthorized):
     /// Err(Error::Auth {
     ///     provider: "gitlab".to_string(),
     ///     reason: "unauthorized - check your token".to_string(),
+    ///     source: None,
     /// })
     /// ```
-    #[error("authentication failed for {provider}: {reason}")]
+    #[error("authentication failed for {provider}{}", detail(.reason))]
     Auth {
         /// Provider requiring auth
         provider: String,
-        /// What went wrong
+        /// What went wrong, without the text of `source`
         reason: String,
+        /// The transport or header error
+        source: Option<Source>,
     },
 
     /// Cache operation failed
@@ -193,12 +208,14 @@ pub enum Error {
     },
 
     /// Generic internal error (should be rare)
-    #[error("internal error in {context}: {message}")]
+    #[error("internal error in {context}{}", detail(.message))]
     Internal {
         /// Error context
         context: String,
-        /// Error details
+        /// Error details, without the text of `source`
         message: String,
+        /// The failed task or decoding error
+        source: Option<Source>,
     },
 }
 
@@ -238,6 +255,27 @@ impl Error {
             self,
             Self::Network { .. } | Self::RateLimited { .. } | Self::Cache { .. }
         )
+    }
+}
+
+/// Render `err` followed by each error in its `source()` chain, joined by `": "`.
+#[must_use]
+pub fn chain(err: &dyn std::error::Error) -> String {
+    let mut text = err.to_string();
+    let mut current = err.source();
+    while let Some(cause) = current {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        current = cause.source();
+    }
+    text
+}
+
+fn detail(text: &str) -> String {
+    if text.is_empty() {
+        String::new()
+    } else {
+        format!(": {text}")
     }
 }
 
@@ -282,6 +320,7 @@ mod tests {
             Error::YamlParse {
                 path: "test.yml".into(),
                 reason: "invalid".into(),
+                source: None,
             },
         ];
 
@@ -300,6 +339,7 @@ mod tests {
             Error::Network {
                 operation: "fetch".into(),
                 message: "timeout".into(),
+                source: None,
             },
             Error::RateLimited {
                 provider: "github".into(),
@@ -312,6 +352,7 @@ mod tests {
             Error::Auth {
                 provider: "github".into(),
                 reason: "invalid token".into(),
+                source: None,
             },
             Error::Cache {
                 operation: "read".into(),
@@ -335,6 +376,7 @@ mod tests {
             Error::Network {
                 operation: "fetch".into(),
                 message: "timeout".into(),
+                source: None,
             }
             .is_unknown_status()
         );
@@ -360,6 +402,7 @@ mod tests {
             !Error::Auth {
                 provider: "github".into(),
                 reason: "bad token".into(),
+                source: None,
             }
             .is_unknown_status()
         );
@@ -442,6 +485,7 @@ mod tests {
         let err = Error::Internal {
             context: "version resolution".into(),
             message: "unexpected state".into(),
+            source: None,
         };
 
         // Internal is neither user nor environment (edge case)
@@ -453,5 +497,57 @@ mod tests {
             err.to_string(),
             "internal error in version resolution: unexpected state"
         );
+    }
+
+    #[derive(Debug, thiserror::Error)]
+    #[error("connect failed")]
+    struct Connect(#[source] std::io::Error);
+
+    fn refused() -> Source {
+        Arc::new(Connect(std::io::Error::other("connection refused")))
+    }
+
+    #[test]
+    fn display_leaves_out_the_source_and_chain_renders_it() {
+        let network = Error::Network {
+            operation: "GET /repos/o/r/tags".into(),
+            message: String::new(),
+            source: Some(refused()),
+        };
+        assert_eq!(
+            network.to_string(),
+            "network error during GET /repos/o/r/tags"
+        );
+        assert_eq!(
+            std::error::Error::source(&network).map(ToString::to_string),
+            Some("connect failed".to_string())
+        );
+        assert_eq!(
+            chain(&network),
+            "network error during GET /repos/o/r/tags: connect failed: connection refused"
+        );
+
+        let auth = Error::Auth {
+            provider: "github".into(),
+            reason: "invalid token format".into(),
+            source: Some(refused()),
+        };
+        let copy = auth.clone();
+        assert_eq!(
+            auth.to_string(),
+            "authentication failed for github: invalid token format"
+        );
+        assert_eq!(
+            chain(&copy),
+            "authentication failed for github: invalid token format: connect failed: connection refused"
+        );
+
+        let plain = Error::Network {
+            operation: "fetch".into(),
+            message: "timeout".into(),
+            source: None,
+        };
+        assert!(std::error::Error::source(&plain).is_none());
+        assert_eq!(chain(&plain), "network error during fetch: timeout");
     }
 }

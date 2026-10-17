@@ -131,7 +131,7 @@ impl Reply {
             "status".into(),
             serde_json::to_value(Status::of_error(error)).unwrap_or(Value::Null),
         );
-        body.insert("error".into(), error.to_string().into());
+        body.insert("error".into(), actup_core::error::chain(error).into());
         Self { body, failed: true }
     }
 
@@ -183,10 +183,12 @@ mod tests {
         let network = Error::Network {
             operation: s(),
             message: s(),
+            source: None,
         };
         let internal = Error::Internal {
             context: s(),
             message: s(),
+            source: None,
         };
         assert_eq!(Status::of_error(&rate), Status::RateLimited);
         assert_eq!(Status::of_error(&missing), Status::Unresolvable);
@@ -299,5 +301,25 @@ mod tests {
             }))
         );
         Ok(())
+    }
+
+    #[test]
+    fn failure_error_carries_the_cause() {
+        let failure = Reply::failure(
+            &Served::unserved("h"),
+            &Error::Network {
+                operation: "GET request".into(),
+                message: String::new(),
+                source: Some(std::sync::Arc::new(std::io::Error::other(
+                    "connection refused",
+                ))),
+            },
+        );
+        assert_eq!(
+            failure.body.get("error"),
+            Some(&Value::from(
+                "network error during GET request: connection refused"
+            ))
+        );
     }
 }

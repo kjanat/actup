@@ -1,8 +1,8 @@
 //! Remote ref listing over the git wire protocol.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use actup_core::{Error, Result, version};
+use actup_core::{Error, Result, error, version};
 use bstr::{BString, ByteSlice};
 use gix_features::progress::Discard;
 use gix_protocol::{LsRefsCommand, handshake::Ref, ls_refs::RefPrefixes};
@@ -106,7 +106,8 @@ pub async fn list_refs(url: String, token: Option<String>, repo: RepoLabel) -> R
         .await
         .map_err(|e| Error::Internal {
             context: "ls-refs".into(),
-            message: format!("ref listing task failed: {e}"),
+            message: "ref listing task failed".into(),
+            source: Some(Arc::new(e)),
         })?
 }
 
@@ -138,7 +139,7 @@ fn list_refs_blocking(url: &str, token: Option<&str>, repo: &RepoLabel) -> Resul
             ..Default::default()
         },
     )
-    .map_err(|e| transport_error(&e, repo))?;
+    .map_err(|e| transport_error(e, repo))?;
 
     if let Some(token) = token {
         transport
@@ -147,12 +148,12 @@ fn list_refs_blocking(url: &str, token: Option<&str>, repo: &RepoLabel) -> Resul
                 password: token.into(),
                 oauth_refresh_token: None,
             })
-            .map_err(|e| transport_error(&e, repo))?;
+            .map_err(|e| transport_error(e, repo))?;
     }
 
     let capabilities = transport
         .handshake(Service::UploadPack, &[])
-        .map_err(|e| transport_error(&e, repo))?
+        .map_err(|e| transport_error(e, repo))?
         .capabilities;
 
     let mut prefixes = RefPrefixes::new();
@@ -164,7 +165,7 @@ fn list_refs_blocking(url: &str, token: Option<&str>, repo: &RepoLabel) -> Resul
         ("agent", Some(gix_protocol::agent(agent_name()).into())),
     )
     .invoke_blocking(&mut transport, &mut Discard, false)
-    .map_err(|e| transport_error(&e, repo))?;
+    .map_err(|e| transport_error(e, repo))?;
 
     Ok(collect(refs))
 }
@@ -227,11 +228,15 @@ fn collect(refs: Vec<Ref>) -> RemoteRefs {
     out
 }
 
-fn transport_error(source: &(dyn std::error::Error + 'static), repo: &RepoLabel) -> Error {
-    match classify(source) {
+fn transport_error<E>(source: E, repo: &RepoLabel) -> Error
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    match classify(&source) {
         Class::Auth => Error::Auth {
             provider: repo.host.clone().unwrap_or_else(|| "git".into()),
-            reason: format!("{}/{}: {source}", repo.owner, repo.repo),
+            reason: format!("{}/{}", repo.owner, repo.repo),
+            source: Some(Arc::new(source)),
         },
         Class::NotFound => Error::NotFound {
             owner: repo.owner.clone(),
@@ -240,7 +245,8 @@ fn transport_error(source: &(dyn std::error::Error + 'static), repo: &RepoLabel)
         },
         Class::Network => Error::Network {
             operation: format!("ls-refs {}/{}", repo.owner, repo.repo),
-            message: chain(source),
+            message: String::new(),
+            source: Some(Arc::new(source)),
         },
     }
 }
@@ -263,7 +269,7 @@ fn classify(source: &(dyn std::error::Error + 'static)) -> Class {
         current = err.source();
     }
 
-    classify_text(&chain(source))
+    classify_text(&error::chain(source))
 }
 
 fn classify_text(text: &str) -> Class {
@@ -274,16 +280,6 @@ fn classify_text(text: &str) -> Class {
     } else {
         Class::Network
     }
-}
-
-fn chain(source: &dyn std::error::Error) -> String {
-    let mut parts = vec![source.to_string()];
-    let mut current = source.source();
-    while let Some(err) = current {
-        parts.push(err.to_string());
-        current = err.source();
-    }
-    parts.join(": ")
 }
 
 #[cfg(test)]
@@ -392,6 +388,48 @@ mod tests {
             Some(oid(0x02).to_string().as_str())
         );
         assert_eq!(set.listing(), version::Listing::Complete);
+    }
+
+    #[derive(Debug)]
+    struct Handshake(std::io::Error);
+
+    impl std::fmt::Display for Handshake {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("handshake failed")
+        }
+    }
+
+    impl std::error::Error for Handshake {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    fn label() -> RepoLabel {
+        RepoLabel::new("o", "r", Some("ghe.corp.com".into()))
+    }
+
+    #[test]
+    fn transport_error_keeps_the_gix_error_as_source() {
+        let err = transport_error(Handshake(std::io::Error::other("reset by peer")), &label());
+        assert!(matches!(err, Error::Network { .. }), "{err:?}");
+        assert_eq!(err.to_string(), "network error during ls-refs o/r");
+        assert_eq!(
+            error::chain(&err),
+            "network error during ls-refs o/r: handshake failed: reset by peer"
+        );
+
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied");
+        let err = transport_error(Handshake(denied), &label());
+        assert!(matches!(err, Error::Auth { .. }), "{err:?}");
+        assert_eq!(
+            error::chain(&err),
+            "authentication failed for ghe.corp.com: o/r: handshake failed: denied"
+        );
+
+        let missing = std::io::Error::other("Received HTTP status 404");
+        let err = transport_error(Handshake(missing), &label());
+        assert!(matches!(err, Error::NotFound { .. }), "{err:?}");
     }
 
     #[test]

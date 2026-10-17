@@ -114,13 +114,13 @@ async fn fetch_github_host_groups<C: Cache>(
                         results.extend(fetcher.fetch_versions(&host_repos, progress).await);
                     }
                     Err(e) => {
-                        debug!(host = %host, error = %e, "failed to build GitHub batch fetcher, falling back to provider fetches");
+                        debug!(host = %host, error = %actup_core::error::chain(&e), "failed to build GitHub batch fetcher, falling back to provider fetches");
                         fallback_repos.extend(host_repos);
                     }
                 }
             }
             Err(e) => {
-                debug!(host = %host, error = %e, "failed to resolve GitHub host config, falling back to provider fetches");
+                debug!(host = %host, error = %actup_core::error::chain(&e), "failed to resolve GitHub host config, falling back to provider fetches");
                 fallback_repos.extend(host_repos);
             }
         }
@@ -165,7 +165,7 @@ async fn fetch_fallback_repos<C: Cache>(
                 results.insert(repo, Ok(versions));
             }
             Err(e) => {
-                debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "failed to fetch versions");
+                debug!(owner = %repo.owner(), repo = %repo.repo(), error = %actup_core::error::chain(&e), "failed to fetch versions");
                 results.insert(repo, Err(e));
             }
         }
@@ -265,7 +265,7 @@ impl<C: Cache> BatchFetcher<C> {
         let graphql_endpoint = provider.graphql_endpoint();
         let graphql = token.and_then(|t| {
             GraphQLClient::with_endpoint(&graphql_endpoint, t)
-                .inspect_err(|e| warn!(error = %e, "failed to create GraphQL client, using REST"))
+                .inspect_err(|e| warn!(error = %actup_core::error::chain(e), "failed to create GraphQL client, using REST"))
                 .ok()
         });
 
@@ -339,7 +339,7 @@ impl<C: Cache> BatchFetcher<C> {
         for (repo, result) in self.fetch_parallel_git(&uncached).await {
             match result {
                 Err(e) if e.is_environment_error() => {
-                    debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "git protocol unavailable, using the API");
+                    debug!(owner = %repo.owner(), repo = %repo.repo(), error = %actup_core::error::chain(&e), "git protocol unavailable, using the API");
                     unlisted.push(repo);
                 }
                 result => {
@@ -388,7 +388,7 @@ impl<C: Cache> BatchFetcher<C> {
                     }
                 }
                 Err(e) => {
-                    debug!(owner = %repo.owner(), repo = %repo.repo(), error = %e, "failed to fetch versions");
+                    debug!(owner = %repo.owner(), repo = %repo.repo(), error = %actup_core::error::chain(e), "failed to fetch versions");
                 }
             }
             results.insert(repo, result);
@@ -409,7 +409,7 @@ impl<C: Cache> BatchFetcher<C> {
             .batch_get_versions(repos, self.max_tags)
             .await
             .unwrap_or_else(|e| {
-                debug!(error = %e, "GraphQL batch fetch failed, using REST");
+                debug!(error = %actup_core::error::chain(&e), "GraphQL batch fetch failed, using REST");
                 HashMap::new()
             })
     }

@@ -307,7 +307,7 @@ async fn compute_diagnostics_for_actions(
                 CheckResult::new(
                     action.action_ref.clone(),
                     CheckStatus::Unresolvable {
-                        reason: e.to_string(),
+                        reason: actup_core::error::chain(e),
                         is_environment_error: e.is_environment_error(),
                     },
                 )
@@ -1722,6 +1722,41 @@ jobs:
         );
         assert!(result.diagnostics[0].message.contains("check failed"));
         assert!(result.errors.has_errors());
+    }
+
+    #[tokio::test]
+    async fn provider_error_diagnostic_carries_the_cause() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let provider = test_utils::MockProvider::new("github.com").with_error(
+            "actions",
+            "checkout",
+            actup_core::Error::Network {
+                operation: "GET request".into(),
+                message: String::new(),
+                source: Some(Arc::new(std::io::Error::other("connection refused"))),
+            },
+        );
+        let registry = test_utils::mock_registry(provider);
+        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let result = compute_diagnostics(
+            "    - uses: actions/checkout@v4\n",
+            &uri,
+            &Config::default(),
+            &registry,
+            &crate::file_cache::FileCache::disabled(),
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        let [diag] = result.diagnostics.as_slice() else {
+            return Err(format!("expected one diagnostic, got {:?}", result.diagnostics).into());
+        };
+        assert!(
+            diag.message
+                .contains("network error during GET request: connection refused"),
+            "{}",
+            diag.message
+        );
+        Ok(())
     }
 
     #[tokio::test]

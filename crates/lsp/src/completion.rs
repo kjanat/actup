@@ -305,7 +305,7 @@ pub async fn version_completions(
             match crate::file_cache::fetch_versions_cached(repo_id, registry, file_cache).await {
                 Some(Ok(v)) => v,
                 Some(Err(e)) => {
-                    tracing::debug!(repo = ?repo_id, error = %e, "failed to fetch versions for completion");
+                    tracing::debug!(repo = ?repo_id, error = %actup_core::error::chain(&e), "failed to fetch versions for completion");
                     return Vec::new();
                 }
                 None => return Vec::new(),

@@ -458,6 +458,7 @@ impl LanguageServer for LspBackend {
                     Some(Arc::new(r))
                 }
                 Err(e) => {
+                    let e = actup_core::error::chain(&e);
                     tracing::error!("failed to build provider registry: {e}");
                     crate::error_ux::show_message(
                         &self.client,
@@ -1241,6 +1242,7 @@ impl LspBackend {
     }
 
     async fn invalid_config(&self, error: &actup_core::Error) -> ConfigState {
+        let error = actup_core::error::chain(error);
         tracing::error!("{error}");
         crate::error_ux::show_message(
             &self.client,
@@ -1248,7 +1250,7 @@ impl LspBackend {
             format!("actup: {error}. Diagnostics are paused until the config parses."),
         )
         .await;
-        ConfigState::Invalid(error.to_string())
+        ConfigState::Invalid(error)
     }
 
     /// Reload config from workspace root and rebuild providers.
@@ -1300,6 +1302,7 @@ impl LspBackend {
         let registry = match (self.providers.registry)(&new_config) {
             Ok(r) => Some(Arc::new(r)),
             Err(e) => {
+                let e = actup_core::error::chain(&e);
                 tracing::error!("failed to rebuild provider registry: {e}");
                 crate::error_ux::show_message(
                     &self.client,
@@ -2959,6 +2962,7 @@ mod tests {
                     .map_err(|e| actup_core::Error::Internal {
                         context: "releases".into(),
                         message: e.to_string(),
+                        source: None,
                     });
             Box::pin(async move { set })
         }
@@ -2972,6 +2976,7 @@ mod tests {
                 actup_core::Error::Internal {
                     context: "releases".into(),
                     message: "invalid SHA".into(),
+                    source: None,
                 }
             });
             Box::pin(async move { sha })

@@ -49,6 +49,7 @@ impl MockProvider {
             "offline" => Some(CoreError::Network {
                 operation: "ls-refs".into(),
                 message: "connection refused".into(),
+                source: None,
             }),
             _ => None,
         }

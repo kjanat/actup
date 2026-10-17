@@ -5,7 +5,7 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
 use actup_providers::{
@@ -70,7 +70,8 @@ impl GitLabClient {
                 "PRIVATE-TOKEN",
                 HeaderValue::from_str(t).map_err(|e| Error::Auth {
                     provider: "gitlab".to_string(),
-                    reason: format!("invalid token format: {e}"),
+                    reason: "invalid token format".into(),
+                    source: Some(Arc::new(e)),
                 })?,
             );
         }
@@ -81,13 +82,15 @@ impl GitLabClient {
             .build()
             .map_err(|e| Error::Network {
                 operation: "create HTTP client".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?;
 
         if api_base.trim().is_empty() {
             return Err(Error::Internal {
                 context: "validate API configuration".to_string(),
                 message: "api_base must not be empty".to_string(),
+                source: None,
             });
         }
 
@@ -377,7 +380,8 @@ impl GitLabClient {
                 Err(e) => {
                     return Err(Error::Network {
                         operation: format!("GET {url}"),
-                        message: e.to_string(),
+                        message: String::new(),
+                        source: Some(Arc::new(e)),
                     });
                 }
             }
@@ -398,12 +402,14 @@ impl GitLabClient {
             StatusCode::OK => {
                 let text = response.text().await.map_err(|e| Error::Network {
                     operation: format!("read response from {url}"),
-                    message: e.to_string(),
+                    message: String::new(),
+                    source: Some(Arc::new(e)),
                 })?;
 
                 serde_json::from_str(&text).map_err(|e| Error::Internal {
                     context: "parse response".to_string(),
-                    message: format!("JSON parse error: {e}"),
+                    message: "JSON parse error".into(),
+                    source: Some(Arc::new(e)),
                 })
             }
             StatusCode::NOT_FOUND => Err(Error::NotFound {
@@ -431,6 +437,7 @@ impl GitLabClient {
                 Err(Error::Auth {
                     provider: "gitlab".to_string(),
                     reason,
+                    source: None,
                 })
             }
             StatusCode::TOO_MANY_REQUESTS => Err(Error::RateLimited {
@@ -447,6 +454,7 @@ impl GitLabClient {
                 Err(Error::Network {
                     operation: format!("GET {url}"),
                     message: format!("HTTP {status}: {}", error_text.unwrap_or_default()),
+                    source: None,
                 })
             }
         }

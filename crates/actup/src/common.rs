@@ -288,17 +288,18 @@ pub fn report_ignored(site: RefSite, result: &mut EditResult) {
 
 /// Warn that `err` leaves `site` unchanged, count it, and record it as errored.
 pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
+    let message = actup_core::error::chain(err);
     eprintln!(
         "{}: {} - {}",
         "Warning".yellow(),
         sanitize_line(&site.action),
-        sanitize_for_terminal(&err.to_string())
+        sanitize_for_terminal(&message)
     );
     result.errors.record(err);
     result.errored.push(ErroredRef {
         site,
         kind: ErrorKind::from(err),
-        message: err.to_string(),
+        message,
     });
 }
 
@@ -778,6 +779,7 @@ mod tests {
         let net_err = CoreError::Network {
             operation: "fetch".into(),
             message: "timeout".into(),
+            source: None,
         };
         tally.record(&net_err);
         assert_eq!(tally.exit_code(), CliExitCode::EnvironmentError);
@@ -856,6 +858,23 @@ mod tests {
     }
 
     #[test]
+    fn test_report_error_message_carries_the_cause() {
+        let mut result = EditResult::default();
+        let refused = CoreError::Network {
+            operation: "GET request".into(),
+            message: String::new(),
+            source: Some(std::sync::Arc::new(std::io::Error::other(
+                "connection refused",
+            ))),
+        };
+        report_error(site(3), &refused, &mut result);
+        assert_eq!(
+            result.errored[0].message,
+            "network error during GET request: connection refused"
+        );
+    }
+
+    #[test]
     fn test_error_kind_names_every_core_error() -> Result<(), Box<dyn std::error::Error>> {
         let s = String::new;
         let errors = [
@@ -877,10 +896,12 @@ mod tests {
             CoreError::YamlParse {
                 path: s(),
                 reason: s(),
+                source: None,
             },
             CoreError::Network {
                 operation: s(),
                 message: s(),
+                source: None,
             },
             CoreError::RateLimited {
                 provider: s(),
@@ -893,6 +914,7 @@ mod tests {
             CoreError::Auth {
                 provider: s(),
                 reason: s(),
+                source: None,
             },
             CoreError::Cache {
                 operation: s(),
@@ -902,6 +924,7 @@ mod tests {
             CoreError::Internal {
                 context: s(),
                 message: s(),
+                source: None,
             },
         ];
         let names: Vec<serde_json::Value> = errors

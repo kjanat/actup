@@ -58,6 +58,8 @@ resolving token_env, validating host configs.
 
 - `Error::NotFound`/`InvalidRef` = user error (bad input)
 - `Error::Network`/`RateLimit`/`Auth` = environment error (actionable)
+- A foreign error goes in the variant's `source`; show errors with
+  `error::chain`, which appends every cause
 - All public types re-exported in `lib.rs`
 - Tests use `#[allow(clippy::unwrap_used)]` in `#[cfg(test)]` blocks
 - `#![forbid(unsafe_code)]`

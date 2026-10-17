@@ -69,7 +69,8 @@ impl GraphQLClient {
             AUTHORIZATION,
             HeaderValue::from_str(&auth_value).map_err(|e| Error::Auth {
                 provider: "github".to_string(),
-                reason: format!("invalid token format: {e}"),
+                reason: "invalid token format".into(),
+                source: Some(Arc::new(e)),
             })?,
         );
 
@@ -79,7 +80,8 @@ impl GraphQLClient {
             .build()
             .map_err(|e| Error::Network {
                 operation: "create GraphQL client".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?;
 
         Ok(Self {
@@ -248,7 +250,8 @@ impl GraphQLClient {
             .await
             .map_err(|e| Error::Network {
                 operation: "GraphQL request".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?;
 
         let status = response.status();
@@ -257,6 +260,7 @@ impl GraphQLClient {
             return Err(Error::Auth {
                 provider: "github".to_string(),
                 reason: "GraphQL requires authentication - check your GITHUB_TOKEN".to_string(),
+                source: None,
             });
         }
 
@@ -310,12 +314,14 @@ impl GraphQLClient {
             return Err(Error::Network {
                 operation: "GraphQL request".to_string(),
                 message: format!("status {status}: {body}"),
+                source: None,
             });
         }
 
         response.json().await.map_err(|e| Error::Network {
             operation: "parse GraphQL response".to_string(),
-            message: e.to_string(),
+            message: String::new(),
+            source: Some(Arc::new(e)),
         })
     }
 

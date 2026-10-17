@@ -138,7 +138,7 @@ pub async fn run(args: &LatestArgs, config: &Config, registry: &provider::Regist
     let versions = match versions_for(&fetched, &repo_id) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("{}", sanitize_for_terminal(&e.to_string()));
+            eprintln!("{}", sanitize_for_terminal(&actup_core::error::chain(&e)));
             return if e.is_environment_error() {
                 CliExitCode::EnvironmentError.into()
             } else {

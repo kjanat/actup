@@ -73,7 +73,7 @@ async fn check_action_with_versions(
         (Some(Err(e)), _) => {
             // Fetch failed - use core's error classification
             let status = FindingStatus::Unresolvable {
-                reason: e.to_string(),
+                reason: actup_core::error::chain(e),
                 is_environment_error: e.is_environment_error(),
             };
             (status, None)
@@ -310,7 +310,7 @@ async fn resolve_fallback_refs(
                     repo = %action.repo_id.repo(),
                     ref_str = %action.action_ref.ref_str(),
                     provider = %action.provider,
-                    error = %e,
+                    error = %actup_core::error::chain(&e),
                     "fallback: environment error during ref resolution"
                 );
                 finding = Finding::new(
@@ -318,7 +318,7 @@ async fn resolve_fallback_refs(
                     action.line,
                     action.action_ref,
                     FindingStatus::Unresolvable {
-                        reason: e.to_string(),
+                        reason: actup_core::error::chain(&e),
                         is_environment_error: true,
                     },
                     action.provider,
@@ -346,7 +346,9 @@ mod tests {
 
     use super::*;
 
-    struct TestProvider;
+    struct TestProvider {
+        resolve_error: Option<actup_core::Error>,
+    }
 
     impl Provider for TestProvider {
         fn kind(&self) -> Kind {
@@ -369,7 +371,11 @@ mod tests {
             _repo: &ActionRepoId,
             _ref_name: &str,
         ) -> actup_core::BoxFuture<'_, actup_core::Result<Sha40>> {
-            Box::pin(async { Ok(Sha40::new("a".repeat(40)).unwrap_or_else(|| unreachable!())) })
+            let result = self.resolve_error.clone().map_or_else(
+                || Ok(Sha40::new("a".repeat(40)).unwrap_or_else(|| unreachable!())),
+                Err,
+            );
+            Box::pin(async { result })
         }
 
         fn get_default_branch(
@@ -397,10 +403,22 @@ mod tests {
     }
 
     fn test_registry() -> provider::Registry {
+        registry_resolving_to(None)
+    }
+
+    fn registry_resolving_to(resolve_error: Option<actup_core::Error>) -> provider::Registry {
         let mut registry = provider::Registry::new();
         registry.set_default_host("github.com");
-        registry.register(Box::new(TestProvider));
+        registry.register(Box::new(TestProvider { resolve_error }));
         registry
+    }
+
+    fn connection_refused() -> actup_core::Error {
+        actup_core::Error::Network {
+            operation: "GET request".to_string(),
+            message: "connection failed".to_string(),
+            source: Some(Arc::new(std::io::Error::other("connection refused"))),
+        }
     }
 
     fn make_version_info(tag: &str, sha: &str) -> Arc<version::Info> {
@@ -735,7 +753,8 @@ mod tests {
         let config = Config::default();
         let auth_error = actup_core::Error::Auth {
             provider: "github".to_string(),
-            reason: "authentication failed".to_string(),
+            reason: "invalid token format".to_string(),
+            source: Some(Arc::new(std::io::Error::other("bad header"))),
         };
         let registry = test_registry();
         let collected = CollectedAction {
@@ -757,7 +776,10 @@ mod tests {
                 reason,
                 is_environment_error,
             } => {
-                assert!(reason.contains("authentication failed"));
+                assert_eq!(
+                    reason,
+                    "authentication failed for github: invalid token format: bad header"
+                );
                 assert!(is_environment_error);
             }
             _ => panic!("expected Unresolvable status with provider error"),
@@ -765,6 +787,47 @@ mod tests {
     }
 
     /// Test that user errors (`NotFound`) are classified as `is_environment_error: false`.
+    #[tokio::test]
+    async fn test_fallback_environment_error_keeps_the_cause() {
+        let action_ref = ActionRef::simple("actions", "checkout", "v4");
+        let collected = CollectedAction {
+            file: "test.yml".to_string(),
+            line: 5,
+            repo_id: action_ref.to_repo_id(),
+            action_ref,
+            provider: "github".to_string(),
+            host: "github.com".to_string(),
+            span: Span { start: 9, end: 25 },
+        };
+        let finding = Finding::new(
+            collected.file.clone(),
+            collected.line,
+            collected.action_ref.clone(),
+            FindingStatus::UpToDate,
+            collected.provider.clone(),
+            collected.host.clone(),
+        );
+        let mut findings = Vec::new();
+        resolve_fallback_refs(
+            vec![(collected, finding)],
+            &registry_resolving_to(Some(connection_refused())),
+            &mut findings,
+        )
+        .await;
+        let [finding] = findings.as_slice() else {
+            panic!("expected one finding, got {findings:?}");
+        };
+        assert!(
+            matches!(
+                finding.status(),
+                FindingStatus::Unresolvable { reason, is_environment_error: true }
+                    if reason == "network error during GET request: connection failed: connection refused"
+            ),
+            "{:?}",
+            finding.status()
+        );
+    }
+
     #[tokio::test]
     async fn test_check_action_with_versions_user_error() {
         use actup_core::ActionRef;

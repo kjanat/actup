@@ -16,8 +16,8 @@ use anstream::{eprintln, println};
 use std::process::ExitCode;
 
 use actup_core::{
-    Config, Registration, Retention, provider, sanitize_for_terminal, user_config_path,
-    validate_no_duplicate_presets,
+    Config, Registration, Retention, error::chain, provider, sanitize_for_terminal,
+    user_config_path, validate_no_duplicate_presets,
 };
 use tracing_subscriber::EnvFilter;
 
@@ -61,7 +61,7 @@ fn load_config(explicit: Option<&std::path::Path>, start_dir: &std::path::Path) 
             Some(config)
         }
         Err(e) => {
-            eprintln!("Error: {}", sanitize_for_terminal(&e.to_string()));
+            eprintln!("Error: {}", sanitize_for_terminal(&chain(&e)));
             None
         }
     }
@@ -188,7 +188,7 @@ fn setup(
     let registry = build_registry(&config).map_err(|e| {
         eprintln!(
             "Error initializing providers: {}",
-            sanitize_for_terminal(&e.to_string())
+            sanitize_for_terminal(&chain(&e))
         );
         CliExitCode::EnvironmentError
     })?;

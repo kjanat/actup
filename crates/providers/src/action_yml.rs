@@ -94,6 +94,7 @@ fn yaml_err(path: &str, reason: impl Into<String>) -> actup_core::Error {
     actup_core::Error::YamlParse {
         path: path.into(),
         reason: reason.into(),
+        source: None,
     }
 }
 
@@ -243,7 +244,11 @@ fn build_action_yml(path: &str, source: &str, raw: RawActionYml) -> Result<Actio
 /// invariants are violated (missing `main`/`image`/empty `steps` per type).
 pub fn parse_action_yml(raw: &str, path: &str) -> Result<ActionYml> {
     let parsed: RawActionYml =
-        serde_yaml_ng::from_str(raw).map_err(|e| yaml_err(path, e.to_string()))?;
+        serde_yaml_ng::from_str(raw).map_err(|e| actup_core::Error::YamlParse {
+            path: path.into(),
+            reason: String::new(),
+            source: Some(std::sync::Arc::new(e)),
+        })?;
     build_action_yml(path, raw, parsed)
 }
 
@@ -482,5 +487,20 @@ runs:
             }
             other => panic!("expected YamlParse error, got: {other:?}"),
         }
+    }
+
+    #[test]
+    fn invalid_yaml_keeps_the_parser_error_as_source() {
+        let Err(err) = parse_action_yml("name: [unclosed", "action.yml") else {
+            panic!("expected a parse error");
+        };
+        let Some(source) = std::error::Error::source(&err) else {
+            panic!("expected a source on {err:?}");
+        };
+        assert_eq!(err.to_string(), "failed to parse YAML 'action.yml'");
+        assert_eq!(
+            actup_core::error::chain(&err),
+            format!("failed to parse YAML 'action.yml': {source}")
+        );
     }
 }

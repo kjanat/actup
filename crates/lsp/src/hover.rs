@@ -203,7 +203,7 @@ async fn get_action_meta(
         Err(e) => {
             tracing::debug!(
                 action = %action_ref,
-                error = %e,
+                error = %actup_core::error::chain(&e),
                 "failed to fetch action.yml for hover"
             );
             return None;
@@ -465,7 +465,7 @@ async fn resolve_hover_versions(
     match crate::file_cache::fetch_versions_cached(repo_id, ctx.registry, ctx.file_cache).await {
         Some(Ok(v)) => Ok(Some(v)),
         Some(Err(e)) => {
-            tracing::debug!(error = %e, "failed to fetch versions for hover");
+            tracing::debug!(error = %actup_core::error::chain(&e), "failed to fetch versions for hover");
             Err(e)
         }
         None => Ok(None),
@@ -492,7 +492,7 @@ async fn compute_hover_status(
     let v = match versions {
         Ok(Some(v)) => v,
         Ok(None) => return unresolvable("no provider available".into()),
-        Err(e) => return unresolvable(e.to_string()),
+        Err(e) => return unresolvable(actup_core::error::chain(e)),
     };
     let Some(provider) = ctx.registry.find_for_repo(repo_id) else {
         return unresolvable("no provider available".into());

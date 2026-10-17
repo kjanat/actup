@@ -5,9 +5,9 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
-use actup_core::{Error, Result};
+use actup_core::{Error, Result, error::Source};
 use actup_providers::{
     DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
 };
@@ -62,7 +62,8 @@ impl GitHubClient {
             USER_AGENT,
             HeaderValue::from_str(&user_agent).map_err(|e| Error::Network {
                 operation: "build user-agent header".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             })?,
         );
         headers.insert(
@@ -76,7 +77,8 @@ impl GitHubClient {
                 AUTHORIZATION,
                 HeaderValue::from_str(&auth_value).map_err(|e| Error::Auth {
                     provider: "github".to_string(),
-                    reason: format!("invalid token format: {e}"),
+                    reason: "invalid token format".into(),
+                    source: Some(Arc::new(e)),
                 })?,
             );
         }
@@ -94,7 +96,8 @@ impl GitHubClient {
 
         let client = builder.build().map_err(|e| Error::Network {
             operation: "create HTTP client".to_string(),
-            message: e.to_string(),
+            message: String::new(),
+            source: Some(Arc::new(e)),
         })?;
 
         let api_base = if api_host.starts_with("http") {
@@ -367,16 +370,19 @@ impl GitHubClient {
                             Error::Network {
                                 operation: "GET request".to_string(),
                                 message: "request timed out".to_string(),
+                                source: Some(Arc::new(e)),
                             }
                         } else if e.is_connect() {
                             Error::Network {
                                 operation: "GET request".to_string(),
                                 message: "connection failed".to_string(),
+                                source: Some(Arc::new(e)),
                             }
                         } else {
                             Error::Network {
                                 operation: "GET request".to_string(),
-                                message: e.to_string(),
+                                message: String::new(),
+                                source: Some(Arc::new(e)),
                             }
                         });
                     }
@@ -389,8 +395,8 @@ impl GitHubClient {
         // Should never reach here, but handle it
         Err(Error::Network {
             operation: "GET request".to_string(),
-            message: last_error
-                .map_or_else(|| "max retries exceeded".to_string(), |e| e.to_string()),
+            message: "max retries exceeded".to_string(),
+            source: last_error.map(|e| -> Source { Arc::new(e) }),
         })
     }
 
@@ -415,7 +421,8 @@ impl GitHubClient {
         match status {
             StatusCode::OK => response.json().await.map_err(|e| Error::Network {
                 operation: "parse response".to_string(),
-                message: e.to_string(),
+                message: String::new(),
+                source: Some(Arc::new(e)),
             }),
             StatusCode::NOT_FOUND => Err(Error::NotFound {
                 owner: owner.to_string(),
@@ -439,12 +446,14 @@ impl GitHubClient {
             StatusCode::UNAUTHORIZED => Err(Error::Auth {
                 provider: "github".to_string(),
                 reason: "unauthorized - check your token".to_string(),
+                source: None,
             }),
             _ => {
                 let body = response.text().await.unwrap_or_default();
                 Err(Error::Network {
                     operation: "API request".to_string(),
                     message: format!("status {status}: {body}"),
+                    source: None,
                 })
             }
         }

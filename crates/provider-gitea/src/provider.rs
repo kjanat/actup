@@ -114,6 +114,7 @@ impl Provider for GiteaProvider {
             Sha40::new(&sha).ok_or_else(|| actup_core::Error::Internal {
                 context: format!("commit SHA from Gitea: {sha}"),
                 message: "expected 40-character hex string".to_string(),
+                source: None,
             })
         })
     }

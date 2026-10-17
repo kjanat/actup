@@ -1,5 +1,7 @@
 //! GitHub provider implementation
 
+use std::sync::Arc;
+
 use actup_core::{
     action_ref::ActionRepoId,
     compat::BoxFuture,
@@ -166,7 +168,7 @@ impl Provider for GitHubProvider {
                     warn!(
                         owner = %repo.owner(),
                         repo = %repo.repo(),
-                        error = %e,
+                        error = %actup_core::error::chain(&e),
                         "git protocol unavailable, falling back to REST"
                     );
                     self.versions_via_rest(&repo).await
@@ -229,6 +231,7 @@ impl Provider for GitHubProvider {
             Sha40::new(&sha).ok_or_else(|| actup_core::Error::Internal {
                 context: "resolve_ref_to_sha".to_string(),
                 message: format!("GitHub returned invalid SHA: {sha}"),
+                source: None,
             })
         })
     }
@@ -270,12 +273,14 @@ impl Provider for GitHubProvider {
                                 .decode(&cleaned)
                                 .map_err(|e| actup_core::Error::Internal {
                                     context: "base64 decode".into(),
-                                    message: format!("Failed to decode README: {e}"),
+                                    message: "Failed to decode README".into(),
+                                    source: Some(Arc::new(e)),
                                 })?;
                         let decoded =
                             String::from_utf8(bytes).map_err(|e| actup_core::Error::Internal {
                                 context: "utf8 decode".into(),
-                                message: format!("README is not valid UTF-8: {e}"),
+                                message: "README is not valid UTF-8".into(),
+                                source: Some(Arc::new(e)),
                             })?;
                         Ok(Some(decoded))
                     } else {
@@ -355,11 +360,13 @@ impl Provider for GitHubProvider {
                     .decode(&cleaned)
                     .map_err(|e| actup_core::Error::Internal {
                         context: "base64 decode".into(),
-                        message: format!("Failed to decode action.yml: {e}"),
+                        message: "Failed to decode action.yml".into(),
+                        source: Some(Arc::new(e)),
                     })?;
                 String::from_utf8(bytes).map_err(|e| actup_core::Error::Internal {
                     context: "utf8 decode".into(),
-                    message: format!("action.yml is not valid UTF-8: {e}"),
+                    message: "action.yml is not valid UTF-8".into(),
+                    source: Some(Arc::new(e)),
                 })?
             } else {
                 return Err(actup_core::Error::Internal {
@@ -367,6 +374,7 @@ impl Provider for GitHubProvider {
                     message: format!(
                         "GitHub returned content without base64 encoding for {owner}/{repo_name}"
                     ),
+                    source: None,
                 });
             };
 

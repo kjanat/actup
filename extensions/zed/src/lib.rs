@@ -308,7 +308,7 @@ fn collect_results(
                 Err(e) if e.is_user_error() => CheckResult::new(
                     action_ref.clone(),
                     CheckStatus::Unresolvable {
-                        reason: e.to_string(),
+                        reason: actup_core::error::chain(e),
                         is_environment_error: false,
                     },
                 ),
@@ -320,9 +320,10 @@ fn collect_results(
     let mut fetch_errors: Vec<(String, String)> = fetched
         .iter()
         .filter_map(|(key, versions)| match versions {
-            Err(e) if !e.is_user_error() => {
-                Some((format!("{}/{}/{}", key.0, key.1, key.2), e.to_string()))
-            }
+            Err(e) if !e.is_user_error() => Some((
+                format!("{}/{}/{}", key.0, key.1, key.2),
+                actup_core::error::chain(e),
+            )),
             _ => None,
         })
         .collect();
@@ -449,7 +450,7 @@ fn read_config(
     let file = file
         .as_ref()
         .map(|(path, contents)| (Path::new(path), contents.as_str()));
-    Config::from_contents(file, env).map_err(|e| e.to_string())
+    Config::from_contents(file, env).map_err(|e| actup_core::error::chain(&e))
 }
 
 /// Discover workflow and action files from the worktree.
@@ -1019,6 +1020,7 @@ mod tests {
                 Err(actup_core::Error::Auth {
                     provider: "github".into(),
                     reason: "status code 401".into(),
+                    source: None,
                 }),
             ),
             (
@@ -1026,6 +1028,7 @@ mod tests {
                 Err(actup_core::Error::Network {
                     operation: "GET tags".into(),
                     message: "connection reset".into(),
+                    source: None,
                 }),
             ),
             (key("fine"), Ok(empty_versions())),

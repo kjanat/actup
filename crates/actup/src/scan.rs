@@ -139,6 +139,7 @@ pub fn versions_for<'a>(
         None => Err(CoreError::Internal {
             context: "batch fetch".to_string(),
             message: "no version fetch attempted".to_string(),
+            source: None,
         }),
     }
 }
