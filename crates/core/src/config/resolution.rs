@@ -179,7 +179,10 @@ impl Resolved {
             path: format!("host \"{hostname}\""),
             reason: format!(
                 "kind required for \"{hostname}\" (not a preset host; specify kind in [hosts.\"{hostname}\"])"
-            ), hint: None, source: None, })
+            ),
+            source: None,
+            hint: None,
+        })
     }
 
     /// Step 5 — fill remaining fields from the registration's defaults /
@@ -245,7 +248,10 @@ fn build_and_validate(
     // Step 6: Validate required fields present
     let resolved_api_base = api_base.ok_or_else(|| Error::InvalidConfig {
         path: ctx.clone(),
-        reason: format!("api_base required for \"{hostname}\" (provider cannot infer; specify api_base in [hosts.\"{hostname}\"])"), hint: None, source: None, })?;
+        reason: format!("api_base required for \"{hostname}\" (provider cannot infer; specify api_base in [hosts.\"{hostname}\"])"),
+        source: None,
+        hint: None,
+    })?;
 
     if token_env.is_none() && !repo_only {
         return Err(Error::InvalidConfig {
