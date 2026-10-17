@@ -115,6 +115,7 @@ mod tests {
             .ok_or("extension.toml declares no language servers")?;
         assert_eq!(servers.keys().collect::<Vec<_>>(), [LANGUAGE_SERVER]);
         assert_eq!(manifest.get("capabilities"), None);
+        assert_eq!(manifest.get("slash_commands"), None);
 
         let grammar = manifest
             .get("grammars")
