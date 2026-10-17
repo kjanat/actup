@@ -466,11 +466,17 @@ struct Recorder {
 
 impl actup_core::fetch::Progress for Recorder {
     fn start(&self, repos: usize) {
-        self.events.lock().unwrap().push(format!("start {repos}"));
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(format!("start {repos}"));
     }
 
     fn finished(&self, outcome: actup_core::fetch::Outcome) {
-        self.events.lock().unwrap().push(format!("{outcome:?}"));
+        self.events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(format!("{outcome:?}"));
     }
 }
 
@@ -510,6 +516,16 @@ impl actup_core::cache::Cache for Hits {
     }
 }
 
+fn unused<T: Send + 'static>() -> actup_core::BoxFuture<'static, actup_core::Result<T>> {
+    Box::pin(async {
+        Err(actup_core::Error::Internal {
+            context: "test provider".to_string(),
+            message: "not used".to_string(),
+            source: None,
+        })
+    })
+}
+
 struct Listed;
 
 impl Provider for Listed {
@@ -542,14 +558,14 @@ impl Provider for Listed {
         _repo: &ActionRepoId,
         _ref_name: &str,
     ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::Sha40>> {
-        unimplemented!()
+        unused()
     }
 
     fn get_default_branch(
         &self,
         _repo: &ActionRepoId,
     ) -> actup_core::BoxFuture<'_, actup_core::Result<String>> {
-        unimplemented!()
+        unused()
     }
 
     fn get_readme(
@@ -557,7 +573,7 @@ impl Provider for Listed {
         _repo: &ActionRepoId,
         _ref_name: Option<&str>,
     ) -> actup_core::BoxFuture<'_, actup_core::Result<Option<String>>> {
-        unimplemented!()
+        unused()
     }
 
     fn get_action_yml(
@@ -565,12 +581,12 @@ impl Provider for Listed {
         _repo: &ActionRepoId,
         _ref_name: &str,
     ) -> actup_core::BoxFuture<'_, actup_core::Result<actup_core::provider::ActionYml>> {
-        unimplemented!()
+        unused()
     }
 }
 
 #[tokio::test]
-async fn test_registry_fetch_reports_each_repo_once() {
+async fn test_registry_fetch_reports_each_repo_once() -> Result<(), Box<dyn std::error::Error>> {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/repos/o/r/tags"))
@@ -601,9 +617,11 @@ async fn test_registry_fetch_reports_each_repo_once() {
     let mut registry = actup_core::provider::Registry::new();
     registry.set_default_host("lab.example");
     registry.register(Box::new(Listed));
-    registry.register(Box::new(
-        GitHubProvider::with_host(&mock_server.uri(), "gh.invalid", None).unwrap(),
-    ));
+    registry.register(Box::new(GitHubProvider::with_host(
+        &mock_server.uri(),
+        "gh.invalid",
+        None,
+    )?));
     let repos = [
         ActionRepoId::new(Some("lab.example".into()), "o", "ok", None),
         ActionRepoId::new(Some("lab.example".into()), "o", "bad", None),
@@ -630,13 +648,14 @@ async fn test_registry_fetch_reports_each_repo_once() {
     .await;
 
     assert_eq!(results.len(), 6);
-    let mut events = recorder.events.into_inner().unwrap();
+    let mut events = recorder.events.into_inner().map_err(|e| e.to_string())?;
     assert_eq!(events.remove(0), "start 6");
     events.sort_unstable();
     assert_eq!(
         events,
         ["Api", "Cache", "Cache", "Failed", "Failed", "Provider"]
     );
+    Ok(())
 }
 
 #[tokio::test]

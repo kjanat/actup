@@ -9,6 +9,10 @@ use std::{
 use actup_core::fetch::{Outcome, Progress};
 use indicatif::{ProgressBar, ProgressDrawTarget};
 
+fn draws(is_terminal: bool) -> bool {
+    is_terminal && !tracing::enabled!(tracing::Level::DEBUG)
+}
+
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 struct Counts {
     total: usize,
@@ -45,10 +49,10 @@ pub struct Spinner {
 }
 
 impl Spinner {
-    /// A spinner on stderr when it is a terminal, else a hidden one.
+    /// A spinner on stderr when it is a terminal and debug logging is off, else a hidden one.
     #[must_use]
     pub fn stderr() -> Self {
-        Self::for_terminal(std::io::stderr().is_terminal())
+        Self::for_terminal(draws(std::io::stderr().is_terminal()))
     }
 
     fn for_terminal(is_terminal: bool) -> Self {
@@ -136,6 +140,20 @@ mod tests {
         assert_eq!(term.height(), 4);
         spinner.finish();
         assert_eq!(term.contents(), "");
+    }
+
+    #[test]
+    fn spinner_draws_only_on_a_terminal_without_debug_logs() {
+        assert!(draws(true));
+        assert!(!draws(false));
+        let verbose = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::DEBUG)
+            .with_writer(std::io::sink)
+            .finish();
+        tracing::subscriber::with_default(verbose, || {
+            assert!(!draws(true));
+            assert!(Spinner::stderr().bar.is_hidden());
+        });
     }
 
     #[test]
