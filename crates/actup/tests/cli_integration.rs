@@ -583,8 +583,9 @@ mod config_tests {
             "[scan]\nextra_paths = [\"../../../etc/*.yml\"]\n",
         )?;
         match Config::load(Some(&explicit), None, temp.path(), None) {
-            Err(actup_core::Error::InvalidConfig { path, reason }) => {
-                assert_eq!(path, explicit.display().to_string());
+            Err(ref err @ actup_core::Error::InvalidConfig { ref path, .. }) => {
+                let reason = actup_core::error::chain(err);
+                assert_eq!(*path, explicit.display().to_string());
                 assert!(
                     reason.contains("`scan.extra_paths` entry `../../../etc/*.yml` contains `..`"),
                     "{reason}"
@@ -646,11 +647,12 @@ policy  = { bump = "patch" }
         );
 
         match Config::load(None, None, temp.path(), None) {
-            Err(actup_core::Error::InvalidConfig { path, reason }) => {
+            Err(ref err @ actup_core::Error::InvalidConfig { ref path, .. }) => {
+                let reason = actup_core::error::chain(err);
                 let found = actup_core::canonical_path(temp.path()).join("actup.toml");
-                assert_eq!(path, found.display().to_string());
+                assert_eq!(*path, found.display().to_string());
                 assert!(
-                    reason.starts_with("`actions` is no longer supported; use `[[overrides]]`"),
+                    reason.contains(": `actions` is no longer supported; use `[[overrides]]`"),
                     "{reason}"
                 );
             }
@@ -667,11 +669,12 @@ policy  = { bump = "patch" }
         fs::write(temp.path().join("actup.toml"), "ref_style = \"sha\"\n")?;
 
         match Config::load(Some(&explicit), None, temp.path(), None) {
-            Err(actup_core::Error::InvalidConfig { path, reason }) => {
+            Err(ref err @ actup_core::Error::InvalidConfig { ref path, .. }) => {
+                let reason = actup_core::error::chain(err);
                 let found = actup_core::canonical_path(temp.path()).join("actup.toml");
-                assert_eq!(path, found.display().to_string());
+                assert_eq!(*path, found.display().to_string());
                 assert!(
-                    reason.starts_with("`ref_style` is no longer supported; use `policy.pin`"),
+                    reason.contains(": `ref_style` is no longer supported; use `policy.pin`"),
                     "{reason}"
                 );
             }
@@ -741,8 +744,25 @@ policy  = { bump = "patch" }
         let explicit = temp.path().join("deleted.toml");
 
         match Config::load(Some(&explicit), None, temp.path(), None) {
-            Err(actup_core::Error::InvalidConfig { path, .. }) => {
-                assert_eq!(path, explicit.display().to_string());
+            Err(
+                ref err @ actup_core::Error::InvalidConfig {
+                    ref path,
+                    ref source,
+                    ..
+                },
+            ) => {
+                assert_eq!(*path, explicit.display().to_string());
+                let Some(io) = source
+                    .as_deref()
+                    .and_then(|e| e.downcast_ref::<std::io::Error>())
+                else {
+                    panic!("expected an io::Error source, got {source:?}");
+                };
+                assert_eq!(io.kind(), std::io::ErrorKind::NotFound);
+                assert_eq!(
+                    actup_core::error::chain(err),
+                    format!("invalid config at '{}': {io}", explicit.display())
+                );
             }
             other => panic!("expected InvalidConfig, got {other:?}"),
         }
@@ -786,12 +806,12 @@ policy  = { bump = "patch" }
         fs::write(&explicit, "{\n  // old key\n  \"extra_paths\": []\n}\n")?;
 
         match Config::load(Some(&explicit), None, temp.path(), None) {
-            Err(actup_core::Error::InvalidConfig { path, reason }) => {
-                assert_eq!(path, explicit.display().to_string());
+            Err(ref err @ actup_core::Error::InvalidConfig { ref path, .. }) => {
+                let reason = actup_core::error::chain(err);
+                assert_eq!(*path, explicit.display().to_string());
                 assert!(
-                    reason.starts_with(
-                        "`extra_paths` is no longer supported; use `scan.extra_paths`"
-                    ),
+                    reason
+                        .contains(": `extra_paths` is no longer supported; use `scan.extra_paths`"),
                     "{reason}"
                 );
             }

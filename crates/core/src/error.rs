@@ -96,12 +96,16 @@ pub enum Error {
     },
 
     /// Configuration file is invalid
-    #[error("invalid config at '{path}': {reason}")]
+    #[error("invalid config at '{path}'{}", detail(.reason))]
     InvalidConfig {
         /// Path to the config file
         path: String,
-        /// What's wrong
+        /// What's wrong, without the text of `source`
         reason: String,
+        /// The read or parse error
+        source: Option<Source>,
+        /// A suggested fix, like ``did you mean `policy.bump`?``, that [`chain`] prints last
+        hint: Option<String>,
     },
 
     /// YAML parsing failed
@@ -259,14 +263,23 @@ impl Error {
 }
 
 /// Render `err` followed by each error in its `source()` chain, joined by `": "`.
+///
+/// The hint of an [`Error::InvalidConfig`] follows the chain after `"; "`.
 #[must_use]
-pub fn chain(err: &dyn std::error::Error) -> String {
+pub fn chain(err: &(dyn std::error::Error + 'static)) -> String {
     let mut text = err.to_string();
     let mut current = err.source();
     while let Some(cause) = current {
         text.push_str(": ");
         text.push_str(&cause.to_string());
         current = cause.source();
+    }
+    if let Some(Error::InvalidConfig {
+        hint: Some(hint), ..
+    }) = err.downcast_ref::<Error>()
+    {
+        text.push_str("; ");
+        text.push_str(hint);
     }
     text
 }
@@ -316,6 +329,8 @@ mod tests {
             Error::InvalidConfig {
                 path: "config.toml".into(),
                 reason: "syntax error".into(),
+                hint: None,
+                source: None,
             },
             Error::YamlParse {
                 path: "test.yml".into(),
@@ -549,5 +564,20 @@ mod tests {
         };
         assert!(std::error::Error::source(&plain).is_none());
         assert_eq!(chain(&plain), "network error during fetch: timeout");
+    }
+
+    #[test]
+    fn chain_prints_the_config_hint_last() {
+        let err = Error::InvalidConfig {
+            path: "actup.toml".into(),
+            reason: String::new(),
+            source: Some(refused()),
+            hint: Some("did you mean `policy.bump`?".into()),
+        };
+        assert_eq!(err.to_string(), "invalid config at 'actup.toml'");
+        assert_eq!(
+            chain(&err),
+            "invalid config at 'actup.toml': connect failed: connection refused; did you mean `policy.bump`?"
+        );
     }
 }

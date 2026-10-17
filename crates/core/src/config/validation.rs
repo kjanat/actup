@@ -151,6 +151,8 @@ fn invalid_config(context: &str, reason: &str) -> Error {
     Error::InvalidConfig {
         path: context.to_string(),
         reason: reason.to_string(),
+        hint: None,
+        source: None,
     }
 }
 

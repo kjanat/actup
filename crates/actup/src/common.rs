@@ -892,6 +892,8 @@ mod tests {
             CoreError::InvalidConfig {
                 path: s(),
                 reason: s(),
+                hint: None,
+                source: None,
             },
             CoreError::YamlParse {
                 path: s(),

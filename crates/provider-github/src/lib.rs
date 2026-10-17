@@ -116,6 +116,8 @@ fn create_batch_fetcher_with_token<C: Cache>(
         return Err(actup_core::Error::InvalidConfig {
             path: format!("host \"{}\"", config.host),
             reason: format!("expected GitHub host config, found {:?}", config.kind),
+            hint: None,
+            source: None,
         });
     }
 

@@ -20,6 +20,7 @@ use std::{
     io::Read,
     num::NonZeroU8,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Duration,
 };
 
@@ -741,7 +742,9 @@ fn same_file(a: &Path, b: &Path) -> bool {
 fn read_config_file(path: &Path) -> Result<FileContents, Error> {
     let contents = std::fs::read_to_string(path).map_err(|e| Error::InvalidConfig {
         path: path.display().to_string(),
-        reason: e.to_string(),
+        reason: String::new(),
+        source: Some(Arc::new(e)),
+        hint: None,
     })?;
     FileContents::new(path, &contents)
 }
@@ -811,7 +814,9 @@ impl Layers {
         let figment = self.figment.merge(env);
         let mut config: Config = figment.extract().map_err(|e| Error::InvalidConfig {
             path: error_origin(&e, self.sources.iter().rev().find_map(Source::path)),
-            reason: format!("{e}{}", unknown_key_hint(&e).unwrap_or_default()),
+            reason: String::new(),
+            hint: unknown_key_hint(&e),
+            source: Some(Arc::new(e)),
         })?;
         if !vars.is_empty() {
             self.sources.push(Source::Env { vars });
@@ -905,7 +910,9 @@ impl FileContents {
                     .read_to_string(&mut stripped)
                     .map_err(|e| Error::InvalidConfig {
                         path: path.display().to_string(),
-                        reason: format!("failed to strip comments: {e}"),
+                        reason: "failed to strip comments".into(),
+                        source: Some(Arc::new(e)),
+                        hint: None,
                     })?;
                 stripped
             }
@@ -956,7 +963,7 @@ fn unknown_key_hint(error: &figment::Error) -> Option<String> {
     if let Some(key) = near
         && let Some((_, new)) = RENAMED_KEYS.iter().find(|(old, _)| *old == key)
     {
-        return Some(format!("; did you mean `{new}`?"));
+        return Some(format!("did you mean `{new}`?"));
     }
     let leaf: Vec<&str> = if let Some(key) = near {
         vec![key]
@@ -976,7 +983,7 @@ fn unknown_key_hint(error: &figment::Error) -> Option<String> {
         }
         _ => suggestion.join("."),
     };
-    Some(format!("; did you mean `{rendered}`?"))
+    Some(format!("did you mean `{rendered}`?"))
 }
 
 fn error_origin(error: &figment::Error, loaded_from: Option<&Path>) -> String {
@@ -1841,12 +1848,7 @@ mod tests {
 
     #[test]
     fn test_from_contents_rejects_renamed_key_naming_the_file() {
-        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
-            Some((Path::new(".github/actup.yaml"), "update_policy: patch\n")),
-            EnvOverrides::default(),
-        ) else {
-            panic!("renamed key must be rejected");
-        };
+        let (path, reason) = rejected(Some((".github/actup.yaml", "update_policy: patch\n")), &[]);
         assert_eq!(path, ".github/actup.yaml");
         assert!(
             reason.contains("`update_policy` is no longer supported; use `policy.bump`"),
@@ -1860,12 +1862,8 @@ mod tests {
             ("../../../etc/*.yml", "contains `..`"),
             ("/etc/*.yml", "is absolute"),
         ] {
-            let Err(Error::InvalidConfig { path, reason: got }) = Config::from_contents(
-                None,
-                EnvOverrides::from_vars([("ACTUP_SCAN__EXTRA_PATHS", format!("[\"{entry}\"]"))]),
-            ) else {
-                panic!("`{entry}` must be rejected");
-            };
+            let paths = format!("[\"{entry}\"]");
+            let (path, got) = rejected(None, &[("ACTUP_SCAN__EXTRA_PATHS", &paths)]);
             assert_eq!(path, "`ACTUP_` environment variable(s)");
             assert!(
                 got.contains(&format!("`scan.extra_paths` entry `{entry}` {reason}")),
@@ -1969,13 +1967,26 @@ mod tests {
     }
 
     fn rejected(file: Option<(&str, &str)>, env: &[(&str, &str)]) -> (String, String) {
-        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+        let (path, rendered, _) = rejected_with_hint(file, env);
+        (path, rendered)
+    }
+
+    fn rejected_with_hint(
+        file: Option<(&str, &str)>,
+        env: &[(&str, &str)],
+    ) -> (String, String, Option<String>) {
+        let result = Config::from_contents(
             file.map(|(path, contents)| (Path::new(path), contents)),
             EnvOverrides::from_vars(env.iter().copied()),
-        ) else {
+        );
+        let Err(err) = result else {
             panic!("{file:?} {env:?} must be rejected");
         };
-        (path, reason)
+        let rendered = crate::error::chain(&err);
+        let Error::InvalidConfig { path, hint, .. } = err else {
+            panic!("expected InvalidConfig, got {err:?}");
+        };
+        (path, rendered, hint)
     }
 
     #[test]
@@ -2020,9 +2031,14 @@ mod tests {
                 Some("scan.extra_paths"),
             ),
         ] {
-            let (path, reason) = rejected(Some((name, contents)), &[]);
+            let (path, reason, got) = rejected_with_hint(Some((name, contents)), &[]);
             assert_eq!(path, name);
             assert!(reason.contains(&format!("found `{found}`")), "{reason}");
+            assert_eq!(
+                got,
+                hint.map(|hint| format!("did you mean `{hint}`?")),
+                "{reason}"
+            );
             match hint {
                 Some(hint) => assert!(
                     reason.ends_with(&format!("; did you mean `{hint}`?")),
@@ -2041,9 +2057,14 @@ mod tests {
             ("ACTUP_UPDATE_POLICYY", Some("policy.bump")),
             ("ACTUP_ZZZ", None),
         ] {
-            let (path, reason) = rejected(None, &[(var, "x")]);
+            let (path, reason, got) = rejected_with_hint(None, &[(var, "x")]);
             assert_eq!(path, "`ACTUP_` environment variable(s)");
             assert!(reason.contains(&format!("for key \"{var}\"")), "{reason}");
+            assert_eq!(
+                got,
+                hint.map(|hint| format!("did you mean `{hint}`?")),
+                "{reason}"
+            );
             match hint {
                 Some(hint) => assert!(
                     reason.ends_with(&format!("; did you mean `{hint}`?")),
@@ -2260,12 +2281,13 @@ mod tests {
 
     #[test]
     fn test_from_contents_rejects_unknown_policy_key_naming_the_file() {
-        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+        let Err(ref err @ Error::InvalidConfig { ref path, .. }) = Config::from_contents(
             Some((Path::new("actup.toml"), "[policy]\ntracking = \"exact\"\n")),
             EnvOverrides::default(),
         ) else {
             panic!("unknown policy key must be rejected");
         };
+        let reason = crate::error::chain(err);
         assert_eq!(path, "actup.toml");
         assert!(
             reason.contains("unknown field: found `tracking`"),
@@ -2275,12 +2297,13 @@ mod tests {
 
     #[test]
     fn test_from_contents_rejects_unknown_policy_env_key_naming_the_variable() {
-        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
+        let Err(ref err @ Error::InvalidConfig { ref path, .. }) = Config::from_contents(
             None,
             EnvOverrides::from_vars([("ACTUP_POLICY__TRACKING", "exact")]),
         ) else {
             panic!("unknown policy env key must be rejected");
         };
+        let reason = crate::error::chain(err);
         assert_eq!(path, "`ACTUP_` environment variable(s)");
         assert!(
             reason.contains("unknown field: found `tracking`"),
@@ -2291,12 +2314,10 @@ mod tests {
 
     #[test]
     fn test_from_contents_env_error_names_the_environment() {
-        let Err(Error::InvalidConfig { path, reason }) = Config::from_contents(
-            Some((Path::new("actup.toml"), "[policy]\nbump = \"minor\"\n")),
-            EnvOverrides::from_vars([("ACTUP_IGNORE", "a/b")]),
-        ) else {
-            panic!("renamed env key must be rejected");
-        };
+        let (path, reason) = rejected(
+            Some(("actup.toml", "[policy]\nbump = \"minor\"\n")),
+            &[("ACTUP_IGNORE", "a/b")],
+        );
         assert_eq!(path, "`ACTUP_` environment variable(s)");
         assert!(
             reason.contains("`ignore` is no longer supported; use `scan.ignore`"),

@@ -786,6 +786,8 @@ impl Registry {
             .ok_or_else(|| Error::InvalidConfig {
                 path: format!("host \"{hostname}\""),
                 reason: format!("no registration for kind {:?}", provider_config.kind),
+                hint: None,
+                source: None,
             })?;
         let provider = (registration.create)(provider_config)?;
         self.register(Box::new(CachingProvider::with_retention(

@@ -179,8 +179,7 @@ impl Resolved {
             path: format!("host \"{hostname}\""),
             reason: format!(
                 "kind required for \"{hostname}\" (not a preset host; specify kind in [hosts.\"{hostname}\"])"
-            ),
-        })
+            ), hint: None, source: None, })
     }
 
     /// Step 5 — fill remaining fields from the registration's defaults /
@@ -218,6 +217,8 @@ fn resolve_registration<'a>(
         Error::InvalidConfig {
             path: format!("host \"{hostname}\""),
             reason: format!("provider {kind:?} not compiled in (available: {available_str})"),
+            hint: None,
+            source: None,
         }
     })
 }
@@ -244,8 +245,7 @@ fn build_and_validate(
     // Step 6: Validate required fields present
     let resolved_api_base = api_base.ok_or_else(|| Error::InvalidConfig {
         path: ctx.clone(),
-        reason: format!("api_base required for \"{hostname}\" (provider cannot infer; specify api_base in [hosts.\"{hostname}\"])"),
-    })?;
+        reason: format!("api_base required for \"{hostname}\" (provider cannot infer; specify api_base in [hosts.\"{hostname}\"])"), hint: None, source: None, })?;
 
     if token_env.is_none() && !repo_only {
         return Err(Error::InvalidConfig {
@@ -253,6 +253,8 @@ fn build_and_validate(
             reason: format!(
                 "token_env required for \"{hostname}\" (specify token_env in [hosts.\"{hostname}\"])"
             ),
+            hint: None,
+            source: None,
         });
     }
 
@@ -289,6 +291,8 @@ fn validate_api_mode_capability(
                 "api_mode \"graphql\" not supported by {kind} provider (supports: {})",
                 capability_list(capabilities),
             ),
+            hint: None,
+            source: None,
         }),
         ApiMode::Rest if !capabilities.supports_rest => Err(Error::InvalidConfig {
             path: format!("host \"{hostname}\""),
@@ -296,6 +300,8 @@ fn validate_api_mode_capability(
                 "api_mode \"rest\" not supported by {kind} provider (supports: {})",
                 capability_list(capabilities),
             ),
+            hint: None,
+            source: None,
         }),
         _ => Ok(()),
     }
@@ -334,6 +340,8 @@ pub fn resolve_default_host(
             Err(Error::InvalidConfig {
                 path: "default_host".to_string(),
                 reason: "no default_host set and no \"github.com\" preset available".to_string(),
+                hint: None,
+                source: None,
             })
         }
     }
