@@ -321,7 +321,9 @@ non-preset host that only the repo config declares gets no token.
 
 An unknown key in a config file or in an `ACTUP_*` variable is an error (exit
 code 2). The message names the file or the variable and suggests the closest
-known key.
+known key. A top-level `$schema` string, such as
+`"$schema": "./schemas/actup-config.schema.json"`, is accepted in every format
+and ignored. In a nested table, `$schema` is an unknown key.
 
 The CLI and the LSP log every config source at `info`: the user file, the repo
 file, the explicit file and the `ACTUP_*` variables that set config keys.

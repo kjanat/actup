@@ -4,6 +4,14 @@
   "description": "Configuration options for the GitHub Actions-like updater.\n\nMain configuration struct.\n\n# Example Configuration\n\n```toml\n# .actup.toml - Conservative security-focused config\n[policy]\nbump   = \"patch\"\npin    = \"sha\"\nbranch = \"warn\"\n\n# Result in workflow:\n# Before:\n# - uses: actions/checkout@v4\n# After:\n# - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1\n```\n\n```toml\n# .actup.toml - Permissive major-update config\n[policy]\nbump       = \"major\"\npin        = \"tag\"\ntrack      = \"exact\"\nprerelease = true\n\n# Result in workflow:\n# Before:\n# - uses: actions/checkout@v3\n# After:\n# - uses: actions/checkout@v4.2.0\n```\n\n```toml\n# .actup.toml - Selective ignore patterns and overrides\n[scan]\nignore = [\n  \"actions/checkout\",              # Ignore all refs of this action\n  \"my-org/*\",                      # Ignore all actions from my-org\n  \"dtolnay/rust-toolchain@1.91.0\", # Ignore specific MSRV version\n]\n\n[[overrides]]\npattern = \"ghe.corp.com/platform/*\"\npolicy  = { pin = \"sha\", bump = \"minor\" }\n\n# Result: dtolnay/rust-toolchain@stable is checked, @1.91.0 is ignored\n```",
   "type": "object",
   "properties": {
+    "$schema": {
+      "description": "JSON schema URL for editors; actup ignores the value.\n\n```json\n{ \"$schema\": \"./schemas/actup-config.schema.json\" }\n```",
+      "type": [
+        "string",
+        "null"
+      ],
+      "writeOnly": true
+    },
     "cache": {
       "description": "Version-cache settings (TTL, location, on/off).\n\n```toml\n[cache]\nttl = 86400        # re-check a repo at most once a day\nenabled = true\n```",
       "$ref": "#/$defs/Cache",

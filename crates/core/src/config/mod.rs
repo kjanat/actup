@@ -98,6 +98,14 @@ use crate::{ActionRef, Error, discovery::ExtraPath, policy};
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
+    /// JSON schema URL for editors; actup ignores the value.
+    ///
+    /// ```json
+    /// { "$schema": "./schemas/actup-config.schema.json" }
+    /// ```
+    #[serde(rename = "$schema", skip_serializing)]
+    pub schema: Option<String>,
+
     /// Update policy applied to every action unless an override matches.
     ///
     /// ```toml
@@ -2035,6 +2043,44 @@ mod tests {
                 None => assert!(!reason.contains("did you mean"), "{reason}"),
             }
         }
+    }
+
+    #[test]
+    fn test_top_level_schema_key_is_ignored_in_every_format()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for (name, contents) in [
+            (
+                "actup.json",
+                r#"{"$schema": "./schemas/actup-config.schema.json", "policy": {"bump": "minor"}}"#,
+            ),
+            (
+                "actup.jsonc",
+                "{ // editor schema\n\"$schema\": \"x\", \"policy\": { \"bump\": \"minor\" } }",
+            ),
+            ("actup.yaml", "$schema: x\npolicy:\n  bump: minor\n"),
+            (
+                "actup.toml",
+                "\"$schema\" = \"x\"\n[policy]\nbump = \"minor\"\n",
+            ),
+        ] {
+            let config =
+                Config::from_contents(Some((Path::new(name), contents)), EnvOverrides::default())?;
+            assert_eq!(config.policy.bump, policy::Update::Minor, "{name}");
+            assert!(
+                serde_json::to_value(&config)?.get("$schema").is_none(),
+                "{name}"
+            );
+        }
+        for (name, contents) in [
+            ("actup.toml", "[policy]\n\"$schema\" = \"x\"\n"),
+            ("actup.json", r#"{"cache": {"$schema": "x"}}"#),
+            ("actup.yaml", "scan:\n  $schema: x\n"),
+        ] {
+            let (path, reason) = rejected(Some((name, contents)), &[]);
+            assert_eq!(path, name);
+            assert!(reason.contains("found `$schema`"), "{reason}");
+        }
+        Ok(())
     }
 
     #[test]

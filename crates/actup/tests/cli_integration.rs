@@ -1341,6 +1341,24 @@ mod schema_tests {
     }
 
     #[test]
+    fn schema_lists_the_schema_key_and_denies_others() -> Result<(), Box<dyn std::error::Error>> {
+        let schema = generated_schema();
+        let key = schema
+            .get("properties")
+            .and_then(|props| props.get("$schema"))
+            .ok_or("$schema property missing")?;
+        assert_eq!(
+            key.get("type"),
+            Some(&serde_json::json!(["string", "null"]))
+        );
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&serde_json::Value::Bool(false))
+        );
+        Ok(())
+    }
+
+    #[test]
     fn schema_fetch_settings_has_deny_unknown() {
         let schema = generated_schema();
         let fetch = &schema["$defs"]["FetchSettings"];
