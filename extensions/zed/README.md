@@ -41,9 +41,12 @@ extension source to pick up changes.
 The `/actions:update` slash command reads actup config from the worktree root
 only. It takes the first repo config candidate in `actup-core` discovery order
 (`actup.*`, `.actup.*`, `.config/actup.*`, `.github/actup.*`; TOML, JSON, JSONC
-or YAML) and applies `ACTUP_*` variables from the worktree shell environment on
-top. Parent-directory configs and the user config do not apply. The first line
-of the output names the config it used, or `defaults`.
+or YAML). When `lsp.actup-lsp.initialization_options.configPath` names a file
+relative to the worktree root, the command reads that file over the candidate as
+an explicit config, where every key applies, as `actup-lsp` does. It applies
+`ACTUP_*` variables from the worktree shell environment on top. Parent-directory
+configs and the user config do not apply. The first line of the output names the
+files it used, or `defaults`.
 
 `actup-lsp` resolves config the same way as the `actup` CLI.
 

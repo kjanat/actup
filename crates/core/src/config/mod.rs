@@ -733,14 +733,34 @@ impl Config {
         contents: &str,
         env: EnvOverrides,
     ) -> Result<Self, Error> {
-        Layers::default()
-            .trusted(
+        Self::from_repo_and_explicit(None, Some((path, contents)), env)
+    }
+
+    /// Parse a discovered repo config `repo` and then an explicit config `explicit`, each given as
+    /// path and contents, over the defaults and apply `env`.
+    ///
+    /// Every key of `explicit` applies, as for a `--config` file, and wins over `repo`.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidConfig`] for an invalid value.
+    pub fn from_repo_and_explicit(
+        repo: Option<(&Path, &str)>,
+        explicit: Option<(&Path, &str)>,
+        env: EnvOverrides,
+    ) -> Result<Self, Error> {
+        let mut layers = Layers::default();
+        if let Some((path, contents)) = repo {
+            layers = layers.repo(FileContents::new(path, contents)?);
+        }
+        if let Some((path, contents)) = explicit {
+            layers = layers.trusted(
                 FileContents::new(path, contents)?,
                 Source::Explicit {
                     path: path.to_path_buf(),
                 },
-            )
-            .extract(env)
+            );
+        }
+        layers.extract(env)
     }
 
     /// Return the highest-precedence config file in [`Config::sources`].
@@ -1937,6 +1957,30 @@ mod tests {
                 },
             ]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_from_repo_and_explicit_layers_the_explicit_file_last() -> Result<(), Error> {
+        let config = Config::from_repo_and_explicit(
+            Some((
+                Path::new("actup.toml"),
+                "[policy]\nbump = \"minor\"\npin = \"tag\"\n",
+            )),
+            Some((Path::new("ci/actup.toml"), "[policy]\npin = \"sha\"\n")),
+            EnvOverrides::default(),
+        )?;
+
+        assert_eq!(config.policy.bump, crate::policy::Update::Minor);
+        assert_eq!(config.policy.pin, crate::policy::Style::Sha);
+        assert_eq!(config.loaded_from(), Some(Path::new("ci/actup.toml")));
+
+        let repo_only = Config::from_repo_and_explicit(
+            Some((Path::new("actup.toml"), "[policy]\nbump = \"minor\"\n")),
+            None,
+            EnvOverrides::default(),
+        )?;
+        assert_eq!(repo_only.loaded_from(), Some(Path::new("actup.toml")));
         Ok(())
     }
 

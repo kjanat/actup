@@ -219,7 +219,15 @@ fn run_actions_check(worktree: Option<&zed::Worktree>) -> Result<SlashCommandOut
     let worktree = worktree.ok_or("no worktree available")?;
 
     let shell_env = worktree.shell_env();
-    let config = read_config(|path| worktree.read_text_file(path), &shell_env)?;
+    let config_path = LspSettings::for_worktree("actup-lsp", worktree)
+        .ok()
+        .and_then(|settings| settings.initialization_options)
+        .and_then(|options| config_path_option(&options));
+    let config = read_config(
+        |path| worktree.read_text_file(path),
+        &shell_env,
+        config_path.as_deref(),
+    )?;
 
     // Discover and read workflow files
     let files = discover_workflow_files(worktree);
@@ -415,9 +423,10 @@ fn config_note(config: &Config) -> String {
                         ignored.iter().map(|key| format!("`{key}`")).collect();
                     format!("`{}` (ignored {})", path.display(), ignored.join(", "))
                 }
-                ConfigSource::User { path }
-                | ConfigSource::Repo { path, .. }
-                | ConfigSource::Explicit { path } => format!("`{}`", path.display()),
+                ConfigSource::Explicit { path } => format!("`{}` (`configPath`)", path.display()),
+                ConfigSource::User { path } | ConfigSource::Repo { path, .. } => {
+                    format!("`{}`", path.display())
+                }
             })
             .collect::<Vec<_>>()
             .join(", ")
@@ -457,19 +466,40 @@ fn api_base_for_host(host: &str) -> String {
     }
 }
 
+fn config_path_option(options: &zed::serde_json::Value) -> Option<String> {
+    let path = options.get("configPath")?.as_str()?.trim();
+    (!path.is_empty()).then(|| path.to_owned())
+}
+
+fn file_parts((path, contents): &(String, String)) -> (&Path, &str) {
+    (Path::new(path.as_str()), contents.as_str())
+}
+
 fn read_config(
     read: impl Fn(&str) -> Result<String, String>,
     shell_env: &[(String, String)],
+    config_path: Option<&str>,
 ) -> Result<Config, String> {
     let env = EnvOverrides::from_vars(shell_env.iter().map(|(name, value)| (name, value)));
-    let file = repo_candidates().find_map(|candidate| {
-        let path = candidate.relative();
-        read(&path).ok().map(|contents| (path, contents))
-    });
-    let file = file
-        .as_ref()
-        .map(|(path, contents)| (Path::new(path), contents.as_str()));
-    Config::from_contents(file, env).map_err(|e| actup_core::error::chain(&e))
+    let discovered = repo_candidates()
+        .find_map(|candidate| {
+            let path = candidate.relative();
+            read(&path).ok().map(|contents| (path, contents))
+        })
+        .filter(|(path, _)| Some(path.as_str()) != config_path);
+    let explicit = config_path
+        .map(|path| {
+            read(path)
+                .map(|contents| (path.to_owned(), contents))
+                .map_err(|e| format!("cannot read configPath `{path}`: {e}"))
+        })
+        .transpose()?;
+    Config::from_repo_and_explicit(
+        discovered.as_ref().map(file_parts),
+        explicit.as_ref().map(file_parts),
+        env,
+    )
+    .map_err(|e| actup_core::error::chain(&e))
 }
 
 /// Discover workflow and action files from the worktree.
@@ -758,7 +788,7 @@ mod tests {
     fn read_config_rejects_invalid_policy() {
         let files = HashMap::from([("actup.toml", "[policy]\nbump = \"sideways\"\n")]);
         let requested = RefCell::new(Vec::new());
-        let Err(error) = read_config(read_from(&files, &requested), &[]) else {
+        let Err(error) = read_config(read_from(&files, &requested), &[], None) else {
             panic!("invalid config must not parse");
         };
         assert!(error.contains("actup.toml"), "{error}");
@@ -769,7 +799,7 @@ mod tests {
     fn read_config_rejects_renamed_key() {
         let files = HashMap::from([(".github/actup.yaml", "update_policy: patch\n")]);
         let requested = RefCell::new(Vec::new());
-        let Err(error) = read_config(read_from(&files, &requested), &[]) else {
+        let Err(error) = read_config(read_from(&files, &requested), &[], None) else {
             panic!("renamed key must not parse");
         };
         assert!(error.contains(".github/actup.yaml"), "{error}");
@@ -783,7 +813,7 @@ mod tests {
     fn read_config_reads_github_yaml() -> Result<(), String> {
         let files = HashMap::from([(".github/actup.yaml", "policy:\n  bump: minor\n")]);
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested), &[])?;
+        let config = read_config(read_from(&files, &requested), &[], None)?;
         assert_eq!(config.policy.bump, policy::Update::Minor);
         assert_eq!(config.loaded_from(), Some(Path::new(".github/actup.yaml")));
         Ok(())
@@ -796,7 +826,7 @@ mod tests {
             (".github/actup.yaml", "policy:\n  bump: minor\n"),
         ]);
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested), &[])?;
+        let config = read_config(read_from(&files, &requested), &[], None)?;
         assert_eq!(config.policy.bump, policy::Update::Patch);
         assert_eq!(*requested.borrow(), ["actup.toml"]);
         Ok(())
@@ -806,7 +836,7 @@ mod tests {
     fn read_config_tries_core_candidates_in_order() -> Result<(), String> {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested), &[])?;
+        let config = read_config(read_from(&files, &requested), &[], None)?;
         assert!(config.loaded_from().is_none());
         let requested: Vec<PathBuf> = requested.borrow().iter().map(PathBuf::from).collect();
         let core: Vec<PathBuf> = iter_config_candidates(Path::new("")).collect();
@@ -826,7 +856,7 @@ mod tests {
         let files = HashMap::from([("actup.toml", "[policy]\nbump = \"minor\"\npin = \"sha\"\n")]);
         let requested = RefCell::new(Vec::new());
         let env = shell_env(&[("ACTUP_POLICY__BUMP", "patch"), ("GITHUB_TOKEN", "t")]);
-        let config = read_config(read_from(&files, &requested), &env)?;
+        let config = read_config(read_from(&files, &requested), &env, None)?;
         assert_eq!(config.policy.bump, policy::Update::Patch);
         assert_eq!(config.policy.pin, policy::Style::Sha);
         assert_eq!(config.loaded_from(), Some(Path::new("actup.toml")));
@@ -838,7 +868,7 @@ mod tests {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
         let env = shell_env(&[("actup_policy__branch", "warn")]);
-        let config = read_config(read_from(&files, &requested), &env)?;
+        let config = read_config(read_from(&files, &requested), &env, None)?;
         assert_eq!(config.policy.branch, policy::Branch::Warn);
         assert!(config.loaded_from().is_none());
         Ok(())
@@ -849,7 +879,7 @@ mod tests {
         let files = HashMap::new();
         let requested = RefCell::new(Vec::new());
         let env = shell_env(&[("ACTUP_POLICY__BUMP", "sideways")]);
-        let Err(error) = read_config(read_from(&files, &requested), &env) else {
+        let Err(error) = read_config(read_from(&files, &requested), &env, None) else {
             panic!("invalid env value must not parse");
         };
         assert!(
@@ -878,7 +908,7 @@ mod tests {
             "default_host = \"x.example\"\n[scan]\nextra_paths = [\"a.md\"]\n",
         )]);
         let requested = RefCell::new(Vec::new());
-        let config = read_config(read_from(&files, &requested), &[])?;
+        let config = read_config(read_from(&files, &requested), &[], None)?;
         assert_eq!(config.default_host, None);
         assert_eq!(
             config_note(&config),
@@ -894,7 +924,7 @@ mod tests {
         let files = HashMap::from([("actup.toml", "[policy]\nbump = \"minor\"\n")]);
         let requested = RefCell::new(Vec::new());
         let env = shell_env(&[("ACTUP_POLICY__PIN", "sha"), ("ACTUP_CACHE__TTL", "60")]);
-        let config = read_config(read_from(&files, &requested), &env)?;
+        let config = read_config(read_from(&files, &requested), &env, None)?;
         assert_eq!(
             config_note(&config),
             format!(
@@ -917,6 +947,105 @@ mod tests {
         assert_eq!(
             config_note(&Config::default()),
             format!("Config: defaults. {SCOPE}\n\n")
+        );
+    }
+
+    #[test]
+    fn config_note_names_the_config_path_file() {
+        let explicit = ConfigSource::Explicit {
+            path: PathBuf::from("ci/actup.toml"),
+        };
+        let only = Config {
+            sources: vec![explicit.clone()],
+            ..Config::default()
+        };
+        assert_eq!(
+            config_note(&only),
+            format!("Config: `ci/actup.toml` (`configPath`). {SCOPE}\n\n")
+        );
+        let both = Config {
+            sources: vec![
+                ConfigSource::Repo {
+                    path: PathBuf::from("actup.toml"),
+                    ignored: Vec::new(),
+                },
+                explicit,
+            ],
+            ..Config::default()
+        };
+        assert_eq!(
+            config_note(&both),
+            format!("Config: `actup.toml`, `ci/actup.toml` (`configPath`). {SCOPE}\n\n")
+        );
+    }
+
+    #[test]
+    fn config_path_option_reads_a_non_blank_string() {
+        let option = |value| config_path_option(&value);
+        assert_eq!(
+            option(zed::serde_json::json!({ "configPath": " ci/actup.toml " })).as_deref(),
+            Some("ci/actup.toml")
+        );
+        assert_eq!(option(zed::serde_json::json!({ "configPath": "  " })), None);
+        assert_eq!(option(zed::serde_json::json!({ "configPath": 3 })), None);
+        assert_eq!(option(zed::serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn read_config_takes_default_host_from_the_config_path_file() -> Result<(), String> {
+        let files = HashMap::from([
+            ("actup.toml", "[policy]\nbump = \"minor\"\npin = \"tag\"\n"),
+            (
+                "ci/actup.toml",
+                "default_host = \"ghe.corp.example\"\n\n[policy]\npin = \"sha\"\n",
+            ),
+        ]);
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&files, &requested), &[], Some("ci/actup.toml"))?;
+        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
+        assert_eq!(config.policy.bump, policy::Update::Minor);
+        assert_eq!(config.policy.pin, policy::Style::Sha);
+        assert_eq!(
+            config.sources,
+            [
+                ConfigSource::Repo {
+                    path: PathBuf::from("actup.toml"),
+                    ignored: Vec::new(),
+                },
+                ConfigSource::Explicit {
+                    path: PathBuf::from("ci/actup.toml"),
+                },
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_reads_a_discovered_config_path_file_once() -> Result<(), String> {
+        let files = HashMap::from([("actup.toml", "default_host = \"ghe.corp.example\"\n")]);
+        let requested = RefCell::new(Vec::new());
+        let config = read_config(read_from(&files, &requested), &[], Some("actup.toml"))?;
+        assert_eq!(config.default_host.as_deref(), Some("ghe.corp.example"));
+        assert_eq!(
+            config.sources,
+            [ConfigSource::Explicit {
+                path: PathBuf::from("actup.toml"),
+            }]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_config_rejects_a_missing_config_path_file() {
+        let files = HashMap::new();
+        let requested = RefCell::new(Vec::new());
+        let Err(error) = read_config(read_from(&files, &requested), &[], Some("ci/actup.toml"))
+        else {
+            panic!("a missing configPath file must fail");
+        };
+        assert!(
+            error.starts_with("cannot read configPath `ci/actup.toml`"),
+            "{error}"
         );
     }
 
