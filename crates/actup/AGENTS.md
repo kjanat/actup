@@ -65,9 +65,8 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
   `actup_core::sanitize_for_terminal` (multi-line error text) before styling it;
   JSON and TOML stay raw
 - `--dry-run` for update/fix/pin shows changes without applying
-- Feature flags `github`, `gitlab`, `gitea` are placeholders that compile
-  nothing; `default = ["github"]`
-- `actup-provider-github` is always compiled in
+- Default features `gitlab` and `gitea` compile in their providers;
+  `actup-provider-github` is always compiled in
 
 ## Provider Wiring
 
@@ -78,7 +77,7 @@ Binary crate. Entry point: `main.rs`. All user-facing output here.
 
 ## Tests
 
-- Integration tests in `tests/cli_integration.rs` (834 lines, 41 tests)
+- Integration tests in `tests/cli_integration.rs`
 - Process tests in `tests/cli_process.rs` run the binary with an explicit
   `--config` whose `[hosts."actup-e2e.invalid"] api_base` points at a wiremock
   server; the git fetch fails on the `.invalid` host and REST serves the

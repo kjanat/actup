@@ -5,12 +5,10 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
-use actup_providers::{
-    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
-};
+use actup_providers::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE};
 use reqwest::{
     Client, Response, StatusCode,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -20,9 +18,6 @@ use tracing::{debug, warn};
 use crate::types::{
     GitLabBranch, GitLabCommit, GitLabError, GitLabFile, GitLabProject, GitLabTag, GitLabTreeEntry,
 };
-
-/// Default items per page
-pub const DEFAULT_PER_PAGE: u8 = MAX_PER_PAGE;
 
 /// HTTP client configured for GitLab API
 #[derive(Debug, Clone)]
@@ -136,12 +131,7 @@ impl GitLabClient {
         urlencoding::encode(&path).to_string()
     }
 
-    /// List tags for a project (paginated, fetches all)
-    ///
-    /// # Arguments
-    /// * `owner` - Project owner/namespace
-    /// * `repo` - Project name
-    /// * `per_page` - Items per page (clamped to 1..=100)
+    /// List the first `max_tags` tags of a project, newest first.
     ///
     /// # Errors
     ///
@@ -150,14 +140,13 @@ impl GitLabClient {
         &self,
         owner: &str,
         repo: &str,
-        per_page: Option<u8>,
+        max_tags: NonZeroU8,
     ) -> Result<Vec<GitLabTag>> {
-        let per_page = per_page
-            .unwrap_or(DEFAULT_PER_PAGE)
-            .clamp(MIN_PER_PAGE, MAX_PER_PAGE);
+        let max_tags = usize::from(max_tags.get());
+        let per_page = max_tags.min(usize::from(MAX_PER_PAGE));
 
         let project_id = Self::encode_project_path(owner, repo);
-        let mut all_tags = Vec::new();
+        let mut all_tags = Vec::with_capacity(max_tags);
         let mut page = 1;
 
         loop {
@@ -169,7 +158,6 @@ impl GitLabClient {
 
             let response = self.get(&url).await?;
 
-            // Check if there are more pages
             let has_next = response
                 .headers()
                 .get("x-next-page")
@@ -178,14 +166,11 @@ impl GitLabClient {
                 .is_some();
 
             let tags: Vec<GitLabTag> = self.handle_response(response, owner, repo).await?;
+            let remaining = max_tags - all_tags.len();
+            let is_empty = tags.is_empty();
+            all_tags.extend(tags.into_iter().take(remaining));
 
-            if tags.is_empty() {
-                break;
-            }
-
-            all_tags.extend(tags);
-
-            if !has_next {
+            if is_empty || !has_next || all_tags.len() >= max_tags {
                 break;
             }
 

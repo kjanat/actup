@@ -44,13 +44,11 @@ pub struct LookupResult {
 
 /// Parse `[host/]owner/repo` or `[host/]owner/repo@ref` into an [`ActionQuery`].
 fn parse_action_query(input: &str) -> Option<ActionQuery> {
-    // Split off optional @ref
     let (slug, constraint) = input.split_once('@').map_or((input, None), |(slug, r)| {
         (slug, (!r.is_empty()).then(|| r.to_string()))
     });
 
     let id = parse_action_path(slug).ok()?;
-    // A subpath is not supported for quick lookup.
     if id.subpath().is_some() {
         return None;
     }

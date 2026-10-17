@@ -22,6 +22,7 @@ serde           = { workspace = true }  # Serialization
 serde_json      = { workspace = true }  # JSON parsing
 tokio           = { workspace = true }  # Async runtime
 tracing         = { workspace = true }  # Logging
+urlencoding     = { workspace = true }  # URL encoding for refs and paths
 
 [dev-dependencies]
 wiremock = { workspace = true }

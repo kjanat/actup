@@ -190,6 +190,66 @@ async fn get_versions_follows_the_next_page_header() -> TestResult {
     Ok(())
 }
 
+async fn serve_tag_page(server: &MockServer, page: u32, per_page: &str, names: &[&str]) {
+    let body: Vec<String> = names.iter().map(|name| tag(name, COMMIT_A)).collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{PROJECT}/repository/tags")))
+        .and(query_param("page", page.to_string()))
+        .and(query_param("per_page", per_page))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("x-next-page", (page + 1).to_string())
+                .set_body_string(format!("[{}]", body.join(","))),
+        )
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+fn tag_names(set: &actup_core::version::Set) -> Vec<&str> {
+    set.semver_tags()
+        .iter()
+        .map(|t| t.version().as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn get_versions_stops_at_max_tags() -> TestResult {
+    let server = MockServer::start().await;
+    serve_tag_page(&server, 1, "3", &["v4.0.0", "v3.0.0"]).await;
+    serve_tag_page(&server, 2, "3", &["v2.0.0", "v1.0.0"]).await;
+    serve_project(&server).await;
+
+    let max_tags = NonZeroU8::new(3).ok_or("zero")?;
+    let set = provider(&server)?
+        .max_tags(max_tags)
+        .get_versions(&repo())
+        .await?;
+
+    assert_eq!(tag_names(&set), ["v4.0.0", "v3.0.0", "v2.0.0"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn registration_passes_max_tags_per_repo() -> TestResult {
+    let server = MockServer::start().await;
+    serve_tag_page(&server, 1, "1", &["v2.0.0", "v1.0.0"]).await;
+    serve_project(&server).await;
+    let provider = (REGISTRATION.create)(ProviderConfig {
+        host: "gitlab.com".into(),
+        kind: HostKind::GitLab,
+        api_base: format!("{}/api/v4", server.uri()),
+        token_env: Some("_ACTUP_TEST_UNSET_GITLAB_TOKEN".into()),
+        api_mode: ApiMode::Rest,
+        max_tags_per_repo: NonZeroU8::MIN,
+    })?;
+
+    let set = provider.get_versions(&repo()).await?;
+
+    assert_eq!(tag_names(&set), ["v2.0.0"]);
+    Ok(())
+}
+
 #[tokio::test]
 async fn get_versions_of_a_missing_project_is_not_found() -> TestResult {
     let error = versions_error(404, r#"{"message": "404 Project Not Found"}"#).await?;

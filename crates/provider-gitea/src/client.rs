@@ -5,12 +5,10 @@
 
 #![allow(clippy::missing_errors_doc)] // All async methods return Result with obvious error conditions
 
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
-use actup_providers::{
-    DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE, MIN_PER_PAGE,
-};
+use actup_providers::{DEFAULT_MAX_RETRIES, DEFAULT_RETRY_BASE_DELAY_MS, MAX_PER_PAGE};
 use reqwest::{
     Client, Response, StatusCode,
     header::{HeaderMap, HeaderValue, USER_AGENT},
@@ -21,8 +19,12 @@ use crate::types::{
     GiteaArchive, GiteaBranch, GiteaCommit, GiteaContent, GiteaError, GiteaRepository, GiteaTag,
 };
 
-/// Default items per page
-pub const DEFAULT_PER_PAGE: u8 = 50; // Gitea recommends 50
+fn encode_path(path: &str) -> String {
+    path.split('/')
+        .map(|segment| urlencoding::encode(segment).into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 /// HTTP client configured for Gitea API
 #[derive(Debug, Clone)]
@@ -114,12 +116,16 @@ impl GiteaClient {
         &self.host
     }
 
-    /// List tags for a repository (paginated, fetches all)
-    ///
-    /// # Arguments
-    /// * `owner` - Repository owner
-    /// * `repo` - Repository name
-    /// * `per_page` - Items per page (clamped to 1..=100)
+    fn repo_url(&self, owner: &str, repo: &str) -> String {
+        format!(
+            "{}/repos/{}/{}",
+            self.api_base,
+            urlencoding::encode(owner),
+            urlencoding::encode(repo)
+        )
+    }
+
+    /// List the first `max_tags` tags of a repository, newest first.
     ///
     /// # Errors
     ///
@@ -128,34 +134,28 @@ impl GiteaClient {
         &self,
         owner: &str,
         repo: &str,
-        per_page: Option<u8>,
+        max_tags: NonZeroU8,
     ) -> Result<Vec<GiteaTag>> {
-        let per_page = per_page
-            .unwrap_or(DEFAULT_PER_PAGE)
-            .clamp(MIN_PER_PAGE, MAX_PER_PAGE);
+        let max_tags = usize::from(max_tags.get());
+        let per_page = max_tags.min(usize::from(MAX_PER_PAGE));
 
-        let mut all_tags = Vec::new();
+        let mut all_tags = Vec::with_capacity(max_tags);
         let mut page = 1;
 
         loop {
             let url = format!(
-                "{}/repos/{owner}/{repo}/tags?page={page}&limit={per_page}",
-                self.api_base
+                "{}/tags?page={page}&limit={per_page}",
+                self.repo_url(owner, repo)
             );
             debug!(url = %url, page = page, "fetching tags page");
 
             let response = self.get(&url).await?;
             let tags: Vec<GiteaTag> = self.handle_response(response, owner, repo).await?;
+            let is_last_page = tags.len() < per_page;
+            let remaining = max_tags - all_tags.len();
+            all_tags.extend(tags.into_iter().take(remaining));
 
-            if tags.is_empty() {
-                break;
-            }
-
-            // Check if this is the last page before extending
-            let is_last_page = tags.len() < per_page as usize;
-            all_tags.extend(tags);
-
-            if is_last_page {
+            if is_last_page || all_tags.len() >= max_tags {
                 break;
             }
 
@@ -171,7 +171,7 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or repo not found.
     pub async fn get_repo(&self, owner: &str, repo: &str) -> Result<GiteaRepository> {
-        let url = format!("{}/repos/{owner}/{repo}", self.api_base);
+        let url = self.repo_url(owner, repo);
         debug!(url = %url, "fetching repo info");
 
         let response = self.get(&url).await?;
@@ -197,7 +197,11 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or branch not found.
     pub async fn get_branch(&self, owner: &str, repo: &str, branch: &str) -> Result<GiteaBranch> {
-        let url = format!("{}/repos/{owner}/{repo}/branches/{branch}", self.api_base);
+        let url = format!(
+            "{}/branches/{}",
+            self.repo_url(owner, repo),
+            encode_path(branch)
+        );
         debug!(url = %url, branch = %branch, "fetching branch info");
 
         let response = self.get(&url).await?;
@@ -217,8 +221,10 @@ impl GiteaClient {
         ref_name: &str,
     ) -> Result<GiteaContent> {
         let url = format!(
-            "{}/repos/{owner}/{repo}/contents/{path}?ref={ref_name}",
-            self.api_base
+            "{}/contents/{}?ref={}",
+            self.repo_url(owner, repo),
+            encode_path(path),
+            urlencoding::encode(ref_name)
         );
         debug!(url = %url, path = %path, ref_name = %ref_name, "fetching file");
 
@@ -232,7 +238,7 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or tag not found.
     pub async fn get_tag(&self, owner: &str, repo: &str, tag: &str) -> Result<GiteaTag> {
-        let url = format!("{}/repos/{owner}/{repo}/tags/{tag}", self.api_base);
+        let url = format!("{}/tags/{}", self.repo_url(owner, repo), encode_path(tag));
         debug!(url = %url, tag = %tag, "fetching tag info");
 
         let response = self.get(&url).await?;
@@ -284,7 +290,11 @@ impl GiteaClient {
     ///
     /// Returns error on network failure, rate limit, auth failure, or commit not found.
     pub async fn get_commit(&self, owner: &str, repo: &str, sha: &str) -> Result<GiteaCommit> {
-        let url = format!("{}/repos/{owner}/{repo}/git/commits/{sha}", self.api_base);
+        let url = format!(
+            "{}/git/commits/{}",
+            self.repo_url(owner, repo),
+            urlencoding::encode(sha)
+        );
         debug!(url = %url, sha = %sha, "fetching commit");
 
         let response = self.get(&url).await?;

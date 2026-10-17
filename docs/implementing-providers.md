@@ -37,6 +37,7 @@ serde           = { workspace = true }
 serde_json      = { workspace = true }
 tokio           = { workspace = true }
 tracing         = { workspace = true }
+urlencoding     = { workspace = true }
 
 [lints]
 workspace = true
@@ -82,7 +83,7 @@ commit SHA the tag points to. For annotated tags, return the peeled commit SHA.
 Create `src/client.rs`:
 
 ```rust
-use std::{sync::Arc, time::Duration};
+use std::{num::NonZeroU8, sync::Arc, time::Duration};
 
 use actup_core::{Error, Result};
 use reqwest::{
@@ -134,11 +135,23 @@ impl YourClient {
         })
     }
 
-    pub async fn list_tags(&self, owner: &str, repo: &str) -> Result<Vec<YourTag>> {
-        // Implement pagination logic for your API
-        let url = format!("{}/repos/{owner}/{repo}/tags", self.api_base);
+    /// The first `max_tags` tags, newest first.
+    pub async fn list_tags(
+        &self,
+        owner: &str,
+        repo: &str,
+        max_tags: NonZeroU8,
+    ) -> Result<Vec<YourTag>> {
+        // Page through your API and stop once `max_tags` tags are collected
+        let url = format!(
+            "{}/repos/{}/{}/tags?limit={max_tags}",
+            self.api_base,
+            urlencoding::encode(owner),
+            urlencoding::encode(repo)
+        );
         let response = self.get(&url).await?;
-        self.handle_response(response, owner, repo).await
+        let tags: Vec<YourTag> = self.handle_response(response, owner, repo).await?;
+        Ok(tags.into_iter().take(usize::from(max_tags.get())).collect())
     }
 
     // `get_repo`, `get_branch`, `resolve_ref` and `get_file` follow the same pattern
@@ -210,6 +223,8 @@ impl YourClient {
 Create `src/provider.rs`:
 
 ```rust
+use std::num::NonZeroU8;
+
 use actup_core::{
     ActionRepoId, Error, Result,
     compat::BoxFuture,
@@ -224,6 +239,7 @@ use crate::client::YourClient;
 pub struct YourProvider {
     client: YourClient,
     host: String,
+    max_tags: NonZeroU8,
 }
 
 impl YourProvider {
@@ -237,7 +253,15 @@ impl YourProvider {
         Ok(Self {
             client: YourClient::new(api_base, host, token)?,
             host: host.to_string(),
+            max_tags: actup_core::config::DEFAULT_MAX_TAGS_PER_REPO,
         })
+    }
+
+    /// Fetch at most `max_tags` tags per repository.
+    #[must_use]
+    pub const fn max_tags(mut self, max_tags: NonZeroU8) -> Self {
+        self.max_tags = max_tags;
+        self
     }
 }
 
@@ -256,7 +280,10 @@ impl Provider for YourProvider {
         let repo_name = repo.repo().to_string();
 
         Box::pin(async move {
-            let tags = self.client.list_tags(&owner, &repo_name).await?;
+            let tags = self
+                .client
+                .list_tags(&owner, &repo_name, self.max_tags)
+                .await?;
             let mut version_set = process_tags(tags);
 
             // Get default branch
@@ -455,10 +482,12 @@ fn create_provider(config: ProviderConfig) -> actup_core::Result<Box<dyn Provide
         api_base,
         host,
         token_env,
+        max_tags_per_repo,
         ..
     } = config;
     let token = std::env::var(&token_env).ok();
-    let provider = YourProvider::new(&api_base, &host, token.as_deref())?;
+    let provider =
+        YourProvider::new(&api_base, &host, token.as_deref())?.max_tags(max_tags_per_repo);
     Ok(Box::new(provider))
 }
 ```
@@ -502,7 +531,8 @@ actup-provider-yourplatform = { workspace = true, optional = true }
 yourplatform = ["dep:actup-provider-yourplatform"]
 ```
 
-In `crates/lsp/Cargo.toml`, add the crate as a dependency:
+In `crates/lsp/Cargo.toml` and `crates/mcp/Cargo.toml`, add the crate as a
+dependency:
 
 ```toml
 [dependencies]
@@ -521,7 +551,10 @@ let registrations = vec![
 ```
 
 Add it to `available_registrations()` in `crates/lsp/src/provider_setup.rs`
-without the `#[cfg]` line.
+without the `#[cfg]` line, and to `REGISTRATIONS` in `crates/mcp/src/lib.rs`
+with the array length raised by one. The test
+`registrations_cover_every_provider` in `crates/mcp/src/lib.rs` lists the
+expected `HostKind`s.
 
 ## Common Patterns
 
@@ -561,7 +594,10 @@ fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<version::Set
 
     Box::pin(async move {
         // Now safe to use self.client because we're not holding repo reference
-        let tags = self.client.list_tags(&owner, &repo_name).await?;
+        let tags = self
+            .client
+            .list_tags(&owner, &repo_name, self.max_tags)
+            .await?;
         // ...
     })
 }
@@ -584,23 +620,28 @@ Box::pin(async move {
 - Uses `/repos/{owner}/{repo}/tags`
 - Pagination via Link header: `<url>; rel="next"`
 - Auth: `Authorization: Bearer {token}`
-- Default per_page: 100 (max)
+- `per_page` is `max_tags_per_repo` up to 100; paging stops at
+  `max_tags_per_repo` tags
 
 ### GitLab
 
 - Uses `/projects/{owner}%2F{repo}/repository/tags` (URL-encoded path!)
 - Pagination via `x-next-page` header
 - Auth: `PRIVATE-TOKEN: {token}`
-- Default per_page: 100 (max)
+- `per_page` is `max_tags_per_repo` up to 100; paging stops at
+  `max_tags_per_repo` tags or without `x-next-page`
 - **Gotcha**: Project paths must be URL-encoded (use `urlencoding` crate)
 
 ### Gitea/Forgejo
 
 - Uses `/repos/{owner}/{repo}/tags`
-- Pagination via `page` parameter (no header indicator for next page)
+- Pagination via `page` and `limit` parameters (no header indicator for next
+  page)
 - Auth: `Authorization: token {token}` (note: "token", not "Bearer")
-- Default per_page: 50 (recommended)
-- Stop when empty array returned
+- `limit` is `max_tags_per_repo` up to 100; paging stops at `max_tags_per_repo`
+  tags or after a page shorter than `limit`
+- **Gotcha**: Percent-encode each path segment and the `ref` query value. A raw
+  `+` reads as a space and a raw `#` cuts the URL
 
 ## Version Processing
 
@@ -611,7 +652,7 @@ the fetched tags to it:
 ```rust
 use actup_providers::process_tags;
 
-let tags: Vec<YourTag> = self.client.list_tags(&owner, &repo_name).await?;
+let tags: Vec<YourTag> = self.client.list_tags(&owner, &repo_name, self.max_tags).await?;
 let mut version_set = process_tags(tags);
 ```
 
@@ -723,8 +764,11 @@ if encoding == "base64" {
 - [ ] Crate added to `default-members` and `[workspace.dependencies]` in the
       workspace `Cargo.toml`
 - [ ] Optional dependency and feature added to `crates/actup/Cargo.toml`
-- [ ] Dependency added to `crates/lsp/Cargo.toml`
-- [ ] `REGISTRATION` wired into both `available_registrations()` functions
+- [ ] Dependency added to `crates/lsp/Cargo.toml` and `crates/mcp/Cargo.toml`
+- [ ] `REGISTRATION` wired into both `available_registrations()` functions and
+      MCP `REGISTRATIONS`
+- [ ] `create` passes `max_tags_per_repo` to the provider, and `list_tags` stops
+      at it
 - [ ] Tests added to `tests/integration.rs`
 - [ ] Documentation includes usage examples
 - [ ] Follows Rust API guidelines (C-CASE, C-GETTER, etc.)

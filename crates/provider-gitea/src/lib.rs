@@ -48,7 +48,7 @@ use actup_core::{
     config::registration::{Capabilities, Preset, ProviderConfig, Registration},
     provider::Provider,
 };
-pub use client::{DEFAULT_PER_PAGE, GiteaClient};
+pub use client::GiteaClient;
 pub use provider::GiteaProvider;
 pub use types::*;
 
@@ -93,10 +93,12 @@ fn create_gitea_provider(
         host,
         api_base,
         token_env,
+        max_tags_per_repo,
         ..
     }: ProviderConfig,
 ) -> actup_core::Result<Box<dyn Provider>> {
     let token = token_env.and_then(|var| std::env::var(var).ok());
-    let provider = GiteaProvider::new(&api_base, &host, token.as_deref())?;
+    let provider =
+        GiteaProvider::new(&api_base, &host, token.as_deref())?.max_tags(max_tags_per_repo);
     Ok(Box::new(provider))
 }

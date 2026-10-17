@@ -1,8 +1,11 @@
 //! GitLab provider implementation
 
+use std::num::NonZeroU8;
+
 use actup_core::{
     action_ref::ActionRepoId,
     compat::BoxFuture,
+    config::DEFAULT_MAX_TAGS_PER_REPO,
     error::Result,
     provider::{self, ActionYml, Provider, Sha40},
     version,
@@ -17,6 +20,7 @@ use crate::client::GitLabClient;
 pub struct GitLabProvider {
     client: GitLabClient,
     host: String,
+    max_tags: NonZeroU8,
 }
 
 impl GitLabProvider {
@@ -30,6 +34,7 @@ impl GitLabProvider {
         Ok(Self {
             host: crate::GITLAB_HOST.to_string(),
             client,
+            max_tags: DEFAULT_MAX_TAGS_PER_REPO,
         })
     }
 
@@ -49,7 +54,15 @@ impl GitLabProvider {
         Ok(Self {
             host: host.to_string(),
             client,
+            max_tags: DEFAULT_MAX_TAGS_PER_REPO,
         })
+    }
+
+    /// Fetch at most `max_tags` tags per repository.
+    #[must_use]
+    pub const fn max_tags(mut self, max_tags: NonZeroU8) -> Self {
+        self.max_tags = max_tags;
+        self
     }
 }
 
@@ -70,7 +83,10 @@ impl Provider for GitLabProvider {
             debug!(owner = %owner, repo = %repo_name, "fetching versions from GitLab");
 
             // Get tags
-            let tags = self.client.list_tags(&owner, &repo_name, None).await?;
+            let tags = self
+                .client
+                .list_tags(&owner, &repo_name, self.max_tags)
+                .await?;
 
             // Process into [`version::Set`]
             let mut version_set = process_tags(tags);

@@ -5,9 +5,7 @@ use std::num::NonZeroU8;
 use actup_core::{
     ActionRepoId, ApiMode, Error, HostKind, Provider, config::registration::ProviderConfig,
 };
-use actup_provider_gitea::{
-    CODEBERG_API_BASE, CODEBERG_HOST, DEFAULT_PER_PAGE, GiteaProvider, REGISTRATION,
-};
+use actup_provider_gitea::{CODEBERG_API_BASE, CODEBERG_HOST, GiteaProvider, REGISTRATION};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
@@ -172,38 +170,94 @@ async fn get_versions_reads_tags_and_the_default_branch() -> TestResult {
     Ok(())
 }
 
+async fn serve_tag_page(server: &MockServer, page: u32, limit: &str, names: &[String]) {
+    let body: Vec<String> = names.iter().map(|name| tag(name, COMMIT_A)).collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/tags")))
+        .and(query_param("page", page.to_string()))
+        .and(query_param("limit", limit))
+        .respond_with(ResponseTemplate::new(200).set_body_string(format!("[{}]", body.join(","))))
+        .expect(1)
+        .mount(server)
+        .await;
+}
+
+fn patches(minor: u32, count: u32) -> Vec<String> {
+    (0..count)
+        .map(|patch| format!("v1.{minor}.{patch}"))
+        .collect()
+}
+
+fn max_tags(n: u8) -> Result<NonZeroU8, &'static str> {
+    NonZeroU8::new(n).ok_or("zero")
+}
+
 #[tokio::test]
 async fn get_versions_reads_the_next_page_after_a_full_page() -> TestResult {
     let server = MockServer::start().await;
-    let full_page: Vec<String> = (0..DEFAULT_PER_PAGE)
-        .map(|patch| tag(&format!("v1.0.{patch}"), COMMIT_A))
-        .collect();
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/tags")))
-        .and(query_param("page", "1"))
-        .and(query_param("limit", DEFAULT_PER_PAGE.to_string()))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_string(format!("[{}]", full_page.join(","))),
-        )
-        .mount(&server)
-        .await;
-    Mock::given(method("GET"))
-        .and(path(format!("{REPO}/tags")))
-        .and(query_param("page", "2"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_string(format!("[{}]", tag("v2.0.0", COMMIT_B))),
-        )
-        .mount(&server)
-        .await;
+    serve_tag_page(&server, 1, "100", &patches(0, 100)).await;
+    serve_tag_page(&server, 2, "100", &["v2.0.0".to_string()]).await;
     serve_repository(&server).await;
 
-    let set = provider(&server)?.get_versions(&repo()).await?;
+    let set = provider(&server)?
+        .max_tags(max_tags(150)?)
+        .get_versions(&repo())
+        .await?;
 
-    assert_eq!(set.semver_tags().len(), usize::from(DEFAULT_PER_PAGE) + 1);
+    assert_eq!(set.semver_tags().len(), 101);
     assert_eq!(
         set.latest().map(|latest| latest.version().as_str()),
         Some("v2.0.0")
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_versions_stops_at_max_tags() -> TestResult {
+    let server = MockServer::start().await;
+    serve_tag_page(&server, 1, "100", &patches(0, 100)).await;
+    serve_tag_page(&server, 2, "100", &patches(1, 100)).await;
+    serve_repository(&server).await;
+
+    let set = provider(&server)?
+        .max_tags(max_tags(150)?)
+        .get_versions(&repo())
+        .await?;
+
+    assert_eq!(set.semver_tags().len(), 150);
+    assert_eq!(set.tag_sha("v1.1.49"), Some(COMMIT_A));
+    assert_eq!(set.tag_sha("v1.1.50"), None);
+    Ok(())
+}
+
+#[tokio::test]
+async fn registration_passes_max_tags_per_repo() -> TestResult {
+    let server = MockServer::start().await;
+    serve_tag_page(
+        &server,
+        1,
+        "1",
+        &["v2.0.0".to_string(), "v1.0.0".to_string()],
+    )
+    .await;
+    serve_repository(&server).await;
+    let provider = (REGISTRATION.create)(ProviderConfig {
+        host: "codeberg.org".into(),
+        kind: HostKind::Gitea,
+        api_base: format!("{}/api/v1", server.uri()),
+        token_env: Some("_ACTUP_TEST_UNSET_GITEA_TOKEN".into()),
+        api_mode: ApiMode::Rest,
+        max_tags_per_repo: NonZeroU8::MIN,
+    })?;
+
+    let set = provider.get_versions(&repo()).await?;
+
+    let names: Vec<&str> = set
+        .semver_tags()
+        .iter()
+        .map(|t| t.version().as_str())
+        .collect();
+    assert_eq!(names, ["v2.0.0"]);
     Ok(())
 }
 
@@ -302,6 +356,52 @@ async fn resolve_a_branch_after_the_tag_lookup_misses() -> TestResult {
         .await?;
 
     assert_eq!(sha.as_str(), HEAD);
+    Ok(())
+}
+
+#[tokio::test]
+async fn resolve_encodes_a_hash_in_the_ref() -> TestResult {
+    let server = MockServer::start().await;
+    get(
+        &server,
+        &format!("{REPO}/branches/feat%231"),
+        200,
+        &branch("feat#1", HEAD),
+    )
+    .await;
+    get(
+        &server,
+        &format!("{REPO}/branches/feat"),
+        200,
+        &branch("feat", COMMIT_A),
+    )
+    .await;
+
+    let sha = provider(&server)?
+        .resolve_ref_to_sha(&repo(), "feat#1")
+        .await?;
+
+    assert_eq!(sha.as_str(), HEAD);
+    Ok(())
+}
+
+#[tokio::test]
+async fn get_action_yml_encodes_a_plus_in_the_ref() -> TestResult {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/contents/action.yml")))
+        .and(query_param("ref", "v1.0.0+build"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_string(content("action.yml", "name: Plus\n")),
+        )
+        .mount(&server)
+        .await;
+
+    let action = provider(&server)?
+        .get_action_yml(&repo(), "v1.0.0+build")
+        .await?;
+
+    assert_eq!(action.name(), Some("Plus"));
     Ok(())
 }
 
