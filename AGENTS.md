@@ -211,8 +211,11 @@ Never let GitHub + GitHub Enterprise collide in cache.
    - `actup.yaml` / `actup.yml` (optional support; TOML preferred)
 3. User/global config:
 
-   - XDG: `$XDG_CONFIG_HOME/actup/config.toml` or `~/.config/actup/config.toml`
-   - Windows: `%APPDATA%/actup/config.toml`
+   - Any OS with an absolute `XDG_CONFIG_HOME`:
+     `$XDG_CONFIG_HOME/actup/config.toml`
+   - Otherwise: `~/.config/actup/config.toml` (Linux),
+     `~/Library/Application Support/actup/config.toml` (macOS),
+     `%APPDATA%/actup/config.toml` (Windows)
 
 ### Precedence
 

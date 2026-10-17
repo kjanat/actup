@@ -4,7 +4,7 @@
 //! 1. Environment variables (ACTUP_*) - highest
 //! 2. Explicit --config path
 //! 3. Repo configs (actup.toml, .actup.toml, .config/actup.toml, etc.)
-//! 4. User/global config (~/.config/actup/config.toml) - fills gaps only
+//! 4. User/global config ([`user_config_path`]) - fills gaps only
 //! 5. Defaults (lowest)
 
 pub mod discovery;

@@ -8,7 +8,10 @@
 //!
 //! Extension priority: toml, json, jsonc, yaml, yml
 
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 /// Directories to search (relative to each ancestor)
 /// Empty string = root level
@@ -121,12 +124,23 @@ pub fn find_repo_config(start_dir: &Path) -> Option<PathBuf> {
 
 /// Get user/global config path.
 ///
+/// - Any OS with an absolute `XDG_CONFIG_HOME`: `$XDG_CONFIG_HOME/actup/config.toml`
 /// - Linux: `~/.config/actup/config.toml`
 /// - macOS: `~/Library/Application Support/actup/config.toml`
 /// - Windows: `%APPDATA%/actup/config.toml`
 #[must_use]
 pub fn user_config_path() -> Option<PathBuf> {
-    let config_dir = dirs::config_dir()?;
+    user_config_path_from(std::env::var_os("XDG_CONFIG_HOME"), dirs::config_dir)
+}
+
+fn user_config_path_from(
+    xdg_config_home: Option<OsString>,
+    platform_config_dir: impl FnOnce() -> Option<PathBuf>,
+) -> Option<PathBuf> {
+    let config_dir = xdg_config_home
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+        .or_else(platform_config_dir)?;
     Some(config_dir.join("actup").join("config.toml"))
 }
 
@@ -200,6 +214,33 @@ mod tests {
             github_yaml.path_in(Path::new("/repo")),
             PathBuf::from("/repo/.github/actup.yaml")
         );
+    }
+
+    #[test]
+    fn test_user_config_path_prefers_absolute_xdg_config_home() -> std::io::Result<()> {
+        let xdg = std::path::absolute("xdg")?;
+        let platform = std::path::absolute("platform")?;
+        let platform_config = platform.join("actup").join("config.toml");
+
+        assert_eq!(
+            user_config_path_from(Some(xdg.clone().into_os_string()), || Some(
+                platform.clone()
+            )),
+            Some(xdg.join("actup").join("config.toml"))
+        );
+        for unset in [
+            None,
+            Some(OsString::new()),
+            Some(OsString::from("relative/xdg")),
+        ] {
+            assert_eq!(
+                user_config_path_from(unset.clone(), || Some(platform.clone())),
+                Some(platform_config.clone()),
+                "{unset:?}"
+            );
+        }
+        assert_eq!(user_config_path_from(None, || None), None);
+        Ok(())
     }
 
     #[test]

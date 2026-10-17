@@ -2,17 +2,17 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    path::{Path, PathBuf},
-    sync::{
-        Arc, OnceLock,
-        atomic::{AtomicBool, Ordering},
-    },
+    path::{Component, Path, PathBuf},
+    sync::{Arc, OnceLock},
     time::Duration,
 };
 
 use actup_core::{Config, cache::Cache as _, provider};
 use dashmap::DashMap;
-use tokio::{sync::RwLock, task::AbortHandle};
+use tokio::{
+    sync::{Mutex, RwLock},
+    task::AbortHandle,
+};
 use tower_lsp_server::{
     Client, LanguageServer,
     jsonrpc::Result,
@@ -243,7 +243,7 @@ pub struct LspBackend {
     /// `--config` flag).
     config_path: RwLock<Option<PathBuf>>,
     user_config: Option<PathBuf>,
-    config_watchers_registered: AtomicBool,
+    config_watchers_registered: Mutex<bool>,
     /// Negotiated position encoding for `Position::character` columns.
     ///
     /// Set once during `initialize` based on client capabilities.
@@ -275,7 +275,7 @@ impl LspBackend {
             error_dedup: Arc::new(crate::error_ux::ErrorDeduplicator::new()),
             config_path: RwLock::new(None),
             user_config,
-            config_watchers_registered: AtomicBool::new(false),
+            config_watchers_registered: Mutex::new(false),
             position_encoding: OnceLock::new(),
         }
     }
@@ -1147,10 +1147,8 @@ impl LspBackend {
             return;
         }
 
-        if self
-            .config_watchers_registered
-            .swap(false, Ordering::SeqCst)
-        {
+        let mut registered = self.config_watchers_registered.lock().await;
+        if *registered {
             let unregistration = Unregistration {
                 id: CONFIG_WATCHER_ID.to_owned(),
                 method: DID_CHANGE_WATCHED_FILES.to_owned(),
@@ -1161,7 +1159,9 @@ impl LspBackend {
                 .await
             {
                 tracing::warn!(error = %e, "failed to unregister config file watchers");
+                return;
             }
+            *registered = false;
         }
 
         let watched = self.watched_configs().await;
@@ -1175,12 +1175,11 @@ impl LspBackend {
             register_options: serde_json::to_value(watch_options).ok(),
         };
 
-        match self.client.register_capability(vec![registration]).await {
-            Ok(()) => {
-                self.config_watchers_registered
-                    .store(true, Ordering::SeqCst);
-                tracing::info!("registered config file watchers");
-            }
+        let result = self.client.register_capability(vec![registration]).await;
+        *registered = result.is_ok();
+        drop(registered);
+        match result {
+            Ok(()) => tracing::info!("registered config file watchers"),
             Err(e) => tracing::warn!(error = %e, "failed to register config file watchers"),
         }
     }
@@ -1376,12 +1375,62 @@ fn file_watcher(file: &Path) -> Option<FileSystemWatcher> {
     relative_watcher(file.parent()?, name)
 }
 
+const fn string_watcher(glob: String) -> FileSystemWatcher {
+    FileSystemWatcher {
+        glob_pattern: GlobPattern::String(glob),
+        kind: None,
+    }
+}
+
+fn glob_escape(segment: &str) -> String {
+    let mut escaped = String::with_capacity(segment.len());
+    for c in segment.chars() {
+        if matches!(c, '*' | '?' | '[' | '{' | '}') {
+            escaped.extend(['[', c, ']']);
+        } else {
+            escaped.push(c);
+        }
+    }
+    escaped
+}
+
+fn absolute_glob(path: &Path) -> String {
+    let mut glob = String::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                glob.push_str(&glob_escape(&prefix.as_os_str().to_string_lossy()));
+            }
+            Component::RootDir => glob.push('/'),
+            Component::CurDir | Component::ParentDir | Component::Normal(_) => {
+                if !glob.is_empty() && !glob.ends_with('/') {
+                    glob.push('/');
+                }
+                glob.push_str(&glob_escape(&component.as_os_str().to_string_lossy()));
+            }
+        }
+    }
+    glob
+}
+
+fn absolute_glob_in(dir: &Path, pattern: &str) -> String {
+    let mut glob = absolute_glob(dir);
+    if !glob.ends_with('/') {
+        glob.push('/');
+    }
+    glob.push_str(pattern);
+    glob
+}
+
 fn config_file_watchers(
     watched: &WatchedConfigs,
     relative_patterns: bool,
 ) -> Vec<FileSystemWatcher> {
+    let ancestors = watched.start_dir.iter().flat_map(|start| start.ancestors());
+    let files = [&watched.user, &watched.explicit].into_iter().flatten();
+
     if !relative_patterns {
-        return candidate_groups(Path::new(""))
+        let workspace = candidate_groups(Path::new(""))
             .into_iter()
             .map(|(dir, names)| {
                 let mut segments = vec!["**".to_owned()];
@@ -1390,24 +1439,22 @@ fn config_file_watchers(
                         .map(|c| c.as_os_str().to_string_lossy().into_owned()),
                 );
                 segments.push(format!("{{{}}}", names.join(",")));
-                FileSystemWatcher {
-                    glob_pattern: GlobPattern::String(segments.join("/")),
-                    kind: None,
-                }
-            })
-            .collect();
+                string_watcher(segments.join("/"))
+            });
+        let above_root = ancestors
+            .skip(1)
+            .flat_map(|dir| candidate_groups(dir).into_iter())
+            .map(|(dir, names)| {
+                string_watcher(absolute_glob_in(&dir, &format!("{{{}}}", names.join(","))))
+            });
+        let files = files.map(|file| string_watcher(absolute_glob(file)));
+        return workspace.chain(above_root).chain(files).collect();
     }
 
-    let candidates = watched
-        .start_dir
-        .iter()
-        .flat_map(|start| start.ancestors())
+    let candidates = ancestors
         .flat_map(|dir| candidate_groups(dir).into_iter())
         .filter_map(|(dir, names)| relative_watcher(&dir, format!("{{{}}}", names.join(","))));
-    let files = [&watched.user, &watched.explicit]
-        .into_iter()
-        .flatten()
-        .filter_map(|file| file_watcher(file));
+    let files = files.filter_map(|file| file_watcher(file));
     candidates.chain(files).collect()
 }
 
@@ -1758,12 +1805,24 @@ mod tests {
         Ok(())
     }
 
+    fn slash_glob(path: &Path) -> String {
+        path.to_string_lossy().replace('\\', "/")
+    }
+
+    fn slash_glob_in(dir: &Path, pattern: &str) -> String {
+        format!("{}/{pattern}", slash_glob(dir).trim_end_matches('/'))
+    }
+
     #[test]
-    fn config_file_watchers_without_relative_patterns_use_workspace_globs() {
+    fn config_file_watchers_without_relative_patterns_use_absolute_globs() -> std::io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let start = temp.path().join("repo");
+        let user = temp.path().join("home/actup/config.toml");
+        let explicit = temp.path().join("custom.yaml");
         let watched = WatchedConfigs {
-            start_dir: Some(PathBuf::from("/repo")),
-            user: Some(PathBuf::from("/home/user/.config/actup/config.toml")),
-            explicit: None,
+            start_dir: Some(start.clone()),
+            user: Some(user.clone()),
+            explicit: Some(explicit.clone()),
         };
         let watchers = config_file_watchers(&watched, false);
         let patterns: Vec<_> = watchers
@@ -1774,14 +1833,218 @@ mod tests {
             })
             .collect();
         assert_eq!(
-            patterns,
-            [
-                format!("**/{ROOT_NAMES}"),
-                format!("**/.config/{SUBDIR_NAMES}"),
-                format!("**/.github/{SUBDIR_NAMES}"),
-            ]
+            patterns.get(..3),
+            Some(
+                &[
+                    format!("**/{ROOT_NAMES}"),
+                    format!("**/.config/{SUBDIR_NAMES}"),
+                    format!("**/.github/{SUBDIR_NAMES}"),
+                ][..]
+            )
         );
+        for expected in [
+            slash_glob_in(temp.path(), ROOT_NAMES),
+            slash_glob_in(&temp.path().join(".config"), SUBDIR_NAMES),
+            slash_glob_in(&temp.path().join(".github"), SUBDIR_NAMES),
+            slash_glob(&user),
+            slash_glob(&explicit),
+        ] {
+            assert!(
+                patterns.contains(&expected),
+                "missing {expected} in {patterns:?}"
+            );
+        }
+        let start_glob = slash_glob(&start);
+        assert!(
+            !patterns.iter().any(|p| p.starts_with(&start_glob)),
+            "{patterns:?}"
+        );
+        assert_eq!(watchers.len(), start.ancestors().count() * 3 + 2);
         assert!(watchers.iter().all(|w| w.kind.is_none()));
+        Ok(())
+    }
+
+    #[test]
+    fn absolute_glob_escapes_glob_syntax() -> std::io::Result<()> {
+        let temp = tempfile::tempdir()?;
+        let odd = temp.path().join("we*ird[x]{y}?");
+        assert_eq!(
+            absolute_glob(&odd),
+            format!("{}/we[*]ird[[]x][{{]y[}}][?]", slash_glob(temp.path()))
+        );
+        Ok(())
+    }
+
+    async fn initialized_service(
+        root: &Path,
+    ) -> std::result::Result<
+        (
+            tower_lsp_server::LspService<LspBackend>,
+            tower_lsp_server::ClientSocket,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        use tower::Service as _;
+        use tower_lsp_server::{
+            jsonrpc::Request,
+            ls_types::{
+                DidChangeWatchedFilesClientCapabilities, WorkspaceClientCapabilities,
+                WorkspaceFolder,
+            },
+        };
+
+        let (mut service, socket) =
+            tower_lsp_server::LspService::new(|client| LspBackend::with_user_config(client, None));
+        let params = InitializeParams {
+            workspace_folders: Some(vec![WorkspaceFolder {
+                uri: Uri::from_file_path(root).ok_or("bad root uri")?,
+                name: "test".to_owned(),
+            }]),
+            ..Default::default()
+        };
+        service
+            .call(
+                Request::build("initialize")
+                    .id(1)
+                    .params(serde_json::to_value(params)?)
+                    .finish(),
+            )
+            .await?;
+        service
+            .call(
+                Request::build("initialized")
+                    .params(serde_json::json!({}))
+                    .finish(),
+            )
+            .await?;
+        *service.inner().client_capabilities.write().await = ClientCapabilities {
+            workspace: Some(WorkspaceClientCapabilities {
+                did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
+                    dynamic_registration: Some(true),
+                    relative_pattern_support: Some(true),
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        Ok((service, socket))
+    }
+
+    async fn next_request(
+        socket: &mut tower_lsp_server::ClientSocket,
+    ) -> Option<tower_lsp_server::jsonrpc::Request> {
+        use futures::StreamExt as _;
+        while let Some(message) = socket.next().await {
+            if message.id().is_some() {
+                return Some(message);
+            }
+        }
+        None
+    }
+
+    async fn answer(
+        socket: &mut tower_lsp_server::ClientSocket,
+        succeed: bool,
+    ) -> std::result::Result<String, Box<dyn std::error::Error>> {
+        use futures::SinkExt as _;
+        use tower_lsp_server::jsonrpc::{Error, Response};
+
+        let request = next_request(socket).await.ok_or("socket closed")?;
+        let id = request.id().cloned().ok_or("request without id")?;
+        let response = if succeed {
+            Response::from_ok(id, serde_json::Value::Null)
+        } else {
+            Response::from_error(id, Error::internal_error())
+        };
+        socket.send(response).await?;
+        Ok(request.method().to_owned())
+    }
+
+    const REGISTER: &str = "client/registerCapability";
+    const UNREGISTER: &str = "client/unregisterCapability";
+
+    #[tokio::test]
+    async fn config_watcher_reregistrations_do_not_interleave()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+
+        let client = async {
+            let first = next_request(&mut socket).await.ok_or("no first request")?;
+            let overlapping =
+                tokio::time::timeout(Duration::from_millis(200), next_request(&mut socket)).await;
+            assert!(overlapping.is_err(), "overlapping request {overlapping:?}");
+            let id = first.id().cloned().ok_or("request without id")?;
+            futures::SinkExt::send(
+                &mut socket,
+                tower_lsp_server::jsonrpc::Response::from_ok(id, serde_json::Value::Null),
+            )
+            .await?;
+            Ok::<_, Box<dyn std::error::Error>>([
+                first.method().to_owned(),
+                answer(&mut socket, true).await?,
+                answer(&mut socket, true).await?,
+            ])
+        };
+        let ((), (), methods) = tokio::time::timeout(Duration::from_secs(10), async {
+            tokio::join!(
+                backend.register_config_watchers(),
+                backend.register_config_watchers(),
+                client
+            )
+        })
+        .await?;
+
+        assert_eq!(methods?, [REGISTER, UNREGISTER, REGISTER]);
+        assert!(*backend.config_watchers_registered.lock().await);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_config_watcher_unregister_skips_register()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let (service, mut socket) = initialized_service(temp.path()).await?;
+        let backend = service.inner();
+        let deadline = Duration::from_secs(10);
+
+        let ((), first) = tokio::time::timeout(deadline, async {
+            tokio::join!(
+                backend.register_config_watchers(),
+                answer(&mut socket, true)
+            )
+        })
+        .await?;
+        assert_eq!(first?, REGISTER);
+
+        let ((), failed) = tokio::time::timeout(deadline, async {
+            tokio::join!(
+                backend.register_config_watchers(),
+                answer(&mut socket, false)
+            )
+        })
+        .await?;
+        assert_eq!(failed?, UNREGISTER);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), next_request(&mut socket))
+                .await
+                .is_err(),
+            "register followed a failed unregister"
+        );
+        assert!(*backend.config_watchers_registered.lock().await);
+
+        let ((), retried) = tokio::time::timeout(deadline, async {
+            tokio::join!(backend.register_config_watchers(), async {
+                Ok::<_, Box<dyn std::error::Error>>([
+                    answer(&mut socket, true).await?,
+                    answer(&mut socket, true).await?,
+                ])
+            })
+        })
+        .await?;
+        assert_eq!(retried?, [UNREGISTER, REGISTER]);
+        Ok(())
     }
 
     #[tokio::test]

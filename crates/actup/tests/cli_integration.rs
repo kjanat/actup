@@ -1061,6 +1061,25 @@ mod cli_runs {
     }
 
     #[test]
+    fn check_reads_user_config_from_xdg_config_home() -> Result<(), Box<dyn std::error::Error>> {
+        let home = TempDir::new()?;
+        let repo = TempDir::new()?;
+        let user_config = home.path().join("actup").join("config.toml");
+        fs::create_dir_all(home.path().join("actup"))?;
+        fs::write(&user_config, "update_policy = \"minor\"\n")?;
+        let output = actup(home.path()).arg("check").arg(repo.path()).output()?;
+
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8(output.stderr)?;
+        assert!(
+            stderr.contains(&user_config.display().to_string()),
+            "stderr: {stderr}"
+        );
+        assert!(stderr.contains("update_policy"), "stderr: {stderr}");
+        Ok(())
+    }
+
+    #[test]
     fn config_human_shows_track_and_overrides() -> Result<(), Box<dyn std::error::Error>> {
         let repo = TempDir::new()?;
         fs::write(

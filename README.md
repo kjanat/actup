@@ -111,7 +111,9 @@ token_env = "GITLAB_TOKEN"
 
 1. `--config <path>` (explicit)
 2. Repo: `actup.toml`, `.actup.toml`, `.config/actup.toml`
-3. User: `~/.config/actup/config.toml` (XDG)
+3. User: `$XDG_CONFIG_HOME/actup/config.toml` on every OS when `XDG_CONFIG_HOME`
+   is an absolute path, otherwise `actup/config.toml` in the OS config dir
+   (`~/.config`, `~/Library/Application Support`, `%APPDATA%`)
 
 ### Environment Variables
 
