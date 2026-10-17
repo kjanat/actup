@@ -18,6 +18,8 @@ const HOST: MatchOptions = MatchOptions {
     ..SEGMENT
 };
 
+const GLOB_META: [char; 5] = ['*', '?', '[', ']', '!'];
+
 /// A glob over `[host/]owner/repo[/subpath][@ref]`.
 ///
 /// Each part is a glob where `*` stays within one `/`-separated segment and
@@ -74,14 +76,17 @@ impl FromStr for ActionPattern {
         };
 
         let mut segments: Vec<&str> = path.split('/').collect();
-        let host = if segments
-            .first()
-            .is_some_and(|s| names_host(s, segments.len()))
-        {
-            Some(segments.remove(0))
-        } else {
-            None
+        let depth = segments.len();
+        let host = match segments.first().copied() {
+            Some(first) if names_host(first, depth) => Some(Pattern::escape(first)),
+            Some(first) if names_host(&first.replace(GLOB_META, "a"), depth) => {
+                Some(first.to_owned())
+            }
+            _ => None,
         };
+        if host.is_some() {
+            segments.remove(0);
+        }
         let [owner, repo, subpath @ ..] = segments.as_slice() else {
             return Err(invalid("expected `[host/]owner/repo[/subpath][@ref]`"));
         };
@@ -91,7 +96,7 @@ impl FromStr for ActionPattern {
 
         Ok(Self {
             raw: raw.to_string(),
-            host: host.map(glob).transpose()?,
+            host: host.as_deref().map(glob).transpose()?,
             owner: glob(owner)?,
             repo: glob(repo)?,
             subpath: (!subpath.is_empty())
@@ -195,6 +200,27 @@ mod tests {
             "my.org/repo/.github",
             "my.org/repo/.github/workflows/ci.yml@main"
         )?);
+        Ok(())
+    }
+
+    #[test]
+    fn host_globs_count_as_hosts() -> Result<(), String> {
+        assert!(matches("*.corp.com/o/*", "x.corp.com/o/r@v1")?);
+        assert!(matches("*.corp.com/o/*", "X.Corp.com/o/r@v1")?);
+        assert!(!matches("*.corp.com/o/*", "x.other.com/o/r@v1")?);
+        assert!(matches("ghe.*/o/r", "ghe.corp/o/r@v1")?);
+        assert!(matches("gh[ae].corp/o/r", "ghe.corp/o/r@v1")?);
+        assert!(!matches("ghe.*/o/r", "o/r@v1")?);
+        assert!(matches("*/o/r", "a/o/r@v1")?);
+        Ok(())
+    }
+
+    #[test]
+    fn bracketed_host_is_a_literal() -> Result<(), String> {
+        assert!(matches("[::1]/o/r", "[::1]/o/r@v1")?);
+        assert!(matches("[::1]:8080/o/*", "[::1]:8080/o/r@v1")?);
+        assert!(!matches("[::1]/o/r", "[::2]/o/r@v1")?);
+        assert!(!matches("[::1]/o/r", "o/r@v1")?);
         Ok(())
     }
 

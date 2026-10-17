@@ -212,8 +212,20 @@ jobs:
 ## Provider Selection Algorithm
 
 1. **Extract host** from `uses:` reference
+   - The first segment of the path before `@` names a host when the path has at
+     least three segments and the segment is one of:
+     - `localhost`
+     - a dotted DNS name, such as `ghe.corp.com`
+     - a DNS name with a `:port`, such as `localhost:3000` or `host:8443`
+     - a bracketed IPv6 literal with an optional `:port`, such as `[::1]` or
+       `[::1]:8080`
+   - A DNS label holds ASCII letters, digits and `-`, and starts and ends with a
+     letter or digit. A port is a number from 0 to 65535.
+   - Actup lower-cases the host.
+   - Owner and repo must match `[A-Za-z0-9._-]+` and must not be `.` or `..`.
    - Explicit: `uses: gitlab.com/owner/repo@ref` → host = "gitlab.com"
    - Implicit: `uses: owner/repo@ref` → host = `default_host` from config
+   - Implicit: `uses: a.b/c@ref` has two segments, so `a.b` is the owner
 
 2. **Resolve effective host config** via `effective_host(hostname)`
    - Check preset index (built from provider `REGISTRATION` statics)

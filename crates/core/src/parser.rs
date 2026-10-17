@@ -10,7 +10,7 @@ use std::net::Ipv6Addr;
 
 use saphyr_parser::{Event, Parser, ScalarStyle, Span};
 
-use crate::{ActionRef, Error, Result};
+use crate::{ActionRef, ActionRepoId, Error, Result};
 
 /// Parse a `uses:` string into an `ActionRef`
 ///
@@ -45,7 +45,27 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
         });
     }
 
-    let segments: Vec<&str> = path_part.split('/').collect();
+    let id = parse_path(input, path_part)?;
+    Ok(Some(ActionRef::new(
+        id.host().map(str::to_owned),
+        id.owner(),
+        id.repo(),
+        id.subpath().map(str::to_owned),
+        ref_str,
+    )))
+}
+
+/// Parse the `[host/]owner/repo[/subpath]` part of a `uses:` string.
+///
+/// # Errors
+///
+/// Returns `Err` for malformed paths.
+pub fn parse_action_path(path: &str) -> Result<ActionRepoId> {
+    parse_path(path, path)
+}
+
+fn parse_path(input: &str, path: &str) -> Result<ActionRepoId> {
+    let segments: Vec<&str> = path.split('/').collect();
     let (host, rest) = match segments.split_first() {
         Some((first, rest)) if names_host(first, segments.len()) => {
             (Some(first.to_ascii_lowercase()), rest)
@@ -63,7 +83,7 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
     check_name(input, "repo", repo)?;
     let subpath = (!subpath.is_empty()).then(|| subpath.join("/"));
 
-    Ok(Some(ActionRef::new(host, *owner, *repo, subpath, ref_str)))
+    Ok(ActionRepoId::new(host, *owner, *repo, subpath))
 }
 
 fn check_name(input: &str, field: &str, name: &str) -> Result<()> {
@@ -474,6 +494,25 @@ mod tests {
                 "{uses}: {result:?}"
             );
         }
+    }
+
+    #[test]
+    fn parse_action_path_applies_the_uses_host_rule()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(
+            parse_action_path("GHE.corp/o/r/sub")?,
+            ActionRepoId::new(Some("ghe.corp".into()), "o", "r", Some("sub".into()))
+        );
+        assert_eq!(
+            parse_action_path("a.b/c")?,
+            ActionRepoId::new(None, "a.b", "c", None)
+        );
+        let result = parse_action_path("o");
+        assert!(
+            matches!(&result, Err(Error::InvalidRef { input, .. }) if input == "o"),
+            "{result:?}"
+        );
+        Ok(())
     }
 
     #[test]

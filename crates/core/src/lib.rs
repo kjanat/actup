@@ -41,7 +41,7 @@ pub use config::{
 };
 pub use discovery::{DiscoveredFile, FileKind, discover_files};
 pub use error::{Error, Result};
-pub use parser::{UsesLocation, extract_uses_from_yaml, parse_uses};
+pub use parser::{UsesLocation, extract_uses_from_yaml, parse_action_path, parse_uses};
 pub use policy::Update;
 pub use provider::Provider;
 pub use resolution::{

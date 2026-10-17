@@ -103,6 +103,22 @@ api_base  = "https://ghe.example.com/api/v3"
 token_env = "GHE_TOKEN"
 ```
 
+### Action Patterns
+
+`scan.ignore` and `[[overrides]]` patterns read a host with the `uses:` rule.
+The first segment is a host when the pattern has at least three segments and
+that segment is `localhost`, a dotted DNS name, a DNS name with a `:port`, or a
+bracketed IPv6 literal such as `[::1]`. Glob characters count as DNS name
+characters, so `*.corp.com/o/*` and `ghe.*/o/r` name hosts. A bracketed IPv6
+host matches literally.
+
+Host matching ignores case, and a ref without a host matches as `default_host`.
+A pattern without a host matches every host. Owner, repo, subpath and ref match
+case-sensitively. `*` stays within one segment and `**` spans segments.
+
+In `uses:` refs, actup lower-cases the host. Owner and repo must match
+`[A-Za-z0-9._-]+` and must not be `.` or `..`.
+
 ### Config Discovery
 
 1. `--config <path>` or LSP `configPath` (explicit). A relative path resolves

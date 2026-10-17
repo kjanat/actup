@@ -9,7 +9,7 @@
 //!
 //! Trigger characters: `@` (for version completion after typing the `@`).
 
-use actup_core::{provider, version};
+use actup_core::{ActionRepoId, provider, version};
 use tower_lsp_server::ls_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,
     CompletionResponse, Documentation, MarkupContent, MarkupKind, Position,
@@ -119,11 +119,10 @@ enum CompletionContext {
     /// Cursor is after `uses:` with partial or no text (suggest actions).
     /// Contains the text typed so far (may be empty).
     ActionName { prefix: String },
-    /// Cursor is after `owner/repo@` (suggest versions).
-    /// Contains the owner and repo parsed from the line.
+    /// Cursor is after `[host/]owner/repo@` (suggest versions).
     VersionRef {
-        owner: String,
-        repo: String,
+        /// Repository parsed from the text before `@`, without a subpath.
+        repo_id: ActionRepoId,
         /// Text typed after `@` (for filtering).
         version_prefix: String,
     },
@@ -194,11 +193,9 @@ fn detect_completion_context(
         let before_at = &typed[..at_pos];
         let after_at = &typed[at_pos + 1..];
 
-        // Parse owner/repo from the part before @.
-        if let Some((owner, repo)) = parse_owner_repo(before_at) {
+        if let Ok(repo_id) = actup_core::parse_action_path(before_at) {
             return Some(CompletionContext::VersionRef {
-                owner: owner.to_owned(),
-                repo: repo.to_owned(),
+                repo_id: repo_id.without_subpath(),
                 version_prefix: after_at.to_owned(),
             });
         }
@@ -238,17 +235,6 @@ fn last_uses_key(prefix: &str) -> Option<usize> {
         i += 1;
     }
     found
-}
-
-/// Parse `owner/repo` from a string, handling optional subpath.
-///
-/// Accepts: `owner/repo`, `owner/repo/subpath/...`
-/// Returns `(owner, repo)` or `None` if the format is invalid.
-fn parse_owner_repo(s: &str) -> Option<(&str, &str)> {
-    let mut parts = s.splitn(3, '/');
-    let owner = parts.next().filter(|o| !o.is_empty())?;
-    let repo = parts.next().filter(|r| !r.is_empty())?;
-    Some((owner, repo))
 }
 
 /// Build completion items for action name suggestions.
@@ -305,22 +291,19 @@ const MAX_SEMVER_COMPLETIONS: usize = 20;
 /// and produces `CompletionItem`s for the latest version, the major tags, and
 /// the newest semver tags matching `version_prefix`.
 pub async fn version_completions(
-    owner: &str,
-    repo: &str,
+    repo_id: &ActionRepoId,
     version_prefix: &str,
     registry: &provider::Registry,
     file_cache: &FileCache,
-    document_versions: Option<&std::collections::HashMap<actup_core::ActionRepoId, version::Set>>,
+    document_versions: Option<&std::collections::HashMap<ActionRepoId, version::Set>>,
 ) -> Vec<CompletionItem> {
-    let repo_id = actup_core::ActionRepoId::new(None, owner.to_owned(), repo.to_owned(), None);
-
-    let versions = match document_versions.and_then(|versions| versions.get(&repo_id).cloned()) {
+    let versions = match document_versions.and_then(|versions| versions.get(repo_id).cloned()) {
         Some(versions) => versions,
         None => {
-            match crate::file_cache::fetch_versions_cached(&repo_id, registry, file_cache).await {
+            match crate::file_cache::fetch_versions_cached(repo_id, registry, file_cache).await {
                 Some(Ok(v)) => v,
                 Some(Err(e)) => {
-                    tracing::debug!(owner, repo, error = %e, "failed to fetch versions for completion");
+                    tracing::debug!(repo = ?repo_id, error = %e, "failed to fetch versions for completion");
                     return Vec::new();
                 }
                 None => return Vec::new(),
@@ -442,13 +425,11 @@ pub async fn compute_completions(
             }
         }
         CompletionContext::VersionRef {
-            owner,
-            repo,
+            repo_id,
             version_prefix,
         } => {
             let items = version_completions(
-                &owner,
-                &repo,
+                &repo_id,
                 &version_prefix,
                 registry,
                 file_cache,
@@ -520,8 +501,7 @@ mod tests {
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: "v".into(),
             }
         );
@@ -538,8 +518,7 @@ mod tests {
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: String::new(),
             }
         );
@@ -556,8 +535,7 @@ mod tests {
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: "v".into(),
             }
         );
@@ -576,16 +554,14 @@ mod tests {
             (
                 32,
                 CompletionContext::VersionRef {
-                    owner: "actions".into(),
-                    repo: "checkout".into(),
+                    repo_id: ActionRepoId::simple("actions", "checkout"),
                     version_prefix: "v".into(),
                 },
             ),
             (
                 34,
                 CompletionContext::VersionRef {
-                    owner: "actions".into(),
-                    repo: "checkout".into(),
+                    repo_id: ActionRepoId::simple("actions", "checkout"),
                     version_prefix: "v4".into(),
                 },
             ),
@@ -644,25 +620,87 @@ mod tests {
     }
 
     #[test]
-    fn parse_owner_repo_simple() {
-        let (owner, repo) = parse_owner_repo("actions/checkout").unwrap();
-        assert_eq!(owner, "actions");
-        assert_eq!(repo, "checkout");
+    fn detect_context_parses_the_repo_with_the_uses_host_rule()
+    -> Result<(), std::num::TryFromIntError> {
+        for (value, repo_id) in [
+            (
+                "ghe.corp/o/r",
+                ActionRepoId::new(Some("ghe.corp".into()), "o", "r", None),
+            ),
+            (
+                "GHE.corp/o/r/sub/dir",
+                ActionRepoId::new(Some("ghe.corp".into()), "o", "r", None),
+            ),
+            (
+                "owner/repo/.github/workflows/foo.yml",
+                ActionRepoId::simple("owner", "repo"),
+            ),
+            ("a.b/c", ActionRepoId::simple("a.b", "c")),
+        ] {
+            let text = format!("      - uses: {value}@v\n");
+            let character = u32::try_from(text.len() - 1)?;
+            let pos = Position { line: 0, character };
+            assert_eq!(
+                detect_completion_context(&text, pos, ENC),
+                Some(CompletionContext::VersionRef {
+                    repo_id,
+                    version_prefix: "v".into(),
+                }),
+                "{value}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
-    fn parse_owner_repo_with_subpath() {
-        let (owner, repo) = parse_owner_repo("owner/repo/.github/workflows/foo.yml").unwrap();
-        assert_eq!(owner, "owner");
-        assert_eq!(repo, "repo");
+    fn detect_context_suggests_actions_for_an_invalid_path_before_at()
+    -> Result<(), std::num::TryFromIntError> {
+        for value in ["justowner", "/repo", "owner/", "./local"] {
+            let text = format!("      - uses: {value}@\n");
+            let character = u32::try_from(text.len() - 1)?;
+            let pos = Position { line: 0, character };
+            assert_eq!(
+                detect_completion_context(&text, pos, ENC),
+                Some(CompletionContext::ActionName {
+                    prefix: format!("{value}@"),
+                }),
+                "{value}"
+            );
+        }
+        Ok(())
     }
 
-    #[test]
-    fn parse_owner_repo_invalid() {
-        assert!(parse_owner_repo("justowner").is_none());
-        assert!(parse_owner_repo("").is_none());
-        assert!(parse_owner_repo("/repo").is_none());
-        assert!(parse_owner_repo("owner/").is_none());
+    #[tokio::test]
+    async fn compute_completions_queries_the_host_named_in_the_ref() {
+        use crate::test_utils::{self, DUMMY_SHA};
+
+        let mut registry =
+            test_utils::mock_registry(test_utils::MockProvider::new("github.com").with_versions(
+                "ghe.corp",
+                "o",
+                test_utils::simple_version_set("v1.0.0", DUMMY_SHA),
+            ));
+        registry.register(Box::new(
+            test_utils::MockProvider::new("ghe.corp").with_versions(
+                "o",
+                "r",
+                test_utils::simple_version_set("v9.0.0", DUMMY_SHA),
+            ),
+        ));
+        let file_cache = FileCache::disabled();
+        let text = "      - uses: ghe.corp/o/r@\n";
+        let position = Position {
+            line: 0,
+            character: 27,
+        };
+
+        let Some(CompletionResponse::List(list)) =
+            compute_completions(text, position, &registry, &file_cache, None, ENC).await
+        else {
+            panic!("expected a completion list");
+        };
+        let labels: Vec<_> = list.items.iter().map(|item| item.label.as_str()).collect();
+        assert_eq!(labels, ["v9.0.0"]);
     }
 
     #[test]
@@ -920,14 +958,13 @@ mod tests {
             std::collections::HashMap::new(),
             latest,
         );
-        let repo_id = actup_core::ActionRepoId::new(None, "a", "b", None);
-        let document_versions = std::collections::HashMap::from([(repo_id, versions)]);
+        let repo_id = ActionRepoId::simple("a", "b");
+        let document_versions = std::collections::HashMap::from([(repo_id.clone(), versions)]);
         let registry = test_utils::mock_registry(test_utils::MockProvider::new("github.com"));
         let file_cache = FileCache::disabled();
         let labels = async |prefix: &str| -> Vec<String> {
             version_completions(
-                "a",
-                "b",
+                &repo_id,
                 prefix,
                 &registry,
                 &file_cache,
@@ -959,8 +996,7 @@ mod tests {
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: String::new(),
             }
         );
@@ -977,8 +1013,7 @@ mod tests {
         assert_eq!(
             ctx,
             CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: "v".into(),
             }
         );
@@ -1035,8 +1070,7 @@ mod tests {
         assert_eq!(
             detect_completion_context(text, pos, ENC),
             Some(CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: "v".into(),
             })
         );
@@ -1052,8 +1086,7 @@ mod tests {
         assert_eq!(
             detect_completion_context(text, pos, ENC),
             Some(CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: String::new(),
             })
         );
@@ -1069,8 +1102,7 @@ mod tests {
         assert_eq!(
             detect_completion_context(text, pos, ENC),
             Some(CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "checkout".into(),
+                repo_id: ActionRepoId::simple("actions", "checkout"),
                 version_prefix: "v".into(),
             })
         );
@@ -1086,8 +1118,7 @@ mod tests {
         assert_eq!(
             detect_completion_context(text, pos, ENC),
             Some(CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "setup-node".into(),
+                repo_id: ActionRepoId::simple("actions", "setup-node"),
                 version_prefix: "v".into(),
             })
         );
@@ -1140,8 +1171,7 @@ mod tests {
         assert_eq!(
             detect_completion_context(text, pos, ENC),
             Some(CompletionContext::VersionRef {
-                owner: "actions".into(),
-                repo: "setup-node".into(),
+                repo_id: ActionRepoId::simple("actions", "setup-node"),
                 version_prefix: "v".into(),
             })
         );
@@ -1162,8 +1192,7 @@ mod tests {
         assert_eq!(
             detect_completion_context(text, pos, ENC),
             Some(CompletionContext::VersionRef {
-                owner: "a".into(),
-                repo: "b".into(),
+                repo_id: ActionRepoId::simple("a", "b"),
                 version_prefix: "v".into(),
             })
         );
