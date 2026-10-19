@@ -2619,9 +2619,9 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/ci.yml".parse()?;
 
-        let yaml = "    - uses: ./local-action\n    - uses: docker://node:16\n";
+        let yaml = "jobs:\n  call:\n    uses: $/.github/workflows/ci.yml\n  build:\n    steps:\n      - uses: ./local-action\n      - uses: $/.github/actions/setup\n      - uses: docker://node:16\n";
         let result = compute_diagnostics(
             yaml,
             &uri,

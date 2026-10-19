@@ -134,6 +134,57 @@ fn stdout(output: &Output) -> Result<String, std::string::FromUtf8Error> {
     String::from_utf8(output.stdout.clone())
 }
 
+#[test]
+fn check_skips_self_repository_refs() -> TestResult {
+    let dir = TempDir::new()?;
+    let workflows = dir.path().join(".github/workflows");
+    let actions = dir.path().join(".github/actions/composite");
+    fs::create_dir_all(&workflows)?;
+    fs::create_dir_all(&actions)?;
+    let workflow = workflows.join("ci.yml");
+    let content = r#"jobs:
+  call:
+    uses: $/.github/workflows/ci-changes.yml
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: $/.github/actions/changelog-monitor
+      - uses: '$/.github/actions/setup-shellcheck'
+      - { uses: "$/.github/actions/npm-publish" }
+"#;
+    fs::write(&workflow, content)?;
+    fs::write(
+        actions.join("action.yml"),
+        "runs:\n  using: composite\n  steps:\n    - uses: $/.github/actions/setup\n",
+    )?;
+    let config = dir.path().join("actup.toml");
+    fs::write(&config, "[cache]\nenabled = false\n")?;
+    let check = || {
+        actup(dir.path())
+            .current_dir(dir.path())
+            .arg("--config")
+            .arg(&config)
+            .args(["check", ".", "--offline", "--strict", "--format", "json"])
+            .output()
+    };
+
+    let output = check()?;
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(findings, serde_json::json!([]));
+
+    fs::write(&workflow, format!("{content}      - uses: owner/repo\n"))?;
+    let output = check()?;
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let findings = findings.as_array().ok_or("findings are no array")?;
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0]["status"], "unresolvable");
+    assert_eq!(findings[0]["owner"], "owner");
+    assert_eq!(findings[0]["repo"], "repo");
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn check_exits_0_and_reports_every_format() -> TestResult {
     let server = remote().await;

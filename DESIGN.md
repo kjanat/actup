@@ -67,10 +67,11 @@ For each discovered file, actup parses the YAML to find all occurrences of the
 `uses: ...@...` syntax. It handles all reference types the GitHub Actions runner
 supports: a reference can be a **tag** (e.g. `v2` or `v2.3.4`), a **branch
 name** (e.g. `@main` or `@release/v1`), or a specific **commit
-SHA**[^xebia/versioning]. Local action references (`uses: ./path/to/action`) are
-skipped since they don't pull from an external source. Each external action
-reference is extracted as a tuple of **{owner}/{repo}** and a **version
-identifier** (tag/branch/SHA).
+SHA**[^xebia/versioning]. Local paths (`./`, `../`) and same-repository
+references (`$/`) are skipped for actions and reusable workflows: they have no
+external version to check, update or pin. Each external action reference is
+extracted as a tuple of **{owner}/{repo}** and a **version identifier**
+(tag/branch/SHA).
 
 ## Version Checking and Update Strategy
 

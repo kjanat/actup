@@ -16,6 +16,10 @@ GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 - **MCP**: stdio server with read tools and dry-runnable mutators confined to
   one root
 
+Local paths (`./`, `../`) and same-repository references (`$/`) are skipped when
+checking, updating or pinning versions. This includes actions and reusable
+workflows such as `$/.github/actions/setup` and `$/.github/workflows/ci.yml`.
+
 ## Installation
 
 ```sh

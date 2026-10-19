@@ -316,7 +316,7 @@ async fn add_search_results(
     ticket: u64,
     items: &mut Vec<CompletionItem>,
 ) -> bool {
-    if prefix.starts_with("./") || prefix.starts_with("docker://") {
+    if matches!(actup_core::parse_uses(prefix), Ok(None)) {
         return false;
     }
     let Some(provider) = registry.find(None) else {
@@ -1144,7 +1144,13 @@ mod tests {
         let searches = provider.search_count();
         let registry = crate::test_utils::mock_registry(provider);
         let file_cache = crate::file_cache::FileCache::disabled();
-        for typed in ["./.github/actions/setup", "docker://alpine"] {
+        for typed in [
+            "./.github/actions/setup",
+            "../actions/setup",
+            "$/.github/actions/setup",
+            "$/.github/workflows/ci.yml",
+            "docker://alpine",
+        ] {
             let (text, at) = uses_line(typed)?;
             let result = compute_completions(
                 &text,

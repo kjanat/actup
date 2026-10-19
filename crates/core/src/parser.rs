@@ -4,7 +4,7 @@
 //! - `owner/repo@ref`
 //! - `owner/repo/path@ref` (reusable workflow or subpath action)
 //! - `host/owner/repo@ref` (explicit host)
-//! - `./path` (local, returned as None)
+//! - `./path`, `../path`, `$/path` (local or same-repository, returned as None)
 
 use std::{collections::BTreeSet, net::Ipv6Addr, ops::Range};
 
@@ -14,7 +14,8 @@ use crate::{ActionRef, ActionRepoId, Error, Result};
 
 /// Parse a `uses:` string into an `ActionRef`
 ///
-/// Returns `Ok(None)` for local references (./path).
+/// Returns `Ok(None)` for local paths (`./`, `../`), same-repository references
+/// (`$/`) and `docker://` images.
 ///
 /// # Errors
 ///
@@ -22,8 +23,8 @@ use crate::{ActionRef, ActionRepoId, Error, Result};
 pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
     let input = input.trim();
 
-    // Local reference
-    if input.starts_with("./") || input.starts_with("../") {
+    // Local or same-repository reference
+    if input.starts_with("./") || input.starts_with("../") || input.starts_with("$/") {
         return Ok(None);
     }
 
@@ -62,7 +63,7 @@ pub fn parse_uses(input: &str) -> Result<Option<ActionRef>> {
 /// What a `uses:` string names.
 #[derive(Debug, Clone)]
 pub enum Uses {
-    /// A local path or a `docker://` image.
+    /// A local path, a same-repository reference or a `docker://` image.
     Local,
     /// A remote reference that parses.
     Action(ActionRef),
@@ -805,6 +806,21 @@ mod tests {
     fn test_parse_local() -> TestResult {
         assert!(parse_uses("./local/action")?.is_none());
         assert!(parse_uses("../parent/action")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn self_repository_refs_are_local() -> TestResult {
+        for input in [
+            "$/.github/actions/changelog-monitor",
+            "$/.github/workflows/ci-changes.yml",
+            "$/",
+            "$//.github/actions/setup",
+            "  $/.github/actions/setup  ",
+        ] {
+            assert!(parse_uses(input)?.is_none(), "{input}");
+            assert!(matches!(classify_uses(input), Uses::Local), "{input}");
+        }
         Ok(())
     }
 
