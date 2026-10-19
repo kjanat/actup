@@ -8,7 +8,7 @@
 use std::{
     collections::HashSet,
     fmt,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     str::FromStr,
 };
 
@@ -228,9 +228,18 @@ const DIRECTORY_SHAPES: [(&str, FileKind); 4] = [
 ];
 
 fn glob_in(dir: &Path, pattern: &str) -> impl Iterator<Item = PathBuf> {
+    // Escape directory names, leaving Windows' `\\?\` prefix recognizable to glob.
     let full = dir
-        .to_str()
-        .map(|dir| PathBuf::from(glob::Pattern::escape(dir)).join(pattern));
+        .components()
+        .map(|part| {
+            let text = part.as_os_str().to_str()?;
+            Some(match part {
+                Component::Normal(_) => glob::Pattern::escape(text),
+                _ => text.to_owned(),
+            })
+        })
+        .collect::<Option<PathBuf>>()
+        .map(|dir| dir.join(pattern));
     full.as_deref()
         .and_then(Path::to_str)
         .and_then(|full| glob::glob(full).ok())
@@ -250,9 +259,11 @@ fn has_yaml_ext(path: &Path) -> bool {
 }
 
 fn classify_explicit_file(path: &Path) -> FileKind {
-    let path_str = path.to_string_lossy();
-
-    if path_str.contains(".github/workflows/") || path_str.contains(".github\\workflows\\") {
+    if path
+        .ancestors()
+        .skip(1)
+        .any(|dir| dir.ends_with(".github/workflows"))
+    {
         return FileKind::Workflow;
     }
 
@@ -269,27 +280,7 @@ fn classify_explicit_file(path: &Path) -> FileKind {
 /// Check if a path looks like a GitHub Actions file
 #[must_use]
 pub fn is_actions_file(path: &Path) -> bool {
-    let path_str = path.to_string_lossy();
-
-    // Check extension
-    if !has_yaml_ext(path) {
-        return false;
-    }
-
-    // Check if in .github/workflows/
-    if path_str.contains(".github/workflows/") || path_str.contains(".github\\workflows\\") {
-        return true;
-    }
-
-    // Check if action.yml/action.yaml
-    if let Some(name) = path.file_name() {
-        let name = name.to_string_lossy();
-        if name.eq_ignore_ascii_case("action.yml") || name.eq_ignore_ascii_case("action.yaml") {
-            return true;
-        }
-    }
-
-    false
+    has_yaml_ext(path) && classify_explicit_file(path) != FileKind::Custom
 }
 
 /// Get the relative path from root, if possible
@@ -327,8 +318,15 @@ mod tests {
             ".github/actions/my-action/action.yml"
         )));
         assert!(is_actions_file(Path::new("action.yml")));
+        assert!(is_actions_file(
+            &Path::new(".github/workflows").join("nested/ci.yml")
+        ));
+        assert!(is_actions_file(
+            &Path::new(".github").join("workflows/ci.yml")
+        ));
 
         assert!(!is_actions_file(Path::new("random.yml")));
+        assert!(!is_actions_file(Path::new("other.github/workflows/ci.yml")));
         assert!(!is_actions_file(Path::new("src/config.yaml")));
         assert!(!is_actions_file(Path::new("README.md")));
     }
@@ -449,6 +447,29 @@ mod tests {
                 Ok((relative.to_string_lossy().replace('\\', "/"), f.kind()))
             })
             .collect()
+    }
+
+    #[test]
+    fn test_discover_files_from_canonical_root() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("repo[1]");
+        let expected = [
+            (
+                ".github/actions/setup/action.yml".to_owned(),
+                FileKind::CompositeAction,
+            ),
+            (".github/workflows/ci.yml".to_owned(), FileKind::Workflow),
+            ("ci/deploy.yaml".to_owned(), FileKind::Workflow),
+        ];
+        for (name, _) in &expected {
+            let file = root.join(name);
+            fs::create_dir_all(file.parent().ok_or("no parent")?)?;
+            fs::write(file, "name: x")?;
+        }
+        for root in [&root, &root.canonicalize()?] {
+            assert_eq!(found(root, &["ci"])?, expected);
+        }
+        Ok(())
     }
 
     #[test]
