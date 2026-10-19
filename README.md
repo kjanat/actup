@@ -352,6 +352,12 @@ surfaces. Replacing a ref removes its recognized label and keeps the note:
 quotes stay intact. This setting does not change `policy.pin`, tag updates, or
 already-current refs that need no edit. `ACTUP_PIN__COMMENT=false` overrides it.
 
+Action hovers show the action's inputs (description, required flag, and default)
+and outputs from `action.yml`, followed by its README at the referenced
+revision. Metadata is cached per host, repository, action subpath, and ref for
+`cache.ttl`. A missing README or metadata fetch failure does not hide the other
+hover content.
+
 The LSP also offers **Update to {version} & pin to SHA** for an outdated ref at
 the cursor. It pins the target selected by the update policy and per-action
 overrides, even with `policy.pin = "tag"` or `"preserve"`. **Pin to commit SHA**

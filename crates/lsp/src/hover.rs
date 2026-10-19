@@ -1,7 +1,7 @@
 //! Hover information for `uses:` references.
 //!
 //! Shows action metadata (name, description, author), version status,
-//! repository link, and deprecation warnings on hover over `uses:` lines.
+//! repository link, inputs, outputs, deprecation warnings, and README on hover.
 
 use std::{
     fmt::Write as _,
@@ -41,8 +41,13 @@ pub struct HoverContext<'a> {
 /// Stored in an in-memory cache keyed by `ActionRepoId` + ref to avoid
 /// re-fetching on every hover request. The provider's `get_action_yml`
 /// is not cached by `CachingProvider`, so we cache results ourselves.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CachedActionMeta {
+    /// Inputs and outputs sorted by name for stable hover rendering.
+    pub inputs: std::collections::BTreeMap<String, provider::ActionInput>,
+    pub outputs: std::collections::BTreeMap<String, provider::ActionOutput>,
+    /// README at the referenced revision.
+    pub readme: Option<String>,
     /// Action name from action.yml (e.g. "Checkout").
     pub name: Option<String>,
     /// Action description from action.yml.
@@ -61,6 +66,7 @@ pub struct ActionMetaCacheKey {
     owner: String,
     repo: String,
     ref_str: String,
+    subpath: Option<String>,
     host: Option<String>,
 }
 
@@ -70,6 +76,7 @@ impl ActionMetaCacheKey {
             owner: action_ref.owner().to_owned(),
             repo: action_ref.repo().to_owned(),
             ref_str: action_ref.ref_str().to_owned(),
+            subpath: action_ref.subpath().map(str::to_owned),
             host: action_ref.host().map(str::to_owned),
         }
     }
@@ -204,22 +211,21 @@ async fn get_action_meta(
     let repo_id = action_ref.to_repo_id();
     let provider = registry.find_for_repo(&repo_id)?;
 
-    let action_yml = match provider
-        .get_action_yml(&repo_id, action_ref.ref_str())
-        .await
-    {
-        Ok(yml) => yml,
-        Err(e) => {
-            tracing::debug!(
-                action = %action_ref,
-                error = %actup_core::error::chain(&e),
-                "failed to fetch action.yml for hover"
-            );
-            return None;
-        }
-    };
+    let (action_yml, readme) = tokio::join!(
+        provider.get_action_yml(&repo_id, action_ref.ref_str()),
+        provider.get_readme(&repo_id, Some(action_ref.ref_str())),
+    );
+    let complete = action_yml.is_ok() && readme.is_ok();
+    let readme = readme.unwrap_or_else(|e| {
+        tracing::debug!(action = %action_ref, error = %actup_core::error::chain(&e), "failed to fetch README for hover");
+        None
+    });
+    let action_yml = action_yml.unwrap_or_else(|e| {
+        tracing::debug!(action = %action_ref, error = %actup_core::error::chain(&e), "failed to fetch action.yml for hover");
+        provider::ActionYml::default()
+    });
 
-    let deprecated_inputs: Vec<(String, String)> = action_yml
+    let mut deprecated_inputs: Vec<(String, String)> = action_yml
         .inputs()
         .iter()
         .filter_map(|(name, input)| {
@@ -229,9 +235,21 @@ async fn get_action_meta(
         })
         .collect();
 
+    deprecated_inputs.sort();
     let runtime = action_yml.runs().map(|r| r.using().to_owned());
 
     let meta = Arc::new(CachedActionMeta {
+        inputs: action_yml
+            .inputs()
+            .iter()
+            .map(|(name, input)| (name.clone(), input.clone()))
+            .collect(),
+        outputs: action_yml
+            .outputs()
+            .iter()
+            .map(|(name, output)| (name.clone(), output.clone()))
+            .collect(),
+        readme,
         name: action_yml.name().map(str::to_owned),
         description: action_yml.description().map(str::to_owned),
         author: action_yml.author().map(str::to_owned),
@@ -239,7 +257,9 @@ async fn get_action_meta(
         runtime,
     });
 
-    cache.insert(cache_key, Arc::clone(&meta));
+    if complete {
+        cache.insert(cache_key, Arc::clone(&meta));
+    }
     Some(meta)
 }
 
@@ -319,6 +339,69 @@ fn format_check_result(result: &CheckResult) -> String {
     )
 }
 
+/// Keep metadata text inside one Markdown table cell.
+fn table_cell(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\\', "\\\\")
+        .replace('|', "\\|")
+        .replace('`', "\\`")
+        .replace('*', "\\*")
+        .replace('_', "\\_")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace("\r\n", "\n")
+        .replace(['\r', '\n'], "<br>")
+}
+
+fn append_action_docs(md: &mut String, meta: &CachedActionMeta) {
+    if !meta.inputs.is_empty() {
+        let _ = writeln!(
+            md,
+            "\n---\n### Inputs\n\n| Name | Required | Default | Description |\n|---|---|---|---|"
+        );
+        for (name, input) in &meta.inputs {
+            let default = input.default().map_or_else(
+                || "—".to_owned(),
+                |value| {
+                    if value.is_empty() {
+                        "\"\"".to_owned()
+                    } else {
+                        table_cell(value)
+                    }
+                },
+            );
+            let _ = writeln!(
+                md,
+                "| {} | {} | {} | {} |",
+                table_cell(name),
+                if input.required() { "Yes" } else { "No" },
+                default,
+                table_cell(input.description().unwrap_or(""))
+            );
+        }
+    }
+    if !meta.outputs.is_empty() {
+        let _ = writeln!(md, "\n### Outputs\n\n| Name | Description |\n|---|---|");
+        for (name, output) in &meta.outputs {
+            let _ = writeln!(
+                md,
+                "| {} | {} |",
+                table_cell(name),
+                table_cell(output.description().unwrap_or(""))
+            );
+        }
+    }
+    if let Some(readme) = meta
+        .readme
+        .as_deref()
+        .filter(|readme| !readme.trim().is_empty())
+    {
+        let _ = writeln!(md, "\n---\n### README\n\n{readme}");
+    }
+}
+
 /// Build the full hover markdown content.
 fn build_hover_content(
     action_ref: &ActionRef,
@@ -389,6 +472,10 @@ fn build_hover_content(
         for (input_name, message) in &meta.deprecated_inputs {
             let _ = writeln!(md, "- `{input_name}`: {message}");
         }
+    }
+
+    if let Some(meta) = meta {
+        append_action_docs(&mut md, meta);
     }
 
     md
@@ -918,6 +1005,121 @@ mod tests {
     }
 
     #[test]
+    fn hover_renders_inputs_outputs_then_readme() {
+        let meta = CachedActionMeta {
+            inputs: std::collections::BTreeMap::from([
+                (
+                    "z-last".into(),
+                    provider::ActionInput::new().with_default(""),
+                ),
+                (
+                    "a-first".into(),
+                    provider::ActionInput::new()
+                        .with_required(true)
+                        .with_default("${{ github.token }}")
+                        .with_description("one | two\n<three>"),
+                ),
+            ]),
+            outputs: std::collections::BTreeMap::from([(
+                "result".into(),
+                provider::ActionOutput::new().with_description("The result"),
+            )]),
+            readme: Some("# Usage\n\n```yaml\nuses: o/r@v1\n```".into()),
+            ..CachedActionMeta::default()
+        };
+        let mut text = String::new();
+        append_action_docs(&mut text, &meta);
+        assert!(
+            text.contains("| a-first | Yes | ${{ github.token }} | one \\| two<br>&lt;three&gt; |")
+        );
+        assert!(text.contains("| z-last | No | \"\" |"));
+        assert!(text.find("a-first") < text.find("z-last"));
+        assert!(text.find("### Inputs") < text.find("### Outputs"));
+        assert!(text.find("### Outputs") < text.find("### README"));
+        assert!(text.ends_with("# Usage\n\n```yaml\nuses: o/r@v1\n```\n"));
+        let mut empty = String::new();
+        append_action_docs(&mut empty, &CachedActionMeta::default());
+        assert_eq!(empty, "");
+    }
+
+    #[tokio::test]
+    async fn hover_documentation_is_cached_and_subpaths_are_separate()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let provider = crate::test_utils::MockProvider::new("github.com").with_documentation(
+            Ok(
+                provider::ActionYml::new("").with_inputs(std::collections::HashMap::from([(
+                    "token".to_owned(),
+                    provider::ActionInput::new().with_required(true),
+                )])),
+            ),
+            Ok(Some("# Action README".into())),
+        );
+        let calls = Arc::clone(&provider.documentation_calls);
+        let registry = crate::test_utils::mock_registry(provider);
+        let cache = new_action_meta_cache();
+        let action = ActionRef::simple("o", "r", "v7");
+        for _ in 0..2 {
+            let meta = get_action_meta(&action, &registry, &cache, Duration::from_secs(60))
+                .await
+                .ok_or("missing metadata")?;
+            assert!(meta.inputs["token"].required());
+            assert_eq!(meta.readme.as_deref(), Some("# Action README"));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let nested = ActionRef::new(None, "o", "r", Some("nested".into()), "v7");
+        assert!(
+            get_action_meta(&nested, &registry, &cache, Duration::from_secs(60))
+                .await
+                .is_some()
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 4);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn hover_keeps_available_docs_when_one_fetch_fails()
+    -> Result<(), Box<dyn std::error::Error>> {
+        for fail_yaml in [true, false] {
+            let error = || actup_core::Error::RateLimited {
+                provider: "test".into(),
+                retry_after: None,
+            };
+            let yml = if fail_yaml {
+                Err(error())
+            } else {
+                Ok(provider::ActionYml::new("").with_name("Action"))
+            };
+            let readme = if fail_yaml {
+                Ok(Some("README".into()))
+            } else {
+                Err(error())
+            };
+            let provider =
+                crate::test_utils::MockProvider::new("github.com").with_documentation(yml, readme);
+            let calls = Arc::clone(&provider.documentation_calls);
+            let registry = crate::test_utils::mock_registry(provider);
+            let cache = new_action_meta_cache();
+            let action = ActionRef::simple("o", "r", "v7");
+            for _ in 0..2 {
+                let meta = get_action_meta(&action, &registry, &cache, Duration::from_secs(60))
+                    .await
+                    .ok_or("missing metadata")?;
+                if fail_yaml {
+                    assert_eq!(meta.readme.as_deref(), Some("README"));
+                } else {
+                    assert_eq!(meta.name.as_deref(), Some("Action"));
+                }
+            }
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                4,
+                "failed fetch must be retried"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn build_hover_content_with_full_meta() {
         let action_ref = ActionRef::simple("actions", "checkout", "v3");
         let meta = CachedActionMeta {
@@ -926,6 +1128,7 @@ mod tests {
             author: Some("GitHub".into()),
             deprecated_inputs: vec![("path".into(), "Use working-directory instead".into())],
             runtime: Some("node20".into()),
+            ..CachedActionMeta::default()
         };
         let result = CheckResult::new(action_ref.clone(), CheckStatus::UpToDate);
 
@@ -1511,6 +1714,7 @@ mod tests {
             owner: "actions".into(),
             repo: "checkout".into(),
             ref_str: "v4".into(),
+            subpath: None,
             host: None,
         };
         let meta = Arc::new(CachedActionMeta {
@@ -1519,6 +1723,7 @@ mod tests {
             author: None,
             deprecated_inputs: vec![],
             runtime: None,
+            ..CachedActionMeta::default()
         });
         cache.insert(key.clone(), Arc::clone(&meta));
         let ttl = Duration::from_secs(60);
@@ -1543,6 +1748,7 @@ mod tests {
             owner: "actions".into(),
             repo: "checkout".into(),
             ref_str: "main".into(),
+            subpath: None,
             host: None,
         };
         let ttl = Duration::from_secs(60);
@@ -1565,6 +1771,7 @@ mod tests {
             author: None,
             deprecated_inputs: vec![],
             runtime: None,
+            ..CachedActionMeta::default()
         })
     }
 
@@ -1575,12 +1782,14 @@ mod tests {
             owner: "actions".into(),
             repo: "checkout".into(),
             ref_str: "v3".into(),
+            subpath: None,
             host: None,
         };
         let key_v4 = ActionMetaCacheKey {
             owner: "actions".into(),
             repo: "checkout".into(),
             ref_str: "v4".into(),
+            subpath: None,
             host: None,
         };
         let meta = Arc::new(CachedActionMeta {
@@ -1589,6 +1798,7 @@ mod tests {
             author: None,
             deprecated_inputs: vec![],
             runtime: None,
+            ..CachedActionMeta::default()
         });
         cache.insert(key_v3.clone(), meta);
         let ttl = Duration::from_secs(60);
@@ -1622,6 +1832,7 @@ mod tests {
             author: None,
             deprecated_inputs: vec![],
             runtime: None,
+            ..CachedActionMeta::default()
         };
         let content = build_hover_content(
             &action_ref,
@@ -1642,12 +1853,14 @@ mod tests {
             owner: "actions".into(),
             repo: "checkout".into(),
             ref_str: "v4".into(),
+            subpath: None,
             host: None,
         };
         let key_ghe = ActionMetaCacheKey {
             owner: "actions".into(),
             repo: "checkout".into(),
             ref_str: "v4".into(),
+            subpath: None,
             host: Some("ghe.corp.com".into()),
         };
 
@@ -1657,6 +1870,7 @@ mod tests {
             author: None,
             deprecated_inputs: vec![],
             runtime: None,
+            ..CachedActionMeta::default()
         });
 
         cache.insert(key_github.clone(), Arc::clone(&meta));

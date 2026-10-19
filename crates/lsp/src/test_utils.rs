@@ -100,6 +100,9 @@ pub const DUMMY_SHA_2: &str = "def4567890abcdef1234567890abcdef456789ab";
 /// Returns pre-configured version sets per repo, or errors. Falls back to
 /// empty `version::Set` for unknown repos.
 pub struct MockProvider {
+    action_yml: Result<ActionYml, CoreError>,
+    readme: Result<Option<String>, CoreError>,
+    pub documentation_calls: Arc<AtomicUsize>,
     kind: Kind,
     host: String,
     /// Pre-configured version sets, keyed by `"owner/repo"`.
@@ -118,6 +121,9 @@ impl MockProvider {
     /// Create a mock provider that returns empty version sets for all repos.
     pub fn new(host: &str) -> Self {
         Self {
+            action_yml: Ok(ActionYml::default()),
+            readme: Ok(None),
+            documentation_calls: Arc::new(AtomicUsize::new(0)),
             kind: Kind::GitHub,
             host: host.to_string(),
             versions: HashMap::new(),
@@ -130,6 +136,16 @@ impl MockProvider {
             searches: Arc::new(AtomicUsize::new(0)),
             repo_state: Ok(None),
         }
+    }
+
+    pub fn with_documentation(
+        mut self,
+        action_yml: Result<ActionYml, CoreError>,
+        readme: Result<Option<String>, CoreError>,
+    ) -> Self {
+        self.action_yml = action_yml;
+        self.readme = readme;
+        self
     }
 
     pub fn with_resolve(mut self, result: Result<&str, CoreError>) -> Self {
@@ -251,7 +267,9 @@ impl Provider for MockProvider {
         _repo: &ActionRepoId,
         _ref_name: Option<&str>,
     ) -> BoxFuture<'_, actup_core::Result<Option<String>>> {
-        Box::pin(async { Ok(None) })
+        self.documentation_calls.fetch_add(1, Ordering::SeqCst);
+        let result = self.readme.clone();
+        Box::pin(async move { result })
     }
 
     fn get_action_yml(
@@ -259,7 +277,9 @@ impl Provider for MockProvider {
         _repo: &ActionRepoId,
         _ref_name: &str,
     ) -> BoxFuture<'_, actup_core::Result<ActionYml>> {
-        Box::pin(async { Ok(ActionYml::default()) })
+        self.documentation_calls.fetch_add(1, Ordering::SeqCst);
+        let result = self.action_yml.clone();
+        Box::pin(async move { result })
     }
 
     fn get_repo_state(
