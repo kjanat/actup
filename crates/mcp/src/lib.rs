@@ -22,13 +22,13 @@ use std::{
 use actup_core::{Clock, Config, FileCache, Registration, clock, provider::Registry};
 pub use confine::{Refusal, Root};
 use rust_mcp_sdk::{
-    McpServer, StdioTransport, ToMcpServerHandler, TransportOptions,
+    McpServer, RequestContext, ServerDetails, StdioTransport, ToMcpServerHandler, TransportOptions,
     error::SdkResult,
     mcp_server::{McpServerOptions, ServerHandler, server_runtime},
     schema::{
-        CallToolRequestParams, CallToolResult, Implementation, InitializeResult, ListToolsResult,
-        PaginatedRequestParams, ProtocolVersion, RpcError, ServerCapabilities,
-        ServerCapabilitiesTools, Tool, ToolAnnotations, schema_utils::CallToolError,
+        CallToolRequestParams, CallToolResult, Implementation, ListToolsResult,
+        ListToolsResultCacheScope, PaginatedRequestParams, RpcError, ServerCapabilities,
+        ServerCapabilitiesTools, ServerResult, Tool, ToolAnnotations, schema_utils::CallToolError,
     },
 };
 use schemars::JsonSchema;
@@ -265,7 +265,6 @@ fn tool<T: JsonSchema>(name: &str, description: &str, annotations: ToolAnnotatio
         title: annotations.title.clone(),
         annotations: Some(annotations),
         description: Some(description.to_string()),
-        execution: None,
         icons: Vec::new(),
         input_schema: input_schema::<T>(),
         meta: None,
@@ -284,28 +283,35 @@ impl ServerHandler for Server {
     async fn handle_list_tools_request(
         &self,
         _params: Option<PaginatedRequestParams>,
+        _context: &RequestContext,
         _runtime: Arc<dyn McpServer>,
     ) -> Result<ListToolsResult, RpcError> {
         Ok(ListToolsResult {
+            cache_scope: ListToolsResultCacheScope::Public,
             meta: None,
             next_cursor: None,
+            result_type: "complete".to_string(),
             tools: Self::tools(),
+            ttl_ms: 0,
         })
     }
 
     async fn handle_call_tool_request(
         &self,
         params: CallToolRequestParams,
+        _context: &RequestContext,
         _runtime: Arc<dyn McpServer>,
-    ) -> Result<CallToolResult, CallToolError> {
-        self.call(&params.name, params.arguments).await
+    ) -> Result<ServerResult, CallToolError> {
+        self.call(&params.name, params.arguments)
+            .await
+            .map(Into::into)
     }
 }
 
-/// The initialization result this server sends.
+/// Server identity, capabilities and instructions for `server/discover`.
 #[must_use]
-pub fn server_details() -> InitializeResult {
-    InitializeResult {
+pub fn server_details() -> ServerDetails {
+    ServerDetails {
         server_info: Implementation {
             name: env!("CARGO_PKG_NAME").to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
@@ -318,7 +324,6 @@ pub fn server_details() -> InitializeResult {
             tools: Some(ServerCapabilitiesTools { list_changed: None }),
             ..ServerCapabilities::default()
         },
-        protocol_version: ProtocolVersion::V2025_11_25.into(),
         instructions: Some(INSTRUCTIONS.to_string()),
         meta: None,
     }
@@ -335,8 +340,6 @@ pub async fn serve_stdio(server: Server) -> SdkResult<()> {
         server_details: server_details(),
         transport,
         handler: server.to_mcp_server_handler(),
-        task_store: None,
-        client_task_store: None,
         message_observer: None,
     });
     runtime.start().await

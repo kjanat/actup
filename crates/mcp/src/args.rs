@@ -1,12 +1,11 @@
 //! Tool arguments, their JSON schemas and boundary validation.
 
-use std::{collections::BTreeMap, num::NonZeroUsize};
+use std::num::NonZeroUsize;
 
 use actup_core::{ActionRepoId, check_ref_name, parse_action_path, policy, version::is_short_sha};
 use rust_mcp_sdk::schema::ToolInputSchema;
 use schemars::{JsonSchema, generate::SchemaSettings};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 /// Arguments of `actionGetReadme`.
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -174,27 +173,13 @@ pub fn input_schema<T: JsonSchema>() -> ToolInputSchema {
         .with(|s| s.inline_subschemas = true)
         .into_generator()
         .into_root_schema_for::<T>();
-    let object = schema.as_object();
-    let properties = object
-        .and_then(|o| o.get("properties"))
-        .and_then(Value::as_object)
-        .map(|props| {
-            props
-                .iter()
-                .filter_map(|(name, prop)| Some((name.clone(), prop.as_object()?.clone())))
-                .collect::<BTreeMap<_, _>>()
-        });
-    let required = object
-        .and_then(|o| o.get("required"))
-        .and_then(Value::as_array)
-        .map(|names| {
-            names
-                .iter()
-                .filter_map(|n| n.as_str().map(String::from))
-                .collect()
-        })
-        .unwrap_or_default();
-    ToolInputSchema::new(required, properties, None)
+    let mut extra = schema.as_object().cloned().unwrap_or_default();
+    let schema_id = extra
+        .remove("$schema")
+        .and_then(|value| value.as_str().map(str::to_owned));
+    extra.remove("type");
+    let extra = (!extra.is_empty()).then_some(extra);
+    ToolInputSchema::new(schema_id, extra)
 }
 
 /// Parse `[host/]owner/repo[/path]` from separate fields.
@@ -279,19 +264,37 @@ mod tests {
     #[test]
     fn input_schema_lists_required_fields_and_inlines_nested_types() {
         let schema = input_schema::<UpdateAll>();
-        assert_eq!(schema.required, ["workspaceRoot", "match", "targetRef"]);
-        let Some(props) = schema.properties else {
+        let Some(extra) = schema.extra.as_ref() else {
+            panic!("schema keywords");
+        };
+        assert_eq!(
+            extra.get("required"),
+            Some(&serde_json::json!(["workspaceRoot", "match", "targetRef"]))
+        );
+        let Some(props) = extra
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        else {
             panic!("schema has properties");
         };
-        let Some(target) = props.get("match") else {
+        let Some(target) = props.get("match").and_then(serde_json::Value::as_object) else {
             panic!("match property");
         };
         assert!(target.contains_key("properties"), "{target:?}");
         assert!(!format!("{props:?}").contains("$ref"));
 
         let latest = input_schema::<Latest>();
-        assert_eq!(latest.required, ["owner", "repo", "currentRef"]);
-        let Some(props) = latest.properties else {
+        let Some(extra) = latest.extra.as_ref() else {
+            panic!("schema keywords");
+        };
+        assert_eq!(
+            extra.get("required"),
+            Some(&serde_json::json!(["owner", "repo", "currentRef"]))
+        );
+        let Some(props) = extra
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+        else {
             panic!("schema has properties");
         };
         assert!(format!("{:?}", props.get("policyOverride")).contains("patch"));

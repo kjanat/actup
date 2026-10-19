@@ -1535,7 +1535,7 @@ mod tests {
     fn body(reply: Reply) -> Result<(Option<bool>, Value), Box<dyn std::error::Error>> {
         let result = reply.into_result();
         let body = result.structured_content.ok_or("structured content")?;
-        Ok((result.is_error, Value::Object(body)))
+        Ok((result.is_error, body))
     }
 
     #[tokio::test]

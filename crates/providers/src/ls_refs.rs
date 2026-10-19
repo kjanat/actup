@@ -162,7 +162,7 @@ fn list_refs_blocking(url: &str, token: Option<&str>, repo: &RepoLabel) -> Resul
     let refs = LsRefsCommand::new(
         Some(prefixes),
         &capabilities,
-        ("agent", Some(gix_protocol::agent(agent_name()).into())),
+        ("agent", Some(gix_protocol::agent(agent_name()))),
     )
     .invoke_blocking(&mut transport, &mut Discard, false)
     .map_err(|e| transport_error(e, repo))?;

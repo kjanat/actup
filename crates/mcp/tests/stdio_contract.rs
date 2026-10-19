@@ -247,21 +247,13 @@ impl Client {
             lines,
             next_id: 0,
         };
-        let init = client.request(
-            "initialize",
-            json!({
-                "protocolVersion": "2025-11-25",
-                "capabilities": {},
-                "clientInfo": { "name": "contract", "version": "0" },
-            }),
-        )?;
-        if init["instructions"]
+        let discover = client.request("server/discover", json!({}))?;
+        if discover["instructions"]
             .as_str()
             .is_none_or(|s| !s.contains("server root"))
         {
-            return Err(format!("initialize returned no instructions: {init}").into());
+            return Err(format!("server/discover returned no instructions: {discover}").into());
         }
-        client.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?;
         Ok(client)
     }
 
@@ -274,6 +266,16 @@ impl Client {
     fn request(&mut self, method: &str, params: Value) -> Result<Value, Box<dyn Error>> {
         self.next_id += 1;
         let id = self.next_id;
+        let mut params = params;
+        if let Some(object) = params.as_object_mut() {
+            object.entry("_meta").or_insert_with(|| {
+                json!({
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                    "io.modelcontextprotocol/clientInfo": { "name": "contract", "version": "0" },
+                })
+            });
+        }
         let mut message = json!({ "jsonrpc": "2.0", "id": id, "method": method });
         message["params"] = params;
         self.send(&message)?;

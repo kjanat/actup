@@ -24,7 +24,7 @@ tokio         = { workspace = true }
 tracing       = { workspace = true }
 
 [dev-dependencies]
-gix-hash = { version = "0.25", features = ["sha1"] }
+gix-hash = { workspace = true, features = ["sha1"] }
 
 [lints]
 workspace = true

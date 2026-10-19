@@ -273,7 +273,7 @@ mod tests {
         let result = reply.into_result();
         assert_eq!(result.is_error, None);
         assert_eq!(
-            result.structured_content.map(Value::Object),
+            result.structured_content,
             Some(serde_json::json!({
                 "provider": "unknown",
                 "host": "ghe.corp.com",
@@ -305,7 +305,7 @@ mod tests {
             &Error::ProviderNotFound { host: "h".into() },
         );
         assert_eq!(
-            failure.into_result().structured_content.map(Value::Object),
+            failure.into_result().structured_content,
             Some(serde_json::json!({
                 "provider": "unknown",
                 "host": "h",
