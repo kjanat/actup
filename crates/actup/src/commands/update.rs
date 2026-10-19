@@ -4,7 +4,7 @@ use anstream::println;
 use std::{path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, FileCache, check_action_with_provider,
+    ActionRef, CheckStatus, Config, FileCache, check_action_with_comment,
     patch::{FileEdits, SkipReason, pin_edit, retarget_edit},
     policy, provider,
     rewrite::{Labels, Named},
@@ -104,7 +104,9 @@ async fn edit(
             };
 
             // Use core check_action to determine if update needed
-            let check = check_action_with_provider(action_ref, versions, config, provider).await;
+            let check =
+                check_action_with_comment(action_ref, loc.comment(), versions, config, provider)
+                    .await;
             let style = config.policy_for(action_ref).pin;
             let labels = Labels::fetched(action_ref.ref_str(), versions);
             let (edit, new_ref, target, show_comment) = match check.status() {
@@ -113,7 +115,7 @@ async fn edit(
                         loc,
                         action_ref.is_sha(),
                         target,
-                        Named::Tag,
+                        Named::listed(&target.version().to_string(), versions),
                         style,
                         &labels,
                         config.pin.comment,
@@ -482,6 +484,19 @@ mod tests {
         Ok(written)
     }
 
+    #[tokio::test]
+    async fn update_branch_pins_in_parallel_steps_is_idempotent()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let before = format!(
+            "jobs:\n  build:\n    steps:\n      - parallel:\n          - uses: 'o/r@{}' # dev keep this\n          - {{ uses: o/r@{} }} # dev\n",
+            sha40('a'),
+            sha40('c')
+        );
+        let written = update_with_config_runs("", &before, 2).await?;
+        assert_eq!(written, before.replace(&sha40('a'), &sha40('c')));
+        Ok(())
+    }
+
     fn pin_style_workflow() -> String {
         [
             "steps:",
@@ -703,13 +718,14 @@ mod tests {
             "steps:",
             "  - uses: o/a@v4.2.0 # v4.2.0 keep",
             "  - uses: o/b@v4.2.0 # lint keep",
-            "  - uses: o/c@NEW # v4.2.0 keep",
+            "  - uses: o/c@BRANCH # dev keep",
             "  - uses: o/d@NEW # TODO fix",
             "  - { uses: \"o/e@v4.2.0\" } # v4.2.0 keep",
             "",
         ]
         .join("\n")
-        .replace("NEW", &sha40('b'));
+        .replace("NEW", &sha40('b'))
+        .replace("BRANCH", &sha40('c'));
         let written = update_with_config("[policy]\npin = \"preserve\"\n", &content).await?;
         assert_eq!(written, expected);
 

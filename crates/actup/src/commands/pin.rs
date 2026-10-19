@@ -4,7 +4,7 @@ use anstream::println;
 use std::{ops::Range, path::Path, sync::Arc};
 
 use actup_core::{
-    ActionRef, CheckStatus, Config, FileCache, UsesLocation, check_action_with_provider,
+    ActionRef, CheckStatus, Config, FileCache, UsesLocation, check_action_with_comment,
     patch::{FileEdits, PendingEdit, SkipReason, pin_edit, repin_sha_edit, rewrite_edit},
     provider,
     rewrite::{Labels, PinMarker, Rewrite, after_value},
@@ -107,7 +107,8 @@ async fn pin_action_edit(
     site: &RefSite,
 ) -> PinStep {
     if action_ref.is_sha() {
-        let result = check_action_with_provider(action_ref, versions, config, provider).await;
+        let result =
+            check_action_with_comment(action_ref, loc.comment(), versions, config, provider).await;
         let CheckStatus::Outdated { target, .. } = result.status() else {
             return PinStep::Nothing;
         };
@@ -1213,6 +1214,23 @@ mod tests {
         line: String,
         new_ref: String,
         comment: Option<String>,
+    }
+
+    #[tokio::test]
+    async fn pin_refreshes_a_branch_comment_without_unpinning()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let old = "a".repeat(40);
+        let mut provider = pin_provider(&[], FULL_SHA).ok_or("provider")?;
+        provider
+            .versions
+            .set_branches(HashMap::from([("master".to_owned(), FULL_SHA.to_owned())]));
+        let before = format!("  - uses: o/r@{old} # master keep");
+        let pinned = pinned_line(&provider, &before)
+            .await
+            .ok_or("missing edit")?;
+        assert_eq!(pinned.line, before.replace(&old, FULL_SHA));
+        assert!(pinned_line(&provider, &pinned.line).await.is_none());
+        Ok(())
     }
 
     async fn pinned_line(provider: &FixedShaProvider, line: &str) -> Option<Pinned> {

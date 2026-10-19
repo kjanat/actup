@@ -191,8 +191,9 @@ a git ref name (such as `o/r@a~1` or `o/r@v1.lock`) reaches no provider. `check`
 reports it as unresolvable, `update` and `pin` report it with kind
 `invalid_ref`, and all three exit 2. The language server marks it with an error
 diagnostic. This holds for a value under `jobs.<id>.uses`,
-`jobs.<id>.steps[*].uses` or `runs.steps[*].uses`. An invalid value under any
-other `uses` key, such as a step input, is skipped.
+`jobs.<id>.steps[*].uses` or `runs.steps[*].uses`, including steps nested inside
+`parallel:` lists. An invalid value under any other `uses` key, such as a step
+input, is skipped.
 
 An unresolvable ref that names no tag can get a suggested tag. A partial version
 names the highest tag that completes it (`v4.2` names the highest `v4.2.x`). A
@@ -354,10 +355,13 @@ already-current refs that need no edit. `ACTUP_PIN__COMMENT=false` overrides it.
 The LSP also offers **Update to {version} & pin to SHA** for an outdated ref at
 the cursor. It pins the target selected by the update policy and per-action
 overrides, even with `policy.pin = "tag"` or `"preserve"`. **Pin to commit SHA**
-still pins the current version. The update-and-pin refactor is omitted when the
-ordinary quick fix already makes the identical edit; it remains available in a
-refactor-only request. Cached SHA targets must be exactly 40 hexadecimal
-characters, and edits use current document diagnostics.
+still pins the current version, including when it is up to date. Pin refactors
+are available with the cursor anywhere in `owner/repo@ref`, including inside
+`parallel:` steps; their edits replace only the ref and its applicable comment.
+The update-and-pin refactor is omitted when the ordinary quick fix already makes
+the identical edit; it remains available in a refactor-only request. Cached SHA
+targets must be exactly 40 hexadecimal characters, and edits use current
+document diagnostics.
 
 On a line that takes no new comment, such as a line of a plain-text file, a
 label comment right after the value is still rewritten. Writers read the word
@@ -367,6 +371,18 @@ line as written: `run("uses: o/p@<sha> # v4.0.0 keep this")` re-pinned becomes
 a backslash, a bracket, `<`, `>`, `;` or `,`. After the only `uses:` value of a
 plain-text line, the comment may also follow a closing quote and `}`, `]` or
 `,`, as in `{"uses": "o/p@<sha>"},  # v4.0.0`.
+
+A SHA pin whose comment starts with a fetched branch name tracks that branch:
+`uses: owner/repo@<sha> # master` is outdated when `master` points at a
+different commit. `update` and `pin` refresh the SHA, retaining the branch label
+and any note under the default pin/comment settings. This also works inside
+`parallel:` steps and for custom branch names. A matching head is a no-op. The
+comment's branch takes precedence over release tags on the old commit; if a tag
+and branch share the comment's name, the tag takes precedence. Unrecognized
+comments and pins without comments keep the existing tag-based resolution.
+`scan.ignore` still applies. The `policy.branch` setting controls floating
+references such as `@master`, not these existing SHA pins. Cache freshness and
+stale-write guards apply as usual; use `--refresh` to fetch current heads.
 
 `actup pin --unpin` and the LSP refactor action `` actup: unpin to `v4` ``
 rewrite `@<sha> # v4 note` to `@v4 # note`. They act only on a SHA pin whose

@@ -1812,6 +1812,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn parallel_up_to_date_action_offers_pin_from_repository_name()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use tower_lsp_server::ls_types::{CodeActionOrCommand, Position, Range};
+        let sha = crate::test_utils::DUMMY_SHA;
+        let versions = crate::test_utils::simple_version_set("v7", sha);
+        let provider = crate::test_utils::MockProvider::new("github.com").with_versions(
+            "actions",
+            "setup-python",
+            versions.clone(),
+        );
+        let (service, _socket) = tower_lsp_server::LspService::new(|client| {
+            LspBackend::with_providers(client, None, crate::test_utils::MOCK_PROVIDERS)
+        });
+        let backend = service.inner();
+        *backend.registry.write().await =
+            Some(Arc::new(crate::test_utils::mock_registry(provider)));
+        let uri: Uri = "file:///test/ci.yml".parse()?;
+        let text = "jobs:\n  b:\n    steps:\n      - parallel:\n          - uses: actions/setup-python@v7\n";
+        let mut document = DocumentState::new(text.to_owned(), 1);
+        document.version_sets = Arc::new(std::collections::HashMap::from([(
+            actup_core::ActionRepoId::simple("actions", "setup-python"),
+            versions,
+        )]));
+        backend.documents.insert(uri.clone(), document);
+        let at = Position::new(4, 33);
+        let response = backend
+            .code_action(CodeActionParams {
+                text_document: tower_lsp_server::ls_types::TextDocumentIdentifier {
+                    uri: uri.clone(),
+                },
+                range: Range::new(at, at),
+                context: tower_lsp_server::ls_types::CodeActionContext {
+                    diagnostics: vec![],
+                    only: None,
+                    trigger_kind: None,
+                },
+                work_done_progress_params:
+                    tower_lsp_server::ls_types::WorkDoneProgressParams::default(),
+                partial_result_params: tower_lsp_server::ls_types::PartialResultParams::default(),
+            })
+            .await?
+            .ok_or("missing code actions")?;
+        let edit = response
+            .iter()
+            .find_map(|action| match action {
+                CodeActionOrCommand::CodeAction(action) if action.title.contains("commit SHA") => {
+                    action.edit.as_ref()
+                }
+                _ => None,
+            })
+            .ok_or("missing SHA pin action")?;
+        let edits = edit
+            .changes
+            .as_ref()
+            .and_then(|changes| changes.get(&uri))
+            .ok_or("missing edits")?;
+        let written = crate::workspace_commands::apply_text_edits(
+            text,
+            edits,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .ok_or("invalid edit")?;
+        assert_eq!(written, text.replace("@v7", &format!("@{sha} # v7")));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn update_and_pin_uses_current_cache_and_respects_kind_filter()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         use tower_lsp_server::ls_types::{CodeActionKind, CodeActionOrCommand};

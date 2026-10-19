@@ -391,6 +391,46 @@ pub fn check_action_with_provider<'a>(
     })
 }
 
+/// Check a source reference, following a SHA pin's comment when it names a listed branch.
+///
+/// Branch comments take precedence over release tags on the pinned commit.
+/// Floating-branch policy does not apply to an already pinned reference. Tags
+/// win when a name exists as both a tag and a branch, matching ref resolution.
+/// Unrecognized comments retain the ordinary SHA/tag resolution behavior.
+pub async fn check_action_with_comment(
+    action_ref: &ActionRef,
+    comment: &str,
+    versions: &version::Set,
+    config: &Config,
+    provider: &dyn provider::Provider,
+) -> CheckResult {
+    if action_ref.is_sha()
+        && !config.should_ignore(action_ref)
+        && let Some(name) = crate::rewrite::comment_label(comment)
+        && versions.tag_sha(name).is_none()
+        && let Some(head) = versions.branch_sha(name)
+    {
+        let status = if head == action_ref.ref_str() {
+            CheckStatus::Pinned {
+                sha: head.to_owned(),
+                tag: None,
+            }
+        } else {
+            CheckStatus::Outdated {
+                current: action_ref.ref_str().to_owned(),
+                target: Arc::new(version::Info::new(
+                    version::Version::Branch {
+                        name: name.to_owned(),
+                    },
+                    head,
+                )),
+            }
+        };
+        return CheckResult::described(action_ref, status, versions, config, None);
+    }
+    check_action_with_provider(action_ref, versions, config, provider).await
+}
+
 /// Check action against already-fetched versions.
 ///
 /// This is the synchronous version for when you already have the [`version::Set`].
@@ -748,6 +788,109 @@ mod tests {
         To(&'static str),
         Missing,
         Offline,
+    }
+
+    #[tokio::test]
+    async fn branch_pin_comments_follow_any_listed_branch() {
+        let old = "a".repeat(40);
+        let head = "b".repeat(40);
+        let action = ActionRef::simple("o", "r", &old);
+        let provider = ResolveMockProvider::with(Resolve::Offline);
+        for name in ["master", "main", "dev", "release/next", "v2"] {
+            let mut versions = version::Set::new();
+            versions.set_branches(HashMap::from([(name.to_owned(), head.clone())]));
+            for branch in [
+                policy::Branch::Ignore,
+                policy::Branch::Warn,
+                policy::Branch::Update,
+            ] {
+                let config = branch_config(branch);
+                let result = check_action_with_comment(
+                    &action,
+                    &format!("# {name} keep"),
+                    &versions,
+                    &config,
+                    &provider,
+                )
+                .await;
+                assert!(
+                    matches!(result.status(), CheckStatus::Outdated { current, target }
+                    if current == &old && target.sha() == head && target.version().to_string() == name)
+                );
+                assert_eq!(result.ref_kind(), Some(RefKind::Sha));
+                let current = ActionRef::simple("o", "r", &head);
+                let result = check_action_with_comment(
+                    &current,
+                    &format!("# {name}"),
+                    &versions,
+                    &config,
+                    &provider,
+                )
+                .await;
+                assert!(matches!(result.status(), CheckStatus::Pinned { .. }));
+            }
+            for comment in ["", "# keep this", "# v1.0.0"] {
+                let result = check_action_with_comment(
+                    &action,
+                    comment,
+                    &versions,
+                    &Config::default(),
+                    &provider,
+                )
+                .await;
+                assert!(matches!(result.status(), CheckStatus::Pinned { .. }));
+            }
+        }
+        assert_eq!(provider.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn branch_pin_comments_override_release_selection_but_respect_ignores()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let old = "a".repeat(40);
+        let head = "b".repeat(40);
+        let release = "c".repeat(40);
+        let action = ActionRef::simple("o", "r", &old);
+        let provider = ResolveMockProvider::with(Resolve::Offline);
+        let mut versions = make_version_set(
+            vec![
+                make_version_info("v1.0.0", &old),
+                make_version_info("v2.0.0", &release),
+            ],
+            None,
+            HashMap::new(),
+            HashMap::new(),
+        );
+        versions.set_branches(HashMap::from([
+            ("master".to_owned(), head.clone()),
+            ("v1.0.0".to_owned(), head.clone()),
+        ]));
+        let config = Config::default();
+        let result =
+            check_action_with_comment(&action, "# master", &versions, &config, &provider).await;
+        assert!(
+            matches!(result.status(), CheckStatus::Outdated { target, .. } if target.sha() == head)
+        );
+        let result =
+            check_action_with_comment(&action, "# v1.0.0", &versions, &config, &provider).await;
+        assert_eq!(
+            result,
+            check_action_with_provider(&action, &versions, &config, &provider).await
+        );
+        let ignored = Config::from_contents(
+            Some((
+                std::path::Path::new("actup.toml"),
+                "[scan]\nignore = [\"o/r\"]",
+            )),
+            crate::config::EnvOverrides::default(),
+        )?;
+        assert_eq!(
+            check_action_with_comment(&action, "# master", &versions, &ignored, &provider)
+                .await
+                .status(),
+            &CheckStatus::Ignored
+        );
+        Ok(())
     }
 
     struct ResolveMockProvider {

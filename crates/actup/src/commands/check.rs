@@ -4,7 +4,7 @@ use std::{path::Path, sync::Arc};
 
 use actup_core::{
     ActionRef, ActionRepoId, CheckResult, CheckStatus, Config, FileCache, NO_VERSIONS_FOUND_REASON,
-    check_action_with_provider, provider, version,
+    check_action_with_comment, provider, version,
 };
 
 use anstream::eprintln;
@@ -86,8 +86,14 @@ async fn check_action_with_versions(
             (status, None)
         }
         (Some(Ok(versions)), Some(provider)) => {
-            let result =
-                check_action_with_provider(&action.action_ref, versions, config, provider).await;
+            let result = check_action_with_comment(
+                &action.action_ref,
+                &action.comment,
+                versions,
+                config,
+                provider,
+            )
+            .await;
             (
                 to_finding_status(result.status().clone(), Some(versions)),
                 Some(result),
@@ -114,6 +120,7 @@ async fn check_action_with_versions(
 
 /// Collected action for batch processing.
 struct CollectedAction {
+    comment: String,
     file: String,
     line: usize,
     action_ref: ActionRef,
@@ -206,6 +213,13 @@ fn collect_actions(
             .with_span(Span::of(&bad.loc)),
         );
     }
+    let sources: Vec<actup_core::patch::FileEdits<()>> = scan
+        .files
+        .iter()
+        .map(|file| {
+            actup_core::patch::FileEdits::new(file.path.clone(), file.content.clone(), file.format)
+        })
+        .collect();
     for scanned in &scan.refs {
         let relative = &scan.files[scanned.file].relative;
         let action_ref = &scanned.action_ref;
@@ -247,6 +261,10 @@ fn collect_actions(
         };
 
         collected.push(CollectedAction {
+            comment: sources[scanned.file]
+                .writable(&scanned.loc)
+                .comment()
+                .to_owned(),
             file: relative.clone(),
             line: scanned.loc.line(),
             action_ref: action_ref.clone(),
@@ -703,6 +721,7 @@ mod tests {
         };
         let registry = test_registry();
         let collected = CollectedAction {
+            comment: String::new(),
             file: "test.yml".to_string(),
             line: 10,
             repo_id: action_ref.to_repo_id(),
@@ -736,6 +755,7 @@ mod tests {
         let config = Config::default();
         let registry = test_registry();
         let collected = CollectedAction {
+            comment: String::new(),
             file: "test.yml".to_string(),
             line: 5,
             repo_id: action_ref.to_repo_id(),
@@ -781,6 +801,7 @@ mod tests {
         };
         let registry = test_registry();
         let collected = CollectedAction {
+            comment: String::new(),
             file: "test.yml".to_string(),
             line: 5,
             repo_id: action_ref.to_repo_id(),
@@ -813,6 +834,7 @@ mod tests {
     async fn test_fallback_environment_error_keeps_the_cause() {
         let action_ref = ActionRef::simple("actions", "checkout", "v4");
         let collected = CollectedAction {
+            comment: String::new(),
             file: "test.yml".to_string(),
             line: 5,
             repo_id: action_ref.to_repo_id(),
@@ -869,6 +891,7 @@ mod tests {
         };
         let registry = test_registry();
         let collected = CollectedAction {
+            comment: String::new(),
             file: "test.yml".to_string(),
             line: 10,
             repo_id: action_ref.to_repo_id(),
@@ -963,6 +986,7 @@ mod tests {
     fn collected(ref_str: &str) -> CollectedAction {
         let action_ref = ActionRef::simple("actions", "checkout", ref_str);
         CollectedAction {
+            comment: String::new(),
             file: "ci.yml".to_string(),
             line: 3,
             repo_id: action_ref.to_repo_id(),
@@ -1180,6 +1204,7 @@ mod tests {
         let repo_id = action_ref.to_repo_id();
 
         let collected = CollectedAction {
+            comment: String::new(),
             file: "workflow.yml".to_string(),
             line: 15,
             action_ref: action_ref.clone(),
@@ -1194,6 +1219,42 @@ mod tests {
         assert_eq!(collected.action_ref.repo(), "setup-node");
         assert_eq!(collected.repo_id.owner(), action_ref.owner());
         assert_eq!(collected.repo_id.repo(), action_ref.repo());
+    }
+
+    #[tokio::test]
+    async fn check_branch_pin_comments_survive_parallel_collection()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let workflows = dir.path().join(".github/workflows");
+        std::fs::create_dir_all(&workflows)?;
+        let old = "a".repeat(40);
+        let head = "b".repeat(40);
+        std::fs::write(
+            workflows.join("ci.yml"),
+            format!(
+                "jobs:\n  b:\n    steps:\n      - parallel:\n          - uses: actions/checkout@{old} # master keep\n"
+            ),
+        )?;
+        let config = Config::default();
+        let registry = test_registry();
+        let scanner = WorkflowScanner::new(dir.path(), &config, &registry, OutputFormat::Json);
+        let mut errors = ErrorTally::default();
+        let scan = Scan::collect(&scanner, &scanner.discover(), &mut errors);
+        let mut findings = Vec::new();
+        let actions = collect_actions(&scanner, &scan, &config, &mut findings);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].comment, "# master keep");
+        let mut versions = version::Set::new();
+        versions.set_branches(std::collections::HashMap::from([(
+            "master".to_owned(),
+            head.clone(),
+        )]));
+        let finding =
+            check_action_with_versions(&actions[0], Some(&Ok(versions)), &config, &registry).await;
+        assert!(
+            matches!(finding.status(), FindingStatus::Outdated { latest, .. } if latest.sha() == head)
+        );
+        Ok(())
     }
 
     #[test]

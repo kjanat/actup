@@ -443,18 +443,30 @@ fn classify_node(stack: &mut [Ctx]) -> NodeRole {
 }
 
 /// Whether a `uses` key in the innermost mapping of `stack` names an action:
-/// `jobs.<id>.uses`, `jobs.<id>.steps[*].uses` or `runs.steps[*].uses`.
+/// `jobs.<id>.uses`, or workflow/composite steps, including nested `parallel` lists.
 fn names_action(stack: &[Ctx]) -> bool {
     let is = |slot: &Slot, name: &str| matches!(slot, Slot::Key(key) if key == name);
     let slots: Vec<&Slot> = stack.iter().map(Ctx::slot).collect();
-    match slots.as_slice() {
-        [Slot::Root, jobs, Slot::Key(_)] => is(jobs, "jobs"),
-        [Slot::Root, jobs, Slot::Key(_), steps, Slot::Other] => {
-            is(jobs, "jobs") && is(steps, "steps")
+    let nested = match slots.as_slice() {
+        [Slot::Root, jobs, Slot::Key(_)] => return is(jobs, "jobs"),
+        [
+            Slot::Root,
+            jobs,
+            Slot::Key(_),
+            steps,
+            Slot::Other,
+            nested @ ..,
+        ] if is(jobs, "jobs") && is(steps, "steps") => nested,
+        [Slot::Root, runs, steps, Slot::Other, nested @ ..]
+            if is(runs, "runs") && is(steps, "steps") =>
+        {
+            nested
         }
-        [Slot::Root, runs, steps, Slot::Other] => is(runs, "runs") && is(steps, "steps"),
-        _ => false,
-    }
+        _ => return false,
+    };
+    nested
+        .chunks(2)
+        .all(|pair| matches!(pair, [parallel, Slot::Other] if is(parallel, "parallel")))
 }
 
 /// 1-indexed lines of `content` whose line break falls inside a scalar.
@@ -583,7 +595,7 @@ pub struct UsesLocation {
     /// locations that [`extract_uses_from_yaml`] found.
     scalar_range: Option<RefRange>,
     /// Whether GitHub reads the value as an action or reusable workflow:
-    /// `jobs.<id>.uses`, `jobs.<id>.steps[*].uses` or `runs.steps[*].uses`.
+    /// `jobs.<id>.uses`, or workflow/composite steps, including nested `parallel` lists.
     #[serde(default = "at_action_key")]
     action_key: bool,
 }
@@ -657,6 +669,17 @@ impl UsesLocation {
     #[must_use]
     pub fn value(&self) -> &str {
         &self.value
+    }
+
+    /// Comment after this reference, when its source range is available.
+    ///
+    /// For embedded text or shared lines, pass the location through
+    /// [`crate::patch::FileEdits::writable`] before reading its comment.
+    #[must_use]
+    pub fn comment(&self) -> &str {
+        self.ref_range().map_or("", |range| {
+            crate::rewrite::after_value(self.raw_line(), range.end)
+        })
     }
 
     /// Get the raw line
@@ -974,6 +997,27 @@ mod tests {
             extract_uses_from_yaml(valid)[0].classify(),
             Some(Uses::Action(_))
         ));
+    }
+
+    #[test]
+    fn classify_parallel_action_keys() {
+        for prefix in ["jobs:\n  build:", "runs:"] {
+            let yaml = format!(
+                "{prefix}\n    steps:\n      - parallel:\n          - uses: o/r@\n            with: {{ uses: input }}\n          - parallel:\n              - {{ uses: o/r@ }}\n          - uses: o/r@v1\n"
+            );
+            let locations = extract_uses_from_yaml(&yaml);
+            assert_eq!(locations.len(), 4);
+            assert!(matches!(
+                locations[0].classify(),
+                Some(Uses::Invalid { .. })
+            ));
+            assert!(locations[1].classify().is_none());
+            assert!(matches!(
+                locations[2].classify(),
+                Some(Uses::Invalid { .. })
+            ));
+            assert!(matches!(locations[3].classify(), Some(Uses::Action(_))));
+        }
     }
 
     #[test]

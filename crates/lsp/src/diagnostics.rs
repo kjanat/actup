@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use actup_core::{
     ActionRef, ActionRepoId, Config, Error as CoreError, SHORT_SHA_REASON, SourceFormat, Uses,
-    check_action_with_provider, parse_uses, provider,
+    check_action_with_comment, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     rewrite::{Gap, Labels, LineShare, Rewrite, Trailing, after_value, closer, labeled_head},
 };
@@ -166,6 +166,8 @@ pub struct LocatedAction {
     pub action_ref: ActionRef,
     /// 0-indexed line in the document.
     pub line: u32,
+    /// Start of the full action value, used for cursor selection only.
+    value_col_start: u32,
     /// Range of the ref portion (after `@`) within the line, or the whole line
     /// when the line does not hold the value verbatim.
     pub col_start: u32,
@@ -214,7 +216,7 @@ impl LocatedAction {
     }
 }
 
-/// Find the `uses:` action whose ref range contains the cursor `position`.
+/// Find the `uses:` action whose full value contains the cursor `position`.
 ///
 /// Used by code actions to offer pin transformations on the ref under the
 /// cursor regardless of whether it has a diagnostic.
@@ -229,7 +231,7 @@ pub fn locate_action_at(
         .find(|a| {
             a.editable
                 && a.line == position.line
-                && (a.col_start..=a.col_end).contains(&position.character)
+                && (a.value_col_start..=a.col_end).contains(&position.character)
         })
 }
 
@@ -350,7 +352,11 @@ fn locate_uses(
                     crate::position::byte_to_col(raw_line, read.len(), encoding),
                 )
             });
+        let value_col_start = loc.value_range().map_or(col_start, |range| {
+            crate::position::byte_to_col(raw_line, range.start, encoding)
+        });
         located.actions.push(LocatedAction {
+            value_col_start,
             action_ref,
             line,
             col_start,
@@ -438,7 +444,14 @@ async fn compute_diagnostics_for_actions(
             }
             Some(Ok(versions)) => match registry.find_for_repo(&repo_id) {
                 Some(provider) => {
-                    check_action_with_provider(&action.action_ref, versions, config, provider).await
+                    check_action_with_comment(
+                        &action.action_ref,
+                        &action.tail,
+                        versions,
+                        config,
+                        provider,
+                    )
+                    .await
                 }
                 None => CheckResult::new(
                     action.action_ref.clone(),
@@ -1424,6 +1437,47 @@ jobs:
                 (0, u32::try_from(line_len)?, Trailing::None),
                 "{yaml:?}"
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn locate_parallel_action_from_owner_repo_or_ref_keeps_ref_edit_range()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let text = "jobs:\n  b:\n    steps:\n      - parallel:\n          - { name: '🚀', uses: 'actions/setup-python@v7' } # keep\n";
+        let line = text.lines().nth(4).ok_or("missing line")?;
+        for encoding in [
+            crate::position::PositionEncoding::Utf8,
+            crate::position::PositionEncoding::Utf16,
+        ] {
+            for needle in ["actions", "setup-python", "@", "v7"] {
+                let byte = line.find(needle).ok_or("missing token")?;
+                let at = Position::new(4, crate::position::byte_to_col(line, byte, encoding));
+                let action = locate_action_at(text, SourceFormat::Yaml, at, encoding)
+                    .ok_or("action not selected")?;
+                assert_eq!(action.action_ref.repo(), "setup-python");
+                let start = line.find("v7").ok_or("missing ref")?;
+                assert_eq!(
+                    action.col_start,
+                    crate::position::byte_to_col(line, start, encoding)
+                );
+                assert_eq!(
+                    action.col_end,
+                    crate::position::byte_to_col(line, start + 2, encoding)
+                );
+            }
+            for needle in ["uses:", "keep"] {
+                let byte = line.find(needle).ok_or("missing token")?;
+                assert!(
+                    locate_action_at(
+                        text,
+                        SourceFormat::Yaml,
+                        Position::new(4, crate::position::byte_to_col(line, byte, encoding)),
+                        encoding
+                    )
+                    .is_none()
+                );
+            }
         }
         Ok(())
     }
@@ -3101,6 +3155,27 @@ jobs:
         )
         .await
         .diagnostics)
+    }
+
+    #[tokio::test]
+    async fn branch_pin_comment_produces_a_sha_update_in_parallel_steps()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut versions = version::Set::new();
+        versions.set_branches(HashMap::from([("master".to_owned(), DUMMY_SHA.to_owned())]));
+        let provider = test_utils::MockProvider::new("github.com")
+            .with_versions("actions", "checkout", versions);
+        let yaml = format!(
+            "jobs:\n  build:\n    steps:\n      - parallel:\n          - uses: 'actions/checkout@{DUMMY_SHA_2}' # master keep\n"
+        );
+        let diags = diagnostics_from(provider, &yaml).await?;
+        assert_eq!(diags.len(), 1);
+        let data: DiagnosticData =
+            serde_json::from_value(diags[0].data.clone().ok_or("missing data")?)?;
+        assert!(
+            matches!(data, DiagnosticData::Outdated { target_ref, repin_comment, .. }
+            if target_ref == DUMMY_SHA && repin_comment.as_deref() == Some("' # master keep"))
+        );
+        Ok(())
     }
 
     async fn text_repins(

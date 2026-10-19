@@ -12,7 +12,7 @@ use std::{
 use actup_core::{
     ActionRef, Clock, Config, SourceFormat,
     cache::Staleness,
-    check_action_with_provider, clock, parse_uses, provider,
+    check_action_with_comment, clock, parse_uses, provider,
     resolution::{CheckResult, CheckStatus, RefKind},
     version,
 };
@@ -118,6 +118,7 @@ pub fn new_action_meta_cache() -> ActionMetaCache {
 
 /// A parsed action located at a specific position in the document.
 struct LocatedActionForHover {
+    tail: String,
     action_ref: ActionRef,
     /// 0-indexed line number.
     line: u32,
@@ -167,7 +168,13 @@ fn find_action_at_position(
 
         // Parse the uses value — skip local/docker refs.
         if let Ok(Some(action_ref)) = parse_uses(loc.value()) {
+            let source: actup_core::patch::FileEdits<()> = actup_core::patch::FileEdits::new(
+                std::path::PathBuf::new(),
+                text.to_owned(),
+                format,
+            );
             return Some(LocatedActionForHover {
+                tail: source.writable(&loc).comment().to_owned(),
                 action_ref,
                 line: line_0,
                 value_col_start: col_start,
@@ -412,6 +419,7 @@ pub async fn compute_hover(
     } else {
         compute_hover_status(
             &located.action_ref,
+            &located.tail,
             &repo_id,
             versions.as_ref().map(Option::as_ref),
             ctx,
@@ -516,6 +524,7 @@ async fn resolve_hover_versions(
 /// `Unresolvable` status if versions / provider lookup failed.
 async fn compute_hover_status(
     action_ref: &ActionRef,
+    comment: &str,
     repo_id: &actup_core::ActionRepoId,
     versions: Result<Option<&version::Set>, &actup_core::Error>,
     ctx: &HoverContext<'_>,
@@ -537,7 +546,7 @@ async fn compute_hover_status(
     let Some(provider) = ctx.registry.find_for_repo(repo_id) else {
         return unresolvable("no provider available".into());
     };
-    check_action_with_provider(action_ref, v, ctx.config, provider).await
+    check_action_with_comment(action_ref, comment, v, ctx.config, provider).await
 }
 
 #[cfg(test)]
@@ -1324,6 +1333,40 @@ mod tests {
             "{}",
             markup.value
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn compute_hover_checks_branch_pin_comments() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::test_utils::{self, DUMMY_SHA, DUMMY_SHA_2};
+        let mut versions = version::Set::new();
+        versions.set_branches(std::collections::HashMap::from([(
+            "master".to_owned(),
+            DUMMY_SHA.to_owned(),
+        )]));
+        let registry = test_utils::mock_registry(
+            test_utils::MockProvider::new("github.com")
+                .with_versions("actions", "checkout", versions),
+        );
+        let file_cache = crate::file_cache::FileCache::disabled();
+        let meta_cache = new_action_meta_cache();
+        let config = Config::default();
+        let ctx = HoverContext {
+            config: &config,
+            registry: &registry,
+            file_cache: &file_cache,
+            meta_cache: &meta_cache,
+            encoding: crate::position::PositionEncoding::Utf16,
+        };
+        let text = format!("- uses: actions/checkout@{DUMMY_SHA_2} # master\n");
+        let hover = compute_hover(&text, SourceFormat::Yaml, Position::new(0, 10), None, &ctx)
+            .await
+            .ok_or("missing hover")?;
+        let HoverContents::Markup(markup) = hover.contents else {
+            return Err("expected markup".into());
+        };
+        assert!(markup.value.contains("**Outdated**"), "{}", markup.value);
+        assert!(markup.value.contains("master"), "{}", markup.value);
         Ok(())
     }
 
