@@ -262,6 +262,9 @@ branch     = "warn"  # ignore | warn | update
 prerelease = false
 archived   = "hint"  # hint | ignore
 
+[pin]
+comment = true  # add version labels to SHA pins
+
 [scan]
 ignore      = ["my-org/*", "dtolnay/rust-toolchain@1.91.0"]
 extra_paths = [".gitea/workflows"]  # user or explicit config only
@@ -341,6 +344,20 @@ line. Other text after the value, such as more flow keys, means no new comment,
 but a label comment at the end of the line is still rewritten and keeps its
 note. `actup pin` and `branch = "update"` place their `# <ref>` comment the same
 way. The CLI, the LSP, the MCP server and the wasm package follow the same rule.
+
+Set `[pin] comment = false` to omit generated labels from SHA edits on all four
+surfaces. Replacing a ref removes its recognized label and keeps the note:
+`@v4.0.0 # v4.0.0 keep` becomes `@<sha> # keep`. Other comments and closing
+quotes stay intact. This setting does not change `policy.pin`, tag updates, or
+already-current refs that need no edit. `ACTUP_PIN__COMMENT=false` overrides it.
+
+The LSP also offers **Update to {version} & pin to SHA** for an outdated ref at
+the cursor. It pins the target selected by the update policy and per-action
+overrides, even with `policy.pin = "tag"` or `"preserve"`. **Pin to commit SHA**
+still pins the current version. The update-and-pin refactor is omitted when the
+ordinary quick fix already makes the identical edit; it remains available in a
+refactor-only request. Cached SHA targets must be exactly 40 hexadecimal
+characters, and edits use current document diagnostics.
 
 On a line that takes no new comment, such as a line of a plain-text file, a
 label comment right after the value is still rewritten. Writers read the word

@@ -42,6 +42,7 @@ pub fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
 /// production output format rather than hardcoding values.
 pub fn make_outdated_diagnostic(range: Range, uses_value: &str, target_ref: &str) -> Diagnostic {
     let data = DiagnosticData::Outdated {
+        pin: None,
         target_ref: target_ref.into(),
         repin_comment: None,
         replace_end_col: None,

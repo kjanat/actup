@@ -109,13 +109,21 @@ async fn edit(
             let labels = Labels::fetched(action_ref.ref_str(), versions);
             let (edit, new_ref, target, show_comment) = match check.status() {
                 CheckStatus::Outdated { target, .. } => (
-                    retarget_edit(loc, action_ref.is_sha(), target, Named::Tag, style, &labels),
+                    retarget_edit(
+                        loc,
+                        action_ref.is_sha(),
+                        target,
+                        Named::Tag,
+                        style,
+                        &labels,
+                        config.pin.comment,
+                    ),
                     new_ref(action_ref, target, style),
                     target_display(action_ref, target, style),
                     false,
                 ),
                 CheckStatus::PinBranch { ref_name, sha } => (
-                    pin_edit(loc, sha, ref_name, &labels),
+                    pin_edit(loc, sha, ref_name, &labels, config.pin.comment),
                     sha.clone(),
                     sha[..7.min(sha.len())].to_string(),
                     true,
@@ -525,6 +533,36 @@ mod tests {
         .join("\n")
         .replace("NEW", &sha40('b'));
         assert_eq!(written, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_without_pin_comments_preserves_notes_and_quotes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let content = format!(
+            "steps:\n  - uses: actions/checkout@v4.0.0\n  - uses: \"o/p@{}\" # v4.0.0 keep\n  - {{ uses: o/q@v4.0.0 }} # v4.0.0\n  - uses: o/r@v4.0.0 # mine\n",
+            sha40('a')
+        );
+        let written = update_with_config(
+            "[policy]\npin = \"sha\"\n[pin]\ncomment = false\n",
+            &content,
+        )
+        .await?;
+        let expected = format!(
+            "steps:\n  - uses: actions/checkout@{0}\n  - uses: \"o/p@{0}\" # keep\n  - {{ uses: o/q@{0} }}\n  - uses: o/r@{0} # mine\n",
+            sha40('b')
+        );
+        assert_eq!(written, expected);
+        let branches = update_with_config_runs(
+            "[policy]\nbranch = \"update\"\n[pin]\ncomment = false\n",
+            "steps:\n  - uses: o/a@main # main keep\n",
+            1,
+        )
+        .await?;
+        assert_eq!(
+            branches,
+            format!("steps:\n  - uses: o/a@{} # keep\n", sha40('a'))
+        );
         Ok(())
     }
 
@@ -1250,8 +1288,14 @@ mod tests {
             (" # mine", " # mine"),
         ] {
             let line = format!("      - uses: a/b@main{tail}");
-            let edit = pin_edit(&sha_loc(&line)?, &sha, "main", &Labels::unfetched("main"))
-                .ok_or("no edit")?;
+            let edit = pin_edit(
+                &sha_loc(&line)?,
+                &sha,
+                "main",
+                &Labels::unfetched("main"),
+                true,
+            )
+            .ok_or("no edit")?;
             assert_eq!(
                 apply_at(&line, edit)?,
                 format!("      - uses: a/b@{sha}{written}"),
@@ -1272,7 +1316,8 @@ mod tests {
             let [loc] = found.as_slice() else {
                 return Err(format!("expected one `uses:` in {line:?}").into());
             };
-            let edit = pin_edit(loc, &sha, "main", &Labels::unfetched("main")).ok_or("no edit")?;
+            let edit =
+                pin_edit(loc, &sha, "main", &Labels::unfetched("main"), true).ok_or("no edit")?;
             assert_eq!(apply_at(line, edit)?, written, "{line}");
         }
         Ok(())
@@ -1295,11 +1340,12 @@ mod tests {
                     Named::Tag,
                     policy::Style::Preserve,
                     &labels,
+                    true,
                 )
                 .is_none()
             );
         }
-        assert!(pin_edit(&loc, &sha40('c'), "v4", &Labels::unfetched("v4")).is_none());
+        assert!(pin_edit(&loc, &sha40('c'), "v4", &Labels::unfetched("v4"), true).is_none());
     }
 
     #[test]
@@ -1355,6 +1401,7 @@ mod tests {
             Named::Tag,
             policy::Style::Preserve,
             &Labels::unfetched(action_ref.ref_str()),
+            true,
         )
         .ok_or("no edit")?;
         assert_eq!(
@@ -1380,6 +1427,7 @@ mod tests {
             Named::Tag,
             policy::Style::Preserve,
             &Labels::unfetched(action_ref.ref_str()),
+            true,
         )
         .ok_or("no edit")?;
         assert_eq!(
@@ -1435,6 +1483,7 @@ mod tests {
                     Named::Tag,
                     policy::Style::Preserve,
                     &Labels::unfetched(action_ref.ref_str()),
+                    true,
                 )
                 .ok_or("no edit")?,
                 (),

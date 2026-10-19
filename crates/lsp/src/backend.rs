@@ -760,17 +760,17 @@ impl LanguageServer for LspBackend {
             crate::diagnostics::uri_format(&uri),
             encoding,
         );
+        let diagnostics = if context_diagnostics.is_empty() {
+            &cached
+        } else {
+            context_diagnostics
+        };
 
         // Per-diagnostic quickfixes (only when quickfix kind is allowed).
         if crate::code_actions::kind_allowed(
             only,
             &tower_lsp_server::ls_types::CodeActionKind::QUICKFIX,
         ) {
-            let diagnostics = if context_diagnostics.is_empty() {
-                &cached
-            } else {
-                context_diagnostics
-            };
             actions.extend(
                 document.retain(crate::code_actions::code_actions_for_diagnostics(
                     &uri,
@@ -801,6 +801,15 @@ impl LanguageServer for LspBackend {
             only,
             &tower_lsp_server::ls_types::CodeActionKind::REFACTOR,
         ) {
+            let pins = document.retain(crate::code_actions::update_and_pin_actions(
+                &uri,
+                doc_version,
+                &cached,
+                params.range,
+                supports_doc_changes,
+                &actions,
+            ));
+            actions.extend(pins);
             actions.extend(
                 document.retain(
                     self.pin_actions_at(
@@ -989,6 +998,9 @@ impl LspBackend {
         doc_version: Option<i32>,
         supports_doc_changes: bool,
     ) -> Vec<tower_lsp_server::ls_types::CodeActionOrCommand> {
+        let ConfigState::Loaded(config) = self.config.read().await.clone() else {
+            return Vec::new();
+        };
         let encoding = self.position_encoding.get().copied().unwrap_or_default();
 
         // Resolve the ref under the cursor and copy out what we need before any
@@ -1023,6 +1035,7 @@ impl LspBackend {
             uri,
             doc_version,
             supports_doc_changes,
+            config.pin,
         )
         .await
     }
@@ -1035,6 +1048,7 @@ async fn pin_actions_for(
     uri: &Uri,
     doc_version: Option<i32>,
     supports_doc_changes: bool,
+    pin: actup_core::config::Pin,
 ) -> Vec<tower_lsp_server::ls_types::CodeActionOrCommand> {
     let cached = cached.filter(|versions| versions.stale().is_none());
     let fetched = if cached.is_none() {
@@ -1048,7 +1062,8 @@ async fn pin_actions_for(
         None
     };
     let versions = cached.or(fetched.as_ref());
-    let targets = compute_pin_targets(action, versions, provider).await;
+    let mut targets = compute_pin_targets(action, versions, provider).await;
+    targets.comment = pin.comment;
     let ref_range = tower_lsp_server::ls_types::Range {
         start: tower_lsp_server::ls_types::Position {
             line: action.line,
@@ -1092,7 +1107,7 @@ async fn compute_pin_targets(
             v.semver_tags()
                 .iter()
                 .find(|t| t.version().to_string() == ref_str)
-                .map(|t| t.sha().to_string())
+                .and_then(|t| actup_core::provider::Sha40::new(t.sha()))
         });
         match cached {
             Some(s) => Some((s, ref_str.to_string())),
@@ -1105,7 +1120,7 @@ async fn compute_pin_targets(
                         .filter(|_| action_ref.abbreviates(s.as_str()))
                         .and_then(|v| v.tag_on(s.as_str()))
                         .map_or_else(|| ref_str.to_string(), |t| t.version().to_string());
-                    (s.as_str().to_string(), label)
+                    (s, label)
                 }),
         }
     };
@@ -1125,6 +1140,7 @@ async fn compute_pin_targets(
 
     crate::code_actions::PinTargets {
         sha,
+        comment: true,
         major,
         branch,
         unpin,
@@ -1617,6 +1633,7 @@ fn config_file_watchers(
 /// which changes what versions are fetched and thus which diagnostics are emitted.
 fn configs_differ_for_diagnostics(old: &Config, new: &Config) -> bool {
     old.policy != new.policy
+        || old.pin != new.pin
         || old.scan.ignore != new.scan.ignore
         || old.overrides != new.overrides
         || old.default_host != new.default_host
@@ -1666,6 +1683,7 @@ mod tests {
         compute_pin_targets(&action, Some(&versions), &provider)
             .await
             .sha
+            .map(|(sha, label)| (sha.to_string(), label))
     }
 
     #[tokio::test]
@@ -1679,6 +1697,193 @@ mod tests {
             sha_pin_target("deadbee").await,
             Some((sha, "deadbee".to_string()))
         );
+    }
+
+    #[tokio::test]
+    async fn sha_pin_target_validates_cached_shas()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use crate::test_utils::{DUMMY_SHA, MockProvider, make_range, simple_version_set};
+        let action = crate::diagnostics::locate_action_at(
+            "- uses: actions/checkout@v4.2.0",
+            actup_core::SourceFormat::Yaml,
+            make_range(0, 25, 25).start,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .ok_or("missing action")?;
+        for invalid in ["abc1234", &"x".repeat(40), &"a".repeat(41)] {
+            let versions = simple_version_set("v4.2.0", invalid);
+            let provider = MockProvider::new("github.com");
+            let targets = compute_pin_targets(&action, Some(&versions), &provider).await;
+            assert_eq!(
+                targets.sha.map(|(sha, _)| sha.to_string()).as_deref(),
+                Some(DUMMY_SHA)
+            );
+            assert_eq!(
+                provider
+                    .resolve_count()
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                1
+            );
+            let provider =
+                MockProvider::new("github.com").with_resolve(Err(actup_core::Error::Network {
+                    operation: "resolve".into(),
+                    message: "offline".into(),
+                    source: None,
+                }));
+            assert!(
+                compute_pin_targets(&action, Some(&versions), &provider)
+                    .await
+                    .sha
+                    .is_none()
+            );
+        }
+        let versions = simple_version_set("v4.2.0", &DUMMY_SHA.to_uppercase());
+        let provider = MockProvider::new("github.com");
+        let targets = compute_pin_targets(&action, Some(&versions), &provider).await;
+        assert_eq!(
+            targets.sha.map(|(sha, _)| sha.to_string()).as_deref(),
+            Some(DUMMY_SHA)
+        );
+        assert_eq!(
+            provider
+                .resolve_count()
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn pin_comment_changes_refresh_diagnostic_edits() {
+        let base = Config::default();
+        let mut changed = base.clone();
+        changed.pin.comment = false;
+        assert!(configs_differ_for_diagnostics(&base, &changed));
+    }
+
+    #[tokio::test]
+    async fn cursor_pin_without_comments_preserves_quotes_and_notes()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use crate::test_utils::{DUMMY_SHA, MockProvider, make_range, simple_version_set};
+        let text = "- uses: \"actions/checkout@v4.2.0\" # v4.2.0 keep";
+        let encoding = crate::position::PositionEncoding::Utf16;
+        let action = crate::diagnostics::locate_action_at(
+            text,
+            actup_core::SourceFormat::Yaml,
+            make_range(0, 26, 26).start,
+            encoding,
+        )
+        .ok_or("no action")?;
+        let versions = simple_version_set("v4.2.0", DUMMY_SHA);
+        let uri: Uri = "file:///test/ci.yml".parse()?;
+        let actions = pin_actions_for(
+            &action,
+            Some(&versions),
+            &MockProvider::new("github.com"),
+            &uri,
+            None,
+            false,
+            actup_core::config::Pin { comment: false },
+        )
+        .await;
+        let pin = actions
+            .iter()
+            .find_map(|a| match a {
+                tower_lsp_server::ls_types::CodeActionOrCommand::CodeAction(a)
+                    if a.title == "Pin to commit SHA (v4.2.0)" =>
+                {
+                    a.edit.as_ref()
+                }
+                _ => None,
+            })
+            .ok_or("no SHA pin action")?;
+        let edits = pin
+            .changes
+            .as_ref()
+            .and_then(|c| c.get(&uri))
+            .ok_or("no edits")?;
+        let written = crate::workspace_commands::apply_text_edits(text, edits, encoding)
+            .ok_or("invalid edit")?;
+        assert_eq!(
+            written,
+            format!("- uses: \"actions/checkout@{DUMMY_SHA}\" # keep")
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_and_pin_uses_current_cache_and_respects_kind_filter()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        use tower_lsp_server::ls_types::{CodeActionKind, CodeActionOrCommand};
+        let (service, _socket) = tower_lsp_server::LspService::new(|client| {
+            LspBackend::with_providers(client, None, crate::test_utils::MOCK_PROVIDERS)
+        });
+        let backend = service.inner();
+        let uri: Uri = "file:///test/ci.yml".parse()?;
+        let range = crate::test_utils::make_range(0, 25, 31);
+        let mut diag =
+            crate::test_utils::make_outdated_diagnostic(range, "actions/checkout@v4.0.0", "v4.2.0");
+        let data = diag.data.as_mut().ok_or("no metadata")?;
+        data["target_ref"] = serde_json::json!(crate::test_utils::DUMMY_SHA);
+        data["repin_comment"] = serde_json::json!(" # v4.2.0");
+        data["pin"] = serde_json::json!({
+            "sha": crate::test_utils::DUMMY_SHA, "label": "v4.2.0",
+            "repin_comment": " # v4.2.0", "replace_end_col": null,
+        });
+        let mut document = DocumentState::new("- uses: actions/checkout@v4.0.0\n".into(), 1);
+        document.diagnostics = vec![diag.clone()];
+        backend.documents.insert(uri.clone(), document);
+        let request = |diagnostics: Vec<Diagnostic>, only: Vec<CodeActionKind>| CodeActionParams {
+            text_document: tower_lsp_server::ls_types::TextDocumentIdentifier { uri: uri.clone() },
+            range,
+            context: tower_lsp_server::ls_types::CodeActionContext {
+                diagnostics,
+                only: Some(only),
+                trigger_kind: None,
+            },
+            work_done_progress_params: tower_lsp_server::ls_types::WorkDoneProgressParams::default(
+            ),
+            partial_result_params: tower_lsp_server::ls_types::PartialResultParams::default(),
+        };
+        for context in [vec![], vec![diag.clone()]] {
+            let actions = backend
+                .code_action(request(context, vec![CodeActionKind::REFACTOR]))
+                .await?
+                .ok_or("missing actions")?;
+            assert!(
+                matches!(actions.as_slice(), [CodeActionOrCommand::CodeAction(action)] if action.title == "Update to v4.2.0 & pin to SHA")
+            );
+        }
+        let quick = backend
+            .code_action(request(vec![], vec![CodeActionKind::QUICKFIX]))
+            .await?
+            .ok_or("no quickfix")?;
+        assert!(quick.iter().all(|a| matches!(a, CodeActionOrCommand::CodeAction(action) if action.kind == Some(CodeActionKind::QUICKFIX))));
+        let mut unrelated = diag.clone();
+        unrelated.source = Some("another-linter".into());
+        let actions = backend
+            .code_action(request(
+                vec![unrelated],
+                vec![CodeActionKind::QUICKFIX, CodeActionKind::REFACTOR],
+            ))
+            .await?
+            .ok_or("missing pin alternative")?;
+        assert!(
+            matches!(actions.as_slice(), [CodeActionOrCommand::CodeAction(action)] if action.title == "Update to v4.2.0 & pin to SHA")
+        );
+        // didChange replaces DocumentState before the next diagnostic pass.
+        backend.documents.insert(
+            uri.clone(),
+            DocumentState::new("- uses: actions/setup-go@v4.0.0\n".into(), 2),
+        );
+        let stale = backend
+            .code_action(request(vec![diag], vec![CodeActionKind::REFACTOR]))
+            .await?;
+        assert!(
+            stale.is_none(),
+            "stale checkout metadata must not pin setup-go"
+        );
+        Ok(())
     }
 
     #[test]
@@ -1747,7 +1952,7 @@ mod tests {
         if targets.unpin.is_none() {
             return Ok(None);
         }
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let ref_range = tower_lsp_server::ls_types::Range {
             start: tower_lsp_server::ls_types::Position {
                 line: 0,
@@ -1759,6 +1964,7 @@ mod tests {
             },
         };
         let only_unpin = crate::code_actions::PinTargets {
+            comment: true,
             sha: None,
             major: None,
             branch: None,
@@ -1813,8 +2019,17 @@ mod tests {
         )
         .ok_or("no action under the cursor")?;
         let calls = provider.call_count();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
-        let actions = pin_actions_for(&action, cached, &provider, &uri, None, false).await;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
+        let actions = pin_actions_for(
+            &action,
+            cached,
+            &provider,
+            &uri,
+            None,
+            false,
+            actup_core::config::Pin::default(),
+        )
+        .await;
         let written = actions
             .iter()
             .filter_map(|action| match action {
@@ -1911,7 +2126,7 @@ mod tests {
         let backend = service.inner();
         *backend.registry.write().await =
             Some(Arc::new(crate::test_utils::mock_registry(provider)));
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let repo = actup_core::ActionRepoId::new(None, "actions", "checkout", None);
         let titles = |line: u32| {
             let position = tower_lsp_server::ls_types::Position {

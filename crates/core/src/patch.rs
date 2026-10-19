@@ -83,12 +83,17 @@ pub fn retarget_edit(
     kind: Named,
     style: Style,
     labels: &Labels<'_>,
+    pin_comment: bool,
 ) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
     let trailing = Trailing::after(loc.raw_line(), range.end, labels);
     let name = target.version().to_string();
     if style.writes_sha(current_is_sha) {
-        place_edit(loc, &Rewrite::pin(target.sha(), &name, trailing), true)
+        place_edit(
+            loc,
+            &Rewrite::pin(target.sha(), &name, trailing, pin_comment),
+            true,
+        )
     } else {
         let labeled = kind == Named::Tag && !current_is_sha;
         place_edit(
@@ -99,14 +104,21 @@ pub fn retarget_edit(
     }
 }
 
-/// Build the [`pin_edit`] that pins a ref to the `target` commit SHA with a ` # <version>` comment.
+/// Build the [`pin_edit`] that pins a ref to the `target` commit SHA with an optional version comment.
 #[must_use]
 pub fn repin_sha_edit(
     loc: &UsesLocation,
     target: &version::Info,
     labels: &Labels<'_>,
+    pin_comment: bool,
 ) -> Option<PendingEdit> {
-    pin_edit(loc, target.sha(), &target.version().to_string(), labels)
+    pin_edit(
+        loc,
+        target.sha(),
+        &target.version().to_string(),
+        labels,
+        pin_comment,
+    )
 }
 
 /// Build an edit that writes `sha` over the ref at `loc`, keeping only the note of a label comment.
@@ -133,13 +145,14 @@ pub fn named_edit(
     )
 }
 
-/// Build an edit that pins the ref at `loc` to `sha` with a ` # <label>` comment, as [`Rewrite::pin`] writes it.
+/// Build an edit that pins the ref at `loc` to `sha` with an optional label comment, as [`Rewrite::pin`] writes it.
 #[must_use]
 pub fn pin_edit(
     loc: &UsesLocation,
     sha: &str,
     label: &str,
     labels: &Labels<'_>,
+    pin_comment: bool,
 ) -> Option<PendingEdit> {
     let range = loc.ref_range()?;
     place_edit(
@@ -148,6 +161,7 @@ pub fn pin_edit(
             sha,
             label,
             Trailing::after(loc.raw_line(), range.end, labels),
+            pin_comment,
         ),
         true,
     )
@@ -608,7 +622,7 @@ mod tests {
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
         let result = apply_line(
             &line,
-            repin_sha_edit(&loc, &target, &NO_REFS).ok_or("no edit")?,
+            repin_sha_edit(&loc, &target, &NO_REFS, true).ok_or("no edit")?,
         )
         .ok_or("edit did not apply")?;
         assert_eq!(
@@ -627,7 +641,7 @@ mod tests {
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
         let result = apply_line(
             &line,
-            repin_sha_edit(&loc, &target, &NO_REFS).ok_or("no edit")?,
+            repin_sha_edit(&loc, &target, &NO_REFS, true).ok_or("no edit")?,
         )
         .ok_or("edit did not apply")?;
         assert_eq!(
@@ -686,12 +700,12 @@ mod tests {
                 };
             let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS, true))?,
                 at(&new, " # v7.0.1")
             );
             let (line, loc) = wrap(at(&old, ""))?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS, true))?,
                 at(&new, " # v7.0.1")
             );
             let (line, loc) = wrap(at(&old, " # v7.0.0"))?;
@@ -706,7 +720,15 @@ mod tests {
             assert_eq!(
                 applied(
                     &line,
-                    retarget_edit(&loc, false, &target, Named::Tag, Style::Preserve, &NO_REFS)
+                    retarget_edit(
+                        &loc,
+                        false,
+                        &target,
+                        Named::Tag,
+                        Style::Preserve,
+                        &NO_REFS,
+                        true
+                    )
                 )?,
                 at("v7.0.1", " # v7.0.1 keep")
             );
@@ -736,7 +758,7 @@ mod tests {
             let line = at(&old, comment);
             let loc = quoted_loc(&line)?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS, true))?,
                 at(&new, repinned),
                 "{line}"
             );
@@ -781,12 +803,12 @@ mod tests {
         ] {
             let loc = quoted_loc(&line)?;
             assert_eq!(
-                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
+                applied(&line, repin_sha_edit(&loc, &target, &NO_REFS, true))?,
                 expected,
                 "{line:?}"
             );
             assert_eq!(
-                applied(&line, pin_edit(&loc, &new, "v7.0.1", &NO_REFS))?,
+                applied(&line, pin_edit(&loc, &new, "v7.0.1", &NO_REFS, true))?,
                 expected,
                 "{line:?}"
             );
@@ -815,7 +837,7 @@ mod tests {
             assert_eq!(
                 applied(
                     &line,
-                    retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS)
+                    retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS, true)
                 )?,
                 at(written, written_comment),
                 "{line} {style}"
@@ -824,13 +846,13 @@ mod tests {
         let line = at("main", "");
         let loc = quoted_loc(&line)?;
         assert_eq!(
-            applied(&line, pin_edit(&loc, new, "main", &NO_REFS))?,
+            applied(&line, pin_edit(&loc, new, "main", &NO_REFS, true))?,
             at(new, " # main")
         );
         let line = at("main", " # mine");
         let loc = quoted_loc(&line)?;
         assert_eq!(
-            applied(&line, pin_edit(&loc, new, "main", &NO_REFS))?,
+            applied(&line, pin_edit(&loc, new, "main", &NO_REFS, true))?,
             at(new, " # mine")
         );
         Ok(())
@@ -847,7 +869,7 @@ mod tests {
         let loc = quoted_loc(line)?;
         applied(
             line,
-            retarget_edit(&loc, is_sha, target, kind, style, labels),
+            retarget_edit(&loc, is_sha, target, kind, style, labels, true),
         )
     }
 
@@ -876,7 +898,7 @@ mod tests {
         let loc = quoted_loc(&line)?;
         let pinned = applied(
             &line,
-            pin_edit(&loc, &new, "main", &Labels::unfetched("main")),
+            pin_edit(&loc, &new, "main", &Labels::unfetched("main"), true),
         )?;
         assert_eq!(pinned, at(&new, " # main keep"));
 
@@ -929,7 +951,7 @@ mod tests {
             FileEdits::<()>::new(PathBuf::from("/t.yml"), line.clone(), SourceFormat::Yaml);
         let loc = file_edits.writable(loc);
         assert_eq!(
-            applied(&line, repin_sha_edit(&loc, &target, &NO_REFS))?,
+            applied(&line, repin_sha_edit(&loc, &target, &NO_REFS, true))?,
             line.replace(&old, &new)
         );
         Ok(())
@@ -944,7 +966,7 @@ mod tests {
         let target = version::Info::new(version::Version::parse("v7.0.1"), &new);
         let result = apply_line(
             &line,
-            repin_sha_edit(&loc, &target, &NO_REFS).ok_or("no edit")?,
+            repin_sha_edit(&loc, &target, &NO_REFS, true).ok_or("no edit")?,
         )
         .ok_or("edit did not apply")?;
         assert_eq!(
@@ -984,7 +1006,7 @@ mod tests {
         ];
         for (line, is_sha, style, written) in cases {
             let loc = sha_loc(&line)?;
-            let edit = retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS)
+            let edit = retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS, true)
                 .ok_or("no edit")?;
             let result = apply_line(&line, edit).ok_or("edit did not apply")?;
             assert_eq!(
@@ -1011,8 +1033,8 @@ mod tests {
             ),
             (Style::Tag, "v4.2.0 # pinned for node16".to_string(), None),
         ] {
-            let edit =
-                retarget_edit(&loc, true, &target, Named::Tag, style, &NO_REFS).ok_or("no edit")?;
+            let edit = retarget_edit(&loc, true, &target, Named::Tag, style, &NO_REFS, true)
+                .ok_or("no edit")?;
             assert_eq!(edit.inline_comment.as_deref(), comment, "{style}");
             let result = apply_line(&line, edit).ok_or("edit did not apply")?;
             assert_eq!(
@@ -1058,9 +1080,16 @@ mod tests {
             ),
         ] {
             for style in [Style::Preserve, Style::Tag] {
-                let edit =
-                    retarget_edit(&sha_loc(line)?, false, &target, Named::Tag, style, &NO_REFS)
-                        .ok_or("no edit")?;
+                let edit = retarget_edit(
+                    &sha_loc(line)?,
+                    false,
+                    &target,
+                    Named::Tag,
+                    style,
+                    &NO_REFS,
+                    true,
+                )
+                .ok_or("no edit")?;
                 assert_eq!(edit.inline_comment.as_deref(), comment, "{line} {style}");
                 assert_eq!(
                     apply_line(line, edit).ok_or("edit did not apply")?,
@@ -1097,6 +1126,7 @@ mod tests {
                 Named::Tag,
                 style,
                 &NO_REFS,
+                true,
             )
             .ok_or("no edit")?;
             assert_eq!(edit.inline_comment, None, "{line}");
@@ -1140,7 +1170,7 @@ mod tests {
             let [loc] = found.as_slice() else {
                 return Err(format!("expected one `uses:` in {line:?}").into());
             };
-            let edit = pin_edit(loc, &sha, "main", &NO_REFS).ok_or("no edit")?;
+            let edit = pin_edit(loc, &sha, "main", &NO_REFS, true).ok_or("no edit")?;
             assert_eq!(
                 apply_line(line, edit).ok_or("edit did not apply")?,
                 written,
@@ -1165,6 +1195,7 @@ mod tests {
             Named::Tag,
             Style::Preserve,
             &NO_REFS,
+            true,
         )
         .ok_or("no edit")?;
         assert_eq!(edit.inline_comment.as_deref(), Some(" # v4.2.0 keep"));
@@ -1188,7 +1219,9 @@ mod tests {
             (false, Style::Sha),
             (true, Style::Tag),
         ] {
-            assert!(retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS).is_none());
+            assert!(
+                retarget_edit(&loc, is_sha, &target, Named::Tag, style, &NO_REFS, true).is_none()
+            );
         }
     }
 
@@ -1198,7 +1231,7 @@ mod tests {
         let line = format!("      - uses: \"actions/checkout@\\x61{}\"", &old[1..]);
         let loc = UsesLocation::new(1, 16, format!("actions/checkout@{old}"), line);
         let target = version::Info::new(version::Version::parse("v7.0.1"), sha40('b'));
-        assert!(repin_sha_edit(&loc, &target, &NO_REFS).is_none());
+        assert!(repin_sha_edit(&loc, &target, &NO_REFS, true).is_none());
     }
 
     fn text_retargeted(
@@ -1221,6 +1254,7 @@ mod tests {
             Named::Tag,
             style,
             labels,
+            true,
         )
         .ok_or("no edit")?;
         fe.add(edit, ());
@@ -1309,7 +1343,7 @@ mod tests {
             return Err(format!("expected two `uses:`, got {locations:?}").into());
         };
         let mut fe = FileEdits::new(PathBuf::from("/test"), line.clone(), SourceFormat::Text);
-        let edit = repin_sha_edit(&fe.writable(loc), &target, &NO_REFS).ok_or("no edit")?;
+        let edit = repin_sha_edit(&fe.writable(loc), &target, &NO_REFS, true).ok_or("no edit")?;
         fe.add(edit, ());
         assert_eq!(fe.plan().content(), line.replace(&old, &new));
         Ok(())
@@ -1360,7 +1394,7 @@ mod tests {
             fresh.to_string(),
             SourceFormat::Text,
         );
-        let edit = repin_sha_edit(&fe.writable(&loc), &target, &NO_REFS).ok_or("no edit")?;
+        let edit = repin_sha_edit(&fe.writable(&loc), &target, &NO_REFS, true).ok_or("no edit")?;
         fe.add(edit, ());
         let plan = fe.plan();
         assert_eq!(plan.entries, [((), EditOutcome::Applied { comment: None })]);

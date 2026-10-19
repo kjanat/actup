@@ -47,6 +47,9 @@ pub enum DiagnosticData {
         /// than left behind. `None` replaces only the ref range.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         replace_end_col: Option<u32>,
+        /// An explicit update-and-pin alternative using the same policy-selected version.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pin: Option<PinEdit>,
     },
     /// The ref is a short SHA; the full SHA it abbreviates replaces it.
     #[serde(rename = "expand-sha")]
@@ -66,7 +69,7 @@ pub enum DiagnosticData {
     PinBranch {
         /// The full commit SHA the ref names.
         sha: String,
-        /// The ref as written, named in the `# <ref>` comment.
+        /// The ref as written, named in the diagnostic and optional label comment.
         ref_name: String,
         /// The comment written after the SHA, absent when other text follows the ref.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -89,6 +92,41 @@ pub enum DiagnosticData {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         replace_end_col: Option<u32>,
     },
+}
+
+/// A validated SHA pin, already placed around quotes and trailing comments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PinEdit {
+    /// Full, validated target commit.
+    pub sha: provider::Sha40,
+    /// Policy-selected version, also used in the action title.
+    pub label: String,
+    /// Text after the SHA, including retained closers and optional comments.
+    pub repin_comment: Option<String>,
+    /// End of a replacement that consumes the trailing label.
+    pub replace_end_col: Option<u32>,
+}
+
+impl PinEdit {
+    fn new(
+        target: &actup_core::version::Info,
+        action: &LocatedAction,
+        versions: Option<&actup_core::version::Set>,
+        comment: bool,
+    ) -> Option<Self> {
+        let sha = provider::Sha40::new(target.sha())?;
+        let label = target.version().to_string();
+        let edit = OutdatedEdit::new(
+            Rewrite::pin(sha.as_str(), &label, action.trailing(versions), comment),
+            action.line_end(),
+        );
+        Some(Self {
+            sha,
+            label,
+            repin_comment: edit.repin_comment,
+            replace_end_col: edit.replace_end_col,
+        })
+    }
 }
 
 /// The replacement an outdated diagnostic should apply.
@@ -429,35 +467,28 @@ async fn compute_diagnostics_for_actions(
             ),
         };
 
-        let edit = match result.status() {
-            CheckStatus::Outdated { target, .. } => Some(OutdatedEdit::new(
-                Rewrite::outdated(
-                    config.policy_for(&action.action_ref).pin,
-                    action.action_ref.is_sha(),
-                    target,
-                    action.trailing(versions),
-                ),
-                action.line_end(),
-            )),
-            CheckStatus::PinBranch { ref_name, sha } => Some(OutdatedEdit::new(
-                Rewrite::pin(sha, ref_name, action.trailing(versions)),
-                action.line_end(),
-            )),
-            CheckStatus::Unresolvable {
-                reason,
-                is_environment_error: false,
-            } if action.editable && reason == SHORT_SHA_REASON => {
-                expand_edit(action, registry.find_for_repo(&repo_id), versions).await
+        let edit = diagnostic_edit(
+            result.status(),
+            action,
+            config,
+            registry.find_for_repo(&repo_id),
+            versions,
+        )
+        .await;
+
+        let pin = match result.status() {
+            CheckStatus::Outdated { target, .. } => {
+                PinEdit::new(target, action, versions, config.pin.comment)
             }
             _ => None,
         };
-
         if let Some(diag) = status_to_diagnostic(
             result.status(),
             range,
             &action.uses_value,
             edit,
             result.ref_kind(),
+            pin,
         ) {
             let mut diag = same_commit_diagnostic(diag, &result, &action.uses_value);
             if diag.data.is_none()
@@ -486,6 +517,35 @@ async fn compute_diagnostics_for_actions(
         errors,
         version_sets: successful_version_sets(versions_map),
     }
+}
+
+async fn diagnostic_edit(
+    status: &CheckStatus,
+    action: &LocatedAction,
+    config: &Config,
+    provider: Option<&dyn provider::Provider>,
+    versions: Option<&actup_core::version::Set>,
+) -> Option<OutdatedEdit> {
+    let rewrite = match status {
+        CheckStatus::Outdated { target, .. } => Rewrite::outdated(
+            config.policy_for(&action.action_ref).pin,
+            action.action_ref.is_sha(),
+            target,
+            action.trailing(versions),
+            config.pin.comment,
+        ),
+        CheckStatus::PinBranch { ref_name, sha } => {
+            Rewrite::pin(sha, ref_name, action.trailing(versions), config.pin.comment)
+        }
+        CheckStatus::Unresolvable {
+            reason,
+            is_environment_error: false,
+        } if action.editable && reason == SHORT_SHA_REASON => {
+            return expand_edit(action, provider, versions, config.pin.comment).await;
+        }
+        _ => return None,
+    };
+    Some(OutdatedEdit::new(rewrite, action.line_end()))
 }
 
 /// The diagnostic text for a repository state worth reporting.
@@ -559,6 +619,7 @@ async fn expand_edit(
     action: &LocatedAction,
     provider: Option<&dyn provider::Provider>,
     versions: Option<&actup_core::version::Set>,
+    pin_comment: bool,
 ) -> Option<OutdatedEdit> {
     let repo_id = action.action_ref.to_repo_id().without_subpath();
     let sha = provider?
@@ -567,17 +628,31 @@ async fn expand_edit(
         .ok()
         .filter(|sha| action.action_ref.abbreviates(sha.as_str()))?;
     let sha = sha.as_str();
-    let untagged = || OutdatedEdit {
-        target_ref: sha.to_string(),
-        repin_comment: None,
-        replace_end_col: None,
+    let untagged = || {
+        if pin_comment {
+            OutdatedEdit {
+                target_ref: sha.to_string(),
+                repin_comment: None,
+                replace_end_col: None,
+            }
+        } else {
+            OutdatedEdit::new(
+                Rewrite::pin(sha, "", action.trailing(versions), false),
+                action.line_end(),
+            )
+        }
     };
     Some(
         versions
             .and_then(|v| v.tag_on(sha))
             .map_or_else(untagged, |tag| {
                 OutdatedEdit::new(
-                    Rewrite::pin(sha, tag.version().as_str(), action.trailing(versions)),
+                    Rewrite::pin(
+                        sha,
+                        tag.version().as_str(),
+                        action.trailing(versions),
+                        pin_comment,
+                    ),
                     action.line_end(),
                 )
             }),
@@ -606,6 +681,7 @@ fn status_to_diagnostic(
     uses_value: &str,
     edit: Option<OutdatedEdit>,
     ref_kind: Option<RefKind>,
+    pin: Option<PinEdit>,
 ) -> Option<Diagnostic> {
     let kind = RefKind::noun(ref_kind);
     match status {
@@ -635,6 +711,7 @@ fn status_to_diagnostic(
                 target_ref,
                 repin_comment,
                 replace_end_col,
+                pin,
             };
             Some(Diagnostic {
                 range,
@@ -686,7 +763,7 @@ fn status_to_diagnostic(
             code: Some(NumberOrString::String("pin-branch".into())),
             source: Some(DIAGNOSTIC_SOURCE.into()),
             message: format!(
-                "{uses_value}: pin {kind} '{ref_name}' to {} # {ref_name}",
+                "{uses_value}: pin {kind} '{ref_name}' to {}",
                 sha.get(..7).unwrap_or(sha)
             ),
             data: edit.and_then(|e| pin_branch_data(ref_name, e)),
@@ -724,6 +801,7 @@ fn suggestion_data(
             action.action_ref.is_sha(),
             tag,
             action.trailing(versions),
+            config.pin.comment,
         ),
         action.line_end(),
     );
@@ -876,7 +954,7 @@ mod tests {
         range: Range,
         uses_value: &str,
     ) -> Option<Diagnostic> {
-        super::status_to_diagnostic(status, range, uses_value, None, None)
+        super::status_to_diagnostic(status, range, uses_value, None, None, None)
     }
 
     // --- CheckStatus -> Diagnostic severity mapping ---
@@ -1602,6 +1680,7 @@ jobs:
     #[test]
     fn diagnostic_data_tagged_correctly() -> Result<(), Box<dyn std::error::Error>> {
         let outdated = DiagnosticData::Outdated {
+            pin: None,
             target_ref: "v1".into(),
             repin_comment: None,
             replace_end_col: None,
@@ -1636,7 +1715,7 @@ jobs:
             policy,
             ..Default::default()
         };
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         Ok(compute_diagnostics(
             yaml,
             &uri,
@@ -1742,7 +1821,7 @@ jobs:
         assert_eq!(repin_comment.as_deref(), Some(" # v4.2.0"));
         assert_eq!(replace_end_col, Some(u32::try_from(yaml.trim_end().len())?));
 
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let actions =
             crate::code_actions::code_actions_for_diagnostics(&uri, Some(1), &diags, true);
         let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
@@ -1766,7 +1845,7 @@ jobs:
             )
             .with_repo_state(state);
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let yaml = "    - uses: actions/create-release@v1.0.0\n    - uses: actions/create-release/sub@v1.1.4\n";
         let result = compute_diagnostics(
             yaml,
@@ -1831,7 +1910,7 @@ jobs:
         let provider = test_utils::MockProvider::new("github.com")
             .with_repo_state(Ok(Some(provider::RepoState::Archived)));
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let result = compute_diagnostics(
             "    - uses: ghe.corp.com/actions/create-release@v1\n",
             &uri,
@@ -1923,7 +2002,7 @@ jobs:
         assert_eq!(
             diag.message,
             format!(
-                "rust-lang/crates-io-auth-action@v1: pin branch 'v1' to {} # v1",
+                "rust-lang/crates-io-auth-action@v1: pin branch 'v1' to {}",
                 &DUMMY_SHA_2[..7]
             )
         );
@@ -1950,7 +2029,7 @@ jobs:
         assert_eq!(
             diag.message,
             format!(
-                "rust-lang/crates-io-auth-action@nightly: pin tag 'nightly' to {} # nightly",
+                "rust-lang/crates-io-auth-action@nightly: pin tag 'nightly' to {}",
                 &DUMMY_SHA_2[..7]
             )
         );
@@ -1965,7 +2044,7 @@ jobs:
                 actup_core::policy::Branch::Update,
                 "pin-branch",
                 format!(
-                    "rust-lang/crates-io-auth-action@stable: pin ref 'stable' to {} # stable",
+                    "rust-lang/crates-io-auth-action@stable: pin ref 'stable' to {}",
                     &DUMMY_SHA[..7]
                 ),
             ),
@@ -2047,7 +2126,7 @@ jobs:
         );
         assert!(diag.message.contains("tag v1 = v1.0.5"), "{}", diag.message);
 
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let actions =
             crate::code_actions::code_actions_for_diagnostics(&uri, Some(1), &diags, true);
         let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
@@ -2090,7 +2169,7 @@ jobs:
                     retry_after: Some(std::time::Duration::from_mins(12)),
                 },
             ));
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let config = Config::default();
         let diagnostics = |yaml: &'static str| {
             compute_diagnostics(
@@ -2201,7 +2280,7 @@ jobs:
             )),
             actup_core::config::EnvOverrides::default(),
         )?;
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let text =
             "steps:\n  - uses: ghe.corp.example/skip/a@v1\n  - uses: ghe.corp.example/o/b@v1\n";
 
@@ -2374,7 +2453,7 @@ jobs:
             std::collections::HashMap::new(),
             None,
         );
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let yaml = "    - uses: actions/checkout@v4.1.0\n";
         for (bump, want) in [
             (Update::Patch, "v4.1.3"),
@@ -2484,7 +2563,7 @@ jobs:
             },
         );
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let result = compute_diagnostics(
             "    - uses: actions/checkout@v4\n",
             &uri,
@@ -2515,7 +2594,7 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
 
         let yaml = "    - uses: \"actions/checkout@v\\x33\"\n    - uses: actions/checkout@v3\n";
         let result = compute_diagnostics(
@@ -2918,6 +2997,44 @@ jobs:
     }
 
     #[tokio::test]
+    async fn expand_sha_without_pin_comments_keeps_only_the_note()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let line = "- uses: \"actions/checkout@abc1234\" # v4 keep";
+        let action = extract_located_actions(
+            line,
+            SourceFormat::Yaml,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .into_iter()
+        .next()
+        .ok_or("no action")?;
+        let provider = test_utils::MockProvider::new("github.com");
+        let versions = test_utils::simple_version_set("v4.2.0", DUMMY_SHA);
+        for versions in [Some(&versions), None] {
+            let edit = expand_edit(&action, Some(&provider), versions, false)
+                .await
+                .ok_or("no expansion")?;
+            let edit = crate::code_actions::outdated_text_edit(
+                action.range(),
+                &edit.target_ref,
+                edit.repin_comment.as_deref(),
+                edit.replace_end_col,
+            );
+            let written = crate::workspace_commands::apply_text_edits(
+                line,
+                &[edit],
+                crate::position::PositionEncoding::Utf16,
+            )
+            .ok_or("invalid edit")?;
+            assert_eq!(
+                written,
+                format!("- uses: \"actions/checkout@{DUMMY_SHA}\" # keep")
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn short_sha_diagnostic_refreshes_stale_version_comment() {
         let line = "    - uses: actions/checkout@abc1234 # v4.1.0";
         let diags = short_sha_diagnostics(line, DUMMY_SHA).await;
@@ -2973,7 +3090,7 @@ jobs:
         text: &str,
     ) -> Result<Vec<Diagnostic>, Box<dyn std::error::Error>> {
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path(path).ok_or("bad uri")?;
+        let uri = format!("file://{path}").parse::<Uri>()?;
         Ok(compute_diagnostics(
             text,
             &uri,
@@ -3013,6 +3130,7 @@ jobs:
                         target_ref,
                         repin_comment,
                         replace_end_col,
+                        ..
                     }) if target_ref == DUMMY_SHA => Ok((repin_comment, replace_end_col)),
                     _ => Err(format!("expected an outdated re-pin, got {d:?}").into()),
                 }

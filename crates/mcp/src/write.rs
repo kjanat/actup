@@ -561,8 +561,17 @@ fn retarget(
     kind: Named,
     style: Style,
     labels: &Labels<'_>,
+    pin_comment: bool,
 ) -> Option<(PendingEdit, String)> {
-    let edit = retarget_edit(loc, action.is_sha(), target, kind, style, labels)?;
+    let edit = retarget_edit(
+        loc,
+        action.is_sha(),
+        target,
+        kind,
+        style,
+        labels,
+        pin_comment,
+    )?;
     let to = if style.writes_sha(action.is_sha()) {
         target.sha().to_string()
     } else {
@@ -672,6 +681,7 @@ impl Job<'_> {
                     target.kind,
                     style,
                     &labels,
+                    self.config.pin.comment,
                 ) else {
                     outcome.skipped.push(Skipped {
                         site,
@@ -922,6 +932,7 @@ mod tests {
                 Named::Tag,
                 style,
                 &Labels::unfetched(action.ref_str()),
+                true,
             )
             .map(|(_, to)| to)
         };
@@ -972,8 +983,8 @@ mod tests {
         ] {
             let (l, action) = loc(content)?;
             let labels = Labels::unfetched(action.ref_str());
-            let (edit, to) =
-                retarget(&l, &action, &target(), Named::Tag, style, &labels).ok_or("no edit")?;
+            let (edit, to) = retarget(&l, &action, &target(), Named::Tag, style, &labels, true)
+                .ok_or("no edit")?;
             let site = Site {
                 path: "f".into(),
                 line: 1,
@@ -1019,6 +1030,7 @@ mod tests {
                     Named::Tag,
                     style,
                     &Labels::unfetched(action.ref_str()),
+                    true,
                 )
                 .ok_or("no retarget edit")?;
                 let site = Site {
@@ -1063,6 +1075,7 @@ mod tests {
                 Named::Tag,
                 Style::Preserve,
                 &Labels::unfetched(action.ref_str()),
+                true,
             )
             .ok_or("no retarget edit")?;
             let site = Site {
@@ -1090,7 +1103,8 @@ mod tests {
                 &target(),
                 Named::Tag,
                 Style::Preserve,
-                &Labels::unfetched(action.ref_str())
+                &Labels::unfetched(action.ref_str()),
+                true
             )
             .is_none()
         );

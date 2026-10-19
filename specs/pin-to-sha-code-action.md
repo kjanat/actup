@@ -1,5 +1,25 @@
 # Pin to SHA: Code Action + Resolution Engine
 
+## Implementation status
+
+Implemented on master. The design below records the original proposal; these
+implementation details supersede it:
+
+- Cursor pinning uses asynchronous provider resolution, with validated `Sha40`
+  values for cached targets and serialized pin metadata. `Sha40` deserialization
+  validates and normalizes input just like its constructor.
+- Update-and-pin uses the policy-selected `Outdated.target`. Prepared edit
+  metadata lives in the current document's diagnostics; stale client metadata
+  cannot supply a target. Ordinary SHA updates suppress identical alternatives,
+  while refactor-only requests still offer the action.
+- `[pin] comment = true` is the default. `false` omits generated SHA labels and
+  removes recognized labels on edited refs, retaining notes and foreign
+  comments. Shared rewrite code handles CLI, LSP, MCP and WASM placement and
+  quoting.
+- `policy.pin` already controls ordinary updates. No `resolved_sha` field or
+  stored `CheckResult` list is needed. A broader migration of version metadata
+  from strings to `Sha40` remains separate from these validated pin boundaries.
+
 ## Problem Definition
 
 **What are we solving?** Non-SHA `uses:` refs (tags, branches) are mutable — the

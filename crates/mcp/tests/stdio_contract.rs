@@ -27,6 +27,7 @@ type TestResult = Result<(), Box<dyn Error>>;
 const CHILD_ENV: &str = "MCP_CONTRACT_ROOT";
 
 const TRACK_ENV: &str = "MCP_CONTRACT_TRACK_EXACT";
+const NO_PIN_COMMENT_ENV: &str = "MCP_CONTRACT_NO_PIN_COMMENT";
 
 fn sha(c: char) -> String {
     c.to_string().repeat(40)
@@ -194,6 +195,9 @@ fn serve_child(root: &Path) -> ExitCode {
     };
     if std::env::var_os(TRACK_ENV).is_some() {
         config.policy.track = actup_core::policy::Track::Exact;
+    }
+    if std::env::var_os(NO_PIN_COMMENT_ENV).is_some() {
+        config.pin.comment = false;
     }
     let file_cache = actup_core::FileCache::disabled();
     match runtime.block_on(serve_stdio(Server::new(config, registry, root, file_cache))) {
@@ -1013,18 +1017,20 @@ fn update_file_refreshes_version_comments(client: &mut Client, ws: &Workspace) -
 fn mutators_refuse_paths_outside_the_root(client: &mut Client, ws: &Workspace) -> TestResult {
     let outside = ws.dir.path().join("outside.yml");
     let edit = json!([{ "line": 7, "action": "actions/checkout", "ref": "v4.2.0" }]);
-    let mut paths = vec![
+    let paths = vec![
         "../outside.yml".to_string(),
         outside.display().to_string(),
         ".github/../../outside.yml".to_string(),
     ];
     #[cfg(unix)]
-    {
+    let paths = {
+        let mut paths = paths;
         std::os::unix::fs::symlink(&outside, ws.path(".github/workflows/escape.yml"))?;
         std::os::unix::fs::symlink(ws.dir.path(), ws.path("parent"))?;
         paths.push(".github/workflows/escape.yml".to_string());
         paths.push("parent/outside.yml".to_string());
-    }
+        paths
+    };
     for path in paths {
         let result = update_file(client, json!({ "path": path, "edits": edit }))?;
         expect(is_error(&result), || {
@@ -1608,7 +1614,44 @@ type Case = fn(&mut Client, &Workspace) -> TestResult;
 
 type BinaryCase = fn(&Workspace) -> TestResult;
 
-const BINARY_CASES: [(&str, BinaryCase); 4] = [
+fn update_all_without_pin_comments_preserves_notes(ws: &Workspace) -> TestResult {
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .env(CHILD_ENV, ws.root())
+        .env(NO_PIN_COMMENT_ENV, "1");
+    let mut client = Client::spawn(command)?;
+    let before = format!(
+        "steps:\n  - uses: \"actions/checkout@{}\" # v4.0.0 keep\n",
+        sha('a')
+    );
+    ws.write(".github/workflows/build.yml", &before)?;
+    let args = json!({
+        "workspaceRoot": ".", "match": {"owner": "actions", "repo": "checkout"}, "targetRef": "v4.2.0",
+    });
+    let updated = client.call("updateAllUsesToVersion", args.clone())?;
+    expect(!is_error(&updated), || format!("update failed: {updated}"))?;
+    let expected = format!(
+        "steps:\n  - uses: \"actions/checkout@{}\" # keep\n",
+        sha('b')
+    );
+    let actual = ws.read(".github/workflows/build.yml")?;
+    expect(actual == expected, || {
+        format!("expected {expected:?}, got {actual:?}: {updated}")
+    })?;
+    let again = client.call("updateAllUsesToVersion", args)?;
+    expect(!is_error(&again), || format!("repeat failed: {again}"))?;
+    expect_eq(
+        &body(&again)["written"],
+        &json!([]),
+        "second call writes nothing",
+    )
+}
+
+const BINARY_CASES: [(&str, BinaryCase); 5] = [
+    (
+        "update_all_without_pin_comments_preserves_notes",
+        update_all_without_pin_comments_preserves_notes,
+    ),
     (
         "latest_names_ref_kind_and_same_commit_target",
         latest_names_ref_kind_and_same_commit_target,

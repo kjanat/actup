@@ -32,6 +32,8 @@ export interface ActupConfig {
     default_host?: string | null;
     /** The `[policy]` table. */
     policy?: Policy;
+    /** Formatting of SHA pins. Defaults to including a version comment. */
+    pin?: { comment?: boolean };
 }
 
 /** Every table of a repo config, as `parseConfig` returns it. */
@@ -411,7 +413,8 @@ struct UpdateEdit {
 /// [`checkRefs`]) and returns one [`UpdateEdit`] for each outdated or
 /// pin-branch result whose `location` has a ref range. `config.policy.pin`
 /// picks tag or SHA output, as in `actup update`. A pin-branch result pins
-/// the branch or non-semver tag to its commit with a `# <ref>` comment. A
+/// the branch or non-semver tag to its commit. `pin.comment = false` omits
+/// generated labels and retains only the note of a recognized label comment. A
 /// comment is added only for a result whose `takes_comment` is set. On other
 /// lines, a label comment right after the ref is rewritten and the rest of
 /// the line stays.
@@ -452,8 +455,11 @@ pub fn plan_updates(
                     result.action_ref.is_sha(),
                     target,
                     trailing,
+                    config.pin.comment,
                 ),
-                CheckStatus::PinBranch { ref_name, sha } => Rewrite::pin(sha, ref_name, trailing),
+                CheckStatus::PinBranch { ref_name, sha } => {
+                    Rewrite::pin(sha, ref_name, trailing, config.pin.comment)
+                }
                 _ => return None,
             };
             let (new_text, to_line_end) = rewrite.splice(closing);

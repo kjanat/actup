@@ -244,4 +244,17 @@ console.log("PASS: planUpdates with empty results returns no edits");
 	console.log("PASS: negative path — provider errors surface as Unresolvable results");
 }
 
+{
+	const text = "- uses: \"actions/checkout@v3.0.0\" # v3.0.0 keep\n";
+	const config = { policy: { pin: "sha" }, pin: { comment: false } };
+	const checked = await checkRefs(text, mockProvider, config);
+	const planned = planUpdates(JSON.stringify(checked), config);
+	if (planned.length !== 1) throw new Error(`Expected one pin edit: ${JSON.stringify(planned)}`);
+	const [edit] = planned;
+	const updated = text.slice(0, edit.refStart) + edit.newText + text.slice(edit.replaceEnd);
+	const expected = `- uses: "actions/checkout@${"d".repeat(40)}" # keep\n`;
+	if (updated !== expected) throw new Error(`comment=false: ${updated}`);
+	console.log("PASS: comment=false pins without a label and preserves quotes and notes");
+}
+
 console.log("\nAll checkRefs + planUpdates tests PASSED");

@@ -3,7 +3,7 @@
 //! Produces [`CodeAction`]s from diagnostics, enabling:
 //! - Single-ref quick fixes (e.g. "Update to vX.Y.Z") for outdated refs
 //! - "Expand to full SHA" quick fixes for short SHA refs
-//! - `Pin to <sha> # <ref>` quick fixes for branch and non-semver tag refs
+//! - `Pin <ref> to <sha>` quick fixes for branch and non-semver tag refs
 //! - Fix-all-in-file source action that applies every edit CLI `update` makes
 //!
 //! Entry points:
@@ -175,8 +175,7 @@ fn display_ref(target_ref: &str) -> String {
 /// For each `Outdated` diagnostic, produces a quickfix "Update to vX.Y.Z"
 /// action with a [`WorkspaceEdit`] that replaces only the ref portion.
 ///
-/// For each `PinBranch` diagnostic, produces a quickfix `Pin to <sha> # <ref>`
-/// action, titled `Pin to <sha>` when other text follows the ref.
+/// For each `PinBranch` diagnostic, produces a quickfix `Pin <ref> to <sha>`.
 ///
 /// For each `Unresolvable` diagnostic with a suggestion, produces a quickfix
 /// "Change to vX.Y.Z" action.
@@ -238,6 +237,7 @@ fn quick_fix(range: Range, data: DiagnosticData) -> Option<(String, TextEdit, bo
             target_ref,
             repin_comment,
             replace_end_col,
+            ..
         } => {
             let edit = outdated_text_edit(
                 range,
@@ -270,10 +270,7 @@ fn quick_fix(range: Range, data: DiagnosticData) -> Option<(String, TextEdit, bo
             repin_comment,
             replace_end_col,
         } => {
-            let title = match repin_comment {
-                Some(_) => format!("Pin to {} # {ref_name}", display_ref(&sha)),
-                None => format!("Pin to {}", display_ref(&sha)),
-            };
+            let title = format!("Pin {ref_name} to {}", display_ref(&sha));
             let edit = outdated_text_edit(range, &sha, repin_comment.as_deref(), replace_end_col);
             Some((title, edit, true))
         }
@@ -297,11 +294,69 @@ fn quick_fix(range: Range, data: DiagnosticData) -> Option<(String, TextEdit, bo
     }
 }
 
+/// Offer an explicit SHA update for outdated refs intersecting the requested range.
+///
+/// The target follows the update policy already applied by diagnostics. When
+/// an already-offered quickfix makes the identical edit, omit the alternative.
+pub fn update_and_pin_actions(
+    uri: &Uri,
+    version: Option<i32>,
+    diagnostics: &[Diagnostic],
+    requested: Range,
+    supports_document_changes: bool,
+    quickfixes: &[CodeActionOrCommand],
+) -> Vec<CodeActionOrCommand> {
+    let point = |p: Position| (p.line, p.character);
+    diagnostics
+        .iter()
+        .filter_map(|diag| {
+            if diag.source.as_deref() != Some(DIAGNOSTIC_SOURCE)
+                || point(diag.range.start) > point(requested.end)
+                || point(diag.range.end) < point(requested.start)
+            {
+                return None;
+            }
+            let DiagnosticData::Outdated { pin: Some(pin), .. } =
+                serde_json::from_value(diag.data.clone()?).ok()?
+            else {
+                return None;
+            };
+            let edit = outdated_text_edit(
+                diag.range,
+                pin.sha.as_str(),
+                pin.repin_comment.as_deref(),
+                pin.replace_end_col,
+            );
+            if quickfixes.iter().any(|action| match action {
+                CodeActionOrCommand::CodeAction(CodeAction {
+                    kind: Some(kind),
+                    edit: Some(existing),
+                    ..
+                }) if *kind == CodeActionKind::QUICKFIX => {
+                    text_edits(existing).as_slice() == std::slice::from_ref(&edit)
+                }
+                _ => false,
+            }) {
+                return None;
+            }
+            Some(pin_action(
+                uri,
+                version,
+                supports_document_changes,
+                format!("Update to {} & pin to SHA", pin.label),
+                edit,
+            ))
+        })
+        .collect()
+}
+
 /// Resolved targets for the "Pin to …" and unpin code actions. Each is `None`
 /// when it's unavailable or would be a no-op for the current ref.
 pub struct PinTargets {
     /// `(full commit SHA, version label)` for the version-commented SHA pin.
-    pub sha: Option<(String, String)>,
+    pub sha: Option<(actup_core::provider::Sha40, String)>,
+    /// Whether SHA pins include a generated label comment.
+    pub comment: bool,
     /// Major tag to float on, e.g. `v7`.
     pub major: Option<String>,
     /// Default branch to track, e.g. `main`.
@@ -348,7 +403,7 @@ pub fn pin_code_actions(
             version,
             supports_document_changes,
             format!("Pin to commit SHA ({label})"),
-            placed(Rewrite::pin(sha, label, trailing)),
+            placed(Rewrite::pin(sha.as_str(), label, trailing, targets.comment)),
         ));
     }
     if let Some(major) = &targets.major {
@@ -412,6 +467,7 @@ pub fn update_text_edit(diag: &Diagnostic) -> Option<TextEdit> {
             target_ref: new_ref,
             repin_comment,
             replace_end_col,
+            ..
         }
         | DiagnosticData::PinBranch {
             sha: new_ref,
@@ -557,7 +613,7 @@ mod tests {
 
     #[test]
     fn outdated_diagnostic_produces_quickfix() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -581,9 +637,143 @@ mod tests {
         Ok(())
     }
 
+    async fn update_pin_diagnostics(
+        text: &str,
+        style: actup_core::policy::Style,
+        comment: bool,
+        target_sha: &str,
+    ) -> Vec<Diagnostic> {
+        use actup_core::{Config, policy::Update, version};
+        let old = test_utils::make_version_info("v4.0.0", test_utils::DUMMY_SHA_2);
+        let patch = test_utils::make_version_info("v4.0.1", target_sha);
+        let latest = test_utils::make_version_info("v5.0.0", &"c".repeat(40));
+        let versions = version::Set::build(
+            vec![old, patch, std::sync::Arc::clone(&latest)],
+            HashMap::new(),
+            HashMap::new(),
+            Some(latest),
+        );
+        let mut config = Config::default();
+        config.policy.bump = Update::Patch;
+        config.policy.pin = style;
+        config.pin.comment = comment;
+        let registry = test_utils::mock_registry(test_utils::MockProvider::new("github.com"));
+        let versions = HashMap::from([(
+            actup_core::ActionRepoId::new(None, "actions", "checkout", None),
+            Ok(versions),
+        )]);
+        crate::diagnostics::compute_diagnostics_with_versions(
+            text,
+            SourceFormat::Yaml,
+            &config,
+            &registry,
+            &versions,
+            PositionEncoding::Utf16,
+        )
+        .await
+        .diagnostics
+    }
+
+    #[tokio::test]
+    async fn update_and_pin_uses_policy_target_and_optional_comments()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let uri: Uri = "file:///test/ci.yml".parse()?;
+        let text = "- uses: \"actions/checkout@v4.0.0\" # v4.0.0 keep\n";
+        for style in [
+            actup_core::policy::Style::Preserve,
+            actup_core::policy::Style::Tag,
+            actup_core::policy::Style::Sha,
+        ] {
+            for comment in [true, false] {
+                let diags =
+                    update_pin_diagnostics(text, style, comment, test_utils::DUMMY_SHA).await;
+                let diag = diags.first().ok_or("no outdated diagnostic")?;
+                let actions =
+                    update_and_pin_actions(&uri, TEST_VERSION, &diags, diag.range, true, &[]);
+                let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
+                    return Err(format!("expected update-and-pin: {actions:?}").into());
+                };
+                assert_eq!(action.title, "Update to v4.0.1 & pin to SHA");
+                assert_eq!(action.kind, Some(CodeActionKind::REFACTOR));
+                let edits =
+                    extract_text_edits(action.edit.as_ref().ok_or("no edit")?, &uri, TEST_VERSION);
+                let written = apply_text_edits(text, &[edits[0].clone()], PositionEncoding::Utf16)
+                    .ok_or("invalid edit")?;
+                let label = if comment { "v4.0.1 " } else { "" };
+                assert_eq!(
+                    written,
+                    format!(
+                        "- uses: \"actions/checkout@{}\" # {label}keep\n",
+                        test_utils::DUMMY_SHA
+                    )
+                );
+                let quickfixes = code_actions_for_diagnostics(&uri, TEST_VERSION, &diags, true);
+                let all_kinds = update_and_pin_actions(
+                    &uri,
+                    TEST_VERSION,
+                    &diags,
+                    diag.range,
+                    true,
+                    &quickfixes,
+                );
+                assert_eq!(
+                    all_kinds.len(),
+                    usize::from(style != actup_core::policy::Style::Sha)
+                );
+                assert_eq!(
+                    update_and_pin_actions(
+                        &uri,
+                        TEST_VERSION,
+                        &diags,
+                        make_range(1, 0, 0),
+                        true,
+                        &[]
+                    ),
+                    []
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_and_pin_rejects_invalid_sha_and_uneditable_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let uri: Uri = "file:///test/ci.yml".parse()?;
+        for (text, sha) in [
+            ("- uses: actions/checkout@v4.0.0\n", "bad-sha"),
+            (
+                "- uses: \"actions/checkout@v4\\x2e0.0\"\n",
+                test_utils::DUMMY_SHA,
+            ),
+        ] {
+            let diags =
+                update_pin_diagnostics(text, actup_core::policy::Style::Tag, true, sha).await;
+            assert_ne!(diags, []);
+            assert_eq!(
+                update_and_pin_actions(&uri, TEST_VERSION, &diags, make_range(0, 0, 80), true, &[]),
+                []
+            );
+        }
+        let mut diags = update_pin_diagnostics(
+            "- uses: actions/checkout@v4.0.0\n",
+            actup_core::policy::Style::Tag,
+            true,
+            test_utils::DUMMY_SHA,
+        )
+        .await;
+        let diag = diags.first_mut().ok_or("no diagnostic")?;
+        diag.data.as_mut().ok_or("no metadata")?["pin"]["sha"] = serde_json::json!("x".repeat(40));
+        assert_eq!(
+            update_and_pin_actions(&uri, TEST_VERSION, &diags, make_range(0, 0, 80), true, &[]),
+            []
+        );
+        Ok(())
+    }
+
     #[test]
     fn outdated_action_links_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         let actions =
@@ -605,7 +795,7 @@ mod tests {
 
     #[test]
     fn sha_target_shortens_title_keeps_full_sha_edit() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let new_sha = "2".repeat(40);
         let old_sha = "1".repeat(40);
         let diag = make_outdated_diagnostic(
@@ -639,7 +829,7 @@ mod tests {
             replace_end_col: Some(48),
         })
         .ok();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("bad uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
         let [CodeActionOrCommand::CodeAction(action)] = actions.as_slice() else {
@@ -662,7 +852,7 @@ mod tests {
 
     #[test]
     fn unresolvable_with_suggestion_produces_quickfix() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -679,7 +869,7 @@ mod tests {
     #[test]
     fn unresolvable_without_suggestion_produces_no_action() -> Result<(), Box<dyn std::error::Error>>
     {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_unresolvable_diagnostic(make_range(3, 10, 15), None);
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -689,7 +879,7 @@ mod tests {
 
     #[test]
     fn foreign_diagnostic_source_ignored() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = Diagnostic {
             range: make_range(5, 0, 10),
             source: Some("other-tool".into()),
@@ -703,7 +893,7 @@ mod tests {
 
     #[test]
     fn diagnostic_without_data_ignored() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = Diagnostic {
             range: make_range(5, 0, 10),
             source: Some(DIAGNOSTIC_SOURCE.into()),
@@ -718,7 +908,7 @@ mod tests {
 
     #[test]
     fn multiple_diagnostics_produce_multiple_actions() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let diag2 =
@@ -767,10 +957,14 @@ mod tests {
 
     #[test]
     fn pin_actions_offer_sha_major_branch() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
         let targets = PinTargets {
-            sha: Some((sha.to_string(), "v7.2.3".to_string())),
+            comment: true,
+            sha: Some((
+                actup_core::provider::Sha40::new(sha).ok_or("invalid test SHA")?,
+                "v7.2.3".to_string(),
+            )),
             major: Some("v7".to_string()),
             branch: Some("main".to_string()),
             unpin: None,
@@ -817,7 +1011,7 @@ mod tests {
 
     #[test]
     fn pin_to_major_and_branch_rewrite_the_label() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         for (current_is_sha, trailing, major, branch) in [
             (true, Trailing::Label { note: "" }, "v7", "main"),
             (
@@ -835,6 +1029,7 @@ mod tests {
             (false, Trailing::Label { note: "" }, "v7 # v7", "main"),
         ] {
             let targets = PinTargets {
+                comment: true,
                 sha: None,
                 major: Some("v7".to_string()),
                 branch: Some("main".to_string()),
@@ -867,10 +1062,14 @@ mod tests {
     #[test]
     fn floating_pins_keep_the_note_of_a_version_comment() -> Result<(), Box<dyn std::error::Error>>
     {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let sha = "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0";
         let targets = PinTargets {
-            sha: Some((sha.to_string(), "v7.2.3".to_string())),
+            comment: true,
+            sha: Some((
+                actup_core::provider::Sha40::new(sha).ok_or("invalid test SHA")?,
+                "v7.2.3".to_string(),
+            )),
             major: Some("v7".to_string()),
             branch: Some("main".to_string()),
             unpin: None,
@@ -924,8 +1123,9 @@ mod tests {
     #[test]
     fn unpin_action_replaces_the_marker_and_stays_out_of_fix_all()
     -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let targets = PinTargets {
+            comment: true,
             sha: None,
             major: None,
             branch: None,
@@ -962,8 +1162,9 @@ mod tests {
 
     #[test]
     fn pin_actions_empty_when_no_targets() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let targets = PinTargets {
+            comment: true,
             sha: None,
             major: None,
             branch: None,
@@ -986,6 +1187,7 @@ mod tests {
     #[test]
     fn diagnostic_data_roundtrips_through_json() -> Result<(), Box<dyn std::error::Error>> {
         let data = DiagnosticData::Outdated {
+            pin: None,
             target_ref: "v5.0.0".into(),
             repin_comment: None,
             replace_end_col: None,
@@ -1029,7 +1231,7 @@ mod tests {
 
     #[test]
     fn fix_all_returns_none_for_single_outdated() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
         // Single outdated ref — quickfix already covers this, no fix-all needed.
@@ -1039,7 +1241,7 @@ mod tests {
 
     #[test]
     fn fix_all_returns_none_for_empty_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         assert!(fix_all_in_file(&uri, TEST_VERSION, &[], true).is_none());
         Ok(())
     }
@@ -1047,7 +1249,7 @@ mod tests {
     #[test]
     fn fix_all_returns_none_for_non_outdated_diagnostics() -> Result<(), Box<dyn std::error::Error>>
     {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 = make_unresolvable_diagnostic(make_range(3, 10, 15), Some("v2.1.0"));
         let diag2 = make_unresolvable_diagnostic(make_range(5, 10, 15), None);
 
@@ -1058,7 +1260,7 @@ mod tests {
 
     #[test]
     fn fix_all_aggregates_multiple_outdated() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let diag2 =
@@ -1096,7 +1298,7 @@ mod tests {
 
     #[test]
     fn fix_all_skips_foreign_and_non_outdated() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let outdated1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let outdated2 =
@@ -1174,7 +1376,7 @@ mod tests {
 
     #[test]
     fn edit_replaces_only_ref_range() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         // Range covers just "v3" (2 chars), not the entire `uses:` line.
         let diag = make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
 
@@ -1200,7 +1402,7 @@ mod tests {
 
     #[test]
     fn edit_handles_longer_replacement() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         // Replacing "v3" (2 chars) with "v4.2.0" (6 chars).
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v3", "v4.2.0");
 
@@ -1223,7 +1425,7 @@ mod tests {
 
     #[test]
     fn fix_all_edits_maintain_per_line_ranges() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 =
             make_outdated_diagnostic(make_range(7, 31, 33), "actions/checkout@v3", "v4.2.0");
         let diag2 =
@@ -1251,7 +1453,7 @@ mod tests {
 
     #[test]
     fn fix_all_title_includes_ref_count() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v2.0.0");
 
@@ -1266,8 +1468,7 @@ mod tests {
 
     #[test]
     fn code_action_edit_targets_correct_uri() -> Result<(), Box<dyn std::error::Error>> {
-        let uri =
-            Uri::from_file_path("/project/.github/workflows/ci.yml").ok_or("invalid file path")?;
+        let uri = "file:///project/.github/workflows/ci.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(0, 0, 2), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, TEST_VERSION, &[diag], true);
@@ -1287,7 +1488,7 @@ mod tests {
 
     #[test]
     fn mixed_diagnostics_produce_correct_action_types() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let outdated = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let suggestion = make_unresolvable_diagnostic(make_range(1, 10, 15), Some("v3.0.0"));
         let no_suggestion = make_unresolvable_diagnostic(make_range(2, 10, 15), None);
@@ -1322,7 +1523,7 @@ mod tests {
 
     #[test]
     fn fix_all_preserves_diagnostic_order() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 = make_outdated_diagnostic(make_range(12, 20, 22), "a/c@v2", "v4.1.0");
         let diag2 = make_outdated_diagnostic(make_range(7, 31, 33), "a/b@v3", "v4.2.0");
 
@@ -1346,6 +1547,7 @@ mod tests {
     #[test]
     fn diagnostic_data_json_has_kind_field() -> Result<(), Box<dyn std::error::Error>> {
         let data = DiagnosticData::Outdated {
+            pin: None,
             target_ref: "v2.0.0".into(),
             repin_comment: None,
             replace_end_col: None,
@@ -1360,7 +1562,7 @@ mod tests {
 
     #[test]
     fn versioned_edit_does_not_use_unversioned_changes() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, Some(42), &[diag], true);
@@ -1388,7 +1590,7 @@ mod tests {
     #[test]
     fn fallback_to_unversioned_changes_when_not_supported() -> Result<(), Box<dyn std::error::Error>>
     {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, Some(5), &[diag], false);
@@ -1408,7 +1610,7 @@ mod tests {
 
     #[test]
     fn fix_all_fallback_to_unversioned_changes() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag1 = make_outdated_diagnostic(make_range(0, 10, 12), "a/b@v1", "v2.0.0");
         let diag2 = make_outdated_diagnostic(make_range(1, 10, 12), "a/c@v1", "v3.0.0");
 
@@ -1428,7 +1630,7 @@ mod tests {
 
     #[test]
     fn none_version_for_untracked_document() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let diag = make_outdated_diagnostic(make_range(0, 10, 12), "o/r@v1", "v2.0.0");
 
         let actions = code_actions_for_diagnostics(&uri, None, &[diag], true);
@@ -1490,7 +1692,7 @@ mod tests {
     #[test]
     fn document_text_retains_only_actions_with_valid_edits()
     -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let document = DocumentText::new(
             VALIDATED,
             SourceFormat::Yaml,
@@ -1512,6 +1714,7 @@ mod tests {
         }
 
         let targets = PinTargets {
+            comment: true,
             sha: None,
             major: Some("v1".to_string()),
             branch: Some("main\n  - [".to_string()),
@@ -1547,7 +1750,7 @@ mod tests {
 
     #[test]
     fn fix_all_leaves_out_edits_the_document_refuses() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let text = "steps:\n  - uses: a/b@v1\n  - uses: a/c@v1\n  - uses: a/d@v1\n";
         let document = DocumentText::new(
             text,
@@ -1633,7 +1836,7 @@ mod tests {
             Some((std::path::Path::new("actup.toml"), toml)),
             actup_core::config::EnvOverrides::default(),
         )?;
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let encoding = crate::position::PositionEncoding::Utf16;
         let result = crate::diagnostics::compute_diagnostics(
             &text,
@@ -1819,7 +2022,7 @@ mod tests {
             )),
             actup_core::config::EnvOverrides::default(),
         )?;
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let encoding = crate::position::PositionEncoding::Utf16;
         let diagnostics = crate::diagnostics::compute_diagnostics(
             PIN_BRANCH_WORKFLOW,
@@ -1861,9 +2064,9 @@ mod tests {
         assert_eq!(
             titles,
             [
-                "Pin to ccccccc # main",
-                "Pin to ddddddd",
-                "Pin to ccccccc # main"
+                "Pin main to ccccccc",
+                "Pin nightly to ddddddd",
+                "Pin main to ccccccc"
             ]
         );
         let quick_edits: Vec<TextEdit> = quick
@@ -1934,7 +2137,7 @@ mod tests {
             )),
             actup_core::config::EnvOverrides::default(),
         )?;
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let uri = "file:///test/ci.yml".parse::<Uri>()?;
         let encoding = crate::position::PositionEncoding::Utf16;
         let diagnostics = crate::diagnostics::compute_diagnostics(
             &text,
@@ -1964,9 +2167,13 @@ mod tests {
 
     #[test]
     fn pin_actions_keep_the_closer() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("no uri")?;
+        let uri = "file:///test/workflow.yml".parse::<Uri>()?;
         let targets = PinTargets {
-            sha: Some(("c".repeat(40), "v7.2.3".to_string())),
+            comment: true,
+            sha: Some((
+                actup_core::provider::Sha40::new("c".repeat(40)).ok_or("invalid test SHA")?,
+                "v7.2.3".to_string(),
+            )),
             major: Some("v7".to_string()),
             branch: None,
             unpin: None,

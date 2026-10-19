@@ -53,6 +53,13 @@
         "$ref": "#/$defs/Override"
       }
     },
+    "pin": {
+      "description": "Formatting of SHA pins, shared by the CLI, editors, MCP and WASM.",
+      "$ref": "#/$defs/Pin",
+      "default": {
+        "comment": true
+      }
+    },
     "policy": {
       "description": "Update policy applied to every action unless an override matches.\n\n```toml\n[policy]\nbump  = \"minor\"\npin   = \"sha\"\ntrack = \"keep\"\n```",
       "$ref": "#/$defs/Policy",
@@ -271,6 +278,18 @@
       "required": [
         "pattern"
       ]
+    },
+    "Pin": {
+      "description": "The `[pin]` table.",
+      "type": "object",
+      "properties": {
+        "comment": {
+          "description": "Add a version label when writing a SHA pin (default: true).\n\nWhen false, omit generated labels and remove an existing recognized\nlabel while retaining its note. Unrelated comments stay unchanged.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
     },
     "Policy": {
       "description": "The `[policy]` table.",

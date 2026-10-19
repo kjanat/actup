@@ -434,10 +434,11 @@ impl Rewrite {
         current_is_sha: bool,
         target: &version::Info,
         trailing: Trailing<'_>,
+        pin_comment: bool,
     ) -> Self {
         let version = target.version().to_string();
         if style.writes_sha(current_is_sha) {
-            Self::pin(target.sha(), &version, trailing)
+            Self::pin(target.sha(), &version, trailing, pin_comment)
         } else {
             Self::named(&version, Named::Tag, current_is_sha, trailing)
         }
@@ -464,15 +465,23 @@ impl Rewrite {
         }
     }
 
-    /// Pin to `sha` with a ` # <label>` comment.
+    /// Pin to `sha`, optionally adding a ` # <label>` comment.
     ///
     /// A label comment gets `label` and keeps its note, a missing comment is
     /// added, and foreign text after the ref is kept without a comment.
+    /// With `comment = false`, remove an existing label but keep its note.
     #[must_use]
-    pub fn pin(sha: &str, label: &str, trailing: Trailing<'_>) -> Self {
+    pub fn pin(sha: &str, label: &str, trailing: Trailing<'_>, comment: bool) -> Self {
         let (comment, to_line_end) = match trailing {
-            Trailing::None => (Some(labeled_comment(label, "")), false),
-            Trailing::Label { note } => (Some(labeled_comment(label, note)), true),
+            Trailing::None => (comment.then(|| labeled_comment(label, "")), false),
+            Trailing::Label { note } => (
+                if comment {
+                    Some(labeled_comment(label, note))
+                } else {
+                    note_comment(note)
+                },
+                true,
+            ),
             Trailing::Foreign => (None, false),
         };
         Self {
@@ -539,6 +548,27 @@ mod tests {
     const LABEL: Trailing<'static> = Trailing::Label { note: "" };
 
     const V1: Labels<'static> = Labels::unfetched("v1");
+
+    #[test]
+    fn pin_without_comments_keeps_notes_quotes_and_flow_closers() {
+        let sha = "a".repeat(40);
+        for (trailing, closer, expected, to_end) in [
+            (Trailing::None, "\"", sha.clone(), false),
+            (Trailing::Foreign, " } ", sha.clone(), false),
+            (LABEL, "\" ", format!("{sha}\""), true),
+            (
+                Trailing::Label { note: "keep" },
+                "' } ",
+                format!("{sha}' }} # keep"),
+                true,
+            ),
+        ] {
+            assert_eq!(
+                Rewrite::pin(&sha, "v2", trailing, false).splice(closer),
+                (expected, to_end)
+            );
+        }
+    }
 
     fn trailing(line: &str) -> Trailing<'_> {
         let ref_end = line.find("@v1").map_or(0, |at| at + 3);
@@ -748,7 +778,7 @@ mod tests {
         }
         let sha = "b".repeat(40);
         assert_eq!(
-            Rewrite::pin(&sha, "main", noted),
+            Rewrite::pin(&sha, "main", noted, true),
             rewrite(&sha, Some(" # main keep"), true)
         );
         let mut versions = version::Set::new();
@@ -855,7 +885,7 @@ mod tests {
         ];
         for (style, is_sha, trailing, expected) in cases {
             assert_eq!(
-                Rewrite::outdated(style, is_sha, &target, trailing),
+                Rewrite::outdated(style, is_sha, &target, trailing, true),
                 expected,
                 "{style} {is_sha} {trailing:?}"
             );
@@ -897,13 +927,13 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                Rewrite::outdated(style, is_sha, &target, noted),
+                Rewrite::outdated(style, is_sha, &target, noted, true),
                 expected,
                 "{style} {is_sha}"
             );
         }
         assert_eq!(
-            Rewrite::pin(&sha, "v4", noted),
+            Rewrite::pin(&sha, "v4", noted, true),
             rewrite(&sha, Some(" # v4 pinned for node16"), true)
         );
         assert_eq!(labeled_comment("v1", ""), " # v1");

@@ -79,6 +79,10 @@ fn display_human(config: &Config, path: &Path, registrations: &[&'static Registr
     println!("  archived:    {}", config.policy.archived);
     println!();
 
+    println!("{}:", "Pin formatting".bold());
+    println!("  comment:     {}", config.pin.comment);
+    println!();
+
     println!("{}:", "Cache".bold());
     println!("  ttl:      {}", ttl_text(config.cache.ttl));
     println!("  enabled:  {}", config.cache.enabled);

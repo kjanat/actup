@@ -117,6 +117,9 @@ pub struct Config {
     /// ```
     pub policy: Policy,
 
+    /// Formatting of SHA pins, shared by the CLI, editors, MCP and WASM.
+    pub pin: Pin,
+
     /// Which files and actions to scan.
     ///
     /// ```toml
@@ -278,6 +281,24 @@ impl std::fmt::Display for Source {
             Self::Explicit { path } => write!(f, "explicit config {}", path.display()),
             Self::Env { vars } => write!(f, "environment {}", vars.join(", ")),
         }
+    }
+}
+
+/// The `[pin]` table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+#[serde(default, deny_unknown_fields)]
+pub struct Pin {
+    /// Add a version label when writing a SHA pin (default: true).
+    ///
+    /// When false, omit generated labels and remove an existing recognized
+    /// label while retaining its note. Unrelated comments stay unchanged.
+    pub comment: bool,
+}
+
+impl Default for Pin {
+    fn default() -> Self {
+        Self { comment: true }
     }
 }
 
@@ -1123,6 +1144,7 @@ mod tests {
     #[test]
     fn test_config_default() {
         let config = Config::default();
+        assert!(config.pin.comment);
         assert_eq!(config.policy.bump, policy::Update::Latest);
         assert_eq!(config.policy.pin, policy::Style::Preserve);
         assert_eq!(config.policy.track, policy::Track::Keep);
@@ -1136,6 +1158,25 @@ mod tests {
         assert_eq!(config.fetch.api_mode, ApiMode::Graphql);
         assert_eq!(config.fetch.max_tags_per_repo.get(), 10);
         assert!(config.hosts.is_empty());
+    }
+
+    #[test]
+    fn pin_comments_default_true_and_follow_config_precedence() -> TestResult {
+        for text in ["", "[pin]\n", "[pin]\ncomment = true\n"] {
+            let config: Config = toml::from_str(text)?;
+            assert!(config.pin.comment);
+        }
+        let file = Some((Path::new("actup.toml"), "[pin]\ncomment = false\n"));
+        let config = Config::from_contents(file, EnvOverrides::default())?;
+        assert!(!config.pin.comment);
+        assert_eq!(config.policy.pin, policy::Style::Preserve);
+        let config = Config::from_contents(
+            file,
+            EnvOverrides::from_vars([("ACTUP_PIN__COMMENT", "true")]),
+        )?;
+        assert!(config.pin.comment);
+        assert!(toml::from_str::<Config>("[pin]\ncomments = false\n").is_err());
+        Ok(())
     }
 
     // should_ignore tests

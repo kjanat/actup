@@ -717,7 +717,7 @@ async fn pin_action_edits_the_ref_in_a_markdown_file() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/USAGE.md").ok_or("bad uri")?;
+    let uri = "file:///test/USAGE.md".parse::<Uri>()?;
     let text = "# Usage\n\n```yaml\nsteps:\n  - uses: actions/checkout@v4.2.0\n```\n";
     harness
         .notify(did_open_notification(&uri, text, 1)?)

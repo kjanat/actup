@@ -65,8 +65,19 @@ impl Kind {
 }
 
 /// A 40-character commit SHA
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
 pub struct Sha40(String);
+
+impl<'de> Deserialize<'de> for Sha40 {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::new(value).ok_or_else(|| {
+            serde::de::Error::custom("expected a 40-character hexadecimal commit SHA")
+        })
+    }
+}
 
 impl Sha40 {
     /// Create a new Sha40, validating the format and normalizing to lowercase
@@ -1309,6 +1320,22 @@ mod tests {
         let json = serde_json::to_string(&sha)?;
         let deserialized: Sha40 = serde_json::from_str(&json)?;
         assert_eq!(sha, deserialized);
+        Ok(())
+    }
+
+    #[test]
+    fn test_sha40_deserialization_validates_and_normalizes() -> TestResult {
+        for invalid in [
+            String::new(),
+            "abc1234".to_string(),
+            "g".repeat(40),
+            "a".repeat(41),
+        ] {
+            let json = serde_json::to_string(&invalid)?;
+            assert!(serde_json::from_str::<Sha40>(&json).is_err(), "{invalid}");
+        }
+        let sha: Sha40 = serde_json::from_value(serde_json::json!("ABCDEF0123".repeat(4)))?;
+        assert_eq!(sha.as_str(), "abcdef0123".repeat(4));
         Ok(())
     }
 

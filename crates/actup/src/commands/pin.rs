@@ -112,7 +112,7 @@ async fn pin_action_edit(
             return PinStep::Nothing;
         };
         let labels = Labels::fetched(action_ref.ref_str(), versions);
-        let Some(edit) = repin_sha_edit(loc, target, &labels) else {
+        let Some(edit) = repin_sha_edit(loc, target, &labels, config.pin.comment) else {
             return PinStep::Unplaceable;
         };
         let short = &target.sha()[..7.min(target.sha().len())];
@@ -138,19 +138,28 @@ async fn pin_action_edit(
                 sha,
                 tag: Some(tag),
             } => {
-                let Some(edit) = repin_sha_edit(loc, &tag, &labels) else {
+                let Some(edit) = repin_sha_edit(loc, &tag, &labels, config.pin.comment) else {
                     return PinStep::Unplaceable;
                 };
-                let target = format!("{prefix}@{sha} # {}", tag.version());
-                (edit, sha, target, false)
+                let target = format!("{prefix}@{sha}");
+                (edit, sha, target, true)
             }
             PinTarget::Expanded { sha, tag: None } => {
                 let new_uses = format!("{prefix}@{sha}");
-                let edit = PendingEdit::replace_range(loc.line(), range, new_uses.clone());
-                (edit, sha, new_uses, false)
+                let edit = if config.pin.comment {
+                    PendingEdit::replace_range(loc.line(), range, new_uses.clone())
+                } else {
+                    let Some(edit) = pin_edit(loc, &sha, "", &labels, false) else {
+                        return PinStep::Unplaceable;
+                    };
+                    edit
+                };
+                (edit, sha, new_uses, true)
             }
             PinTarget::Named { sha } => {
-                let Some(edit) = pin_edit(loc, &sha, action_ref.ref_str(), &labels) else {
+                let Some(edit) =
+                    pin_edit(loc, &sha, action_ref.ref_str(), &labels, config.pin.comment)
+                else {
                     return PinStep::Unplaceable;
                 };
                 (edit, sha.clone(), format!("{prefix}@{sha}"), true)
@@ -612,6 +621,39 @@ mod tests {
         .await;
         assert_eq!(code, CliExitCode::Success);
         assert_eq!(std::fs::read_to_string(&file)?, expected);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn pin_without_comments_keeps_user_notes() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let before = "steps:\n  - uses: actions/checkout@v4\n  - uses: \"o/b@v1\" # v1 keep\n  - uses: o/d@main # mine\n";
+        let file = workflow(dir.path(), before)?;
+        let expected = format!(
+            "steps:\n  - uses: actions/checkout@{}\n  - uses: \"o/b@{}\" # keep\n  - uses: o/d@{} # mine\n",
+            sha('a'),
+            sha('c'),
+            sha('d')
+        );
+        let mut config = uncached();
+        config.pin.comment = false;
+        let registry = repo_sha_registry();
+        let cache = Arc::new(FileCache::from_config(&config, Access::ReadWrite));
+        for _ in 0..2 {
+            let result = edit(
+                dir.path(),
+                Mode::Pin,
+                false,
+                OutputFormat::Json,
+                &config,
+                &registry,
+                &cache,
+            )
+            .await
+            .ok_or("no workflow")?;
+            assert_eq!(result.exit_code(false), CliExitCode::Success);
+            assert_eq!(std::fs::read_to_string(&file)?, expected);
+        }
         Ok(())
     }
 
@@ -1174,6 +1216,14 @@ mod tests {
     }
 
     async fn pinned_line(provider: &FixedShaProvider, line: &str) -> Option<Pinned> {
+        pinned_line_with_config(provider, line, &uncached()).await
+    }
+
+    async fn pinned_line_with_config(
+        provider: &FixedShaProvider,
+        line: &str,
+        config: &Config,
+    ) -> Option<Pinned> {
         let content = format!("steps:\n{line}\n");
         let (loc, action_ref) =
             WorkflowScanner::extract_actions(&content, SourceFormat::Yaml).next()?;
@@ -1183,7 +1233,7 @@ mod tests {
             &action_ref,
             &loc,
             &provider.versions,
-            &uncached(),
+            config,
             &site,
         )
         .await
@@ -1207,6 +1257,29 @@ mod tests {
             new_ref: change.new_ref.clone(),
             comment: comment.clone(),
         })
+    }
+
+    #[tokio::test]
+    async fn pin_expands_short_sha_without_labels_when_disabled()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut config = uncached();
+        config.pin.comment = false;
+        for tags in [vec![], vec![("v4.2.0", FULL_SHA)]] {
+            let provider = pin_provider(&tags, FULL_SHA).ok_or("bad fixture")?;
+            let pinned = pinned_line_with_config(
+                &provider,
+                "  - uses: \"actions/checkout@abc1234\" # v4 keep",
+                &config,
+            )
+            .await
+            .ok_or("no pin")?;
+            assert_eq!(
+                pinned.line,
+                format!("  - uses: \"actions/checkout@{FULL_SHA}\" # keep")
+            );
+            assert_eq!(pinned.comment.as_deref(), Some(" # keep"));
+        }
+        Ok(())
     }
 
     #[tokio::test]
