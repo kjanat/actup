@@ -2627,6 +2627,7 @@ mod tests {
         ("ACTUP_POLICY__BRANCH", "update"),
         ("ACTUP_POLICY__PRERELEASE", "true"),
         ("ACTUP_POLICY__ARCHIVED", "ignore"),
+        ("ACTUP_PIN__COMMENT", "false"),
         ("ACTUP_SCAN__IGNORE", "[\"a/b\"]"),
         ("ACTUP_SCAN__EXTRA_PATHS", "[\".gitea/workflows\"]"),
         (
@@ -2653,6 +2654,7 @@ mod tests {
     fn test_from_contents_env_sets_every_key() -> Result<(), Box<dyn std::error::Error>> {
         let config =
             Config::from_contents(None, EnvOverrides::from_vars(ENV_EVERY_KEY.iter().copied()))?;
+        assert!(!config.pin.comment);
         assert_eq!(
             config.policy,
             Policy {

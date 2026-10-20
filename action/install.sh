@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repository="kjanat/actup-v2"
+repository="kjanat/actup"
 release_tag='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 action_repository="$(printf '%s' "${ACTUP_REPOSITORY:-}" | tr '[:upper:]' '[:lower:]')"
 if [[ "${action_repository}" == "${repository}" && "${ACTUP_ACTION_REF:-}" =~ $release_tag ]]; then

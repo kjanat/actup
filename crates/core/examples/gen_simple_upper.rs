@@ -98,6 +98,9 @@ mod tests {
         let Err(err) = table("0061;LATIN SMALL LETTER A") else {
             panic!("a short line must be rejected");
         };
-        assert_eq!(err.to_string(), "malformed line `0061;LATIN SMALL LETTER A`");
+        assert_eq!(
+            err.to_string(),
+            "malformed line `0061;LATIN SMALL LETTER A`"
+        );
     }
 }

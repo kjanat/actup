@@ -324,7 +324,12 @@ fn help_matches_the_snapshot() -> TestResult {
     let output = actup(home.path()).arg("--help").output()?;
     assert_eq!(output.status.code(), Some(0));
     let help = String::from_utf8(output.stdout)?;
-    let expected = include_str!("fixtures/help.txt").replace("\r\n", "\n");
+    let expected = include_str!("fixtures/help.txt")
+        .replace("\r\n", "\n")
+        .replace(
+            "Usage: actup ",
+            &format!("Usage: actup{} ", std::env::consts::EXE_SUFFIX),
+        );
     assert_eq!(help, expected);
     Ok(())
 }

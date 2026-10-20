@@ -24,7 +24,7 @@ workflows such as `$/.github/actions/setup` and `$/.github/workflows/ci.yml`.
 
 ```sh
 # From source (requires Rust 1.96+)
-cargo install --git https://github.com/kjanat/actup-v2 actup
+cargo install --git https://github.com/kjanat/actup actup
 ```
 
 ### GitHub Action
@@ -34,7 +34,7 @@ the release's `SHA256SUMS.txt`, and runs it. Linux runners get the static musl
 build.
 
 ```yaml
-- uses: kjanat/actup-v2@<commit SHA of v1.2.3> # v1.2.3
+- uses: kjanat/actup@<commit SHA of v1.2.3> # v1.2.3
   with:
     version: v1.2.3 # needed when the ref is a commit SHA
     command: check # check, update, pin or config
@@ -52,7 +52,7 @@ build.
 A ref that is neither a release tag like `v1.2.3` nor paired with `version`
 fails the step. Inside another composite action, `github.action_ref` names that
 outer action, and actup then needs `version`. The download always comes from the
-`kjanat/actup-v2` releases. Outputs: `exit-code` (see [Exit Codes](#exit-codes))
+`kjanat/actup` releases. Outputs: `exit-code` (see [Exit Codes](#exit-codes))
 and `actup-bin`, the path of the verified binary for later steps.
 
 `examples/workflows/` holds a check workflow and a reusable workflow that opens
@@ -505,7 +505,7 @@ actup completions powershell >> $PROFILE
 `actup-mcp` serves actup over the Model Context Protocol on stdio:
 
 ```sh
-cargo install --git https://github.com/kjanat/actup-v2 actup-mcp
+cargo install --git https://github.com/kjanat/actup actup-mcp
 ```
 
 ```json

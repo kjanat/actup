@@ -1278,8 +1278,10 @@ mod tests {
         let registry = test_utils::mock_registry(provider);
         let file_cache = crate::file_cache::FileCache::disabled();
         let config = actup_core::Config::default();
-        let uri = tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml")
-            .ok_or("invalid file path")?;
+        let uri = tower_lsp_server::ls_types::Uri::from_file_path(crate::test_utils::fixture_path(
+            "/test/ci.yml",
+        ))
+        .ok_or("invalid file path")?;
         let diagnostics_text = "      - uses: actions/checkout@v3\n";
 
         let diagnostics = crate::diagnostics::compute_diagnostics(

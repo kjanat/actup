@@ -16,7 +16,7 @@ classifiers     = [
 
 [project.urls]
 Funding  = "https://github.com/kjanat/funding"
-Homepage = "https://github.com/kjanat/actup-v2"
+Homepage = "https://github.com/kjanat/actup"
 
 [project.optional-dependencies]
 core = ["tree-sitter~=0.24"]

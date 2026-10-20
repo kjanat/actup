@@ -55,13 +55,13 @@ modules); the same `src/parser.c` + `src/scanner.c` feeds all of them.
 
 ## Install
 
-| Ecosystem | Package                                                                       |
-| --------- | ----------------------------------------------------------------------------- |
-| npm       | `tree-sitter-github-actions`                                                  |
-| crates.io | `tree-sitter-github-actions`                                                  |
-| PyPI      | `tree-sitter-github-actions`                                                  |
-| Go        | `github.com/kjanat/actup-v2/languages/tree-sitter-github-actions/bindings/go` |
-| Maven     | `io.github.tree-sitter:jtreesitter-github-actions`                            |
+| Ecosystem | Package                                                                    |
+| --------- | -------------------------------------------------------------------------- |
+| npm       | `tree-sitter-github-actions`                                               |
+| crates.io | `tree-sitter-github-actions`                                               |
+| PyPI      | `tree-sitter-github-actions`                                               |
+| Go        | `github.com/kjanat/actup/languages/tree-sitter-github-actions/bindings/go` |
+| Maven     | `io.github.tree-sitter:jtreesitter-github-actions`                         |
 
 None published yet — pre-alpha.
 

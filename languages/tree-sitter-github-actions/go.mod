@@ -1,4 +1,4 @@
-module github.com/kjanat/actup-v2/languages/tree-sitter-github-actions
+module github.com/kjanat/actup/languages/tree-sitter-github-actions
 
 go 1.26
 

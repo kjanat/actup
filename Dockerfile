@@ -6,8 +6,8 @@ ARG ACTUP_REVISION=unknown
 
 LABEL org.opencontainers.image.title="actup" \
       org.opencontainers.image.description="Check, update and SHA-pin GitHub Actions uses: refs" \
-      org.opencontainers.image.source="https://github.com/kjanat/actup-v2" \
-      org.opencontainers.image.url="https://github.com/kjanat/actup-v2" \
+      org.opencontainers.image.source="https://github.com/kjanat/actup" \
+      org.opencontainers.image.url="https://github.com/kjanat/actup" \
       org.opencontainers.image.licenses="MIT OR Apache-2.0" \
       org.opencontainers.image.vendor="Kaj Kowalski" \
       org.opencontainers.image.version="${ACTUP_VERSION}" \

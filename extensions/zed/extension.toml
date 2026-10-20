@@ -6,7 +6,7 @@ schema_version = 1
 version        = "0.1.0"
 description    = "Keep GitHub Actions up-to-date — diagnostics, code actions, hover, completion"
 authors        = ["Kaj Kowalski <info@kajkowalski.nl>"]
-repository     = "https://github.com/kjanat/actup-v2"
+repository     = "https://github.com/kjanat/actup"
 
 [language_servers.actup-lsp]
 languages = ["GitHub Actions", "YAML"]
@@ -28,6 +28,6 @@ command = "where.exe"
 args    = ["actup-mcp"]
 
 [grammars.github_actions]
-repository = "https://github.com/kjanat/actup-v2"
+repository = "https://github.com/kjanat/actup"
 rev        = "7fb4037d3fb694b62c3b0aa493616478a5f0cea5"
 path       = "languages/tree-sitter-github-actions"

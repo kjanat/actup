@@ -1592,7 +1592,8 @@ jobs:
         let yaml = "runs:\n  steps:\n  - uses: o/r@a~1\n  - uses: o/r@v1.lock\n  - uses: o/r\n  - uses: o/r@\n  - uses: ./local\n";
         let result = compute_diagnostics(
             yaml,
-            &Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?,
+            &Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+                .ok_or("invalid file path")?,
             &Config::default(),
             &registry,
             &crate::file_cache::FileCache::disabled(),
@@ -2306,7 +2307,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let result = compute_diagnostics(
             "name: CI\non: push\n",
@@ -2378,7 +2380,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n";
         let result = compute_diagnostics(
@@ -2409,7 +2412,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v4.0.0\n";
         let result = compute_diagnostics(
@@ -2463,7 +2467,8 @@ jobs:
             },
             ..Default::default()
         };
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: denoland/setup-deno@v2\n";
         let result = compute_diagnostics(
@@ -2581,7 +2586,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v4\n";
         let result = compute_diagnostics(
@@ -2693,7 +2699,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v2\n";
         let result = compute_diagnostics(
@@ -2721,7 +2728,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/setup-node@v4.0.0\n";
         let result = compute_diagnostics(
@@ -2848,7 +2856,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         // Use a full 40-char SHA as the ref to trigger the Pinned code path.
         let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA}\n");
@@ -3311,7 +3320,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         // Use DUMMY_SHA_2 which doesn't match any tag in the version set.
         let yaml = format!("    - uses: actions/checkout@{DUMMY_SHA_2}\n");
@@ -3343,7 +3353,8 @@ jobs:
     -> Result<(), Box<dyn std::error::Error>> {
         let provider = test_utils::MockProvider::new("github.com");
         let registry = test_utils::mock_registry(provider);
-        let uri = Uri::from_file_path("/test/README.md").ok_or("bad uri")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/README.md"))
+            .ok_or("bad uri")?;
         let md = "# CI\n\n```yaml\njobs:\n  b:\n    steps:\n      - uses: o/r@\n      - uses: ./local\n        with:\n          uses: lint\n```\n";
         let result = compute_diagnostics(
             md,
@@ -3378,7 +3389,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/readme.md").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/readme.md"))
+            .ok_or("invalid file path")?;
 
         let text = "# README\nThis is not a workflow file.\n";
         let result = compute_diagnostics(
@@ -3414,7 +3426,8 @@ jobs:
         let registry = test_utils::mock_registry(provider);
         let cache = crate::file_cache::FileCache::disabled();
         let config = Config::default();
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
 
         let yaml = "    - uses: actions/checkout@v3\n    - uses: actions/checkout@v4.2.0\n";
         let result = compute_diagnostics(

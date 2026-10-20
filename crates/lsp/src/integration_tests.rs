@@ -470,7 +470,8 @@ async fn did_open_no_uses_publishes_empty_diagnostics() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/no-uses.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/no-uses.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non:\n  push:\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
 
     harness
@@ -495,7 +496,8 @@ async fn did_open_with_uses_publishes_diagnostics() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/with-uses.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/with-uses.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
 
     harness
@@ -527,7 +529,8 @@ async fn harness_serves_versions_from_the_mock_provider() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/mocked.yml").ok_or("no uri")?;
+    let uri =
+        Uri::from_file_path(crate::test_utils::fixture_path("/test/mocked.yml")).ok_or("no uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
     harness
         .notify(did_open_notification(&uri, text, 1)?)
@@ -558,7 +561,8 @@ async fn did_close_clears_diagnostics() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/close-test.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/close-test.yml"))
+        .ok_or("invalid file path")?;
     let text =
         "name: CI\non: push\njobs:\n  build:\n    steps:\n      - uses: actions/checkout@v4\n";
 
@@ -594,7 +598,8 @@ async fn code_action_returns_quickfix_for_outdated() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/codeaction.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/codeaction.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v3\n";
 
     harness
@@ -666,7 +671,8 @@ async fn code_action_returns_quickfix_in_a_markdown_file() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/README.md").ok_or("bad uri")?;
+    let uri =
+        Uri::from_file_path(crate::test_utils::fixture_path("/test/README.md")).ok_or("bad uri")?;
     let text = "# Usage\n\nRun it:\n\n```yaml\nsteps:\n  - uses: actions/checkout@v3\n```\n";
     harness
         .notify(did_open_notification(&uri, text, 1)?)
@@ -776,7 +782,8 @@ async fn code_action_leaves_out_an_edit_that_breaks_the_yaml() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/corrupting.yml").ok_or("no uri")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/corrupting.yml"))
+        .ok_or("no uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@v3\n";
     harness
         .notify(did_open_notification(&uri, text, 1)?)
@@ -818,7 +825,8 @@ async fn code_action_offers_nothing_for_an_unopened_document() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/never-opened.yml").ok_or("no uri")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/never-opened.yml"))
+        .ok_or("no uri")?;
     let range = test_utils::make_range(3, 31, 33);
     let diag = test_utils::make_outdated_diagnostic(range, "actions/checkout@v3", "v4.2.0");
     let resp = harness
@@ -837,7 +845,8 @@ async fn code_action_expands_short_sha() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/shortsha.yml").ok_or("bad uri")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/shortsha.yml"))
+        .ok_or("bad uri")?;
     let text = "jobs:\n  build:\n    steps:\n      - uses: actions/checkout@abc1234\n";
     harness
         .notify(did_open_notification(&uri, text, 1)?)
@@ -894,7 +903,8 @@ async fn code_action_empty_context_returns_none() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/empty.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/empty.yml"))
+        .ok_or("invalid file path")?;
     harness
         .notify(did_open_notification(&uri, "name: CI\non: push\n", 1)?)
         .await?;
@@ -936,7 +946,8 @@ async fn full_lifecycle_open_change_close() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/lifecycle.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/lifecycle.yml"))
+        .ok_or("invalid file path")?;
 
     // Open.
     let text_v1 =
@@ -1334,7 +1345,8 @@ async fn invalid_config_path_beside_valid_repo_config_is_invalid() -> TestResult
 #[tokio::test]
 async fn relative_config_path_resolves_against_workspace_root() -> TestResult {
     let temp = tempfile::tempdir()?;
-    let repo = temp.path().join("repo");
+    let temp_path = actup_core::config::canonical_path(temp.path());
+    let repo = temp_path.join("repo");
     std::fs::create_dir(&repo)?;
     let explicit = repo.join("custom.toml");
     std::fs::write(&explicit, "[policy]\nbump = \"sideways\"\n")?;
@@ -1371,7 +1383,7 @@ async fn relative_config_path_resolves_against_workspace_root() -> TestResult {
         "diagnostics must resume after the relative configPath parses"
     );
 
-    let second = temp.path().join("second");
+    let second = temp_path.join("second");
     std::fs::create_dir(&second)?;
     let second_explicit = second.join("custom.toml");
     std::fs::write(&second_explicit, "[policy]\nbump = \"backwards\"\n")?;
@@ -1519,12 +1531,13 @@ fn registered_relative_patterns(requests: &[(String, serde_json::Value)]) -> Vec
 #[tokio::test]
 async fn config_watchers_follow_workspace_root() -> TestResult {
     let temp = tempfile::tempdir()?;
-    let first = temp.path().join("first");
-    let second = temp.path().join("second");
+    let temp_path = actup_core::config::canonical_path(temp.path());
+    let first = temp_path.join("first");
+    let second = temp_path.join("second");
     std::fs::create_dir(&first)?;
     std::fs::create_dir(&second)?;
-    let user = temp.path().join("user/config.toml");
-    let explicit = temp.path().join("custom.toml");
+    let user = temp_path.join("user/config.toml");
+    let explicit = temp_path.join("custom.toml");
     let explicit_str = explicit.to_str().ok_or("temp path is not UTF-8")?;
     let root = first.to_str().ok_or("temp path is not UTF-8")?;
 
@@ -1544,8 +1557,8 @@ async fn config_watchers_follow_workspace_root() -> TestResult {
             uri(&first.join(".github"))?,
             "{actup.toml,actup.json,actup.jsonc,actup.yaml,actup.yml}",
         ),
-        (uri(temp.path())?, "custom.toml"),
-        (uri(&temp.path().join("user"))?, "config.toml"),
+        (uri(&temp_path)?, "custom.toml"),
+        (uri(&temp_path.join("user"))?, "config.toml"),
     ] {
         assert!(
             patterns.contains(&(expected.0.clone(), expected.1.to_owned())),
@@ -1605,7 +1618,8 @@ async fn hover_on_uses_line_returns_response() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/hover.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/hover.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
 
     harness
@@ -1654,7 +1668,7 @@ async fn hover_reads_markdown_and_plain_text_documents() -> TestResult {
         ),
     ];
     for (id, (path, text, position, range)) in (30..).zip(cases) {
-        let uri = Uri::from_file_path(path).ok_or("bad uri")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path(path)).ok_or("bad uri")?;
         harness
             .notify(did_open_notification(&uri, text, 1)?)
             .await?;
@@ -1685,7 +1699,8 @@ async fn hover_on_non_uses_line_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/hover-null.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/hover-null.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
 
     harness
@@ -1718,7 +1733,8 @@ async fn hover_without_open_document_returns_null() -> TestResult {
     harness.initialize(None).await?;
 
     // Request hover on a document that was never opened.
-    let uri = Uri::from_file_path("/test/not-opened.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/not-opened.yml"))
+        .ok_or("invalid file path")?;
     let position = Position {
         line: 0,
         character: 0,
@@ -1744,7 +1760,8 @@ async fn completion_on_uses_line_returns_response() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/completion.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/completion.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@\n";
 
     harness
@@ -1778,7 +1795,8 @@ async fn completion_on_non_uses_line_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/completion-null.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/completion-null.yml"))
+        .ok_or("invalid file path")?;
     let text = "name: CI\non: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n";
 
     harness
@@ -1812,7 +1830,10 @@ async fn completion_without_open_document_returns_null() -> TestResult {
     let mut harness = TestHarness::new();
     harness.initialize(None).await?;
 
-    let uri = Uri::from_file_path("/test/completion-missing.yml").ok_or("invalid file path")?;
+    let uri = Uri::from_file_path(crate::test_utils::fixture_path(
+        "/test/completion-missing.yml",
+    ))
+    .ok_or("invalid file path")?;
     let position = Position {
         line: 0,
         character: 0,

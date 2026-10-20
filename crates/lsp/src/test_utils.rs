@@ -22,6 +22,15 @@ use tower_lsp_server::ls_types::{Diagnostic, DiagnosticSeverity, NumberOrString,
 
 use crate::diagnostics::{DIAGNOSTIC_SOURCE, DiagnosticData};
 
+/// Give synthetic test paths an absolute root on every supported platform.
+pub fn fixture_path(path: &str) -> std::path::PathBuf {
+    if cfg!(windows) {
+        std::path::Path::new(r"C:\").join(path.trim_start_matches('/'))
+    } else {
+        std::path::PathBuf::from(path)
+    }
+}
+
 /// Build a [`Range`] at `(line, col_start..col_end)`.
 pub fn make_range(line: u32, col_start: u32, col_end: u32) -> Range {
     Range {

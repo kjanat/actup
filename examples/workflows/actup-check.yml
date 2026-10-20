@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: kjanat/actup-v2@<release-sha> # v0.1.0
+      - uses: kjanat/actup@<release-sha> # v0.1.0
         with:
           version: v0.1.0
           command: check

@@ -187,10 +187,7 @@ mod tests {
             .and_then(|grammars| grammars.get("github_actions"))
             .ok_or("extension.toml declares no `github_actions` grammar")?;
         let field = |key: &str| grammar.get(key).and_then(toml::Value::as_str);
-        assert_eq!(
-            field("repository"),
-            Some("https://github.com/kjanat/actup-v2")
-        );
+        assert_eq!(field("repository"), Some("https://github.com/kjanat/actup"));
         assert_eq!(
             field("rev"),
             Some("7fb4037d3fb694b62c3b0aa493616478a5f0cea5")

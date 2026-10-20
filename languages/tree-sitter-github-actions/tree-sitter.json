@@ -17,7 +17,7 @@
 		"license": "MIT",
 		"description": "Github Actions grammar for tree-sitter",
 		"authors": [{ "name": "Kaj Kowalski", "email": "info@kajkowalski.nl", "url": "https://github.com/kjanat" }],
-		"links": { "repository": "https://github.com/kjanat/actup-v2", "funding": "https://github.com/kjanat/funding" }
+		"links": { "repository": "https://github.com/kjanat/actup", "funding": "https://github.com/kjanat/funding" }
 	},
 	"bindings": { "c": true, "go": true, "java": true, "node": true, "python": true, "rust": true, "swift": true, "zig": true }
 }

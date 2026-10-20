@@ -37,6 +37,7 @@
 		"**/grammars",
 		"**/test/highlight/**",
 		"**/examples/**",
+		"!crates/**/examples/**/*.rs",
 		"**/grammar.json",
 		"**/node-types.json",
 	],

@@ -2422,15 +2422,17 @@ mod tests {
 
     #[test]
     fn extract_workspace_root_prefers_workspace_folders()
-    -> std::result::Result<(), serde_json::Error> {
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let expected = crate::test_utils::fixture_path("/workspace/root");
+        let uri = Uri::from_file_path(&expected).ok_or("invalid workspace path")?;
         let params: InitializeParams = serde_json::from_value(serde_json::json!({
             "capabilities": {},
-            "workspaceFolders": [{ "uri": "file:///workspace/root", "name": "root" }],
+            "workspaceFolders": [{ "uri": uri, "name": "root" }],
             "rootUri": "file:///other/root",
             "rootPath": "/legacy/root",
         }))?;
         let root = extract_workspace_root(&params);
-        assert_eq!(root, Some(PathBuf::from("/workspace/root")));
+        assert_eq!(root, Some(expected));
         Ok(())
     }
 
@@ -2439,7 +2441,8 @@ mod tests {
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         // Direct test: construct backend parts and verify in_flight tracking.
         let in_flight: DashMap<Uri, AbortHandle> = DashMap::new();
-        let uri = Uri::from_file_path("/test/file.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/file.yml"))
+            .ok_or("invalid file path")?;
 
         // Simulate what schedule_diagnostics does: insert an abort handle.
         let handle = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
@@ -2459,7 +2462,8 @@ mod tests {
     async fn schedule_diagnostics_cancels_previous_task()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let in_flight: DashMap<Uri, AbortHandle> = DashMap::new();
-        let uri = Uri::from_file_path("/test/workflow.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/workflow.yml"))
+            .ok_or("invalid file path")?;
 
         // Spawn a long-running task (simulating slow version check).
         let task1 = tokio::spawn(async { tokio::time::sleep(Duration::from_mins(1)).await });
@@ -2485,7 +2489,8 @@ mod tests {
     async fn version_staleness_prevents_stale_publish()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let documents: Arc<DashMap<Uri, DocumentState>> = Arc::new(DashMap::new());
-        let uri = Uri::from_file_path("/test/stale.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/stale.yml"))
+            .ok_or("invalid file path")?;
 
         // Store document at version 5.
         documents.insert(
@@ -2519,7 +2524,8 @@ mod tests {
     async fn closed_document_prevents_publish()
     -> std::result::Result<(), Box<dyn std::error::Error>> {
         let documents: Arc<DashMap<Uri, DocumentState>> = Arc::new(DashMap::new());
-        let uri = Uri::from_file_path("/test/closed.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/closed.yml"))
+            .ok_or("invalid file path")?;
 
         // Document not in map (was closed).
         let should_publish = documents.get(&uri).is_some();
@@ -3382,15 +3388,18 @@ mod tests {
     }
 
     #[test]
-    fn extract_workspace_root_from_root_uri() -> std::result::Result<(), serde_json::Error> {
+    fn extract_workspace_root_from_root_uri() -> std::result::Result<(), Box<dyn std::error::Error>>
+    {
+        let expected = crate::test_utils::fixture_path("/workspace/from-uri");
+        let uri = Uri::from_file_path(&expected).ok_or("invalid workspace path")?;
         let params: InitializeParams = serde_json::from_value(serde_json::json!({
             "capabilities": {},
-            "rootUri": "file:///workspace/from-uri",
+            "rootUri": uri,
             "rootPath": "/legacy/root",
         }))?;
         let root = extract_workspace_root(&params);
         // root_uri takes precedence over root_path when workspace_folders absent.
-        assert_eq!(root, Some(PathBuf::from("/workspace/from-uri")));
+        assert_eq!(root, Some(expected));
         Ok(())
     }
 

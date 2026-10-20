@@ -875,7 +875,8 @@ mod tests {
 
     #[test]
     fn build_workspace_edit_versioned_open_file() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
         let edits = vec![VersionedFileEdits {
             uri: uri.clone(),
             version: Some(7),
@@ -901,7 +902,8 @@ mod tests {
 
     #[test]
     fn build_workspace_edit_null_version_for_disk_file() -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
         let edits = vec![VersionedFileEdits {
             uri,
             version: None,
@@ -923,8 +925,10 @@ mod tests {
 
     #[test]
     fn build_workspace_edit_mixed_open_and_disk() -> Result<(), Box<dyn std::error::Error>> {
-        let open_uri = Uri::from_file_path("/test/open.yml").ok_or("invalid file path")?;
-        let disk_uri = Uri::from_file_path("/test/disk.yml").ok_or("invalid file path")?;
+        let open_uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/open.yml"))
+            .ok_or("invalid file path")?;
+        let disk_uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/disk.yml"))
+            .ok_or("invalid file path")?;
         let edits = vec![
             VersionedFileEdits {
                 uri: open_uri.clone(),
@@ -1089,7 +1093,8 @@ mod tests {
     #[test]
     fn build_workspace_edit_fallback_to_unversioned_changes()
     -> Result<(), Box<dyn std::error::Error>> {
-        let uri = Uri::from_file_path("/test/ci.yml").ok_or("invalid file path")?;
+        let uri = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml"))
+            .ok_or("invalid file path")?;
         let edits = vec![VersionedFileEdits {
             uri: uri.clone(),
             version: Some(7),
@@ -1213,7 +1218,7 @@ mod tests {
     }
 
     fn test_uri() -> Uri {
-        let Some(uri) = Uri::from_file_path("/test/ci.yml") else {
+        let Some(uri) = Uri::from_file_path(crate::test_utils::fixture_path("/test/ci.yml")) else {
             panic!("/test/ci.yml has no file URI");
         };
         uri
@@ -1223,7 +1228,7 @@ mod tests {
         LoadedFile {
             uri: test_uri(),
             file: DiscoveredFile::new(
-                std::path::PathBuf::from("/test/ci.yml"),
+                crate::test_utils::fixture_path("/test/ci.yml"),
                 actup_core::FileKind::Workflow,
             ),
             text: text.to_string(),

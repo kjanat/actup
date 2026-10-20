@@ -1,5 +1,5 @@
 LANGUAGE_NAME := tree-sitter-github-actions
-HOMEPAGE_URL := https://github.com/kjanat/actup-v2
+HOMEPAGE_URL := https://github.com/kjanat/actup
 VERSION := 0.1.0
 
 # repository

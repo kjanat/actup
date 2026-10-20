@@ -32,7 +32,7 @@ fail() {
 pins_everywhere() {
 	local file
 	for file in "${examples[@]}"; do
-		grep -q "kjanat/actup-v2@$1 # $2$" "${file}" && grep -q "version: $2$" "${file}" || return 1
+		grep -q "kjanat/actup@$1 # $2$" "${file}" && grep -q "version: $2$" "${file}" || return 1
 	done
 }
 

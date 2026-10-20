@@ -1,7 +1,7 @@
 # actup-wasm
 
 Parse and check GitHub Actions `uses:` refs — powered by
-[actup-core](https://github.com/kjanat/actup-v2) compiled to WebAssembly.
+[actup-core](https://github.com/kjanat/actup) compiled to WebAssembly.
 
 Works in **Node.js 18+**, **Bun**, **Deno**, and **browsers**. No native
 dependencies.

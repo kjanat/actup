@@ -3,7 +3,7 @@
 	"version": "0.1.0",
 	"description": "Github Actions grammar for tree-sitter",
 	"keywords": ["incremental", "parsing", "tree-sitter", "github_actions"],
-	"repository": { "type": "git", "url": "git+https://github.com/kjanat/actup-v2.git", "directory": "languages/tree-sitter-github-actions" },
+	"repository": { "type": "git", "url": "git+https://github.com/kjanat/actup.git", "directory": "languages/tree-sitter-github-actions" },
 	"funding": "https://github.com/kjanat/funding",
 	"license": "MIT",
 	"author": { "name": "Kaj Kowalski", "email": "info@kajkowalski.nl", "url": "https://github.com/kjanat" },

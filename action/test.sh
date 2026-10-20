@@ -62,26 +62,26 @@ install() {
 
 bin_of() { sed -n 's/^actup-bin=//p' "${work}/output"; }
 
-publish kjanat/actup-v2 v1.2.3 >/dev/null
-publish kjanat/actup-v2 v2.0.0-rc.1 >/dev/null
+publish kjanat/actup v1.2.3 >/dev/null
+publish kjanat/actup v2.0.0-rc.1 >/dev/null
 
-if install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=kjanat/actup-v2 RUNNER_OS=Linux RUNNER_ARCH=X64 \
+if install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=kjanat/actup RUNNER_OS=Linux RUNNER_ARCH=X64 \
 	&& [[ -x "$(bin_of)" ]] \
-	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v1.2.3/actup-v1.2.3-x86_64-unknown-linux-musl.tar.gz" "${work}/curl.log"; then
+	&& grep -qx "https://github.com/kjanat/actup/releases/download/v1.2.3/actup-v1.2.3-x86_64-unknown-linux-musl.tar.gz" "${work}/curl.log"; then
 	pass "a release tag ref installs the musl asset of that release"
 else
 	fail "a release tag ref installs the musl asset of that release"
 fi
 
-if install ACTUP_ACTION_REF=3d3c42e5aac5ba805825da76410c181273ba90b1 ACTUP_VERSION=v2.0.0-rc.1 ACTUP_REPOSITORY=kjanat/actup-v2 RUNNER_OS=macOS RUNNER_ARCH=ARM64 \
+if install ACTUP_ACTION_REF=3d3c42e5aac5ba805825da76410c181273ba90b1 ACTUP_VERSION=v2.0.0-rc.1 ACTUP_REPOSITORY=kjanat/actup RUNNER_OS=macOS RUNNER_ARCH=ARM64 \
 	&& [[ -x "$(bin_of)" ]] \
-	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v2.0.0-rc.1/actup-v2.0.0-rc.1-aarch64-apple-darwin.tar.gz" "${work}/curl.log"; then
+	&& grep -qx "https://github.com/kjanat/actup/releases/download/v2.0.0-rc.1/actup-v2.0.0-rc.1-aarch64-apple-darwin.tar.gz" "${work}/curl.log"; then
 	pass "a SHA ref installs the version input"
 else
 	fail "a SHA ref installs the version input"
 fi
 
-if install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=KJanat/Actup-V2 RUNNER_OS=Linux RUNNER_ARCH=X64 \
+if install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY=KJanat/Actup RUNNER_OS=Linux RUNNER_ARCH=X64 \
 	&& [[ -x "$(bin_of)" ]] && grep -q "/download/v1.2.3/" "${work}/curl.log"; then
 	pass "the repository name matches without regard to case"
 else
@@ -98,11 +98,11 @@ fi
 if install ACTUP_ACTION_REF=v9.9.9 ACTUP_REPOSITORY=acme/wrapper ACTUP_VERSION=v1.2.3 RUNNER_OS=Linux RUNNER_ARCH=X64 \
 	&& [[ -x "$(bin_of)" ]] \
 	&& [[ "$(wc -l <"${work}/curl.log")" -eq 2 ]] \
-	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v1.2.3/SHA256SUMS.txt" "${work}/curl.log" \
-	&& grep -qx "https://github.com/kjanat/actup-v2/releases/download/v1.2.3/actup-v1.2.3-x86_64-unknown-linux-musl.tar.gz" "${work}/curl.log"; then
-	pass "an enclosing action downloads the version input from kjanat/actup-v2"
+	&& grep -qx "https://github.com/kjanat/actup/releases/download/v1.2.3/SHA256SUMS.txt" "${work}/curl.log" \
+	&& grep -qx "https://github.com/kjanat/actup/releases/download/v1.2.3/actup-v1.2.3-x86_64-unknown-linux-musl.tar.gz" "${work}/curl.log"; then
+	pass "an enclosing action downloads the version input from kjanat/actup"
 else
-	fail "an enclosing action downloads the version input from kjanat/actup-v2"
+	fail "an enclosing action downloads the version input from kjanat/actup"
 fi
 
 if ! install ACTUP_ACTION_REF=v1.2.3 ACTUP_REPOSITORY= RUNNER_OS=Linux RUNNER_ARCH=X64 \
@@ -112,7 +112,7 @@ else
 	fail "an empty action repository needs the version input"
 fi
 
-if ! install ACTUP_ACTION_REF=v9.9.9 ACTUP_REPOSITORY=kjanat/actup-v2 ACTUP_VERSION=v1.2.3 RUNNER_OS=Windows RUNNER_ARCH=X64 \
+if ! install ACTUP_ACTION_REF=v9.9.9 ACTUP_REPOSITORY=kjanat/actup ACTUP_VERSION=v1.2.3 RUNNER_OS=Windows RUNNER_ARCH=X64 \
 	&& grep -q "/download/v9.9.9/" "${work}/curl.log" && ! grep -q "/download/v1.2.3/" "${work}/curl.log"; then
 	pass "a release tag ref wins over the version input"
 else
@@ -121,9 +121,9 @@ fi
 
 if install ACTUP_ACTION_REF= ACTUP_VERSION=v1.2.3 RUNNER_OS=Windows RUNNER_ARCH=X64 \
 	&& [[ "$(bin_of)" == */unpacked/actup.exe && -x "$(bin_of)" ]]; then
-	pass "a local action unpacks the Windows zip from kjanat/actup-v2"
+	pass "a local action unpacks the Windows zip from kjanat/actup"
 else
-	fail "a local action unpacks the Windows zip from kjanat/actup-v2"
+	fail "a local action unpacks the Windows zip from kjanat/actup"
 fi
 
 mkdir "${work}/no-unzip"
@@ -142,8 +142,8 @@ else
 fi
 
 for ref in main v1 v1.2; do
-	if install ACTUP_ACTION_REF="${ref}" ACTUP_REPOSITORY=kjanat/actup-v2 RUNNER_OS=Linux RUNNER_ARCH=X64 \
-		|| ! grep -q "the action ref '${ref}' of 'kjanat/actup-v2' is not a release tag" "${work}/install.log" \
+	if install ACTUP_ACTION_REF="${ref}" ACTUP_REPOSITORY=kjanat/actup RUNNER_OS=Linux RUNNER_ARCH=X64 \
+		|| ! grep -q "the action ref '${ref}' of 'kjanat/actup' is not a release tag" "${work}/install.log" \
 		|| [[ -s "${work}/output" || -s "${work}/curl.log" ]]; then
 		fail "ref ${ref} without a version input fails"
 	else
@@ -172,7 +172,7 @@ else
 	pass "an unsupported runner fails"
 fi
 
-sums="${fixtures}/kjanat/actup-v2/releases/download/v1.2.3/SHA256SUMS.txt"
+sums="${fixtures}/kjanat/actup/releases/download/v1.2.3/SHA256SUMS.txt"
 cp "${sums}" "${work}/sums.orig"
 sed -i 's/^[0-9a-f]\{64\}  actup-v1.2.3-x86_64-unknown-linux-musl/0000000000000000000000000000000000000000000000000000000000000000  actup-v1.2.3-x86_64-unknown-linux-musl/' "${sums}"
 if install ACTUP_VERSION=v1.2.3 RUNNER_OS=Linux RUNNER_ARCH=X64 \

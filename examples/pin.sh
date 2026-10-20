@@ -18,9 +18,9 @@ sha="$(git rev-parse --verify --quiet "${tag}^{commit}")" || {
 
 for file in "${dir}"/*.yml; do
 	sed -E -i.bak \
-		-e "s|kjanat/actup-v2@[^[:space:]]+ # v[^[:space:]]+|kjanat/actup-v2@${sha} # ${tag}|" \
+		-e "s|kjanat/actup@[^[:space:]]+ # v[^[:space:]]+|kjanat/actup@${sha} # ${tag}|" \
 		-e "s|^([[:space:]]*version: )v[^[:space:]]+$|\\1${tag}|" \
 		"${file}"
 	rm -- "${file}.bak"
-	echo "${file}: kjanat/actup-v2@${sha} # ${tag}"
+	echo "${file}: kjanat/actup@${sha} # ${tag}"
 done

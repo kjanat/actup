@@ -397,38 +397,40 @@ pub fn check_action_with_provider<'a>(
 /// Floating-branch policy does not apply to an already pinned reference. Tags
 /// win when a name exists as both a tag and a branch, matching ref resolution.
 /// Unrecognized comments retain the ordinary SHA/tag resolution behavior.
-pub async fn check_action_with_comment(
-    action_ref: &ActionRef,
-    comment: &str,
-    versions: &version::Set,
-    config: &Config,
-    provider: &dyn provider::Provider,
-) -> CheckResult {
-    if action_ref.is_sha()
-        && !config.should_ignore(action_ref)
-        && let Some(name) = crate::rewrite::comment_label(comment)
-        && versions.tag_sha(name).is_none()
-        && let Some(head) = versions.branch_sha(name)
-    {
-        let status = if head == action_ref.ref_str() {
-            CheckStatus::Pinned {
-                sha: head.to_owned(),
-                tag: None,
-            }
-        } else {
-            CheckStatus::Outdated {
-                current: action_ref.ref_str().to_owned(),
-                target: Arc::new(version::Info::new(
-                    version::Version::Branch {
-                        name: name.to_owned(),
-                    },
-                    head,
-                )),
-            }
-        };
-        return CheckResult::described(action_ref, status, versions, config, None);
-    }
-    check_action_with_provider(action_ref, versions, config, provider).await
+pub fn check_action_with_comment<'a>(
+    action_ref: &'a ActionRef,
+    comment: &'a str,
+    versions: &'a version::Set,
+    config: &'a Config,
+    provider: &'a dyn provider::Provider,
+) -> BoxFuture<'a, CheckResult> {
+    Box::pin(async move {
+        if action_ref.is_sha()
+            && !config.should_ignore(action_ref)
+            && let Some(name) = crate::rewrite::comment_label(comment)
+            && versions.tag_sha(name).is_none()
+            && let Some(head) = versions.branch_sha(name)
+        {
+            let status = if head == action_ref.ref_str() {
+                CheckStatus::Pinned {
+                    sha: head.to_owned(),
+                    tag: None,
+                }
+            } else {
+                CheckStatus::Outdated {
+                    current: action_ref.ref_str().to_owned(),
+                    target: Arc::new(version::Info::new(
+                        version::Version::Branch {
+                            name: name.to_owned(),
+                        },
+                        head,
+                    )),
+                }
+            };
+            return CheckResult::described(action_ref, status, versions, config, None);
+        }
+        check_action_with_provider(action_ref, versions, config, provider).await
+    })
 }
 
 /// Check action against already-fetched versions.
