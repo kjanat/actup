@@ -504,119 +504,126 @@ const fn ancestry_unknown(reason: String) -> CheckStatus {
     }
 }
 
-async fn compare(
-    provider: &dyn provider::Provider,
-    action: &ActionRef,
-    base: &str,
-    head: &str,
-) -> Result<provider::CommitRelation, CheckStatus> {
-    let (Some(base), Some(head)) = (provider::Sha40::new(base), provider::Sha40::new(head)) else {
-        return Err(ancestry_unknown(
-            "cannot verify commit ancestry: invalid commit SHA".into(),
-        ));
-    };
-    match provider
-        .compare_commits(&action.to_repo_id().without_subpath(), &base, &head)
-        .await
-    {
-        Ok(provider::CommitRelation::Unknown) => Err(ancestry_unknown(
-            "cannot verify major tag ancestry; reference retained".into(),
-        )),
-        Ok(relation) => Ok(relation),
-        Err(error) => Err(ancestry_unknown(format!(
-            "cannot verify major tag ancestry; reference retained: {}",
-            crate::error::chain(&error)
-        ))),
-    }
+fn compare<'a>(
+    provider: &'a dyn provider::Provider,
+    action: &'a ActionRef,
+    base: &'a str,
+    head: &'a str,
+) -> BoxFuture<'a, Result<provider::CommitRelation, CheckStatus>> {
+    Box::pin(async move {
+        let (Some(base), Some(head)) = (provider::Sha40::new(base), provider::Sha40::new(head))
+        else {
+            return Err(ancestry_unknown(
+                "cannot verify commit ancestry: invalid commit SHA".into(),
+            ));
+        };
+        match provider
+            .compare_commits(&action.to_repo_id().without_subpath(), &base, &head)
+            .await
+        {
+            Ok(provider::CommitRelation::Unknown) => Err(ancestry_unknown(
+                "cannot verify major tag ancestry; reference retained".into(),
+            )),
+            Ok(relation) => Ok(relation),
+            Err(error) => Err(ancestry_unknown(format!(
+                "cannot verify major tag ancestry; reference retained: {}",
+                crate::error::chain(&error)
+            ))),
+        }
+    })
 }
 
 /// Verify differing SHAs lazily, before exposing an automatic update to any frontend.
-async fn reconcile_major_tag(
-    action: &ActionRef,
-    versions: &version::Set,
-    config: &Config,
-    provider: &dyn provider::Provider,
+fn reconcile_major_tag<'a>(
+    action: &'a ActionRef,
+    versions: &'a version::Set,
+    config: &'a Config,
+    provider: &'a dyn provider::Provider,
     status: CheckStatus,
-) -> CheckStatus {
-    use provider::CommitRelation;
-    if !matches!(
-        status,
-        CheckStatus::Outdated { .. } | CheckStatus::Pinned { .. } | CheckStatus::UpToDate
-    ) {
-        return status;
-    }
-    if !action.is_sha() && !versions.has_exact_tag(action.ref_str()) {
-        return status;
-    }
-    let policy = config.policy_for(action);
-    let current = if action.is_sha() {
-        let Some(tag) = versions.tag_on(action.ref_str()) else {
+) -> BoxFuture<'a, CheckStatus> {
+    Box::pin(async move {
+        use provider::CommitRelation;
+        if !matches!(
+            status,
+            CheckStatus::Outdated { .. } | CheckStatus::Pinned { .. } | CheckStatus::UpToDate
+        ) {
             return status;
-        };
-        tag.version().clone()
-    } else {
-        version::Version::parse(action.ref_str())
-    };
-    if !current.is_semver() {
-        return status;
-    }
-    let Some(latest) = versions.find_latest_for(&current, policy.bump, policy.prerelease) else {
-        return status;
-    };
-    let major = latest
-        .version()
-        .major()
-        .and_then(|m| versions.major_tags().get(&m));
-    let eligible = tracks_major(&current, policy);
-    let mut selected = find_best_target(versions, &current, policy);
-    let mut major_relation = None;
-    if policy.major_tag == policy::MajorTag::Contains
-        && eligible
-        && let Some(major) = major
-        && major.sha() != latest.sha()
-    {
-        let relation = compare(provider, action, latest.sha(), major.sha()).await;
-        major_relation = relation.as_ref().ok().copied();
-        match relation {
-            Ok(CommitRelation::Ahead) => selected = Some(Arc::clone(major)),
-            Ok(CommitRelation::Behind) => {} // stale major: use the full release
-            Ok(CommitRelation::Diverged) => {
-                return CheckStatus::Mismatch {
-                    reason: format!(
-                        "major tag {} diverges from release {}; reference retained",
-                        major.version(),
-                        latest.version()
-                    ),
-                };
-            }
-            Ok(_) => {
-                return ancestry_unknown(
-                    "inconsistent major tag ancestry; reference retained".into(),
-                );
-            }
-            Err(status) => return status,
         }
-    }
-    let Some(target) = selected else {
-        return status;
-    };
-    if let Some(sha) = major_current_sha(action, versions)
-        && sha != target.sha()
-    {
-        let relation = if target.sha() == latest.sha()
-            && major.is_some_and(|m| m.sha() == sha)
-            && let Some(relation) = major_relation
-        {
-            Ok(relation)
+        if !action.is_sha() && !versions.has_exact_tag(action.ref_str()) {
+            return status;
+        }
+        let policy = config.policy_for(action);
+        let current = if action.is_sha() {
+            let Some(tag) = versions.tag_on(action.ref_str()) else {
+                return status;
+            };
+            tag.version().clone()
         } else {
-            compare(provider, action, target.sha(), sha).await
+            version::Version::parse(action.ref_str())
         };
-        if let Err(status) = relation.and_then(|relation| verify_forward_update(relation, &target))
-        {
+        if !current.is_semver() {
             return status;
         }
-    }
-    status_for_verified_target(action, versions, &current, target, policy, status)
+        let Some(latest) = versions.find_latest_for(&current, policy.bump, policy.prerelease)
+        else {
+            return status;
+        };
+        let major = latest
+            .version()
+            .major()
+            .and_then(|m| versions.major_tags().get(&m));
+        let eligible = tracks_major(&current, policy);
+        let mut selected = find_best_target(versions, &current, policy);
+        let mut major_relation = None;
+        if policy.major_tag == policy::MajorTag::Contains
+            && eligible
+            && let Some(major) = major
+            && major.sha() != latest.sha()
+        {
+            let relation = compare(provider, action, latest.sha(), major.sha()).await;
+            major_relation = relation.as_ref().ok().copied();
+            match relation {
+                Ok(CommitRelation::Ahead) => selected = Some(Arc::clone(major)),
+                Ok(CommitRelation::Behind) => {} // stale major: use the full release
+                Ok(CommitRelation::Diverged) => {
+                    return CheckStatus::Mismatch {
+                        reason: format!(
+                            "major tag {} diverges from release {}; reference retained",
+                            major.version(),
+                            latest.version()
+                        ),
+                    };
+                }
+                Ok(_) => {
+                    return ancestry_unknown(
+                        "inconsistent major tag ancestry; reference retained".into(),
+                    );
+                }
+                Err(status) => return status,
+            }
+        }
+        let Some(target) = selected else {
+            return status;
+        };
+        if let Some(sha) = major_current_sha(action, versions)
+            && sha != target.sha()
+        {
+            let relation = if target.sha() == latest.sha()
+                && major.is_some_and(|m| m.sha() == sha)
+                && let Some(relation) = major_relation
+            {
+                Ok(relation)
+            } else {
+                compare(provider, action, target.sha(), sha).await
+            };
+            if let Err(status) =
+                relation.and_then(|relation| verify_forward_update(relation, &target))
+            {
+                return status;
+            }
+        }
+        status_for_verified_target(action, versions, &current, target, policy, status)
+    })
 }
 
 fn verify_forward_update(
