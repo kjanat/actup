@@ -1,19 +1,12 @@
 name: Upload data
-on: { pull_request: }
+on: { pull_request: { types: [opened] } }
 permissions: {}
-
 jobs:
   upload:
-    runs-on: ubuntu-latest
-
+    runs-on: ubuntu-slim
     steps:
       - name: Save PR number
-        env:
-          PR_NUMBER: ${{ github.event.number }}
-        run: |
-          mkdir -p ./pr
-          echo "${PR_NUMBER}" > ./pr/pr_number
+        env: { PR_NUMBER: "${{ github.event.number }}" }
+        run: mkdir -p ./pr; echo "${PR_NUMBER}" > ./pr/pr_number
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: pr_number
-          path: pr/
+        with: { name: pr_number, path: pr/ }
