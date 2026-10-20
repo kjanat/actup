@@ -3,15 +3,13 @@
 GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 `uses:` refs across workflows and composite actions.
 
-**Status:** Pre-alpha. Interfaces may change.
-
 ## Features
 
 - **Check** workflows for outdated action versions
 - **Update** to latest versions (respecting semver policy)
 - **Pin** refs to immutable commit SHAs for security
 - **Providers**: GitHub, GitHub Enterprise, GitLab and Gitea/Forgejo
-  (`docs/providers.md`)
+  ([`docs/providers.md`](docs/providers.md))
 - **LSP**: Editor diagnostics and code actions
 - **MCP**: stdio server with read tools and dry-runnable mutators confined to
   one root
@@ -25,6 +23,8 @@ workflows such as `$/.github/actions/setup` and `$/.github/workflows/ci.yml`.
 ```sh
 # From source (requires Rust 1.96+)
 cargo install --git https://github.com/kjanat/actup actup
+cargo install --git https://github.com/kjanat/actup actup-lsp
+cargo install --git https://github.com/kjanat/actup actup-mcp
 ```
 
 ### GitHub Action
@@ -59,6 +59,7 @@ and `actup-bin`, the path of the verified binary for later steps.
 an update pull request with the `token` secret it receives. After tagging a
 release, `just examples-pin <tag>` pins both examples to the tag's commit.
 
+<!--
 ### Container Image
 
 Each release publishes `ghcr.io/kjanat/actup:<tag>` for `linux/amd64` and
@@ -70,7 +71,7 @@ the tag becomes `_` in the image tag, so `v1.0.0+build-5` publishes
 docker run --rm -v "$PWD:/work" -e GITHUB_TOKEN ghcr.io/kjanat/actup:v1.2.3 check
 # Run as your own user so `update` and `pin` can write your files
 docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" -e GITHUB_TOKEN ghcr.io/kjanat/actup:v1.2.3 update
-```
+``` -->
 
 ## Quick Start
 
@@ -143,8 +144,7 @@ command per error or warning finding to stderr, whatever `--format` is.
 - run: actup check --format sarif --github-annotations > actup.sarif
 - uses: github/codeql-action/upload-sarif@v3
   if: always()
-  with:
-    sarif_file: actup.sarif
+  with: { sarif_file: actup.sarif }
 ```
 
 `check --fail-on <kind>` exits 1 when a finding of that kind exists. Repeat it
