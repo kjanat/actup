@@ -192,8 +192,10 @@ mod tests {
             },
         );
         let registry = build_registry(&config)?;
-        let uri =
-            tower_lsp_server::ls_types::Uri::from_file_path("/test/ci.yml").ok_or("no uri")?;
+        let uri = tower_lsp_server::ls_types::Uri::from_file_path(crate::test_utils::fixture_path(
+            "/test/ci.yml",
+        ))
+        .ok_or("no uri")?;
         let text = "steps:\n  - uses: gitlab.com/group/project@v1.0.0\n";
 
         let result = crate::diagnostics::compute_diagnostics(

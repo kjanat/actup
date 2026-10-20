@@ -1,8 +1,5 @@
 # actup (CLI + LSP + MCP)
 
-WE ARE STILL NOT EVEN IN ALPHA. WE ARE FREE TO CHANGE SIGNATURES, PUBLIC
-INTERFACES, ETC.
-
 This repo contains **actup** (CLI), **actup-lsp** (Language Server), and
 **actup-mcp** (Model Context Protocol server) for checking/updating
 GitHub-compatible Actions `uses:` refs across workflows + composite actions. You

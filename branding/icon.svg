@@ -1,12 +1,8 @@
-<svg viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
-	<defs>
-		<linearGradient id="a" x1="0%" y1="0%" x2="100%" y2="100%">
-			<stop offset="0%" stop-color="#7b2ff7" />
-			<stop offset="100%" stop-color="#2188ff" />
-		</linearGradient>
-	</defs>
-	<circle cx="256" cy="256" r="240" fill="url(#a)" />
-	<path d="m256 120 94 94-28 28-46-46v164h-40V196l-46 46-28-28z" fill="#fff" />
-	<path d="M380 256c0 68.483-55.517 124-124 124s-124-55.517-124-124"
-	      stroke="#fff" stroke-width="20" opacity=".6" stroke-linecap="round" />
+<svg width="512" height="512" viewBox="0 0 512 512"
+     aria-label="actup" role="img"
+     xmlns="http://www.w3.org/2000/svg">
+	<rect rx="104" width="512" height="512" fill="#131715" />
+	<path d="M18 52 52 18h58v92H86V92l-18 18H18V52Zm24 10v24h16l28-28V42H62L42 62Z"
+	      transform="translate(0 0) scale(4.0)"
+	      fill="#D3F47A" fill-rule="evenodd" />
 </svg>

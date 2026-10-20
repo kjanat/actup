@@ -1,4 +1,4 @@
-# actup
+![actup — Check. Update. Pin.](branding/banner.svg)
 
 GitHub Actions version manager. CLI + LSP + MCP for checking and updating
 `uses:` refs across workflows and composite actions.

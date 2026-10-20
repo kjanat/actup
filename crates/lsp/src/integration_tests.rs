@@ -1190,10 +1190,15 @@ const UNRESOLVED_WORKFLOW: &str =
 
 impl TestHarness {
     async fn error_shown(&self, needle: &str) -> bool {
+        // File URIs use forward slashes; Windows PathBuf::join may retain both separators.
+        let needle = needle.replace(std::path::MAIN_SEPARATOR, "/");
         self.wait_until(Duration::from_secs(2), |c| {
-            c.messages
-                .iter()
-                .any(|m| m.typ == MessageType::ERROR && m.message.contains(needle))
+            c.messages.iter().any(|m| {
+                m.typ == MessageType::ERROR
+                    && m.message
+                        .replace(std::path::MAIN_SEPARATOR, "/")
+                        .contains(&needle)
+            })
         })
         .await
     }
