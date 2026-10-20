@@ -557,6 +557,37 @@ impl GitHubClient {
         self.handle_response(response, owner, repo).await
     }
 
+    /// Compare immutable commit SHAs using the host's ancestry result.
+    ///
+    /// # Errors
+    /// Returns the existing structured network, auth, rate-limit or lookup error.
+    pub async fn compare_commits(
+        &self,
+        owner: &str,
+        repo: &str,
+        base: &actup_core::provider::Sha40,
+        head: &actup_core::provider::Sha40,
+    ) -> Result<actup_core::provider::CommitRelation> {
+        use actup_core::provider::CommitRelation;
+        #[derive(serde::Deserialize)]
+        struct Comparison {
+            status: String,
+        }
+        let url = format!(
+            "{}/compare/{base}...{head}?per_page=1",
+            self.repo_url(owner, repo)?
+        );
+        let response = self.get(&url).await?;
+        let comparison: Comparison = self.handle_response(response, owner, repo).await?;
+        Ok(match comparison.status.as_str() {
+            "identical" if base == head => CommitRelation::Identical,
+            "ahead" => CommitRelation::Ahead,
+            "behind" => CommitRelation::Behind,
+            "diverged" => CommitRelation::Diverged,
+            _ => CommitRelation::Unknown,
+        })
+    }
+
     /// Get an annotated tag object (for dereferencing to commit SHA)
     ///
     /// # Errors

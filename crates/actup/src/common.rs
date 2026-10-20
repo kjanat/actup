@@ -224,6 +224,10 @@ pub struct EditedRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorKind {
+    /// Verified commit history does not satisfy the major-tag policy.
+    PolicyMismatch,
+    /// Ancestry could not be verified, so no safe update target is available.
+    Verification,
     /// The `uses:` reference is malformed.
     InvalidRef,
     /// The repository does not exist.
@@ -329,6 +333,32 @@ pub fn report_error(site: RefSite, err: &CoreError, result: &mut EditResult) {
         site,
         kind: ErrorKind::from(err),
         message: actup_core::error::chain(err),
+    });
+}
+
+/// Report a policy mismatch or an ancestry failure without exposing an edit.
+pub fn report_check_blocked(
+    site: RefSite,
+    status: &actup_core::CheckStatus,
+    result: &mut EditResult,
+) {
+    let (kind, reason) = match status {
+        actup_core::CheckStatus::Mismatch { reason } => (ErrorKind::PolicyMismatch, reason),
+        actup_core::CheckStatus::Unresolvable { reason, .. } => (ErrorKind::Verification, reason),
+        _ => return,
+    };
+    eprintln!(
+        "Warning: {}:{}: {} - {}",
+        sanitize_line(&site.file),
+        site.line,
+        sanitize_line(&site.action),
+        sanitize_line(reason)
+    );
+    result.errors.record_env();
+    result.errored.push(ErroredRef {
+        site,
+        kind,
+        message: reason.clone(),
     });
 }
 

@@ -90,6 +90,7 @@ enum PinStep {
     Edit(PendingEdit, Box<Change>),
     Unplaceable,
     Failed(Unwritable),
+    Blocked(CheckStatus),
     Nothing,
 }
 
@@ -110,7 +111,18 @@ async fn pin_action_edit(
         let result =
             check_action_with_comment(action_ref, loc.comment(), versions, config, provider).await;
         let CheckStatus::Outdated { target, .. } = result.status() else {
-            return PinStep::Nothing;
+            return if matches!(
+                result.status(),
+                CheckStatus::Mismatch { .. }
+                    | CheckStatus::Unresolvable {
+                        is_environment_error: true,
+                        ..
+                    }
+            ) {
+                PinStep::Blocked(result.status().clone())
+            } else {
+                PinStep::Nothing
+            };
         };
         let labels = Labels::fetched(action_ref.ref_str(), versions);
         let Some(edit) = repin_sha_edit(loc, target, &labels, config.pin.comment) else {
@@ -315,6 +327,9 @@ async fn edit(
                 PinStep::Edit(edit, change) => file_edits.add(edit, *change),
                 PinStep::Unplaceable => report_skipped(site, SkipReason::Unplaceable, &mut result),
                 PinStep::Failed(why) => report_unwritable(site, why, &mut result),
+                PinStep::Blocked(status) => {
+                    crate::common::report_check_blocked(site, &status, &mut result);
+                }
                 PinStep::Nothing => {}
             }
         }
@@ -391,6 +406,15 @@ mod tests {
         ) -> BoxFuture<'_, actup_core::Result<Sha40>> {
             let sha = self.sha.clone();
             Box::pin(async move { Ok(sha) })
+        }
+
+        fn compare_commits(
+            &self,
+            _repo: &ActionRepoId,
+            _base: &Sha40,
+            _head: &Sha40,
+        ) -> BoxFuture<'_, actup_core::Result<provider::CommitRelation>> {
+            Box::pin(async { Ok(provider::CommitRelation::Behind) })
         }
 
         fn get_default_branch(

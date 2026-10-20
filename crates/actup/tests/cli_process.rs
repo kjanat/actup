@@ -673,3 +673,87 @@ async fn untrusted_text_never_opens_a_workflow_command() -> TestResult {
     }
     Ok(())
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn major_tag_policy_never_downgrades_a_descendant() -> TestResult {
+    let server = remote().await;
+    Mock::given(method("GET"))
+        .and(path("/repos/o/new/tags"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+            {"name":"v1", "commit":{"sha":HEAD}},
+            {"name":"v1.1.0", "commit":{"sha":NEW}},
+            {"name":"v1.0.0", "commit":{"sha":OLD}},
+            {"name":"v0", "commit":{"sha":OLD}}
+        ])))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/repos/o/new/compare/{NEW}...{HEAD}")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"status":"ahead"})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/repos/o/new/compare/{HEAD}...{OLD}")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"status":"behind"})),
+        )
+        .mount(&server)
+        .await;
+    let pin = format!("o/new@{HEAD}");
+    let repo = Repo::new(&server, &["o/new@v1", &pin])?;
+    let output = repo.run(&["check", ".", "--format", "json"]).await?;
+    assert_eq!(output.status.code(), Some(3), "{output:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    for finding in findings.as_array().ok_or("expected findings")? {
+        assert_eq!(finding["status"], "error");
+        assert!(
+            finding["reason"]
+                .as_str()
+                .ok_or("missing reason")?
+                .contains("additional commits")
+        );
+        assert!(finding.get("latest_sha").is_none());
+    }
+    for command in ["fix", "pin"] {
+        let pin_repo = Repo::new(&server, &[&pin])?;
+        let repo = if command == "pin" { &pin_repo } else { &repo };
+        let before = repo.workflow()?;
+        let output = repo.run(&[command, ".", "--format", "json"]).await?;
+        assert_eq!(output.status.code(), Some(3), "{output:?}");
+        assert_eq!(repo.workflow()?, before);
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+        assert_eq!(
+            result["errors"]
+                .as_array()
+                .ok_or("missing error refs")?
+                .len(),
+            if command == "fix" { 2 } else { 1 }
+        );
+    }
+    let contains = Repo::with_config(
+        &server,
+        &["o/new@v1", &pin],
+        "[cache]\nenabled = false\n[[overrides]]\npattern = \"o/new\"\npolicy = { major_tag = \"contains\" }\n",
+    )?;
+    let before = contains.workflow()?;
+    let output = contains.run(&["check", ".", "--format", "json"]).await?;
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let findings: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    assert_eq!(findings[0]["status"], "up_to_date");
+    assert_eq!(findings[1]["status"], "pinned");
+    assert_eq!(contains.run(&["fix", "."]).await?.status.code(), Some(0));
+    assert_eq!(contains.workflow()?, before);
+    let upgrade = Repo::with_config(
+        &server,
+        &["o/new@v0"],
+        "[cache]\nenabled = false\n[policy]\ntrack = \"major\"\nmajor_tag = \"contains\"\n",
+    )?;
+    let output = upgrade.run(&["fix", "."]).await?;
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    assert!(upgrade.workflow()?.contains("o/new@v1"));
+
+    Ok(())
+}

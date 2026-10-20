@@ -165,6 +165,46 @@ impl GiteaClient {
         Ok(all_tags)
     }
 
+    /// Compare both directions: an empty reverse range proves containment.
+    ///
+    /// # Errors
+    /// Returns the existing structured network, auth, rate-limit or lookup error.
+    pub async fn compare_commits(
+        &self,
+        owner: &str,
+        repo: &str,
+        base: &actup_core::provider::Sha40,
+        head: &actup_core::provider::Sha40,
+    ) -> Result<actup_core::provider::CommitRelation> {
+        use actup_core::provider::CommitRelation;
+        #[derive(serde::Deserialize)]
+        struct Comparison {
+            total_commits: u64,
+        }
+        if base == head {
+            return Ok(CommitRelation::Identical);
+        }
+        let root = self.repo_url(owner, repo)?;
+        let response = self
+            .get(&format!(
+                "{root}/compare/{base}...{head}?verification=false&files=false"
+            ))
+            .await?;
+        let forward: Comparison = self.handle_response(response, owner, repo).await?;
+        let response = self
+            .get(&format!(
+                "{root}/compare/{head}...{base}?verification=false&files=false"
+            ))
+            .await?;
+        let reverse: Comparison = self.handle_response(response, owner, repo).await?;
+        Ok(match (forward.total_commits, reverse.total_commits) {
+            (0, 0) => CommitRelation::Unknown,
+            (_, 0) => CommitRelation::Ahead,
+            (0, _) => CommitRelation::Behind,
+            _ => CommitRelation::Diverged,
+        })
+    }
+
     /// Get repository info
     ///
     /// # Errors

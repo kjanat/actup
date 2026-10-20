@@ -605,3 +605,48 @@ async fn dot_segments_are_refused_before_any_request() -> TestResult {
     assert_eq!(server.received_requests().await.map(|r| r.len()), Some(0));
     Ok(())
 }
+
+#[tokio::test]
+async fn commit_ancestry_uses_immutable_shas_and_classifies_failures() -> TestResult {
+    use actup_core::provider::{CommitRelation, Sha40};
+    let base = Sha40::new("a".repeat(40)).ok_or("invalid test SHA")?;
+    let head = Sha40::new("b".repeat(40)).ok_or("invalid test SHA")?;
+    for (common, want) in [
+        (base.as_str().to_owned(), CommitRelation::Ahead),
+        (head.as_str().to_owned(), CommitRelation::Behind),
+        ("c".repeat(40), CommitRelation::Diverged),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{PROJECT}/repository/merge_base")))
+            .and(query_param("refs[]", base.as_str()))
+            .and(query_param("refs[]", head.as_str()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"id": common})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert_eq!(
+            provider(&server)?
+                .compare_commits(&repo(), &base, &head)
+                .await?,
+            want
+        );
+    }
+    let server = MockServer::start().await;
+    get(
+        &server,
+        &format!("{PROJECT}/repository/merge_base"),
+        401,
+        r#"{"message":"unauthorized"}"#,
+    )
+    .await;
+    assert!(matches!(
+        provider(&server)?
+            .compare_commits(&repo(), &base, &head)
+            .await,
+        Err(actup_core::Error::Auth { .. })
+    ));
+    Ok(())
+}

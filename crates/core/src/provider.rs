@@ -103,6 +103,21 @@ impl fmt::Display for Sha40 {
     }
 }
 
+/// Relationship of a head commit to a base commit, independent of ref names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommitRelation {
+    /// Both commits are identical.
+    Identical,
+    /// Head contains base and has additional commits.
+    Ahead,
+    /// Head is an ancestor of base.
+    Behind,
+    /// Neither commit contains the other.
+    Diverged,
+    /// The provider cannot establish ancestry.
+    Unknown,
+}
+
 /// A repository that an action search found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoSummary {
@@ -637,6 +652,23 @@ pub trait Provider: MaybeSend + MaybeSync {
         self.resolve_ref_to_sha(repo, ref_name)
     }
 
+    /// Compare immutable commit SHAs. Unsupported providers return `Unknown`.
+    fn compare_commits(
+        &self,
+        _repo: &ActionRepoId,
+        base: &Sha40,
+        head: &Sha40,
+    ) -> BoxFuture<'_, Result<CommitRelation>> {
+        let same = base == head;
+        Box::pin(async move {
+            Ok(if same {
+                CommitRelation::Identical
+            } else {
+                CommitRelation::Unknown
+            })
+        })
+    }
+
     /// Get the default branch name for a repository
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>>;
 
@@ -703,6 +735,15 @@ where
         ref_name: &str,
     ) -> BoxFuture<'_, Result<Sha40>> {
         (**self).refresh_ref_to_sha(repo, ref_name)
+    }
+
+    fn compare_commits(
+        &self,
+        repo: &ActionRepoId,
+        base: &Sha40,
+        head: &Sha40,
+    ) -> BoxFuture<'_, Result<CommitRelation>> {
+        (**self).compare_commits(repo, base, head)
     }
 
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
@@ -986,6 +1027,15 @@ impl Provider for Deferred {
         ref_name: &str,
     ) -> BoxFuture<'_, Result<Sha40>> {
         self.call(|provider| provider.refresh_ref_to_sha(repo, ref_name))
+    }
+
+    fn compare_commits(
+        &self,
+        repo: &ActionRepoId,
+        base: &Sha40,
+        head: &Sha40,
+    ) -> BoxFuture<'_, Result<CommitRelation>> {
+        self.call(|provider| provider.compare_commits(repo, base, head))
     }
 
     fn get_default_branch(&self, repo: &ActionRepoId) -> BoxFuture<'_, Result<String>> {
