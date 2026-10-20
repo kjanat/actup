@@ -124,6 +124,7 @@ pub struct MockProvider {
     search: Result<provider::Search, CoreError>,
     searches: Arc<AtomicUsize>,
     repo_state: Result<Option<provider::RepoState>, CoreError>,
+    comparison: provider::CommitRelation,
 }
 
 impl MockProvider {
@@ -144,7 +145,13 @@ impl MockProvider {
             search: Ok(provider::Search::Unsupported),
             searches: Arc::new(AtomicUsize::new(0)),
             repo_state: Ok(None),
+            comparison: provider::CommitRelation::Behind,
         }
+    }
+
+    pub fn with_comparison(mut self, relation: provider::CommitRelation) -> Self {
+        self.comparison = relation;
+        self
     }
 
     pub fn with_documentation(
@@ -261,6 +268,16 @@ impl Provider for MockProvider {
             Err(e) => Err(e.clone()),
         };
         Box::pin(async move { result })
+    }
+
+    fn compare_commits(
+        &self,
+        _repo: &ActionRepoId,
+        _base: &Sha40,
+        _head: &Sha40,
+    ) -> BoxFuture<'_, Result<provider::CommitRelation, CoreError>> {
+        let relation = self.comparison;
+        Box::pin(async move { Ok(relation) })
     }
 
     fn get_default_branch(

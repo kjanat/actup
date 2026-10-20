@@ -491,6 +491,27 @@ fn create_provider(config: &ProviderConfig) -> actup_core::Result<Box<dyn Provid
 }
 ```
 
+### Commit ancestry
+
+Implement `Provider::compare_commits(repo, base, head)` to support safe
+major-tag resolution. Both arguments are validated immutable `Sha40` values.
+Return the head's relationship to the base: `Identical`, `Ahead` (head contains
+base), `Behind`, `Diverged`, or `Unknown` when ancestry is unsupported or
+inconclusive. An API failure must retain its structured error; never infer
+ancestry from version numbers or timestamps.
+
+Core requests comparisons lazily for differing commits. Its `CachingProvider`
+keys successful comparisons by repository (including host) and ordered SHA pair,
+ignoring action subpaths, and applies its existing retention policy. Unknown
+answers and failures are retried rather than cached. The default trait
+implementation returns `Unknown` for different commits, which prevents automatic
+rewrites that require ancestry evidence.
+
+GitHub uses its compare status. GitLab uses the merge-base endpoint. Gitea and
+Forgejo compare both directions: a nonempty forward range and empty reverse
+range establish that head contains base. A single nonempty comparison cannot
+distinguish descendants from divergent history.
+
 ### 7. Wire the Provider
 
 Add `YourPlatform` variants to `actup_core::HostKind` and

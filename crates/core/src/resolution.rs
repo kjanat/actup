@@ -217,6 +217,11 @@ pub enum CheckStatus {
         /// The commit the ref names
         sha: String,
     },
+    /// A verified commit relationship violates policy; no automatic edit is safe.
+    Mismatch {
+        /// Explanation of the relationship and why the reference was retained.
+        reason: String,
+    },
     /// Could not resolve version info
     Unresolvable {
         /// Reason for failure
@@ -365,6 +370,7 @@ pub fn check_action_with_provider<'a>(
     Box::pin(async move {
         let (status, lookup) = classify(action_ref, versions, config);
         let Some(lookup) = lookup else {
+            let status = reconcile_major_tag(action_ref, versions, config, provider, status).await;
             return CheckResult::described(action_ref, status, versions, config, None);
         };
 
@@ -386,6 +392,7 @@ pub fn check_action_with_provider<'a>(
             },
             Err(_) => lookup.missing,
         };
+        let status = reconcile_major_tag(action_ref, versions, config, provider, status).await;
         let resolved = resolved.as_ref().ok().map(provider::Sha40::as_str);
         CheckResult::described(action_ref, status, versions, config, resolved)
     })
@@ -442,8 +449,240 @@ pub fn check_action(
     versions: &version::Set,
     config: &Config,
 ) -> CheckResult {
-    let status = classify(action_ref, versions, config).0;
+    let mut status = classify(action_ref, versions, config).0;
+    let safety_check = matches!(&status, CheckStatus::Outdated { target, .. }
+        if major_current_sha(action_ref, versions).is_some_and(|sha| sha != target.sha()));
+    let policy = config.policy_for(action_ref);
+    let current = if action_ref.is_sha() {
+        versions
+            .tag_on(action_ref.ref_str())
+            .map(|tag| tag.version().clone())
+    } else {
+        versions
+            .has_exact_tag(action_ref.ref_str())
+            .then(|| version::Version::parse(action_ref.ref_str()))
+    };
+    let contains_check = policy.major_tag == policy::MajorTag::Contains
+        && current.is_some_and(|current| {
+            tracks_major(&current, policy)
+                && versions
+                    .find_latest_for(&current, policy.bump, policy.prerelease)
+                    .is_some_and(|latest| {
+                        latest
+                            .version()
+                            .major()
+                            .and_then(|major| versions.major_tags().get(&major))
+                            .is_some_and(|tag| tag.sha() != latest.sha())
+                    })
+        });
+    if safety_check || (contains_check && !matches!(status, CheckStatus::Ignored)) {
+        status = ancestry_unknown("commit ancestry requires a provider".into());
+    }
     CheckResult::described(action_ref, status, versions, config, None)
+}
+
+/// Only major tags (and pins on them) need ancestry rather than version ordering.
+fn major_current_sha<'a>(action: &'a ActionRef, versions: &'a version::Set) -> Option<&'a str> {
+    let (_, sha) = current_commit(action, versions)?;
+    if action.is_sha() {
+        versions
+            .major_tags()
+            .values()
+            .any(|tag| tag.sha() == sha)
+            .then_some(sha)
+    } else {
+        version::Version::parse(action.ref_str())
+            .is_major_only()
+            .then_some(sha)
+    }
+}
+
+const fn ancestry_unknown(reason: String) -> CheckStatus {
+    CheckStatus::Unresolvable {
+        reason,
+        is_environment_error: true,
+    }
+}
+
+fn compare<'a>(
+    provider: &'a dyn provider::Provider,
+    action: &'a ActionRef,
+    base: &'a str,
+    head: &'a str,
+) -> BoxFuture<'a, Result<provider::CommitRelation, CheckStatus>> {
+    Box::pin(async move {
+        let (Some(base), Some(head)) = (provider::Sha40::new(base), provider::Sha40::new(head))
+        else {
+            return Err(ancestry_unknown(
+                "cannot verify commit ancestry: invalid commit SHA".into(),
+            ));
+        };
+        match provider
+            .compare_commits(&action.to_repo_id().without_subpath(), &base, &head)
+            .await
+        {
+            Ok(provider::CommitRelation::Unknown) => Err(ancestry_unknown(
+                "cannot verify major tag ancestry; reference retained".into(),
+            )),
+            Ok(relation) => Ok(relation),
+            Err(error) => Err(ancestry_unknown(format!(
+                "cannot verify major tag ancestry; reference retained: {}",
+                crate::error::chain(&error)
+            ))),
+        }
+    })
+}
+
+/// Verify differing SHAs lazily, before exposing an automatic update to any frontend.
+fn reconcile_major_tag<'a>(
+    action: &'a ActionRef,
+    versions: &'a version::Set,
+    config: &'a Config,
+    provider: &'a dyn provider::Provider,
+    status: CheckStatus,
+) -> BoxFuture<'a, CheckStatus> {
+    Box::pin(async move {
+        use provider::CommitRelation;
+        if !matches!(
+            status,
+            CheckStatus::Outdated { .. } | CheckStatus::Pinned { .. } | CheckStatus::UpToDate
+        ) {
+            return status;
+        }
+        if !action.is_sha() && !versions.has_exact_tag(action.ref_str()) {
+            return status;
+        }
+        let policy = config.policy_for(action);
+        let current = if action.is_sha() {
+            let Some(tag) = versions.tag_on(action.ref_str()) else {
+                return status;
+            };
+            tag.version().clone()
+        } else {
+            version::Version::parse(action.ref_str())
+        };
+        if !current.is_semver() {
+            return status;
+        }
+        let Some(latest) = versions.find_latest_for(&current, policy.bump, policy.prerelease)
+        else {
+            return status;
+        };
+        let major = latest
+            .version()
+            .major()
+            .and_then(|m| versions.major_tags().get(&m));
+        let eligible = tracks_major(&current, policy);
+        let mut selected = find_best_target(versions, &current, policy);
+        let mut major_relation = None;
+        if policy.major_tag == policy::MajorTag::Contains
+            && eligible
+            && let Some(major) = major
+            && major.sha() != latest.sha()
+        {
+            let relation = compare(provider, action, latest.sha(), major.sha()).await;
+            major_relation = relation.as_ref().ok().copied();
+            match relation {
+                Ok(CommitRelation::Ahead) => selected = Some(Arc::clone(major)),
+                Ok(CommitRelation::Behind) => {} // stale major: use the full release
+                Ok(CommitRelation::Diverged) => {
+                    return CheckStatus::Mismatch {
+                        reason: format!(
+                            "major tag {} diverges from release {}; reference retained",
+                            major.version(),
+                            latest.version()
+                        ),
+                    };
+                }
+                Ok(_) => {
+                    return ancestry_unknown(
+                        "inconsistent major tag ancestry; reference retained".into(),
+                    );
+                }
+                Err(status) => return status,
+            }
+        }
+        let Some(target) = selected else {
+            return status;
+        };
+        if let Some(sha) = major_current_sha(action, versions)
+            && sha != target.sha()
+        {
+            let relation = if target.sha() == latest.sha()
+                && major.is_some_and(|m| m.sha() == sha)
+                && let Some(relation) = major_relation
+            {
+                Ok(relation)
+            } else {
+                compare(provider, action, target.sha(), sha).await
+            };
+            if let Err(status) =
+                relation.and_then(|relation| verify_forward_update(relation, &target))
+            {
+                return status;
+            }
+        }
+        status_for_verified_target(action, versions, &current, target, policy, status)
+    })
+}
+
+fn verify_forward_update(
+    relation: provider::CommitRelation,
+    target: &version::Info,
+) -> Result<(), CheckStatus> {
+    use provider::CommitRelation;
+    match relation {
+        CommitRelation::Behind => Ok(()),
+        CommitRelation::Ahead => Err(CheckStatus::Mismatch {
+            reason: format!(
+                "current major tag commit contains release {} plus additional commits; reference retained by major tag policy",
+                target.version()
+            ),
+        }),
+        CommitRelation::Diverged => Err(CheckStatus::Mismatch {
+            reason: format!(
+                "current major tag commit diverges from release {}; reference retained",
+                target.version()
+            ),
+        }),
+        _ => Err(ancestry_unknown(
+            "inconsistent major tag ancestry; reference retained".into(),
+        )),
+    }
+}
+
+fn status_for_verified_target(
+    action: &ActionRef,
+    versions: &version::Set,
+    current: &version::Version,
+    target: Arc<version::Info>,
+    policy: Policy,
+    status: CheckStatus,
+) -> CheckStatus {
+    if action.is_sha() && target.sha() == action.ref_str() {
+        CheckStatus::Pinned {
+            sha: action.ref_str().to_owned(),
+            tag: Some(target.version().to_string()),
+        }
+    } else if !action.is_sha()
+        && versions.has_exact_tag(action.ref_str())
+        && is_current(
+            current,
+            versions.tag(action.ref_str()).map(|t| t.sha()),
+            &target,
+            policy.track,
+            versions,
+        )
+    {
+        CheckStatus::UpToDate
+    } else if matches!(status, CheckStatus::Outdated { .. }) || target.version().is_major_only() {
+        CheckStatus::Outdated {
+            current: current.to_string(),
+            target,
+        }
+    } else {
+        status
+    }
 }
 
 fn current_commit<'a>(
@@ -668,6 +907,14 @@ fn listed_commit<'a>(ref_name: &str, versions: &'a version::Set) -> Option<&'a s
         .map(|t| t.sha())
         .or_else(|| versions.other_tag_sha(ref_name))
         .or_else(|| versions.branch_sha(ref_name))
+}
+
+fn tracks_major(current: &version::Version, policy: Policy) -> bool {
+    match policy.track {
+        policy::Track::Keep => current.is_major_only(),
+        policy::Track::Major => policy.bump != policy::Update::Patch || current.minor().is_none(),
+        policy::Track::Exact => false,
+    }
 }
 
 /// Find the best target version, respecting [`Policy::track`].
@@ -897,6 +1144,8 @@ mod tests {
 
     struct ResolveMockProvider {
         lookup: Resolve,
+        comparison: crate::Result<provider::CommitRelation>,
+        comparisons: std::sync::atomic::AtomicUsize,
         calls: std::sync::atomic::AtomicUsize,
     }
 
@@ -912,6 +1161,8 @@ mod tests {
         const fn with(lookup: Resolve) -> Self {
             Self {
                 lookup,
+                comparison: Ok(provider::CommitRelation::Behind),
+                comparisons: std::sync::atomic::AtomicUsize::new(0),
                 calls: std::sync::atomic::AtomicUsize::new(0),
             }
         }
@@ -962,6 +1213,18 @@ mod tests {
                     source: Some(Arc::new(std::io::Error::other("offline"))),
                 }),
             };
+            Box::pin(async move { result })
+        }
+
+        fn compare_commits(
+            &self,
+            _repo: &crate::ActionRepoId,
+            _base: &Sha40,
+            _head: &Sha40,
+        ) -> BoxFuture<'_, crate::Result<provider::CommitRelation>> {
+            self.comparisons
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let result = self.comparison.clone();
             Box::pin(async move { result })
         }
 
@@ -1739,7 +2002,8 @@ mod tests {
 
     fn target_for(ref_str: &str, track: policy::Track, versions: &version::Set) -> Option<String> {
         let action = make_action_ref("actions", "checkout", ref_str);
-        match check_action(&action, versions, &track_config(track)).status() {
+        // Selection-only unit tests; provider-backed ancestry is exercised separately.
+        match &classify(&action, versions, &track_config(track)).0 {
             CheckStatus::Outdated { target, .. } => Some(target.version().to_string()),
             CheckStatus::UpToDate => None,
             other => panic!("{ref_str} under {track}: unexpected {other:?}"),
@@ -1951,7 +2215,7 @@ mod tests {
         versions: &version::Set,
     ) -> Result<Option<String>, Box<dyn std::error::Error>> {
         let config: Config = toml::from_str(toml_str)?;
-        Ok(target_of(check_action(action, versions, &config).status())?)
+        Ok(target_of(&classify(action, versions, &config).0)?)
     }
 
     #[tokio::test]
@@ -2880,9 +3144,8 @@ mod tests {
 
     fn status_under(track: policy::Track, ref_str: &str, versions: &version::Set) -> CheckStatus {
         let action = make_action_ref("actions", "checkout", ref_str);
-        check_action(&action, versions, &track_config(track))
-            .status()
-            .clone()
+        // Pure classification, before the provider verifies commit ancestry.
+        classify(&action, versions, &track_config(track)).0
     }
 
     const TRACKS: [policy::Track; 3] = [
@@ -3381,6 +3644,230 @@ mod tests {
                 .map(|t| t.version().to_string())
                 .as_deref(),
             Some("v4.2.0")
+        );
+    }
+    fn major_policy_config(mode: &str, track: &str, bump: &str) -> Config {
+        let mut config = Config::default();
+        config.policy.major_tag = if mode == "contains" {
+            policy::MajorTag::Contains
+        } else {
+            policy::MajorTag::Exact
+        };
+        config.policy.track = policy::Track::from_str_loose(track).unwrap_or_default();
+        config.policy.bump = policy::Update::from_str_loose(bump).unwrap_or_default();
+        config
+    }
+
+    #[tokio::test]
+    async fn major_tag_ancestry_matrix_protects_tags_and_sha_pins() {
+        use provider::CommitRelation;
+        // The post-release action commit is named only by the major tag.
+        let major = make_version_info("v6", &"c".repeat(40));
+        let release = make_version_info("v6.0.2", &"b".repeat(40));
+        let versions = make_version_set(
+            vec![major.clone(), release.clone()],
+            Some(release.clone()),
+            HashMap::from([(6, release)]),
+            HashMap::from([(6, major)]),
+        );
+        for mode in ["exact", "contains"] {
+            for track in ["keep", "major", "exact"] {
+                for name in ["v6".to_string(), "c".repeat(40)] {
+                    let action = ActionRef::simple("o", "r", &name);
+                    let config = major_policy_config(mode, track, "latest");
+                    for relation in [
+                        CommitRelation::Ahead,
+                        CommitRelation::Behind,
+                        CommitRelation::Diverged,
+                        CommitRelation::Unknown,
+                    ] {
+                        let mut provider = ResolveMockProvider::with(Resolve::Offline);
+                        provider.comparison = Ok(relation);
+                        let result =
+                            check_action_with_provider(&action, &versions, &config, &provider)
+                                .await;
+                        let context =
+                            format!("{mode} {track} {name} {relation:?}: {:?}", result.status());
+                        match relation {
+                            CommitRelation::Ahead if mode == "contains" && track != "exact" => {
+                                assert!(
+                                    matches!(
+                                        result.status(),
+                                        CheckStatus::UpToDate | CheckStatus::Pinned { .. }
+                                    ),
+                                    "{context}"
+                                );
+                            }
+                            CommitRelation::Ahead | CommitRelation::Diverged => assert!(
+                                matches!(result.status(), CheckStatus::Mismatch { .. }),
+                                "{context}"
+                            ),
+                            CommitRelation::Behind => assert!(
+                                matches!(result.status(), CheckStatus::Outdated { target, .. } if target.version().as_str() == "v6.0.2"),
+                                "{context}"
+                            ),
+                            CommitRelation::Unknown => assert!(
+                                matches!(
+                                    result.status(),
+                                    CheckStatus::Unresolvable {
+                                        is_environment_error: true,
+                                        ..
+                                    }
+                                ),
+                                "{context}"
+                            ),
+                            CommitRelation::Identical => unreachable!(),
+                        }
+                        assert_eq!(
+                            provider
+                                .comparisons
+                                .load(std::sync::atomic::Ordering::SeqCst),
+                            1,
+                            "{context}"
+                        );
+                    }
+                    assert!(matches!(
+                        check_action(&action, &versions, &config).status(),
+                        CheckStatus::Unresolvable {
+                            is_environment_error: true,
+                            ..
+                        }
+                    ));
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn contains_respects_track_bump_ignore_and_fetch_failures() {
+        let versions = stale_major_tag_versions();
+        let action = ActionRef::simple("o", "r", "v4.1.0");
+        for (track, bump, want, comparisons) in [
+            ("keep", "latest", "v6.0.2", 0),
+            ("exact", "latest", "v6.0.2", 0),
+            ("major", "latest", "v6", 1),
+            ("major", "patch", "", 0),
+            ("major", "minor", "", 0),
+        ] {
+            let config = major_policy_config("contains", track, bump);
+            let mut provider = ResolveMockProvider::with(Resolve::Offline);
+            provider.comparison = Ok(provider::CommitRelation::Ahead);
+            let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+            match result.status() {
+                CheckStatus::Outdated { target, .. } => assert_eq!(target.version().as_str(), want),
+                CheckStatus::UpToDate => assert_eq!(want, ""),
+                other => panic!("unexpected {other:?}"),
+            }
+            assert_eq!(
+                provider
+                    .comparisons
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                comparisons
+            );
+        }
+        let action = ActionRef::simple("o", "r", "v6");
+        for error in [
+            Error::RateLimited {
+                provider: "test".into(),
+                retry_after: None,
+            },
+            Error::Network {
+                operation: "compare".into(),
+                message: "offline".into(),
+                source: None,
+            },
+        ] {
+            let mut provider = ResolveMockProvider::with(Resolve::Offline);
+            provider.comparison = Err(error);
+            let config = major_policy_config("contains", "keep", "latest");
+            let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+            assert!(matches!(
+                result.status(),
+                CheckStatus::Unresolvable {
+                    is_environment_error: true,
+                    ..
+                }
+            ));
+        }
+        let mut config = major_policy_config("contains", "keep", "latest");
+        config
+            .scan
+            .ignore
+            .push("o/r".parse().unwrap_or_else(|e| panic!("{e}")));
+        let provider = ResolveMockProvider::with(Resolve::Offline);
+        assert_eq!(
+            check_action_with_provider(&action, &versions, &config, &provider)
+                .await
+                .status(),
+            &CheckStatus::Ignored
+        );
+        assert_eq!(
+            provider
+                .comparisons
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn equal_major_and_release_need_no_comparison() {
+        let tag = make_version_info("v6", &"b".repeat(40));
+        let full = make_version_info("v6.0.2", &"b".repeat(40));
+        let versions = make_version_set(
+            vec![tag.clone(), full.clone()],
+            Some(full.clone()),
+            HashMap::from([(6, full)]),
+            HashMap::from([(6, tag)]),
+        );
+        for mode in ["exact", "contains"] {
+            let action = ActionRef::simple("o", "r", "v6");
+            let provider = ResolveMockProvider::with(Resolve::Offline);
+            assert_eq!(
+                check_action_with_provider(
+                    &action,
+                    &versions,
+                    &major_policy_config(mode, "keep", "latest"),
+                    &provider
+                )
+                .await
+                .status(),
+                &CheckStatus::UpToDate
+            );
+            assert_eq!(
+                provider
+                    .comparisons
+                    .load(std::sync::atomic::Ordering::SeqCst),
+                0
+            );
+        }
+    }
+    #[tokio::test]
+    async fn contains_major_does_not_escape_a_patch_policy() {
+        let old = make_version_info("v4.1.0", &"a".repeat(40));
+        let patch = make_version_info("v4.1.3", &"b".repeat(40));
+        let latest = make_version_info("v4.9.3", &"c".repeat(40));
+        let major = make_version_info("v4", &"d".repeat(40));
+        let versions = make_version_set(
+            vec![old, patch, latest.clone(), major.clone()],
+            Some(latest.clone()),
+            HashMap::from([(4, latest)]),
+            HashMap::from([(4, major)]),
+        );
+        let config = major_policy_config("contains", "major", "patch");
+        let mut provider = ResolveMockProvider::with(Resolve::Offline);
+        provider.comparison = Ok(provider::CommitRelation::Ahead);
+        for name in ["v4.1.0".to_owned(), "a".repeat(40)] {
+            let action = ActionRef::simple("o", "r", &name);
+            let result = check_action_with_provider(&action, &versions, &config, &provider).await;
+            assert!(
+                matches!(result.status(), CheckStatus::Outdated { target, .. } if target.version().as_str() == "v4.1.3")
+            );
+        }
+        assert_eq!(
+            provider
+                .comparisons
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0
         );
     }
 }

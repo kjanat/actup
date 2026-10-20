@@ -259,6 +259,7 @@ default_host = "github.com"
 bump       = "minor"  # patch | minor | major | latest
 pin        = "preserve"  # preserve | tag | sha
 track      = "keep"  # keep | major | exact
+major_tag  = "exact"  # exact | contains
 branch     = "warn"  # ignore | warn | update
 prerelease = false
 archived   = "hint"  # hint | ignore
@@ -377,6 +378,36 @@ line as written: `run("uses: o/p@<sha> # v4.0.0 keep this")` re-pinned becomes
 a backslash, a bracket, `<`, `>`, `;` or `,`. After the only `uses:` value of a
 plain-text line, the comment may also follow a closing quote and `}`, `]` or
 `,`, as in `{"uses": "o/p@<sha>"},  # v4.0.0`.
+
+Major tags must identify the selected release commit by default
+(`policy.major_tag = "exact"`). If a major tag is ahead of the release or has
+diverged, Actup reports a mismatch and offers no automatic rewrite. An ancestor
+is outdated. If ancestry cannot be verified, the result is unknown and no
+automatic rewrite is offered. This prevents a newer major tag from being
+replaced by an older release commit, including SHA pins on that major tag.
+
+For actions that publish an image from a release and then move their major tag
+to a subsequent digest-pinning commit, opt into verified containment:
+
+```toml
+[[overrides]]
+pattern = "kjanat/actionlint"
+policy  = { major_tag = "contains" }
+```
+
+`contains` also accepts major tags whose commits descend from the selected
+release. It does not accept divergent history or unverified ancestry, change
+`track`, or relax `bump` restrictions. `track = "exact"` still selects the full
+release; it never automatically downgrades a current major tag to its ancestor.
+Comparisons use immutable commit SHAs and run only when needed. Successful
+comparisons are cached per provider, host, repository and SHA pair with the
+provider's existing retention policy. Failures and unsupported comparisons are
+not cached. Providers without ancestry support return unknown.
+
+Strict mismatches appear as warnings without fixes in the LSP. CLI check reports
+them as an error with the mismatch reason (exit 3); MCP `getLatest` returns
+`status: "unknown"`, `check: "mismatch"`, a reason, and no target. Explicit MCP
+mutators retain their requested-target semantics.
 
 A SHA pin whose comment starts with a fetched branch name tracks that branch:
 `uses: owner/repo@<sha> # master` is outdated when `master` points at a

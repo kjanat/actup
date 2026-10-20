@@ -70,6 +70,19 @@ impl MockProvider {
         )
     }
 
+    fn post_release_versions() -> version::Set {
+        let info =
+            |name: &str, c| Arc::new(version::Info::new(version::Version::parse(name), sha(c)));
+        let major = info("v1", 'c');
+        let release = info("v1.17.0", 'b');
+        version::Set::build(
+            vec![Arc::clone(&major), Arc::clone(&release)],
+            HashMap::from([(1, Arc::clone(&release))]),
+            HashMap::from([(1, major)]),
+            Some(release),
+        )
+    }
+
     fn versions() -> version::Set {
         let info =
             |tag: &str, c: char| Arc::new(version::Info::new(version::Version::parse(tag), sha(c)));
@@ -103,10 +116,22 @@ impl Provider for MockProvider {
     fn get_versions(&self, repo: &ActionRepoId) -> BoxFuture<'_, actup_core::Result<version::Set>> {
         let result = match Self::failure(repo) {
             Some(e) => Err(e),
+            None if matches!(repo.owner(), "strict" | "contains") => {
+                Ok(Self::post_release_versions())
+            }
             None if repo.owner() == "twins" => Ok(Self::twin_versions()),
             None => Ok(Self::versions()),
         };
         Box::pin(async move { result })
+    }
+
+    fn compare_commits(
+        &self,
+        _repo: &ActionRepoId,
+        _base: &Sha40,
+        _head: &Sha40,
+    ) -> BoxFuture<'_, actup_core::Result<actup_core::provider::CommitRelation>> {
+        Box::pin(async { Ok(actup_core::provider::CommitRelation::Ahead) })
     }
 
     fn resolve_ref_to_sha(
@@ -182,6 +207,16 @@ fn serve_child(root: &Path) -> ExitCode {
     registry.set_default_host("github.com");
     registry.register(Box::new(MockProvider));
     let mut config = Config::default();
+    if let Ok(pattern) = "contains/*".parse() {
+        config.overrides.push(actup_core::config::Override {
+            pattern,
+            policy: actup_core::config::PolicyOverride {
+                major_tag: Some(actup_core::policy::MajorTag::Contains),
+                ..Default::default()
+            },
+        });
+    }
+
     config.scan.extra_paths = match ["docs/*.md", "infra/*.tf"]
         .map(str::parse)
         .into_iter()
@@ -546,6 +581,47 @@ fn latest_names_ref_kind_and_same_commit_target(ws: &Workspace) -> TestResult {
     expect(body(&unlisted).get("refKind").is_none(), || {
         format!("an unlisted ref has no refKind: {}", body(&unlisted))
     })?;
+    Ok(())
+}
+
+fn latest_major_policy_reports_mismatch_without_a_downgrade(
+    client: &mut Client,
+    _ws: &Workspace,
+) -> TestResult {
+    for name in ["v1".to_owned(), sha('c')] {
+        let strict = client.call(
+            "getLatest",
+            json!({"owner":"strict", "repo":"r", "currentRef":name}),
+        )?;
+        let value = body(&strict);
+        expect_eq(
+            &value["status"],
+            &json!("unknown"),
+            "strict mismatch status",
+        )?;
+        expect_eq(&value["check"], &json!("mismatch"), "strict mismatch check")?;
+        expect(value.get("target").is_none(), || {
+            format!("mismatch exposed an update target: {value}")
+        })?;
+        expect(
+            value["reason"]
+                .as_str()
+                .is_some_and(|s| s.contains("additional commits")),
+            || format!("missing mismatch reason: {value}"),
+        )?;
+        let contains = client.call(
+            "getLatest",
+            json!({"owner":"contains", "repo":"r", "currentRef":name}),
+        )?;
+        expect_eq(
+            &body(&contains)["status"],
+            &json!("upToDate"),
+            "contains descendant status",
+        )?;
+        expect(body(&contains).get("target").is_none(), || {
+            format!("accepted ref has a target: {}", body(&contains))
+        })?;
+    }
     Ok(())
 }
 
@@ -1670,7 +1746,11 @@ const BINARY_CASES: [(&str, BinaryCase); 5] = [
     ),
 ];
 
-const CASES: [(&str, Case); 15] = [
+const CASES: [(&str, Case); 16] = [
+    (
+        "latest_major_policy_reports_mismatch_without_a_downgrade",
+        latest_major_policy_reports_mismatch_without_a_downgrade,
+    ),
     (
         "tools_list_marks_mutators_destructive",
         tools_list_marks_mutators_destructive,

@@ -41,7 +41,8 @@ impl Status {
             | CheckStatus::Ignored
             | CheckStatus::Floating { .. } => Self::UpToDate,
             CheckStatus::Outdated { .. } | CheckStatus::PinBranch { .. } => Self::Outdated,
-            CheckStatus::Unresolvable {
+            CheckStatus::Mismatch { .. }
+            | CheckStatus::Unresolvable {
                 is_environment_error: true,
                 ..
             } => Self::Unknown,

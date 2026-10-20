@@ -130,6 +130,14 @@ async fn edit(
                     sha[..7.min(sha.len())].to_string(),
                     true,
                 ),
+                CheckStatus::Mismatch { .. }
+                | CheckStatus::Unresolvable {
+                    is_environment_error: true,
+                    ..
+                } => {
+                    crate::common::report_check_blocked(site, check.status(), &mut result);
+                    continue;
+                }
                 _ => continue, // Not actionable, skip
             };
             let Some(edit) = edit else {

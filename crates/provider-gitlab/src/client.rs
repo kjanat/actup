@@ -179,6 +179,40 @@ impl GitLabClient {
         Ok(all_tags)
     }
 
+    /// Compare commits by asking for their merge base.
+    ///
+    /// # Errors
+    /// Returns the existing structured network, auth, rate-limit or lookup error.
+    pub async fn compare_commits(
+        &self,
+        owner: &str,
+        repo: &str,
+        base: &actup_core::provider::Sha40,
+        head: &actup_core::provider::Sha40,
+    ) -> Result<actup_core::provider::CommitRelation> {
+        use actup_core::provider::CommitRelation;
+        #[derive(serde::Deserialize)]
+        struct MergeBase {
+            id: actup_core::provider::Sha40,
+        }
+        let project = Self::encode_project_path(owner, repo)?;
+        let url = format!(
+            "{}/projects/{project}/repository/merge_base?refs%5B%5D={base}&refs%5B%5D={head}",
+            self.api_base
+        );
+        let response = self.get(&url).await?;
+        let common: MergeBase = self.handle_response(response, owner, repo).await?;
+        Ok(if base == head {
+            CommitRelation::Identical
+        } else if common.id == *base {
+            CommitRelation::Ahead
+        } else if common.id == *head {
+            CommitRelation::Behind
+        } else {
+            CommitRelation::Diverged
+        })
+    }
+
     /// Get project info
     ///
     /// # Errors

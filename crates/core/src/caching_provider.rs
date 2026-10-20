@@ -98,6 +98,7 @@ pub struct CachingProvider<P> {
     branch_cache: Memo<ActionRepoId, String>,
     search_cache: Memo<String, provider::Search>,
     state_cache: Memo<ActionRepoId, Result<Option<provider::RepoState>>>,
+    comparison_cache: Memo<(ActionRepoId, Sha40, Sha40), provider::CommitRelation>,
     // Singleflight coordination: concurrent callers for the same key share
     // one provider fetch. Each flight is represented by a `Semaphore` with
     // zero permits; followers `acquire().await` on it. The leader holds a
@@ -208,6 +209,7 @@ impl<P: Provider> CachingProvider<P> {
             branch_cache: RwLock::new(HashMap::new()),
             search_cache: RwLock::new(HashMap::new()),
             state_cache: RwLock::new(HashMap::new()),
+            comparison_cache: RwLock::new(HashMap::new()),
             version_flights: Mutex::new(HashMap::new()),
             sha_flights: Mutex::new(HashMap::new()),
             branch_flights: Mutex::new(HashMap::new()),
@@ -218,12 +220,13 @@ impl<P: Provider> CachingProvider<P> {
 impl<P> CachingProvider<P> {
     /// Clear all cached data.
     pub fn clear_cache(&self) -> impl Future<Output = ()> + '_ {
-        let (versions, shas, branches, searches, states) = (
+        let (versions, shas, branches, searches, states, comparisons) = (
             &self.version_cache,
             &self.sha_cache,
             &self.branch_cache,
             &self.search_cache,
             &self.state_cache,
+            &self.comparison_cache,
         );
         async move {
             versions.write().await.clear();
@@ -231,6 +234,7 @@ impl<P> CachingProvider<P> {
             branches.write().await.clear();
             searches.write().await.clear();
             states.write().await.clear();
+            comparisons.write().await.clear();
         }
     }
 
@@ -522,6 +526,36 @@ impl<P: Provider> Provider for CachingProvider<P> {
                     .write()
                     .await
                     .insert(query, self.retention.stamp(found.clone()));
+            }
+            result
+        })
+    }
+
+    fn compare_commits(
+        &self,
+        repo: &ActionRepoId,
+        base: &Sha40,
+        head: &Sha40,
+    ) -> BoxFuture<'_, Result<provider::CommitRelation>> {
+        let key = (repo_cache_key(repo), base.clone(), head.clone());
+        Box::pin(async move {
+            if key.1 == key.2 {
+                return Ok(provider::CommitRelation::Identical);
+            }
+            let hit = self
+                .retention
+                .fresh(self.comparison_cache.read().await.get(&key));
+            if let Some(hit) = hit {
+                return Ok(hit);
+            }
+            let result = self.inner.compare_commits(&key.0, &key.1, &key.2).await;
+            if let Ok(relation) = &result
+                && *relation != provider::CommitRelation::Unknown
+            {
+                self.comparison_cache
+                    .write()
+                    .await
+                    .insert(key, self.retention.stamp(*relation));
             }
             result
         })
@@ -1547,6 +1581,25 @@ mod tests {
             Box::pin(async { Ok(ActionYml::default()) })
         }
 
+        fn compare_commits(
+            &self,
+            repo: &ActionRepoId,
+            _base: &Sha40,
+            _head: &Sha40,
+        ) -> BoxFuture<'_, Result<provider::CommitRelation>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let answer = match repo.repo() {
+                "unsupported" => Ok(provider::CommitRelation::Unknown),
+                "offline" => Err(crate::Error::Network {
+                    operation: "compare".into(),
+                    message: "offline".into(),
+                    source: None,
+                }),
+                _ => Ok(provider::CommitRelation::Ahead),
+            };
+            Box::pin(async move { answer })
+        }
+
         fn get_repo_state(
             &self,
             repo: &ActionRepoId,
@@ -1667,6 +1720,55 @@ mod tests {
             calls: AtomicUsize::new(0),
         });
         assert_eq!(boxed.get_repo_state(&repo).await?, None);
+        Ok(())
+    }
+    #[tokio::test]
+    async fn comparisons_cache_successes_by_repo_host_and_pair_until_ttl() -> TestResult {
+        let clock = crate::clock::ManualClock::new();
+        let cached = CachingProvider::with_retention(
+            Searching {
+                calls: AtomicUsize::new(0),
+            },
+            expiring(&clock, 60),
+        );
+        let repo = make_repo("o", "r");
+        let subpath = ActionRepoId::new(None, "o", "r", Some("sub".into()));
+        let base = Sha40::new("a".repeat(40)).ok_or("invalid SHA")?;
+        let head = Sha40::new("b".repeat(40)).ok_or("invalid SHA")?;
+        for id in [&repo, &subpath] {
+            assert_eq!(
+                cached.compare_commits(id, &base, &head).await?,
+                provider::CommitRelation::Ahead
+            );
+        }
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 1);
+        cached.compare_commits(&repo, &head, &base).await?;
+        let other_host = ActionRepoId::new(Some("enterprise.test".into()), "o", "r", None);
+        cached.compare_commits(&other_host, &base, &head).await?;
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 3);
+        clock.advance(Duration::from_secs(61));
+        cached.compare_commits(&repo, &base, &head).await?;
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 4);
+        cached.clear_cache().await;
+        cached.compare_commits(&repo, &base, &head).await?;
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 5);
+        for name in ["unsupported", "offline"] {
+            let id = make_repo("o", name);
+            for _ in 0..2 {
+                let _ = cached.compare_commits(&id, &base, &head).await;
+            }
+        }
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 9);
+        assert_eq!(
+            cached.compare_commits(&repo, &base, &base).await?,
+            provider::CommitRelation::Identical
+        );
+        assert_eq!(cached.inner.calls.load(Ordering::SeqCst), 9);
+        let boxed: Box<dyn Provider> = Box::new(cached);
+        assert_eq!(
+            boxed.compare_commits(&repo, &base, &head).await?,
+            provider::CommitRelation::Ahead
+        );
         Ok(())
     }
 }

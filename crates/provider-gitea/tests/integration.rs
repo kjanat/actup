@@ -652,3 +652,53 @@ async fn dot_segments_are_refused_before_any_request() -> TestResult {
     assert_eq!(server.received_requests().await.map(|r| r.len()), Some(0));
     Ok(())
 }
+
+#[tokio::test]
+async fn commit_ancestry_uses_immutable_shas_and_classifies_failures() -> TestResult {
+    use actup_core::provider::{CommitRelation, Sha40};
+    let base = Sha40::new("a".repeat(40)).ok_or("invalid test SHA")?;
+    let head = Sha40::new("b".repeat(40)).ok_or("invalid test SHA")?;
+    for (forward, reverse, want) in [
+        (1, 0, CommitRelation::Ahead),
+        (0, 1, CommitRelation::Behind),
+        (1, 1, CommitRelation::Diverged),
+        (0, 0, CommitRelation::Unknown),
+    ] {
+        let server = MockServer::start().await;
+        for (a, b, count) in [(&base, &head, forward), (&head, &base, reverse)] {
+            Mock::given(method("GET"))
+                .and(path(format!("/repos/o/r/compare/{a}...{b}")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({"total_commits": count})),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        let provider = actup_provider_gitea::GiteaProvider::new(&server.uri(), "forge.test", None)?;
+        assert_eq!(
+            provider
+                .compare_commits(&ActionRepoId::simple("o", "r"), &base, &head)
+                .await?,
+            want
+        );
+    }
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/repos/o/r/compare/{base}...{head}")))
+        .respond_with(
+            ResponseTemplate::new(401)
+                .set_body_json(serde_json::json!({"message": "unauthorized"})),
+        )
+        .mount(&server)
+        .await;
+    let provider = actup_provider_gitea::GiteaProvider::new(&server.uri(), "forge.test", None)?;
+    assert!(matches!(
+        provider
+            .compare_commits(&ActionRepoId::simple("o", "r"), &base, &head)
+            .await,
+        Err(actup_core::Error::Auth { .. })
+    ));
+    Ok(())
+}

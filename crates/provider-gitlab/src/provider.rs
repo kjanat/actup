@@ -106,6 +106,22 @@ impl Provider for GitLabProvider {
         })
     }
 
+    fn compare_commits(
+        &self,
+        repo: &ActionRepoId,
+        base: &Sha40,
+        head: &Sha40,
+    ) -> BoxFuture<'_, Result<provider::CommitRelation>> {
+        let repo = repo.clone();
+        let base = base.clone();
+        let head = head.clone();
+        Box::pin(async move {
+            self.client
+                .compare_commits(repo.owner(), repo.repo(), &base, &head)
+                .await
+        })
+    }
+
     fn resolve_ref_to_sha(
         &self,
         repo: &ActionRepoId,

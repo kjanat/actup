@@ -305,6 +305,7 @@ fn format_version_status(status: &CheckStatus, ref_kind: Option<RefKind>) -> Str
                 sha.get(..12).unwrap_or(sha)
             )
         }
+        CheckStatus::Mismatch { reason } => format!("**Major tag mismatch**: {reason}"),
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,

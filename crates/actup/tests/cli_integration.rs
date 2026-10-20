@@ -2063,6 +2063,7 @@ mod cli_runs {
                 "bump": "patch",
                 "pin": "sha",
                 "track": "exact",
+                "major_tag": "exact",
                 "branch": "update",
                 "prerelease": false,
                 "archived": "hint",

@@ -10,6 +10,18 @@ use serde::{
     de::{self, Visitor},
 };
 
+/// Required relationship between a major tag and the selected release commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "tsify", derive(tsify::Tsify))]
+pub enum MajorTag {
+    /// Require the same commit. A descendant is a mismatch, never a downgrade.
+    #[default]
+    Exact,
+    /// Also accept a verified descendant of the selected release commit.
+    Contains,
+}
+
 /// Update policy determines what version bumps are allowed.
 ///
 /// # Workflow Examples

@@ -337,12 +337,18 @@ pub struct Policy {
     /// and writes the full version when the major-only tag lags the target
     /// commit, `major` writes the major-only tag when it points at the target commit
     /// and `bump` allows that whole major, `exact` always writes the full
-    /// version.
+    /// version. `major_tag = "contains"` also permits verified descendants
+    /// of the selected release when a major tag is eligible.
     ///
     /// ```toml
     /// track = "exact"   # actions/checkout@v4 -> @v6.0.2
     /// ```
     pub track: policy::Track,
+
+    /// Relationship required between a major tag and the selected release.
+    /// `exact` (default) requires equality; `contains` also accepts verified
+    /// descendants. Ahead or divergent refs are never automatically downgraded.
+    pub major_tag: policy::MajorTag,
 
     /// How to handle floating branch refs like `@main` or `@v2`.
     ///
@@ -381,6 +387,7 @@ impl Policy {
             bump: partial.bump.unwrap_or(self.bump),
             pin: partial.pin.unwrap_or(self.pin),
             track: partial.track.unwrap_or(self.track),
+            major_tag: partial.major_tag.unwrap_or(self.major_tag),
             branch: partial.branch.unwrap_or(self.branch),
             prerelease: partial.prerelease.unwrap_or(self.prerelease),
             archived: partial.archived.unwrap_or(self.archived),
@@ -398,6 +405,8 @@ pub struct PolicyOverride {
     pub pin: Option<policy::Style>,
     /// Replaces `policy.track`.
     pub track: Option<policy::Track>,
+    /// Replaces `policy.major_tag`.
+    pub major_tag: Option<policy::MajorTag>,
     /// Replaces `policy.branch`.
     pub branch: Option<policy::Branch>,
     /// Replaces `policy.prerelease`.
@@ -1829,6 +1838,7 @@ mod tests {
                 bump: policy::Update::Minor,
                 pin: policy::Style::Sha,
                 track: policy::Track::Major,
+                major_tag: policy::MajorTag::Exact,
                 branch: policy::Branch::Warn,
                 prerelease: true,
                 archived: policy::Archived::Ignore,
@@ -2624,6 +2634,7 @@ mod tests {
         ("ACTUP_POLICY__BUMP", "patch"),
         ("ACTUP_POLICY__PIN", "sha"),
         ("ACTUP_POLICY__TRACK", "exact"),
+        ("ACTUP_POLICY__MAJOR_TAG", "contains"),
         ("ACTUP_POLICY__BRANCH", "update"),
         ("ACTUP_POLICY__PRERELEASE", "true"),
         ("ACTUP_POLICY__ARCHIVED", "ignore"),
@@ -2661,6 +2672,7 @@ mod tests {
                 bump: policy::Update::Patch,
                 pin: policy::Style::Sha,
                 track: policy::Track::Exact,
+                major_tag: policy::MajorTag::Contains,
                 branch: policy::Branch::Update,
                 prerelease: true,
                 archived: policy::Archived::Ignore,
@@ -2952,6 +2964,50 @@ mod tests {
         assert_eq!(run.ignored, REPO_ONLY_KEYS.map(str::to_owned));
         assert_eq!(run.warned, REPO_ONLY_KEYS.map(str::to_owned));
         assert_eq!(run.config.default_host.as_deref(), Some("r.example"));
+        Ok(())
+    }
+    #[test]
+    fn major_tag_defaults_overrides_and_environment() -> Result<(), Box<dyn std::error::Error>> {
+        assert_eq!(Policy::default().major_tag, policy::MajorTag::Exact);
+        let source = r#"
+[policy]
+major_tag = "contains"
+[[overrides]]
+pattern = "o/*"
+policy = { major_tag = "exact" }
+[[overrides]]
+pattern = "o/r"
+policy = { major_tag = "contains" }
+"#;
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), source)),
+            EnvOverrides::default(),
+        )?;
+        assert_eq!(config.policy.major_tag, policy::MajorTag::Contains);
+        assert_eq!(
+            config
+                .policy_for(&ActionRef::simple("o", "other", "v1"))
+                .major_tag,
+            policy::MajorTag::Exact
+        );
+        assert_eq!(
+            config
+                .policy_for(&ActionRef::simple("o", "r", "v1"))
+                .major_tag,
+            policy::MajorTag::Contains
+        );
+        let config = Config::from_contents(
+            Some((Path::new("actup.toml"), source)),
+            EnvOverrides::from_vars([("ACTUP_POLICY__MAJOR_TAG", "exact")]),
+        )?;
+        assert_eq!(config.policy.major_tag, policy::MajorTag::Exact);
+        assert!(
+            Config::from_contents(
+                Some((Path::new("actup.toml"), "[policy]\nmajor_tag = \"lenient\"")),
+                EnvOverrides::default()
+            )
+            .is_err()
+        );
         Ok(())
     }
 }

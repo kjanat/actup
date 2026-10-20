@@ -372,6 +372,7 @@ fn describe(status: &CheckStatus) -> (&'static str, Option<Info>, Option<&str>) 
             Some(Info::new(version::Version::parse(ref_name), sha.as_str())),
             None,
         ),
+        CheckStatus::Mismatch { reason } => ("mismatch", None, Some(reason)),
         CheckStatus::Unresolvable { reason, .. } => ("unresolvable", None, Some(reason)),
     }
 }

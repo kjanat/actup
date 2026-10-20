@@ -1914,3 +1914,51 @@ async fn dot_segments_are_refused_before_any_request() -> Result<(), Box<dyn std
     assert_eq!(server.received_requests().await.map(|r| r.len()), Some(0));
     Ok(())
 }
+
+#[tokio::test]
+async fn commit_ancestry_uses_immutable_shas_and_classifies_failures() -> TestResult {
+    use actup_core::provider::{CommitRelation, Sha40};
+    let base = Sha40::new("a".repeat(40)).ok_or("invalid test SHA")?;
+    let head = Sha40::new("b".repeat(40)).ok_or("invalid test SHA")?;
+    for (answer, want) in [
+        ("ahead", CommitRelation::Ahead),
+        ("behind", CommitRelation::Behind),
+        ("diverged", CommitRelation::Diverged),
+        ("unexpected", CommitRelation::Unknown),
+    ] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/repos/o/r/compare/{base}...{head}")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"status": answer})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = GitHubProvider::with_host(&server.uri(), "ghe.test", None)?;
+        assert_eq!(
+            provider
+                .compare_commits(&ActionRepoId::simple("o", "r"), &base, &head)
+                .await?,
+            want
+        );
+    }
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/repos/o/r/compare/{base}...{head}")))
+        .respond_with(
+            ResponseTemplate::new(403)
+                .insert_header("x-ratelimit-remaining", "0")
+                .set_body_json(serde_json::json!({"message": "rate limit exceeded"})),
+        )
+        .mount(&server)
+        .await;
+    let provider = GitHubProvider::with_host(&server.uri(), "ghe.test", None)?;
+    assert!(matches!(
+        provider
+            .compare_commits(&ActionRepoId::simple("o", "r"), &base, &head)
+            .await,
+        Err(actup_core::Error::RateLimited { .. })
+    ));
+    Ok(())
+}

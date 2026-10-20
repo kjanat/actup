@@ -783,6 +783,8 @@ fn status_to_diagnostic(
             ..Default::default()
         }),
 
+        CheckStatus::Mismatch { reason } => Some(mismatch_diagnostic(range, reason)),
+
         CheckStatus::Unresolvable {
             reason,
             is_environment_error,
@@ -799,6 +801,17 @@ fn status_to_diagnostic(
             });
             Some(diag)
         }
+    }
+}
+
+fn mismatch_diagnostic(range: Range, reason: &str) -> Diagnostic {
+    Diagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::WARNING),
+        code: Some(NumberOrString::String("major-tag-mismatch".into())),
+        source: Some("actup".into()),
+        message: reason.to_owned(),
+        ..Default::default()
     }
 }
 
@@ -3463,5 +3476,66 @@ jobs:
 
         assert!(results.contains_key(&repo));
         assert!(results[&repo].is_err());
+    }
+    #[tokio::test]
+    async fn major_tag_mismatches_have_no_edit_and_contains_accepts_descendants()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let major = test_utils::make_version_info("v1", DUMMY_SHA_2);
+        let release = test_utils::make_version_info("v1.17.0", DUMMY_SHA);
+        let versions = actup_core::version::Set::build(
+            vec![Arc::clone(&major), Arc::clone(&release)],
+            HashMap::from([(1, Arc::clone(&release))]),
+            HashMap::from([(1, major)]),
+            Some(release),
+        );
+        let mut registry = provider::Registry::new();
+        registry.set_default_host("github.com");
+        registry.register(Box::new(
+            test_utils::MockProvider::new("github.com")
+                .with_comparison(provider::CommitRelation::Ahead),
+        ));
+        let versions_map = HashMap::from([(ActionRepoId::simple("o", "r"), Ok(versions))]);
+        let text = format!("steps:\n  - uses: o/r@v1\n  - uses: o/r@{DUMMY_SHA_2} # v1\n");
+        let mut config = Config::default();
+        let result = compute_diagnostics_with_versions(
+            &text,
+            SourceFormat::Yaml,
+            &config,
+            &registry,
+            &versions_map,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        assert_eq!(result.diagnostics.len(), 2);
+        for diagnostic in &result.diagnostics {
+            assert_eq!(
+                diagnostic.code,
+                Some(NumberOrString::String("major-tag-mismatch".into()))
+            );
+            assert_eq!(diagnostic.severity, Some(DiagnosticSeverity::WARNING));
+            assert!(
+                diagnostic.data.is_none(),
+                "mismatch must offer no automatic edit"
+            );
+        }
+        config.policy.major_tag = actup_core::policy::MajorTag::Contains;
+        let result = compute_diagnostics_with_versions(
+            &text,
+            SourceFormat::Yaml,
+            &config,
+            &registry,
+            &versions_map,
+            crate::position::PositionEncoding::Utf16,
+        )
+        .await;
+        assert!(
+            result
+                .diagnostics
+                .iter()
+                .all(|d| d.code == Some(NumberOrString::String("pinned".into()))),
+            "{:?}",
+            result.diagnostics
+        );
+        Ok(())
     }
 }
