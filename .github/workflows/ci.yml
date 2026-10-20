@@ -2,7 +2,7 @@ name: CI
 on:
   push:
     branches: [master]
-    paths-ignore:
+    paths-ignore: &paths
       - "**.md"
       - ".gitignore"
       - "LICENSE*"
@@ -12,15 +12,7 @@ on:
       - ".zed/**"
       - ".claude/**"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - ".gitignore"
-      - "LICENSE*"
-      - ".github/ISSUE_TEMPLATE/**"
-      - ".github/PULL_REQUEST_TEMPLATE.md"
-      - ".opencode/**"
-      - ".zed/**"
-      - ".claude/**"
+    paths-ignore: *paths
 permissions:
   contents: read
 concurrency:
