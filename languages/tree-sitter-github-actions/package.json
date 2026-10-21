@@ -12,15 +12,15 @@
 	"main": "bindings/node",
 	"types": "bindings/node",
 	"files": [
-		"grammar.js",
-		"tree-sitter.json",
-		"binding.gyp",
-		"prebuilds/**",
-		"bindings/node/*",
-		"queries/*",
-		"scripts/**",
-		"src/**",
-		"*.wasm"
+		"/grammar.js",
+		"/tree-sitter.json",
+		"/binding.gyp",
+		"/prebuilds/**",
+		"/bindings/node/*",
+		"/queries/*",
+		"/scripts/**",
+		"/src/**",
+		"/*.wasm"
 	],
 	"scripts": {
 		"check": "biome check",
@@ -38,7 +38,5 @@
 	"dependencies": { "node-addon-api": "^8.5.0", "node-gyp-build": "^4.8.4" },
 	"devDependencies": { "prebuildify": "^6.0.1", "tree-sitter": "^0.25.0", "tree-sitter-cli": "^0.26.8" },
 	"peerDependencies": { "tree-sitter": "^0.25.0" },
-	"peerDependenciesMeta": { "tree-sitter": { "optional": true } },
-	"packageManager": "bun@1.3.13",
-	"volta": { "node": "26.0.0", "npm": "11.13.0" }
+	"peerDependenciesMeta": { "tree-sitter": { "optional": true } }
 }

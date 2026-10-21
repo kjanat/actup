@@ -1,11 +1,14 @@
-#:schema https://gist.githubusercontent.com/kjanat/1172d9d2d6dbe7c6d9983aaabef2eea5/raw/cargo-config.bundle.json
+#:schema https://www.schemastore.org/cargo-config.json
 
 [alias]
-actup         = ["run", "--bin=actup", "--quiet", "--"]
-actup-lsp     = ["run", "--bin=actup-lsp", "--quiet", "--"]
-dwn           = "--config .cargo/nightly.toml doc --workspace --all-features"
-i             = "install"
+i = "install"
+
 install-actup = "i --path crates/actup --bin actup"
 install-lsp   = "i --path crates/lsp --bin actup-lsp"
 install-mcp   = "i --path crates/mcp --bin actup-mcp"
-lint          = "clippy --workspace --all-targets --all-features -- -D warnings -D clippy::all"
+
+actup     = ["run", "--bin=actup", "--quiet", "--"]
+actup-lsp = ["run", "--bin=actup-lsp", "--quiet", "--"]
+
+dwn  = "--config .cargo/nightly.toml doc --workspace --all-features"
+lint = "clippy --workspace --all-targets --all-features -- -D warnings -D clippy::all"

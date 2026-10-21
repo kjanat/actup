@@ -12,12 +12,12 @@ keywords               = ["github-actions", "incremental", "parsing", "tree-sitt
 categories             = ["parser-implementations", "parsing", "text-editors"]
 build                  = "bindings/rust/build.rs"
 include                = [
-  "LICENSE-MIT",
-  "bindings/rust/*",
-  "grammar.js",
-  "queries/*",
-  "src/*",
-  "tree-sitter.json",
+  "/LICENSE-MIT",
+  "/bindings/rust/*",
+  "/grammar.js",
+  "/queries/*",
+  "/src/*",
+  "/tree-sitter.json",
 ]
 autoexamples           = false
 
