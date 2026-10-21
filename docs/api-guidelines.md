@@ -2205,326 +2205,326 @@ generally only depend on permissively-licensed crates.
 - [Elegant Library APIs in Rust]
 - [Rust Design Patterns]
 
-["Link all the things"]: <https://github.com/rust-lang/rfcs/blob/master/text/1574-more-api-documentation-conventions.md#link-all-the-things>
-["`impl Trait` for returning complex types with ease"]: <https://rust-lang.github.io/edition-guide/rust-2018/trait-system/impl-trait-for-returning-complex-types-with-ease.html>
-[Ad-hoc conversions follow `as_`, `to_`, `into_` conventions (C-CONV)]: <https://rust-lang.github.io/api-guidelines/print.html#ad-hoc-conversions-follow-as_-to_-into_-conventions-c-conv>
-[Advantages of generics]: <https://rust-lang.github.io/api-guidelines/print.html#advantages-of-generics>
-[Advantages of trait objects]: <https://rust-lang.github.io/api-guidelines/print.html#advantages-of-trait-objects>
-[All items have a rustdoc example (C-EXAMPLE)]: <https://rust-lang.github.io/api-guidelines/print.html#all-items-have-a-rustdoc-example-c-example>
-[All public types implement `Debug` (C-DEBUG)]: <https://rust-lang.github.io/api-guidelines/print.html#all-public-types-implement-debug-c-debug>
-[Apache 2.0]: <https://github.com/rust-lang/rust/blob/master/LICENSE-APACHE>
-[Apache-2.0]: <https://choosealicense.com/licenses/apache-2.0/>
-[Arguments convey meaning through types, not `bool` or `Option` (C-CUSTOM-TYPE)]: <https://rust-lang.github.io/api-guidelines/print.html#arguments-convey-meaning-through-types-not-bool-or-option-c-custom-type>
-[Binary number types provide `Hex`, `Octal`, `Binary` formatting (C-NUM-FMT)]: <https://rust-lang.github.io/api-guidelines/print.html#binary-number-types-provide-hex-octal-binary-formatting-c-num-fmt>
-[Builders enable construction of complex values (C-BUILDER)]: <https://rust-lang.github.io/api-guidelines/print.html#builders-enable-construction-of-complex-values-c-builder>
-[C-ANYWHERE]: <https://rust-lang.github.io/api-guidelines/macros.html#c-anywhere>
-[C-BITFLAG]: <https://rust-lang.github.io/api-guidelines/type-safety.html#c-bitflag>
-[C-BUILDER]: <https://rust-lang.github.io/api-guidelines/type-safety.html#c-builder>
-[C-CALLER-CONTROL]: <https://rust-lang.github.io/api-guidelines/flexibility.html#c-caller-control>
-[C-CASE]: <https://rust-lang.github.io/api-guidelines/naming.html#c-case>
-[C-COLLECT]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-collect>
-[C-COMMON-TRAITS]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-common-traits>
-[C-CONV-SPECIFIC]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-conv-specific>
-[C-CONV-TRAITS]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-conv-traits>
-[C-CONV]: <https://rust-lang.github.io/api-guidelines/naming.html#c-conv>
-[C-CRATE-DOC]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-crate-doc>
-[C-CTOR]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-ctor>
-[C-CUSTOM-TYPE]: <https://rust-lang.github.io/api-guidelines/type-safety.html#c-custom-type>
-[C-DEBUG-NONEMPTY]: <https://rust-lang.github.io/api-guidelines/debuggability.html#c-debug-nonempty>
-[C-DEBUG]: <https://rust-lang.github.io/api-guidelines/debuggability.html#c-debug>
-[C-DEREF]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-deref>
-[C-DTOR-BLOCK]: <https://rust-lang.github.io/api-guidelines/dependability.html#c-dtor-block>
-[C-DTOR-FAIL]: <https://rust-lang.github.io/api-guidelines/dependability.html#c-dtor-fail>
-[C-EVOCATIVE]: <https://rust-lang.github.io/api-guidelines/macros.html#c-evocative>
-[C-EXAMPLE]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-example>
-[C-FAILURE]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-failure>
-[C-FEATURE]: <https://rust-lang.github.io/api-guidelines/naming.html#c-feature>
-[C-GENERIC]: <https://rust-lang.github.io/api-guidelines/flexibility.html#c-generic>
-[C-GETTER]: <https://rust-lang.github.io/api-guidelines/naming.html#c-getter>
-[C-GOOD-ERR]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-good-err>
-[C-HIDDEN]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-hidden>
-[C-INTERMEDIATE]: <https://rust-lang.github.io/api-guidelines/flexibility.html#c-intermediate>
-[C-ITER-TY]: <https://rust-lang.github.io/api-guidelines/naming.html#c-iter-ty>
-[C-ITER]: <https://rust-lang.github.io/api-guidelines/naming.html#c-iter>
-[C-LINK]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-link>
-[C-MACRO-ATTR]: <https://rust-lang.github.io/api-guidelines/macros.html#c-macro-attr>
-[C-MACRO-TY]: <https://rust-lang.github.io/api-guidelines/macros.html#c-macro-ty>
-[C-MACRO-VIS]: <https://rust-lang.github.io/api-guidelines/macros.html#c-macro-vis>
-[C-METADATA]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-metadata>
-[C-METHOD]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-method>
-[C-NEWTYPE-HIDE]: <https://rust-lang.github.io/api-guidelines/future-proofing.html#c-newtype-hide>
-[C-NEWTYPE]: <https://rust-lang.github.io/api-guidelines/type-safety.html#c-newtype>
-[C-NO-OUT]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-no-out>
-[C-NUM-FMT]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-num-fmt>
-[C-OBJECT]: <https://rust-lang.github.io/api-guidelines/flexibility.html#c-object>
-[C-OVERLOAD]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-overload>
-[C-PERMISSIVE]: <https://rust-lang.github.io/api-guidelines/necessities.html#c-permissive>
-[C-QUESTION-MARK]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-question-mark>
-[C-RELNOTES]: <https://rust-lang.github.io/api-guidelines/documentation.html#c-relnotes>
-[C-RW-VALUE]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-rw-value>
-[C-SEALED]: <https://rust-lang.github.io/api-guidelines/future-proofing.html#c-sealed>
-[C-SEND-SYNC]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-send-sync>
-[C-SERDE]: <https://rust-lang.github.io/api-guidelines/interoperability.html#c-serde>
-[C-SMART-PTR]: <https://rust-lang.github.io/api-guidelines/predictability.html#c-smart-ptr>
-[C-STABLE]: <https://rust-lang.github.io/api-guidelines/necessities.html#c-stable>
-[C-STRUCT-BOUNDS]: <https://rust-lang.github.io/api-guidelines/future-proofing.html#c-struct-bounds>
-[C-STRUCT-PRIVATE]: <https://rust-lang.github.io/api-guidelines/future-proofing.html#c-struct-private>
-[C-VALIDATE]: <https://rust-lang.github.io/api-guidelines/dependability.html#c-validate>
-[C-WORD-ORDER]: <https://rust-lang.github.io/api-guidelines/naming.html#c-word-order>
-[Caller decides where to copy and place data (C-CALLER-CONTROL)]: <https://rust-lang.github.io/api-guidelines/print.html#caller-decides-where-to-copy-and-place-data-c-caller-control>
-[Cargo feature]: <http://doc.crates.io/manifest.html#the-features-section>
-[Cargo.toml includes all common metadata (C-METADATA)]: <https://rust-lang.github.io/api-guidelines/print.html#cargotoml-includes-all-common-metadata-c-metadata>
-[Casing conforms to RFC 430 (C-CASE)]: <https://rust-lang.github.io/api-guidelines/print.html#casing-conforms-to-rfc-430-c-case>
-[Collections implement `FromIterator` and `Extend` (C-COLLECT)]: <https://rust-lang.github.io/api-guidelines/print.html#collections-implement-fromiterator-and-extend-c-collect>
-[Constructors are static, inherent methods (C-CTOR)]: <https://rust-lang.github.io/api-guidelines/print.html#constructors-are-static-inherent-methods-c-ctor>
-[Consuming builders]: <https://rust-lang.github.io/api-guidelines/print.html#consuming-builders>
-[Conversions live on the most specific type involved (C-CONV-SPECIFIC)]: <https://rust-lang.github.io/api-guidelines/print.html#conversions-live-on-the-most-specific-type-involved-c-conv-specific>
-[Conversions use the standard traits `From`, `AsRef`, `AsMut` (C-CONV-TRAITS)]: <https://rust-lang.github.io/api-guidelines/print.html#conversions-use-the-standard-traits-from-asref-asmut-c-conv-traits>
-[Crate and its dependencies have a permissive license (C-PERMISSIVE)]: <https://rust-lang.github.io/api-guidelines/print.html#crate-and-its-dependencies-have-a-permissive-license-c-permissive>
-[Crate level docs are thorough and include examples (C-CRATE-DOC)]: <https://rust-lang.github.io/api-guidelines/print.html#crate-level-docs-are-thorough-and-include-examples-c-crate-doc>
-[Data structures do not duplicate derived trait bounds (C-STRUCT-BOUNDS)]: <https://rust-lang.github.io/api-guidelines/print.html#data-structures-do-not-duplicate-derived-trait-bounds-c-struct-bounds>
-[Data structures implement Serde's `Serialize`, `Deserialize` (C-SERDE)]: <https://rust-lang.github.io/api-guidelines/print.html#data-structures-implement-serdes-serialize-deserialize-c-serde>
-[Debuggability]: <https://rust-lang.github.io/api-guidelines/print.html#debuggability>
-[Dependability]: <https://rust-lang.github.io/api-guidelines/print.html#dependability>
-[Destructors never fail (C-DTOR-FAIL)]: <https://rust-lang.github.io/api-guidelines/print.html#destructors-never-fail-c-dtor-fail>
-[Destructors that may block have alternatives (C-DTOR-BLOCK)]: <https://rust-lang.github.io/api-guidelines/print.html#destructors-that-may-block-have-alternatives-c-dtor-block>
-[Diesel change log]: <https://github.com/diesel-rs/diesel/blob/master/CHANGELOG.md>
-[Disadvantages of generics]: <https://rust-lang.github.io/api-guidelines/print.html#disadvantages-of-generics>
-[Disadvantages of trait objects]: <https://rust-lang.github.io/api-guidelines/print.html#disadvantages-of-trait-objects>
-[Documentation]: <https://rust-lang.github.io/api-guidelines/print.html#documentation>
-[Dynamic enforcement with `debug_assert!`]: <https://rust-lang.github.io/api-guidelines/print.html#dynamic-enforcement-with-debug_assert>
-[Dynamic enforcement with opt-out]: <https://rust-lang.github.io/api-guidelines/print.html#dynamic-enforcement-with-opt-out>
-[Dynamic enforcement]: <https://rust-lang.github.io/api-guidelines/print.html#dynamic-enforcement>
-[Elegant Library APIs in Rust]: <https://deterministic.space/elegant-apis-in-rust.html>
-[Error types are meaningful and well-behaved (C-GOOD-ERR)]: <https://rust-lang.github.io/api-guidelines/print.html#error-types-are-meaningful-and-well-behaved-c-good-err>
-[Examples 1]: <https://rust-lang.github.io/api-guidelines/print.html#examples-1>
-[Examples 2]: <https://rust-lang.github.io/api-guidelines/print.html#examples-2>
-[Examples from the standard library]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library>
-[Examples from the standard library 1]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-1>
-[Examples from the standard library 2]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-2>
-[Examples from the standard library 3]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-3>
-[Examples from the standard library 4]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-4>
-[Examples from the standard library 5]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-5>
-[Examples from the standard library 6]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-6>
-[Examples from the standard library 7]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-7>
-[Examples from the standard library 8]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-8>
-[Examples from the standard library 9]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-9>
-[Examples from the standard library 10]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-10>
-[Examples from the standard library 11]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-11>
-[Examples from the standard library 12]: <https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-12>
-[Examples of error messages]: <https://rust-lang.github.io/api-guidelines/print.html#examples-of-error-messages>
-[Examples use `?`, not `try!`, not `unwrap` (C-QUESTION-MARK)]: <https://rust-lang.github.io/api-guidelines/print.html#examples-use--not-try-not-unwrap-c-question-mark>
-[Examples]: <https://rust-lang.github.io/api-guidelines/print.html#examples>
-[Exceptions]: <https://rust-lang.github.io/api-guidelines/print.html#exceptions>
-[External links]: <https://rust-lang.github.io/api-guidelines/print.html#external-links>
-[Feature names are free of placeholder words (C-FEATURE)]: <https://rust-lang.github.io/api-guidelines/print.html#feature-names-are-free-of-placeholder-words-c-feature>
-[Flexibility]: <https://rust-lang.github.io/api-guidelines/print.html#flexibility>
-[Function docs include error, panic, and safety considerations (C-FAILURE)]: <https://rust-lang.github.io/api-guidelines/print.html#function-docs-include-error-panic-and-safety-considerations-c-failure>
-[Functions do not take out-parameters (C-NO-OUT)]: <https://rust-lang.github.io/api-guidelines/print.html#functions-do-not-take-out-parameters-c-no-out>
-[Functions expose intermediate results to avoid duplicate work (C-INTERMEDIATE)]: <https://rust-lang.github.io/api-guidelines/print.html#functions-expose-intermediate-results-to-avoid-duplicate-work-c-intermediate>
-[Functions minimize assumptions about parameters by using generics (C-GENERIC)]: <https://rust-lang.github.io/api-guidelines/print.html#functions-minimize-assumptions-about-parameters-by-using-generics-c-generic>
-[Functions validate their arguments (C-VALIDATE)]: <https://rust-lang.github.io/api-guidelines/print.html#functions-validate-their-arguments-c-validate>
-[Functions with a clear receiver are methods (C-METHOD)]: <https://rust-lang.github.io/api-guidelines/print.html#functions-with-a-clear-receiver-are-methods-c-method>
-[Future proofing]: <https://rust-lang.github.io/api-guidelines/print.html#future-proofing>
-[Generic reader/writer functions take `R: Read` and `W: Write` by value (C-RW-VALUE)]: <https://rust-lang.github.io/api-guidelines/print.html#generic-readerwriter-functions-take-r-read-and-w-write-by-value-c-rw-value>
-[Getter names follow Rust convention (C-GETTER)]: <https://rust-lang.github.io/api-guidelines/print.html#getter-names-follow-rust-convention-c-getter>
-[Gitter channel]: <https://gitter.im/rust-impl-period/WG-libs-guidelines>
-[Input syntax is evocative of the output (C-EVOCATIVE)]: <https://rust-lang.github.io/api-guidelines/print.html#input-syntax-is-evocative-of-the-output-c-evocative>
-[Interoperability]: <https://rust-lang.github.io/api-guidelines/print.html#interoperability>
-[Item macros compose well with attributes (C-MACRO-ATTR)]: <https://rust-lang.github.io/api-guidelines/print.html#item-macros-compose-well-with-attributes-c-macro-attr>
-[Item macros support visibility specifiers (C-MACRO-VIS)]: <https://rust-lang.github.io/api-guidelines/print.html#item-macros-support-visibility-specifiers-c-macro-vis>
-[Item macros work anywhere that items are allowed (C-ANYWHERE)]: <https://rust-lang.github.io/api-guidelines/print.html#item-macros-work-anywhere-that-items-are-allowed-c-anywhere>
-[Iterator type names match the methods that produce them (C-ITER-TY)]: <https://rust-lang.github.io/api-guidelines/print.html#iterator-type-names-match-the-methods-that-produce-them-c-iter-ty>
-[MIT]: <https://github.com/rust-lang/rust/blob/master/LICENSE-MIT>
-[Macros]: <https://rust-lang.github.io/api-guidelines/print.html#macros>
-[Methods on collections that produce iterators follow `iter`, `iter_mut`, `into_iter` (C-ITER)]: <https://rust-lang.github.io/api-guidelines/print.html#methods-on-collections-that-produce-iterators-follow-iter-iter_mut-into_iter-c-iter>
-[More examples from the standard library]: <https://rust-lang.github.io/api-guidelines/print.html#more-examples-from-the-standard-library>
-[Names use a consistent word order (C-WORD-ORDER)]: <https://rust-lang.github.io/api-guidelines/print.html#names-use-a-consistent-word-order-c-word-order>
-[Naming]: <https://rust-lang.github.io/api-guidelines/print.html#naming>
-[Necessities]: <https://rust-lang.github.io/api-guidelines/print.html#necessities>
-[Newtypes encapsulate implementation details (C-NEWTYPE-HIDE)]: <https://rust-lang.github.io/api-guidelines/print.html#newtypes-encapsulate-implementation-details-c-newtype-hide>
-[Newtypes provide static distinctions (C-NEWTYPE)]: <https://rust-lang.github.io/api-guidelines/print.html#newtypes-provide-static-distinctions-c-newtype>
-[Non-consuming builders (preferred)]: <https://rust-lang.github.io/api-guidelines/print.html#non-consuming-builders-preferred>
-[Only smart pointers implement `Deref` and `DerefMut` (C-DEREF)]: <https://rust-lang.github.io/api-guidelines/print.html#only-smart-pointers-implement-deref-and-derefmut-c-deref>
-[Operator overloads are unsurprising (C-OVERLOAD)]: <https://rust-lang.github.io/api-guidelines/print.html#operator-overloads-are-unsurprising-c-overload>
-[Predictability]: <https://rust-lang.github.io/api-guidelines/print.html#predictability>
-[Prose contains hyperlinks to relevant things (C-LINK)]: <https://rust-lang.github.io/api-guidelines/print.html#prose-contains-hyperlinks-to-relevant-things-c-link>
-[Public dependencies of a stable crate are stable (C-STABLE)]: <https://rust-lang.github.io/api-guidelines/print.html#public-dependencies-of-a-stable-crate-are-stable-c-stable>
-[RFC 199]: <https://github.com/rust-lang/rfcs/blob/master/text/0199-ownership-variants.md>
-[RFC 344]: <https://github.com/rust-lang/rfcs/blob/master/text/0344-conventions-galore.md>
-[RFC 430]: <https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md>
-[RFC 505]: <https://github.com/rust-lang/rfcs/blob/master/text/0505-api-comment-conventions.md>
-[RFC 1105]: <https://github.com/rust-lang/rfcs/blob/master/text/1105-api-evolution.md>
-[RFC 1574]: <https://github.com/rust-lang/rfcs/blob/master/text/1574-more-api-documentation-conventions.md>
-[RFC 1687]: <https://github.com/rust-lang/rfcs/pull/1687>
-[Release notes document all significant changes (C-RELNOTES)]: <https://rust-lang.github.io/api-guidelines/print.html#release-notes-document-all-significant-changes-c-relnotes>
-[Rust API Guidelines Checklist]: <https://rust-lang.github.io/api-guidelines/print.html#rust-api-guidelines-checklist>
-[Rust Design Patterns]: <https://rust-unofficial.github.io/patterns/>
-[Rust FAQ]: <https://github.com/dtolnay/rust-faq#why-a-dual-mitasl2-license>
-[Rustdoc does not show unhelpful implementation details (C-HIDDEN)]: <https://rust-lang.github.io/api-guidelines/print.html#rustdoc-does-not-show-unhelpful-implementation-details-c-hidden>
-[Sealed traits protect against downstream implementations (C-SEALED)]: <https://rust-lang.github.io/api-guidelines/print.html#sealed-traits-protect-against-downstream-implementations-c-sealed>
-[Serde 0.9.0 release notes]: <https://github.com/serde-rs/serde/releases/tag/v0.9.0>
-[Serde 0.9.8 release notes]: <https://github.com/serde-rs/serde/releases/tag/v0.9.8>
-[Serde 1.0.0 release notes]: <https://github.com/serde-rs/serde/releases/tag/v1.0.0>
-[Smart pointers do not add inherent methods (C-SMART-PTR)]: <https://rust-lang.github.io/api-guidelines/print.html#smart-pointers-do-not-add-inherent-methods-c-smart-ptr>
-[Static enforcement]: <https://rust-lang.github.io/api-guidelines/print.html#static-enforcement>
-[Structs have private fields (C-STRUCT-PRIVATE)]: <https://rust-lang.github.io/api-guidelines/print.html#structs-have-private-fields-c-struct-private>
-[The benefit]: <https://rust-lang.github.io/api-guidelines/print.html#the-benefit>
-[Traits are object-safe if they may be useful as a trait object (C-OBJECT)]: <https://rust-lang.github.io/api-guidelines/print.html#traits-are-object-safe-if-they-may-be-useful-as-a-trait-object-c-object>
-[Type fragments are flexible (C-MACRO-TY)]: <https://rust-lang.github.io/api-guidelines/print.html#type-fragments-are-flexible-c-macro-ty>
-[Type safety]: <https://rust-lang.github.io/api-guidelines/print.html#type-safety>
-[Types are `Send` and `Sync` where possible (C-SEND-SYNC)]: <https://rust-lang.github.io/api-guidelines/print.html#types-are-send-and-sync-where-possible-c-send-sync>
-[Types eagerly implement common traits (C-COMMON-TRAITS)]: <https://rust-lang.github.io/api-guidelines/print.html#types-eagerly-implement-common-traits-c-common-traits>
-[Types for a set of flags are `bitflags`, not enums (C-BITFLAG)]: <https://rust-lang.github.io/api-guidelines/print.html#types-for-a-set-of-flags-are-bitflags-not-enums-c-bitflag>
-[`Arc<T>`]: <https://doc.rust-lang.org/std/sync/struct.Arc.html>
-[`Arc`]: <https://doc.rust-lang.org/std/sync/struct.Arc.html>
-[`AsMut`]: <https://doc.rust-lang.org/std/convert/trait.AsMut.html>
-[`AsRef`]: <https://doc.rust-lang.org/std/convert/trait.AsRef.html>
-[`AtomicBool`]: <https://doc.rust-lang.org/std/sync/atomic/struct.AtomicBool.html#method.into_inner>
-[`BTreeMap::iter_mut`]: <https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.iter_mut>
-[`BTreeMap::iter`]: <https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.iter>
-[`BTreeMap::keys`]: <https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.keys>
-[`BTreeMap::values`]: <https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.values>
-[`Box::from_raw`]: <https://doc.rust-lang.org/std/boxed/struct.Box.html#method.from_raw>
-[`Box::into_raw`]: <https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw>
-[`Box::new`]: <https://doc.rust-lang.org/stable/std/boxed/struct.Box.html#method.new>
-[`Box<T>`]: <https://doc.rust-lang.org/std/boxed/struct.Box.html>
-[`BufReader::into_inner()`]: <https://doc.rust-lang.org/std/io/struct.BufReader.html#method.into_inner>
-[`BufReader`]: <https://doc.rust-lang.org/std/io/struct.BufReader.html#method.into_inner>
-[`BufWriter::into_inner()`]: <https://doc.rust-lang.org/std/io/struct.BufWriter.html#method.into_inner>
-[`Cell::get`]: <https://doc.rust-lang.org/std/cell/struct.Cell.html#method.get>
-[`Clone`]: <https://doc.rust-lang.org/std/clone/trait.Clone.html>
-[`Command`]: <https://doc.rust-lang.org/std/process/struct.Command.html>
-[`Copy`]: <https://doc.rust-lang.org/std/marker/trait.Copy.html>
-[`Cow<'a, T>`]: <https://doc.rust-lang.org/std/borrow/enum.Cow.html>
-[`Debug` representation is never empty (C-DEBUG-NONEMPTY)]: <https://rust-lang.github.io/api-guidelines/print.html#debug-representation-is-never-empty-c-debug-nonempty>
-[`Debug`]: <https://doc.rust-lang.org/std/fmt/trait.Debug.html>
-[`Default`]: <https://doc.rust-lang.org/std/default/trait.Default.html>
-[`Deserialize`]: <https://docs.serde.rs/serde/trait.Deserialize.html>
-[`Display`]: <https://doc.rust-lang.org/std/fmt/trait.Display.html>
-[`Eq`]: <https://doc.rust-lang.org/std/cmp/trait.Eq.html>
-[`Error::description()`]: <https://doc.rust-lang.org/std/error/trait.Error.html#tymethod.description>
-[`Error::downcast_ref`]: <https://doc.rust-lang.org/std/error/trait.Error.html#method.downcast_ref-2>
-[`Extend`]: <https://doc.rust-lang.org/std/iter/trait.Extend.html>
-[`File::open`]: <https://doc.rust-lang.org/stable/std/fs/struct.File.html#method.open>
-[`From<Ipv6Addr>`]: <https://doc.rust-lang.org/std/net/struct.Ipv6Addr.html>
-[`FromIterator`]: <https://doc.rust-lang.org/std/iter/trait.FromIterator.html>
-[`From`]: <https://doc.rust-lang.org/std/convert/trait.From.html>
-[`GzDecoder`]: <https://docs.rs/flate2/0.2.19/flate2/read/struct.GzDecoder.html#method.into_inner>
-[`HashMap::insert`]: <https://doc.rust-lang.org/stable/std/collections/struct.HashMap.html#method.insert>
-[`Hash`]: <https://doc.rust-lang.org/std/hash/trait.Hash.html>
-[`IntoIter`]: <https://doc.rust-lang.org/std/vec/struct.IntoIter.html>
-[`Into`]: <https://doc.rust-lang.org/std/convert/trait.Into.html>
-[`IpAddr`]: <https://doc.rust-lang.org/std/net/enum.IpAddr.html>
-[`IterMut`]: <https://doc.rust-lang.org/std/slice/struct.IterMut.html>
-[`Iter`]: <https://doc.rust-lang.org/std/slice/struct.Iter.html>
-[`Iterator::collect`]: <https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.collect>
-[`Iterator::partition`]: <https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.partition>
-[`Iterator::unzip`]: <https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.unzip>
-[`Iterator`]: <https://doc.rust-lang.org/std/iter/trait.Iterator.html>
-[`JoinPathsError`]: <https://doc.rust-lang.org/std/env/struct.JoinPathsError.html>
-[`Keys`]: <https://doc.rust-lang.org/std/collections/btree_map/struct.Keys.html>
-[`LinkedHashMap`]: <https://docs.rs/linked-hash-map/0.4.2/linked_hash_map/struct.LinkedHashMap.html>
-[`LittleEndian`]: <https://docs.rs/byteorder/1.0.0/byteorder/enum.LittleEndian.html>
-[`Mmap::open_with_offset`]: <https://docs.rs/memmap/0.5.2/memmap/struct.Mmap.html#method.open_with_offset>
-[`Mmap::open`]: <https://docs.rs/memmap/0.5.2/memmap/struct.Mmap.html#method.open>
-[`Option::into_iter`]: <https://doc.rust-lang.org/std/option/enum.Option.html#method.into_iter>
-[`Ord`]: <https://doc.rust-lang.org/std/cmp/trait.Ord.html>
-[`OsString`]: <https://doc.rust-lang.org/std/ffi/struct.OsString.html>
-[`ParseBoolError`]: <https://doc.rust-lang.org/std/str/struct.ParseBoolError.html>
-[`ParseCharError`]: <https://doc.rust-lang.org/std/char/struct.ParseCharError.html>
-[`ParseFloatError`]: <https://doc.rust-lang.org/std/num/struct.ParseFloatError.html>
-[`ParseIntError`]: <https://doc.rust-lang.org/std/num/struct.ParseIntError.html>
-[`ParseOptions`]: <https://docs.rs/url/1.4.0/url/struct.ParseOptions.html>
-[`PartialEq`]: <https://doc.rust-lang.org/std/cmp/trait.PartialEq.html>
-[`PartialOrd`]: <https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html>
-[`Path::to_str`]: <https://doc.rust-lang.org/std/path/struct.Path.html#method.to_str>
-[`Path`]: <https://doc.rust-lang.org/std/path/struct.Path.html>
-[`PercentEncode`]: <https://docs.rs/url/1.4.0/url/percent_encoding/struct.PercentEncode.html>
-[`Rc<T>`]: <https://doc.rust-lang.org/std/rc/struct.Rc.html>
-[`RecvTimeoutError`]: <https://doc.rust-lang.org/std/sync/mpsc/enum.RecvTimeoutError.html>
-[`RefCell::as_ptr`]: <https://doc.rust-lang.org/std/cell/struct.RefCell.html#method.as_ptr>
-[`Result::as_ref`]: <https://doc.rust-lang.org/std/result/enum.Result.html#method.as_ref>
-[`Send`]: <https://doc.rust-lang.org/std/marker/trait.Send.html>
-[`Serialize`]: <https://docs.serde.rs/serde/trait.Serialize.html>
-[`String::from_utf8`]: <https://doc.rust-lang.org/std/string/struct.String.html#method.from_utf8>
-[`String::into_bytes()`]: <https://doc.rust-lang.org/std/string/struct.String.html#method.into_bytes>
-[`String`]: <https://doc.rust-lang.org/std/string/struct.String.html>
-[`StripPrefixError`]: <https://doc.rust-lang.org/std/path/struct.StripPrefixError.html>
-[`Sync`]: <https://doc.rust-lang.org/std/marker/trait.Sync.html>
-[`TcpStream::connect`]: <https://doc.rust-lang.org/stable/std/net/struct.TcpStream.html#method.connect>
-[`TempDir::into_path`]: <https://docs.rs/tempdir/0.3.5/tempdir/struct.TempDir.html#method.into_path>
-[`TempDir::path`]: <https://docs.rs/tempdir/0.3.5/tempdir/struct.TempDir.html#method.path>
-[`TryFrom`]: <https://doc.rust-lang.org/std/convert/trait.TryFrom.html>
-[`TryInto`]: <https://doc.rust-lang.org/std/convert/trait.TryInto.html>
-[`UdpSocket::bind`]: <https://doc.rust-lang.org/stable/std/net/struct.UdpSocket.html#method.bind>
-[`Url`]: <https://docs.rs/url/1.4.0/url/struct.Url.html>
-[`Values`]: <https://doc.rust-lang.org/std/collections/btree_map/struct.Values.html>
-[`Vec::as_mut_slice`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html#method.as_mut_slice>
-[`Vec::binary_search`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html#method.binary_search>
-[`Vec::insert`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html#method.insert>
-[`Vec::into_iter`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html#method.into_iter>
-[`Vec::iter_mut`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html#method.iter_mut>
-[`Vec::iter`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html#method.iter>
-[`Vec<T>`]: <https://doc.rust-lang.org/std/vec/struct.Vec.html>
-[`as_bytes`]: <https://doc.rust-lang.org/std/primitive.str.html#method.as_bytes>
-[`bitflags`]: <https://github.com/bitflags/bitflags>
-[`byteorder::ByteOrder`]: <https://docs.rs/byteorder/1.1.0/byteorder/trait.ByteOrder.html>
-[`error-chain`]: <https://docs.rs/error-chain>
-[`f64::to_radians()`]: <https://doc.rust-lang.org/std/primitive.f64.html#method.to_radians>
-[`flate2::read::GzDecoder::new`]: <https://docs.rs/flate2/0.2/flate2/read/struct.GzDecoder.html#method.new>
-[`flate2::write::GzEncoder::new`]: <https://docs.rs/flate2/0.2/flate2/write/struct.GzEncoder.html#method.new>
-[`from_utf8`]: <https://doc.rust-lang.org/std/str/fn.from_utf8.html>
-[`impl Trait`]: <https://github.com/rust-lang/rfcs/blob/master/text/1522-conservative-impl-trait.md>
-[`io::Read`]: <https://doc.rust-lang.org/std/io/trait.Read.html>
-[`io::Write`]: <https://doc.rust-lang.org/std/io/trait.Write.html>
-[`percent_encode`]: <https://docs.rs/url/1.4.0/url/percent_encoding/fn.percent_encode.html>
-[`pub(crate)`]: <https://github.com/rust-lang/rfcs/blob/master/text/1422-pub-restricted.md>
-[`reqwest::Error::get_ref`]: <https://docs.rs/reqwest/0.7.2/reqwest/struct.Error.html#method.get_ref>
+["Link all the things"]: https://github.com/rust-lang/rfcs/blob/master/text/1574-more-api-documentation-conventions.md#link-all-the-things
+["`impl Trait` for returning complex types with ease"]: https://rust-lang.github.io/edition-guide/rust-2018/trait-system/impl-trait-for-returning-complex-types-with-ease.html
+[Ad-hoc conversions follow `as_`, `to_`, `into_` conventions (C-CONV)]: https://rust-lang.github.io/api-guidelines/print.html#ad-hoc-conversions-follow-as_-to_-into_-conventions-c-conv
+[Advantages of generics]: https://rust-lang.github.io/api-guidelines/print.html#advantages-of-generics
+[Advantages of trait objects]: https://rust-lang.github.io/api-guidelines/print.html#advantages-of-trait-objects
+[All items have a rustdoc example (C-EXAMPLE)]: https://rust-lang.github.io/api-guidelines/print.html#all-items-have-a-rustdoc-example-c-example
+[All public types implement `Debug` (C-DEBUG)]: https://rust-lang.github.io/api-guidelines/print.html#all-public-types-implement-debug-c-debug
+[Apache 2.0]: https://github.com/rust-lang/rust/blob/master/LICENSE-APACHE
+[Apache-2.0]: https://choosealicense.com/licenses/apache-2.0/
+[Arguments convey meaning through types, not `bool` or `Option` (C-CUSTOM-TYPE)]: https://rust-lang.github.io/api-guidelines/print.html#arguments-convey-meaning-through-types-not-bool-or-option-c-custom-type
+[Binary number types provide `Hex`, `Octal`, `Binary` formatting (C-NUM-FMT)]: https://rust-lang.github.io/api-guidelines/print.html#binary-number-types-provide-hex-octal-binary-formatting-c-num-fmt
+[Builders enable construction of complex values (C-BUILDER)]: https://rust-lang.github.io/api-guidelines/print.html#builders-enable-construction-of-complex-values-c-builder
+[C-ANYWHERE]: https://rust-lang.github.io/api-guidelines/macros.html#c-anywhere
+[C-BITFLAG]: https://rust-lang.github.io/api-guidelines/type-safety.html#c-bitflag
+[C-BUILDER]: https://rust-lang.github.io/api-guidelines/type-safety.html#c-builder
+[C-CALLER-CONTROL]: https://rust-lang.github.io/api-guidelines/flexibility.html#c-caller-control
+[C-CASE]: https://rust-lang.github.io/api-guidelines/naming.html#c-case
+[C-COLLECT]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-collect
+[C-COMMON-TRAITS]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-common-traits
+[C-CONV-SPECIFIC]: https://rust-lang.github.io/api-guidelines/predictability.html#c-conv-specific
+[C-CONV-TRAITS]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-conv-traits
+[C-CONV]: https://rust-lang.github.io/api-guidelines/naming.html#c-conv
+[C-CRATE-DOC]: https://rust-lang.github.io/api-guidelines/documentation.html#c-crate-doc
+[C-CTOR]: https://rust-lang.github.io/api-guidelines/predictability.html#c-ctor
+[C-CUSTOM-TYPE]: https://rust-lang.github.io/api-guidelines/type-safety.html#c-custom-type
+[C-DEBUG-NONEMPTY]: https://rust-lang.github.io/api-guidelines/debuggability.html#c-debug-nonempty
+[C-DEBUG]: https://rust-lang.github.io/api-guidelines/debuggability.html#c-debug
+[C-DEREF]: https://rust-lang.github.io/api-guidelines/predictability.html#c-deref
+[C-DTOR-BLOCK]: https://rust-lang.github.io/api-guidelines/dependability.html#c-dtor-block
+[C-DTOR-FAIL]: https://rust-lang.github.io/api-guidelines/dependability.html#c-dtor-fail
+[C-EVOCATIVE]: https://rust-lang.github.io/api-guidelines/macros.html#c-evocative
+[C-EXAMPLE]: https://rust-lang.github.io/api-guidelines/documentation.html#c-example
+[C-FAILURE]: https://rust-lang.github.io/api-guidelines/documentation.html#c-failure
+[C-FEATURE]: https://rust-lang.github.io/api-guidelines/naming.html#c-feature
+[C-GENERIC]: https://rust-lang.github.io/api-guidelines/flexibility.html#c-generic
+[C-GETTER]: https://rust-lang.github.io/api-guidelines/naming.html#c-getter
+[C-GOOD-ERR]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-good-err
+[C-HIDDEN]: https://rust-lang.github.io/api-guidelines/documentation.html#c-hidden
+[C-INTERMEDIATE]: https://rust-lang.github.io/api-guidelines/flexibility.html#c-intermediate
+[C-ITER-TY]: https://rust-lang.github.io/api-guidelines/naming.html#c-iter-ty
+[C-ITER]: https://rust-lang.github.io/api-guidelines/naming.html#c-iter
+[C-LINK]: https://rust-lang.github.io/api-guidelines/documentation.html#c-link
+[C-MACRO-ATTR]: https://rust-lang.github.io/api-guidelines/macros.html#c-macro-attr
+[C-MACRO-TY]: https://rust-lang.github.io/api-guidelines/macros.html#c-macro-ty
+[C-MACRO-VIS]: https://rust-lang.github.io/api-guidelines/macros.html#c-macro-vis
+[C-METADATA]: https://rust-lang.github.io/api-guidelines/documentation.html#c-metadata
+[C-METHOD]: https://rust-lang.github.io/api-guidelines/predictability.html#c-method
+[C-NEWTYPE-HIDE]: https://rust-lang.github.io/api-guidelines/future-proofing.html#c-newtype-hide
+[C-NEWTYPE]: https://rust-lang.github.io/api-guidelines/type-safety.html#c-newtype
+[C-NO-OUT]: https://rust-lang.github.io/api-guidelines/predictability.html#c-no-out
+[C-NUM-FMT]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-num-fmt
+[C-OBJECT]: https://rust-lang.github.io/api-guidelines/flexibility.html#c-object
+[C-OVERLOAD]: https://rust-lang.github.io/api-guidelines/predictability.html#c-overload
+[C-PERMISSIVE]: https://rust-lang.github.io/api-guidelines/necessities.html#c-permissive
+[C-QUESTION-MARK]: https://rust-lang.github.io/api-guidelines/documentation.html#c-question-mark
+[C-RELNOTES]: https://rust-lang.github.io/api-guidelines/documentation.html#c-relnotes
+[C-RW-VALUE]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-rw-value
+[C-SEALED]: https://rust-lang.github.io/api-guidelines/future-proofing.html#c-sealed
+[C-SEND-SYNC]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-send-sync
+[C-SERDE]: https://rust-lang.github.io/api-guidelines/interoperability.html#c-serde
+[C-SMART-PTR]: https://rust-lang.github.io/api-guidelines/predictability.html#c-smart-ptr
+[C-STABLE]: https://rust-lang.github.io/api-guidelines/necessities.html#c-stable
+[C-STRUCT-BOUNDS]: https://rust-lang.github.io/api-guidelines/future-proofing.html#c-struct-bounds
+[C-STRUCT-PRIVATE]: https://rust-lang.github.io/api-guidelines/future-proofing.html#c-struct-private
+[C-VALIDATE]: https://rust-lang.github.io/api-guidelines/dependability.html#c-validate
+[C-WORD-ORDER]: https://rust-lang.github.io/api-guidelines/naming.html#c-word-order
+[Caller decides where to copy and place data (C-CALLER-CONTROL)]: https://rust-lang.github.io/api-guidelines/print.html#caller-decides-where-to-copy-and-place-data-c-caller-control
+[Cargo feature]: http://doc.crates.io/manifest.html#the-features-section
+[Cargo.toml includes all common metadata (C-METADATA)]: https://rust-lang.github.io/api-guidelines/print.html#cargotoml-includes-all-common-metadata-c-metadata
+[Casing conforms to RFC 430 (C-CASE)]: https://rust-lang.github.io/api-guidelines/print.html#casing-conforms-to-rfc-430-c-case
+[Collections implement `FromIterator` and `Extend` (C-COLLECT)]: https://rust-lang.github.io/api-guidelines/print.html#collections-implement-fromiterator-and-extend-c-collect
+[Constructors are static, inherent methods (C-CTOR)]: https://rust-lang.github.io/api-guidelines/print.html#constructors-are-static-inherent-methods-c-ctor
+[Consuming builders]: https://rust-lang.github.io/api-guidelines/print.html#consuming-builders
+[Conversions live on the most specific type involved (C-CONV-SPECIFIC)]: https://rust-lang.github.io/api-guidelines/print.html#conversions-live-on-the-most-specific-type-involved-c-conv-specific
+[Conversions use the standard traits `From`, `AsRef`, `AsMut` (C-CONV-TRAITS)]: https://rust-lang.github.io/api-guidelines/print.html#conversions-use-the-standard-traits-from-asref-asmut-c-conv-traits
+[Crate and its dependencies have a permissive license (C-PERMISSIVE)]: https://rust-lang.github.io/api-guidelines/print.html#crate-and-its-dependencies-have-a-permissive-license-c-permissive
+[Crate level docs are thorough and include examples (C-CRATE-DOC)]: https://rust-lang.github.io/api-guidelines/print.html#crate-level-docs-are-thorough-and-include-examples-c-crate-doc
+[Data structures do not duplicate derived trait bounds (C-STRUCT-BOUNDS)]: https://rust-lang.github.io/api-guidelines/print.html#data-structures-do-not-duplicate-derived-trait-bounds-c-struct-bounds
+[Data structures implement Serde's `Serialize`, `Deserialize` (C-SERDE)]: https://rust-lang.github.io/api-guidelines/print.html#data-structures-implement-serdes-serialize-deserialize-c-serde
+[Debuggability]: https://rust-lang.github.io/api-guidelines/print.html#debuggability
+[Dependability]: https://rust-lang.github.io/api-guidelines/print.html#dependability
+[Destructors never fail (C-DTOR-FAIL)]: https://rust-lang.github.io/api-guidelines/print.html#destructors-never-fail-c-dtor-fail
+[Destructors that may block have alternatives (C-DTOR-BLOCK)]: https://rust-lang.github.io/api-guidelines/print.html#destructors-that-may-block-have-alternatives-c-dtor-block
+[Diesel change log]: https://github.com/diesel-rs/diesel/blob/master/CHANGELOG.md
+[Disadvantages of generics]: https://rust-lang.github.io/api-guidelines/print.html#disadvantages-of-generics
+[Disadvantages of trait objects]: https://rust-lang.github.io/api-guidelines/print.html#disadvantages-of-trait-objects
+[Documentation]: https://rust-lang.github.io/api-guidelines/print.html#documentation
+[Dynamic enforcement with `debug_assert!`]: https://rust-lang.github.io/api-guidelines/print.html#dynamic-enforcement-with-debug_assert
+[Dynamic enforcement with opt-out]: https://rust-lang.github.io/api-guidelines/print.html#dynamic-enforcement-with-opt-out
+[Dynamic enforcement]: https://rust-lang.github.io/api-guidelines/print.html#dynamic-enforcement
+[Elegant Library APIs in Rust]: https://deterministic.space/elegant-apis-in-rust.html
+[Error types are meaningful and well-behaved (C-GOOD-ERR)]: https://rust-lang.github.io/api-guidelines/print.html#error-types-are-meaningful-and-well-behaved-c-good-err
+[Examples 1]: https://rust-lang.github.io/api-guidelines/print.html#examples-1
+[Examples 2]: https://rust-lang.github.io/api-guidelines/print.html#examples-2
+[Examples from the standard library]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library
+[Examples from the standard library 1]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-1
+[Examples from the standard library 2]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-2
+[Examples from the standard library 3]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-3
+[Examples from the standard library 4]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-4
+[Examples from the standard library 5]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-5
+[Examples from the standard library 6]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-6
+[Examples from the standard library 7]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-7
+[Examples from the standard library 8]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-8
+[Examples from the standard library 9]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-9
+[Examples from the standard library 10]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-10
+[Examples from the standard library 11]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-11
+[Examples from the standard library 12]: https://rust-lang.github.io/api-guidelines/print.html#examples-from-the-standard-library-12
+[Examples of error messages]: https://rust-lang.github.io/api-guidelines/print.html#examples-of-error-messages
+[Examples use `?`, not `try!`, not `unwrap` (C-QUESTION-MARK)]: https://rust-lang.github.io/api-guidelines/print.html#examples-use--not-try-not-unwrap-c-question-mark
+[Examples]: https://rust-lang.github.io/api-guidelines/print.html#examples
+[Exceptions]: https://rust-lang.github.io/api-guidelines/print.html#exceptions
+[External links]: https://rust-lang.github.io/api-guidelines/print.html#external-links
+[Feature names are free of placeholder words (C-FEATURE)]: https://rust-lang.github.io/api-guidelines/print.html#feature-names-are-free-of-placeholder-words-c-feature
+[Flexibility]: https://rust-lang.github.io/api-guidelines/print.html#flexibility
+[Function docs include error, panic, and safety considerations (C-FAILURE)]: https://rust-lang.github.io/api-guidelines/print.html#function-docs-include-error-panic-and-safety-considerations-c-failure
+[Functions do not take out-parameters (C-NO-OUT)]: https://rust-lang.github.io/api-guidelines/print.html#functions-do-not-take-out-parameters-c-no-out
+[Functions expose intermediate results to avoid duplicate work (C-INTERMEDIATE)]: https://rust-lang.github.io/api-guidelines/print.html#functions-expose-intermediate-results-to-avoid-duplicate-work-c-intermediate
+[Functions minimize assumptions about parameters by using generics (C-GENERIC)]: https://rust-lang.github.io/api-guidelines/print.html#functions-minimize-assumptions-about-parameters-by-using-generics-c-generic
+[Functions validate their arguments (C-VALIDATE)]: https://rust-lang.github.io/api-guidelines/print.html#functions-validate-their-arguments-c-validate
+[Functions with a clear receiver are methods (C-METHOD)]: https://rust-lang.github.io/api-guidelines/print.html#functions-with-a-clear-receiver-are-methods-c-method
+[Future proofing]: https://rust-lang.github.io/api-guidelines/print.html#future-proofing
+[Generic reader/writer functions take `R: Read` and `W: Write` by value (C-RW-VALUE)]: https://rust-lang.github.io/api-guidelines/print.html#generic-readerwriter-functions-take-r-read-and-w-write-by-value-c-rw-value
+[Getter names follow Rust convention (C-GETTER)]: https://rust-lang.github.io/api-guidelines/print.html#getter-names-follow-rust-convention-c-getter
+[Gitter channel]: https://gitter.im/rust-impl-period/WG-libs-guidelines
+[Input syntax is evocative of the output (C-EVOCATIVE)]: https://rust-lang.github.io/api-guidelines/print.html#input-syntax-is-evocative-of-the-output-c-evocative
+[Interoperability]: https://rust-lang.github.io/api-guidelines/print.html#interoperability
+[Item macros compose well with attributes (C-MACRO-ATTR)]: https://rust-lang.github.io/api-guidelines/print.html#item-macros-compose-well-with-attributes-c-macro-attr
+[Item macros support visibility specifiers (C-MACRO-VIS)]: https://rust-lang.github.io/api-guidelines/print.html#item-macros-support-visibility-specifiers-c-macro-vis
+[Item macros work anywhere that items are allowed (C-ANYWHERE)]: https://rust-lang.github.io/api-guidelines/print.html#item-macros-work-anywhere-that-items-are-allowed-c-anywhere
+[Iterator type names match the methods that produce them (C-ITER-TY)]: https://rust-lang.github.io/api-guidelines/print.html#iterator-type-names-match-the-methods-that-produce-them-c-iter-ty
+[MIT]: https://github.com/rust-lang/rust/blob/master/LICENSE-MIT
+[Macros]: https://rust-lang.github.io/api-guidelines/print.html#macros
+[Methods on collections that produce iterators follow `iter`, `iter_mut`, `into_iter` (C-ITER)]: https://rust-lang.github.io/api-guidelines/print.html#methods-on-collections-that-produce-iterators-follow-iter-iter_mut-into_iter-c-iter
+[More examples from the standard library]: https://rust-lang.github.io/api-guidelines/print.html#more-examples-from-the-standard-library
+[Names use a consistent word order (C-WORD-ORDER)]: https://rust-lang.github.io/api-guidelines/print.html#names-use-a-consistent-word-order-c-word-order
+[Naming]: https://rust-lang.github.io/api-guidelines/print.html#naming
+[Necessities]: https://rust-lang.github.io/api-guidelines/print.html#necessities
+[Newtypes encapsulate implementation details (C-NEWTYPE-HIDE)]: https://rust-lang.github.io/api-guidelines/print.html#newtypes-encapsulate-implementation-details-c-newtype-hide
+[Newtypes provide static distinctions (C-NEWTYPE)]: https://rust-lang.github.io/api-guidelines/print.html#newtypes-provide-static-distinctions-c-newtype
+[Non-consuming builders (preferred)]: https://rust-lang.github.io/api-guidelines/print.html#non-consuming-builders-preferred
+[Only smart pointers implement `Deref` and `DerefMut` (C-DEREF)]: https://rust-lang.github.io/api-guidelines/print.html#only-smart-pointers-implement-deref-and-derefmut-c-deref
+[Operator overloads are unsurprising (C-OVERLOAD)]: https://rust-lang.github.io/api-guidelines/print.html#operator-overloads-are-unsurprising-c-overload
+[Predictability]: https://rust-lang.github.io/api-guidelines/print.html#predictability
+[Prose contains hyperlinks to relevant things (C-LINK)]: https://rust-lang.github.io/api-guidelines/print.html#prose-contains-hyperlinks-to-relevant-things-c-link
+[Public dependencies of a stable crate are stable (C-STABLE)]: https://rust-lang.github.io/api-guidelines/print.html#public-dependencies-of-a-stable-crate-are-stable-c-stable
+[RFC 199]: https://github.com/rust-lang/rfcs/blob/master/text/0199-ownership-variants.md
+[RFC 344]: https://github.com/rust-lang/rfcs/blob/master/text/0344-conventions-galore.md
+[RFC 430]: https://github.com/rust-lang/rfcs/blob/master/text/0430-finalizing-naming-conventions.md
+[RFC 505]: https://github.com/rust-lang/rfcs/blob/master/text/0505-api-comment-conventions.md
+[RFC 1105]: https://github.com/rust-lang/rfcs/blob/master/text/1105-api-evolution.md
+[RFC 1574]: https://github.com/rust-lang/rfcs/blob/master/text/1574-more-api-documentation-conventions.md
+[RFC 1687]: https://github.com/rust-lang/rfcs/pull/1687
+[Release notes document all significant changes (C-RELNOTES)]: https://rust-lang.github.io/api-guidelines/print.html#release-notes-document-all-significant-changes-c-relnotes
+[Rust API Guidelines Checklist]: https://rust-lang.github.io/api-guidelines/print.html#rust-api-guidelines-checklist
+[Rust Design Patterns]: https://rust-unofficial.github.io/patterns/
+[Rust FAQ]: https://github.com/dtolnay/rust-faq#why-a-dual-mitasl2-license
+[Rustdoc does not show unhelpful implementation details (C-HIDDEN)]: https://rust-lang.github.io/api-guidelines/print.html#rustdoc-does-not-show-unhelpful-implementation-details-c-hidden
+[Sealed traits protect against downstream implementations (C-SEALED)]: https://rust-lang.github.io/api-guidelines/print.html#sealed-traits-protect-against-downstream-implementations-c-sealed
+[Serde 0.9.0 release notes]: https://github.com/serde-rs/serde/releases/tag/v0.9.0
+[Serde 0.9.8 release notes]: https://github.com/serde-rs/serde/releases/tag/v0.9.8
+[Serde 1.0.0 release notes]: https://github.com/serde-rs/serde/releases/tag/v1.0.0
+[Smart pointers do not add inherent methods (C-SMART-PTR)]: https://rust-lang.github.io/api-guidelines/print.html#smart-pointers-do-not-add-inherent-methods-c-smart-ptr
+[Static enforcement]: https://rust-lang.github.io/api-guidelines/print.html#static-enforcement
+[Structs have private fields (C-STRUCT-PRIVATE)]: https://rust-lang.github.io/api-guidelines/print.html#structs-have-private-fields-c-struct-private
+[The benefit]: https://rust-lang.github.io/api-guidelines/print.html#the-benefit
+[Traits are object-safe if they may be useful as a trait object (C-OBJECT)]: https://rust-lang.github.io/api-guidelines/print.html#traits-are-object-safe-if-they-may-be-useful-as-a-trait-object-c-object
+[Type fragments are flexible (C-MACRO-TY)]: https://rust-lang.github.io/api-guidelines/print.html#type-fragments-are-flexible-c-macro-ty
+[Type safety]: https://rust-lang.github.io/api-guidelines/print.html#type-safety
+[Types are `Send` and `Sync` where possible (C-SEND-SYNC)]: https://rust-lang.github.io/api-guidelines/print.html#types-are-send-and-sync-where-possible-c-send-sync
+[Types eagerly implement common traits (C-COMMON-TRAITS)]: https://rust-lang.github.io/api-guidelines/print.html#types-eagerly-implement-common-traits-c-common-traits
+[Types for a set of flags are `bitflags`, not enums (C-BITFLAG)]: https://rust-lang.github.io/api-guidelines/print.html#types-for-a-set-of-flags-are-bitflags-not-enums-c-bitflag
+[`Arc<T>`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
+[`Arc`]: https://doc.rust-lang.org/std/sync/struct.Arc.html
+[`AsMut`]: https://doc.rust-lang.org/std/convert/trait.AsMut.html
+[`AsRef`]: https://doc.rust-lang.org/std/convert/trait.AsRef.html
+[`AtomicBool`]: https://doc.rust-lang.org/std/sync/atomic/struct.AtomicBool.html#method.into_inner
+[`BTreeMap::iter_mut`]: https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.iter_mut
+[`BTreeMap::iter`]: https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.iter
+[`BTreeMap::keys`]: https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.keys
+[`BTreeMap::values`]: https://doc.rust-lang.org/std/collections/struct.BTreeMap.html#method.values
+[`Box::from_raw`]: https://doc.rust-lang.org/std/boxed/struct.Box.html#method.from_raw
+[`Box::into_raw`]: https://doc.rust-lang.org/std/boxed/struct.Box.html#method.into_raw
+[`Box::new`]: https://doc.rust-lang.org/stable/std/boxed/struct.Box.html#method.new
+[`Box<T>`]: https://doc.rust-lang.org/std/boxed/struct.Box.html
+[`BufReader::into_inner()`]: https://doc.rust-lang.org/std/io/struct.BufReader.html#method.into_inner
+[`BufReader`]: https://doc.rust-lang.org/std/io/struct.BufReader.html#method.into_inner
+[`BufWriter::into_inner()`]: https://doc.rust-lang.org/std/io/struct.BufWriter.html#method.into_inner
+[`Cell::get`]: https://doc.rust-lang.org/std/cell/struct.Cell.html#method.get
+[`Clone`]: https://doc.rust-lang.org/std/clone/trait.Clone.html
+[`Command`]: https://doc.rust-lang.org/std/process/struct.Command.html
+[`Copy`]: https://doc.rust-lang.org/std/marker/trait.Copy.html
+[`Cow<'a, T>`]: https://doc.rust-lang.org/std/borrow/enum.Cow.html
+[`Debug` representation is never empty (C-DEBUG-NONEMPTY)]: https://rust-lang.github.io/api-guidelines/print.html#debug-representation-is-never-empty-c-debug-nonempty
+[`Debug`]: https://doc.rust-lang.org/std/fmt/trait.Debug.html
+[`Default`]: https://doc.rust-lang.org/std/default/trait.Default.html
+[`Deserialize`]: https://docs.serde.rs/serde/trait.Deserialize.html
+[`Display`]: https://doc.rust-lang.org/std/fmt/trait.Display.html
+[`Eq`]: https://doc.rust-lang.org/std/cmp/trait.Eq.html
+[`Error::description()`]: https://doc.rust-lang.org/std/error/trait.Error.html#tymethod.description
+[`Error::downcast_ref`]: https://doc.rust-lang.org/std/error/trait.Error.html#method.downcast_ref-2
+[`Extend`]: https://doc.rust-lang.org/std/iter/trait.Extend.html
+[`File::open`]: https://doc.rust-lang.org/stable/std/fs/struct.File.html#method.open
+[`From<Ipv6Addr>`]: https://doc.rust-lang.org/std/net/struct.Ipv6Addr.html
+[`FromIterator`]: https://doc.rust-lang.org/std/iter/trait.FromIterator.html
+[`From`]: https://doc.rust-lang.org/std/convert/trait.From.html
+[`GzDecoder`]: https://docs.rs/flate2/0.2.19/flate2/read/struct.GzDecoder.html#method.into_inner
+[`HashMap::insert`]: https://doc.rust-lang.org/stable/std/collections/struct.HashMap.html#method.insert
+[`Hash`]: https://doc.rust-lang.org/std/hash/trait.Hash.html
+[`IntoIter`]: https://doc.rust-lang.org/std/vec/struct.IntoIter.html
+[`Into`]: https://doc.rust-lang.org/std/convert/trait.Into.html
+[`IpAddr`]: https://doc.rust-lang.org/std/net/enum.IpAddr.html
+[`IterMut`]: https://doc.rust-lang.org/std/slice/struct.IterMut.html
+[`Iter`]: https://doc.rust-lang.org/std/slice/struct.Iter.html
+[`Iterator::collect`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.collect
+[`Iterator::partition`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.partition
+[`Iterator::unzip`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.unzip
+[`Iterator`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html
+[`JoinPathsError`]: https://doc.rust-lang.org/std/env/struct.JoinPathsError.html
+[`Keys`]: https://doc.rust-lang.org/std/collections/btree_map/struct.Keys.html
+[`LinkedHashMap`]: https://docs.rs/linked-hash-map/0.4.2/linked_hash_map/struct.LinkedHashMap.html
+[`LittleEndian`]: https://docs.rs/byteorder/1.0.0/byteorder/enum.LittleEndian.html
+[`Mmap::open_with_offset`]: https://docs.rs/memmap/0.5.2/memmap/struct.Mmap.html#method.open_with_offset
+[`Mmap::open`]: https://docs.rs/memmap/0.5.2/memmap/struct.Mmap.html#method.open
+[`Option::into_iter`]: https://doc.rust-lang.org/std/option/enum.Option.html#method.into_iter
+[`Ord`]: https://doc.rust-lang.org/std/cmp/trait.Ord.html
+[`OsString`]: https://doc.rust-lang.org/std/ffi/struct.OsString.html
+[`ParseBoolError`]: https://doc.rust-lang.org/std/str/struct.ParseBoolError.html
+[`ParseCharError`]: https://doc.rust-lang.org/std/char/struct.ParseCharError.html
+[`ParseFloatError`]: https://doc.rust-lang.org/std/num/struct.ParseFloatError.html
+[`ParseIntError`]: https://doc.rust-lang.org/std/num/struct.ParseIntError.html
+[`ParseOptions`]: https://docs.rs/url/1.4.0/url/struct.ParseOptions.html
+[`PartialEq`]: https://doc.rust-lang.org/std/cmp/trait.PartialEq.html
+[`PartialOrd`]: https://doc.rust-lang.org/std/cmp/trait.PartialOrd.html
+[`Path::to_str`]: https://doc.rust-lang.org/std/path/struct.Path.html#method.to_str
+[`Path`]: https://doc.rust-lang.org/std/path/struct.Path.html
+[`PercentEncode`]: https://docs.rs/url/1.4.0/url/percent_encoding/struct.PercentEncode.html
+[`Rc<T>`]: https://doc.rust-lang.org/std/rc/struct.Rc.html
+[`RecvTimeoutError`]: https://doc.rust-lang.org/std/sync/mpsc/enum.RecvTimeoutError.html
+[`RefCell::as_ptr`]: https://doc.rust-lang.org/std/cell/struct.RefCell.html#method.as_ptr
+[`Result::as_ref`]: https://doc.rust-lang.org/std/result/enum.Result.html#method.as_ref
+[`Send`]: https://doc.rust-lang.org/std/marker/trait.Send.html
+[`Serialize`]: https://docs.serde.rs/serde/trait.Serialize.html
+[`String::from_utf8`]: https://doc.rust-lang.org/std/string/struct.String.html#method.from_utf8
+[`String::into_bytes()`]: https://doc.rust-lang.org/std/string/struct.String.html#method.into_bytes
+[`String`]: https://doc.rust-lang.org/std/string/struct.String.html
+[`StripPrefixError`]: https://doc.rust-lang.org/std/path/struct.StripPrefixError.html
+[`Sync`]: https://doc.rust-lang.org/std/marker/trait.Sync.html
+[`TcpStream::connect`]: https://doc.rust-lang.org/stable/std/net/struct.TcpStream.html#method.connect
+[`TempDir::into_path`]: https://docs.rs/tempdir/0.3.5/tempdir/struct.TempDir.html#method.into_path
+[`TempDir::path`]: https://docs.rs/tempdir/0.3.5/tempdir/struct.TempDir.html#method.path
+[`TryFrom`]: https://doc.rust-lang.org/std/convert/trait.TryFrom.html
+[`TryInto`]: https://doc.rust-lang.org/std/convert/trait.TryInto.html
+[`UdpSocket::bind`]: https://doc.rust-lang.org/stable/std/net/struct.UdpSocket.html#method.bind
+[`Url`]: https://docs.rs/url/1.4.0/url/struct.Url.html
+[`Values`]: https://doc.rust-lang.org/std/collections/btree_map/struct.Values.html
+[`Vec::as_mut_slice`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.as_mut_slice
+[`Vec::binary_search`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.binary_search
+[`Vec::insert`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.insert
+[`Vec::into_iter`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.into_iter
+[`Vec::iter_mut`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.iter_mut
+[`Vec::iter`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.iter
+[`Vec<T>`]: https://doc.rust-lang.org/std/vec/struct.Vec.html
+[`as_bytes`]: https://doc.rust-lang.org/std/primitive.str.html#method.as_bytes
+[`bitflags`]: https://github.com/bitflags/bitflags
+[`byteorder::ByteOrder`]: https://docs.rs/byteorder/1.1.0/byteorder/trait.ByteOrder.html
+[`error-chain`]: https://docs.rs/error-chain
+[`f64::to_radians()`]: https://doc.rust-lang.org/std/primitive.f64.html#method.to_radians
+[`flate2::read::GzDecoder::new`]: https://docs.rs/flate2/0.2/flate2/read/struct.GzDecoder.html#method.new
+[`flate2::write::GzEncoder::new`]: https://docs.rs/flate2/0.2/flate2/write/struct.GzEncoder.html#method.new
+[`from_utf8`]: https://doc.rust-lang.org/std/str/fn.from_utf8.html
+[`impl Trait`]: https://github.com/rust-lang/rfcs/blob/master/text/1522-conservative-impl-trait.md
+[`io::Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
+[`io::Write`]: https://doc.rust-lang.org/std/io/trait.Write.html
+[`percent_encode`]: https://docs.rs/url/1.4.0/url/percent_encoding/fn.percent_encode.html
+[`pub(crate)`]: https://github.com/rust-lang/rfcs/blob/master/text/1422-pub-restricted.md
+[`reqwest::Error::get_ref`]: https://docs.rs/reqwest/0.7.2/reqwest/struct.Error.html#method.get_ref
 [serde.rs]: https://serde.rs/
-[`serde_json::from_reader`]: <https://docs.serde.rs/serde_json/fn.from_reader.html>
-[`serde_json::to_writer`]: <https://docs.serde.rs/serde_json/fn.to_writer.html>
-[`serde_json::value::Index`]: <https://docs.serde.rs/serde_json/value/trait.Index.html>
-[`slice::to_vec`]: <https://doc.rust-lang.org/std/primitive.slice.html#method.to_vec>
-[`source()`]: <https://doc.rust-lang.org/std/error/trait.Error.html#method.source>
-[`std::borrow::Cow`]: <https://doc.rust-lang.org/std/borrow/enum.Cow.html>
-[`std::boxed::Box`]: <https://doc.rust-lang.org/std/boxed/struct.Box.html>
-[`std::collections::hash_map::OccupiedEntry::get_mut`]: <https://doc.rust-lang.org/std/collections/hash_map/struct.OccupiedEntry.html#method.get_mut>
-[`std::error::Error`]: <https://doc.rust-lang.org/std/error/trait.Error.html>
-[`std::fmt::Binary`]: <https://doc.rust-lang.org/std/fmt/trait.Binary.html>
-[`std::fmt::LowerHex`]: <https://doc.rust-lang.org/std/fmt/trait.LowerHex.html>
-[`std::fmt::Octal`]: <https://doc.rust-lang.org/std/fmt/trait.Octal.html>
-[`std::fmt::UpperHex`]: <https://doc.rust-lang.org/std/fmt/trait.UpperHex.html>
-[`std::fs::File::open`]: <https://doc.rust-lang.org/std/fs/struct.File.html#method.open>
-[`std::io::BufWriter`]: <https://doc.rust-lang.org/std/io/struct.BufWriter.html>
-[`std::io::Cursor::get_mut`]: <https://doc.rust-lang.org/std/io/struct.Cursor.html#method.get_mut>
-[`std::io::Error::from_raw_os_error`]: <https://doc.rust-lang.org/std/io/struct.Error.html#method.from_raw_os_error>
-[`std::io::Error::new`]: <https://doc.rust-lang.org/std/io/struct.Error.html#method.new>
-[`std::io::Read::read`]: <https://doc.rust-lang.org/std/io/trait.Read.html#tymethod.read>
-[`std::ops`]: <https://doc.rust-lang.org/std/ops/index.html#traits>
-[`std::pin::Pin::get_mut`]: <https://doc.rust-lang.org/std/pin/struct.Pin.html#method.get_mut>
-[`std::process::Command`]: <https://doc.rust-lang.org/std/process/struct.Command.html>
-[`std::ptr::read`]: <https://doc.rust-lang.org/std/ptr/fn.read.html>
-[`std::sync::PoisonError::get_mut`]: <https://doc.rust-lang.org/std/sync/struct.PoisonError.html#method.get_mut>
-[`std::sync::atomic::AtomicBool::get_mut`]: <https://doc.rust-lang.org/std/sync/atomic/struct.AtomicBool.html#method.get_mut>
-[`str::as_bytes()`]: <https://doc.rust-lang.org/std/primitive.str.html#method.as_bytes>
-[`str::bytes`]: <https://doc.rust-lang.org/std/primitive.str.html#method.bytes>
-[`str::chars`]: <https://doc.rust-lang.org/std/primitive.str.html#method.chars>
-[`str::to_lowercase()`]: <https://doc.rust-lang.org/std/primitive.str.html#method.to_lowercase>
-[`str`]: <https://doc.rust-lang.org/std/primitive.str.html>
-[`thread::spawn`]: <https://doc.rust-lang.org/std/thread/fn.spawn.html>
-[`u64::from_be`]: <https://doc.rust-lang.org/std/primitive.u64.html#method.from_be>
-[`u64::from_str_radix`]: <https://doc.rust-lang.org/std/primitive.u64.html#method.from_str_radix>
-[`vec::IntoIter`]: <https://doc.rust-lang.org/std/vec/struct.IntoIter.html>
+[`serde_json::from_reader`]: https://docs.serde.rs/serde_json/fn.from_reader.html
+[`serde_json::to_writer`]: https://docs.serde.rs/serde_json/fn.to_writer.html
+[`serde_json::value::Index`]: https://docs.serde.rs/serde_json/value/trait.Index.html
+[`slice::to_vec`]: https://doc.rust-lang.org/std/primitive.slice.html#method.to_vec
+[`source()`]: https://doc.rust-lang.org/std/error/trait.Error.html#method.source
+[`std::borrow::Cow`]: https://doc.rust-lang.org/std/borrow/enum.Cow.html
+[`std::boxed::Box`]: https://doc.rust-lang.org/std/boxed/struct.Box.html
+[`std::collections::hash_map::OccupiedEntry::get_mut`]: https://doc.rust-lang.org/std/collections/hash_map/struct.OccupiedEntry.html#method.get_mut
+[`std::error::Error`]: https://doc.rust-lang.org/std/error/trait.Error.html
+[`std::fmt::Binary`]: https://doc.rust-lang.org/std/fmt/trait.Binary.html
+[`std::fmt::LowerHex`]: https://doc.rust-lang.org/std/fmt/trait.LowerHex.html
+[`std::fmt::Octal`]: https://doc.rust-lang.org/std/fmt/trait.Octal.html
+[`std::fmt::UpperHex`]: https://doc.rust-lang.org/std/fmt/trait.UpperHex.html
+[`std::fs::File::open`]: https://doc.rust-lang.org/std/fs/struct.File.html#method.open
+[`std::io::BufWriter`]: https://doc.rust-lang.org/std/io/struct.BufWriter.html
+[`std::io::Cursor::get_mut`]: https://doc.rust-lang.org/std/io/struct.Cursor.html#method.get_mut
+[`std::io::Error::from_raw_os_error`]: https://doc.rust-lang.org/std/io/struct.Error.html#method.from_raw_os_error
+[`std::io::Error::new`]: https://doc.rust-lang.org/std/io/struct.Error.html#method.new
+[`std::io::Read::read`]: https://doc.rust-lang.org/std/io/trait.Read.html#tymethod.read
+[`std::ops`]: https://doc.rust-lang.org/std/ops/index.html#traits
+[`std::pin::Pin::get_mut`]: https://doc.rust-lang.org/std/pin/struct.Pin.html#method.get_mut
+[`std::process::Command`]: https://doc.rust-lang.org/std/process/struct.Command.html
+[`std::ptr::read`]: https://doc.rust-lang.org/std/ptr/fn.read.html
+[`std::sync::PoisonError::get_mut`]: https://doc.rust-lang.org/std/sync/struct.PoisonError.html#method.get_mut
+[`std::sync::atomic::AtomicBool::get_mut`]: https://doc.rust-lang.org/std/sync/atomic/struct.AtomicBool.html#method.get_mut
+[`str::as_bytes()`]: https://doc.rust-lang.org/std/primitive.str.html#method.as_bytes
+[`str::bytes`]: https://doc.rust-lang.org/std/primitive.str.html#method.bytes
+[`str::chars`]: https://doc.rust-lang.org/std/primitive.str.html#method.chars
+[`str::to_lowercase()`]: https://doc.rust-lang.org/std/primitive.str.html#method.to_lowercase
+[`str`]: https://doc.rust-lang.org/std/primitive.str.html
+[`thread::spawn`]: https://doc.rust-lang.org/std/thread/fn.spawn.html
+[`u64::from_be`]: https://doc.rust-lang.org/std/primitive.u64.html#method.from_be
+[`u64::from_str_radix`]: https://doc.rust-lang.org/std/primitive.u64.html#method.from_str_radix
+[`vec::IntoIter`]: https://doc.rust-lang.org/std/vec/struct.IntoIter.html
 [catastrophic bugs]: http://en.wikipedia.org/wiki/Mars_Climate_Orbiter
-[checklist]: <https://rust-lang.github.io/api-guidelines/checklist.html>
-[child process]: <https://doc.rust-lang.org/std/process/struct.Child.html>
-[contributing.md]: <https://github.com/rust-lang/api-guidelines/blob/master/CONTRIBUTING.md>
-[docs.rs]: <https://docs.rs/>
-[robustness principle]: <https://en.wikipedia.org/wiki/Robustness_principle>
-[trait objects]: <https://rust-lang.github.io/api-guidelines/flexibility.html#c-object>
-[unclear 101]: <https://github.com/rust-lang/api-guidelines/issues/101>
-[unclear 29]: <https://github.com/rust-lang/api-guidelines/issues/29>
+[checklist]: https://rust-lang.github.io/api-guidelines/checklist.html
+[child process]: https://doc.rust-lang.org/std/process/struct.Child.html
+[contributing.md]: https://github.com/rust-lang/api-guidelines/blob/master/CONTRIBUTING.md
+[docs.rs]: https://docs.rs/
+[robustness principle]: https://en.wikipedia.org/wiki/Robustness_principle
+[trait objects]: https://rust-lang.github.io/api-guidelines/flexibility.html#c-object
+[unclear 101]: https://github.com/rust-lang/api-guidelines/issues/101
+[unclear 29]: https://github.com/rust-lang/api-guidelines/issues/29
 
 [`<[T]>::get_unchecked`]:
 <https://doc.rust-lang.org/std/primitive.slice.html#method.get_unchecked>

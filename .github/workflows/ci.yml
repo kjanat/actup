@@ -22,6 +22,7 @@ env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
   RUSTFLAGS: -D warnings
+
 jobs:
   fmt:
     name: Format
@@ -30,14 +31,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
       - run: cargo fmt --all -- --check
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - run: cargo clippy --workspace --all-targets --all-features -- -Dwarnings
+
   test:
     name: Test
     runs-on: ubuntu-latest
@@ -45,10 +48,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: nextest
+        with: &nextest { tool: nextest }
       - run: cargo nextest run --workspace --all-features --profile ci
       - run: cargo nextest run --workspace --no-default-features --profile ci
       - run: cargo test --doc --workspace --all-features
@@ -72,10 +74,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: nextest
+        with: *nextest
       - run: cargo nextest run --workspace --all-features --profile ci
       - run: cargo nextest run --workspace --no-default-features --profile ci
       - run: cargo test --doc --workspace --all-features
@@ -88,29 +89,32 @@ jobs:
           fail_ci_if_error: false
           flags: ${{ matrix.os }}
           token: ${{ env.CODECOV_TOKEN }}
+
   doc:
     name: Documentation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo doc --workspace --all-features --no-deps
+
   machete:
     name: Unused Dependencies
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: cargo-machete
+        with: { tool: cargo-machete }
       - run: cargo machete
+
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+
   msrv:
     name: MSRV
     runs-on: ubuntu-latest
@@ -120,14 +124,15 @@ jobs:
       - id: msrv
         shell: bash
         run: |
-          metadata=$(cargo metadata --no-deps --format-version 1)
-          version=$(jq -r '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("crates disagree on rust-version: \(.)") end' <<< "${metadata}")
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          metadata=$(cargo metadata --no-deps --format-version 1);
+          version=$(jq -r '[.packages[].rust_version] | unique | if length == 1 and .[0] != null then .[0] else error("crates disagree on rust-version: \(.)") end' <<< "${metadata}");
+          echo "version=${version}" >> "${GITHUB_OUTPUT}";
       - run: rustup toolchain install "${MSRV}" --profile minimal
         env: { MSRV: "${{ steps.msrv.outputs.version }}" }
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - run: cargo "+${MSRV}" check --workspace --all-targets --all-features
         env: { MSRV: "${{ steps.msrv.outputs.version }}" }
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
@@ -135,10 +140,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: cargo-llvm-cov
+        with: { tool: cargo-llvm-cov }
       - run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         if: ${{ env.CODECOV_TOKEN != '' }}
@@ -154,29 +158,30 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Install wasm-pack
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: wasm-pack@0.15.0
+      - parallel:
+          - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+          - &wasmPack
+            name: Install wasm-pack
+            uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+            with: { tool: wasm-pack@0.15.0 }
       - name: Zed — clippy
         working-directory: extensions/zed
-        run: cargo clippy --target wasm32-wasip2 -- -D warnings
+        run: cargo clippy --target wasm32-wasip2 -- -Dwarnings
       - name: actup-wasm — install
-        working-directory: packages/actup-wasm
+        working-directory: &pkgWasm packages/actup-wasm
         run: bun install --frozen-lockfile
       - name: actup-wasm — build (regenerates tsify-derived `.d.ts` from current Rust)
-        working-directory: packages/actup-wasm
+        working-directory: *pkgWasm
         run: bun run build
       - name: VSCode — install
-        working-directory: extensions/vscode
+        working-directory: &extVscode extensions/vscode
         run: bun install --frozen-lockfile
       - name: VSCode — lint + typecheck (against fresh wasm types)
-        working-directory: extensions/vscode
-        run: bun run lint && bun run typecheck
+        working-directory: *extVscode
+        run: bun run --sequential lint typecheck
       - name: VSCode — test
-        working-directory: extensions/vscode
+        working-directory: *extVscode
         run: bun run test
 
   wasm:
@@ -185,25 +190,23 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - name: Clippy (wasm32)
-        run: cargo clippy -p actup-wasm --target wasm32-unknown-unknown -- -D warnings
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - name: Install wasm-pack
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        with:
-          tool: wasm-pack@0.15.0
+      - parallel:
+          - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          - name: Clippy (wasm32)
+            run: cargo clippy -p actup-wasm --target wasm32-unknown-unknown -- -Dwarnings
+          - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+          - *wasmPack
       - name: Install npm deps
-        working-directory: packages/actup-wasm
+        working-directory: &pkgWasm packages/actup-wasm
         run: bun install --frozen-lockfile
       - name: Build
-        working-directory: packages/actup-wasm
+        working-directory: *pkgWasm
         run: bun run build
       - name: Typecheck
-        working-directory: packages/actup-wasm
+        working-directory: *pkgWasm
         run: bun run typecheck
       - name: Test
-        working-directory: packages/actup-wasm
+        working-directory: *pkgWasm
         run: bun run test
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Crate node tests
@@ -214,12 +217,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: kjanat/actionlint@v1
       - run: shellcheck action/*.sh examples/*.sh .github/actions/crates-publish/*.sh .github/actions/release-version/*.sh
-      - run: action/test.sh
-      - run: examples/pin.test.sh
-      - run: .github/actions/crates-publish/test.sh
+      - run: ./action/test.sh
+      - run: ./examples/pin.test.sh
+      - run: ./.github/actions/crates-publish/test.sh
       - run: sudo locale-gen en_US.UTF-8
-      - run: .github/actions/release-version/test.sh
+      - run: ./.github/actions/release-version/test.sh
 
   self-check:
     name: Self-check pins
@@ -227,8 +231,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+      - parallel:
+          - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - run: just self-check-pins
         env: { GITHUB_TOKEN: "${{ github.token }}" }
 
@@ -254,21 +259,18 @@ jobs:
           WASM: ${{ needs.wasm.result }}
           ACTION: ${{ needs.action.result }}
           SELF_CHECK: ${{ needs.self-check.result }}
-        run: |
-          if [[ "${FMT}" != "success" ]] || \
-             [[ "${CLIPPY}" != "success" ]] || \
-             [[ "${TEST}" != "success" ]] || \
-             [[ "${TEST_PLATFORMS}" != "success" ]] || \
-             [[ "${DOC}" != "success" ]] || \
-             [[ "${MACHETE}" != "success" ]] || \
-             [[ "${DENY}" != "success" ]] || \
-             [[ "${MSRV}" != "success" ]] || \
-             [[ "${COVERAGE}" != "success" ]] || \
-             [[ "${CHECK_EXTENSIONS}" != "success" ]] || \
-             [[ "${WASM}" != "success" ]] || \
-             [[ "${ACTION}" != "success" ]] || \
-             [[ "${SELF_CHECK}" != "success" ]]; then
-            echo "One or more jobs failed"
-            exit 1
-          fi
-          echo "All jobs passed"
+        run: if [[ "${FMT}" != "success" ]] ||
+          [[ "${CLIPPY}" != "success" ]] ||
+          [[ "${TEST}" != "success" ]] ||
+          [[ "${TEST_PLATFORMS}" != "success" ]] ||
+          [[ "${DOC}" != "success" ]] ||
+          [[ "${MACHETE}" != "success" ]] ||
+          [[ "${DENY}" != "success" ]] ||
+          [[ "${MSRV}" != "success" ]] ||
+          [[ "${COVERAGE}" != "success" ]] ||
+          [[ "${CHECK_EXTENSIONS}" != "success" ]] ||
+          [[ "${WASM}" != "success" ]] ||
+          [[ "${ACTION}" != "success" ]] ||
+          [[ "${SELF_CHECK}" != "success" ]];
+          then { echo "One or more jobs failed"; exit 1; };
+          fi; echo "All jobs passed"

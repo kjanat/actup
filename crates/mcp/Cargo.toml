@@ -23,19 +23,19 @@ name    = "stdio_contract"
 path    = "tests/stdio_contract.rs"
 
 [dependencies]
-actup-core            = { workspace = true, features = ["clap"] }  # Core engine
-actup-provider-gitea  = { workspace = true }  # Gitea/Forgejo provider
-actup-provider-github = { workspace = true }  # GitHub provider
-actup-provider-gitlab = { workspace = true }  # GitLab provider
-async-trait           = { workspace = true }  # `ServerHandler` impl
-clap                  = { workspace = true }  # CLI parsing
+actup-core            = { workspace = true, features = ["clap"] }             # Core engine
+actup-provider-gitea  = { workspace = true }                                  # Gitea/Forgejo provider
+actup-provider-github = { workspace = true }                                  # GitHub provider
+actup-provider-gitlab = { workspace = true }                                  # GitLab provider
+async-trait           = { workspace = true }                                  # `ServerHandler` impl
+clap                  = { workspace = true }                                  # CLI parsing
 rust-mcp-sdk          = { workspace = true, features = ["server", "stdio"] }  # MCP protocol
-schemars              = { workspace = true }  # Tool input schemas
-serde                 = { workspace = true }  # Tool arguments
-serde_json            = { workspace = true }  # Tool results
-tokio                 = { workspace = true }  # Async runtime
-tracing               = { workspace = true }  # Logging
-tracing-subscriber    = { workspace = true }  # Log formatting
+schemars              = { workspace = true }                                  # Tool input schemas
+serde                 = { workspace = true }                                  # Tool arguments
+serde_json            = { workspace = true }                                  # Tool results
+tokio                 = { workspace = true }                                  # Async runtime
+tracing               = { workspace = true }                                  # Logging
+tracing-subscriber    = { workspace = true }                                  # Log formatting
 
 [dev-dependencies]
 tempfile = { workspace = true }  # Temp workspaces for contract tests

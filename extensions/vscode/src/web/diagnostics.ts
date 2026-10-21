@@ -1,21 +1,21 @@
-import type { ActupProvider, UpdateEdit, UsesLocation } from "actup-wasm";
-import { checkRefs, type CheckStatus, type LocatedCheckResult, planUpdates } from "actup-wasm";
-import * as vscode from "vscode";
-import { type ConfigLookup, noConfig } from "./config.ts";
-import { byteToColumn } from "./position.ts";
+import type { ActupProvider, UpdateEdit, UsesLocation } from 'actup-wasm';
+import { checkRefs, type CheckStatus, type LocatedCheckResult, planUpdates } from 'actup-wasm';
+import * as vscode from 'vscode';
+import { type ConfigLookup, noConfig } from './config.ts';
+import { byteToColumn } from './position.ts';
 
-const DIAGNOSTIC_SOURCE = "actup";
+const DIAGNOSTIC_SOURCE = 'actup';
 
 /** Stored edit for an outdated or pin-branch diagnostic, keyed by document URI string. */
 export type DiagnosticData =
 	| {
-		readonly kind: "outdated";
+		readonly kind: 'outdated';
 		readonly targetRef: string;
 		readonly range: vscode.Range;
 		readonly newText: string;
 	}
 	| {
-		readonly kind: "pin-branch";
+		readonly kind: 'pin-branch';
 		readonly sha: string;
 		readonly refName: string;
 		readonly range: vscode.Range;
@@ -33,7 +33,7 @@ let computeCount = 0;
 
 /** Create a `DiagnosticCollection` for actup. */
 export function createDiagnosticCollection(): vscode.DiagnosticCollection {
-	return vscode.languages.createDiagnosticCollection("actup");
+	return vscode.languages.createDiagnosticCollection('actup');
 }
 
 /**
@@ -52,7 +52,7 @@ export async function computeDiagnostics(
 	const compute = ++computeCount;
 	latestComputeByUri.set(key, compute);
 
-	if (!text.includes("uses:")) {
+	if (!text.includes('uses:')) {
 		collection.set(uri, []);
 		clearDiagnosticData(uri);
 		return;
@@ -61,10 +61,10 @@ export async function computeDiagnostics(
 	let checked: { results: LocatedCheckResult[]; edits: UpdateEdit[] } | undefined;
 	try {
 		const folderConfig = await configs(uri);
-		if (folderConfig.kind === "invalid") {
+		if (folderConfig.kind === 'invalid') {
 			throw new Error(folderConfig.message);
 		}
-		const config = folderConfig.kind === "loaded" ? folderConfig.config : undefined;
+		const config = folderConfig.kind === 'loaded' ? folderConfig.config : undefined;
 		const results = await checkRefs(text, provider, config);
 		checked = { results, edits: planUpdates(results, config) };
 	} catch {
@@ -124,7 +124,7 @@ function sameCommitDetail(result: LocatedCheckResult): string | undefined {
 	if (target === null) {
 		return undefined;
 	}
-	const kind = result.ref_kind === null ? "" : `${result.ref_kind} `;
+	const kind = result.ref_kind === null ? '' : `${result.ref_kind} `;
 	return `${kind}${result.action_ref.ref_str} = ${target.version} (${target.sha.slice(0, 7)})`;
 }
 
@@ -133,14 +133,14 @@ function sameCommitDiagnostic(diag: vscode.Diagnostic, result: LocatedCheckResul
 	if (detail === undefined) {
 		return diag;
 	}
-	const lead = result.same_commit_pins ? "pin available, " : "";
+	const lead = result.same_commit_pins ? 'pin available, ' : '';
 	const sameCommit = new vscode.Diagnostic(
 		diag.range,
 		`${result.location.value}: ${lead}same commit: ${detail}`,
 		vscode.DiagnosticSeverity.Information,
 	);
 	sameCommit.source = DIAGNOSTIC_SOURCE;
-	sameCommit.code = "same-commit";
+	sameCommit.code = 'same-commit';
 	return sameCommit;
 }
 
@@ -163,20 +163,20 @@ function statusToDiagnostic(result: LocatedCheckResult, edit: UpdateEdit | undef
 	const status: CheckStatus = result.status;
 	const loc = result.location;
 	// UpToDate — no diagnostic
-	if (status === "UpToDate") return undefined;
+	if (status === 'UpToDate') return undefined;
 
 	const line = loc.line - 1; // 1-indexed -> 0-indexed
 	const refRange = loc.ref_range;
 	const range = refRange !== null
 		? new vscode.Range(line, byteToColumn(loc.raw_line, refRange.start), line, byteToColumn(loc.raw_line, refRange.end))
 		: new vscode.Range(line, 0, line, loc.raw_line.length);
-	const kind = result.ref_kind ?? "ref";
+	const kind = result.ref_kind ?? 'ref';
 
-	if (typeof status === "object" && "Outdated" in status) {
+	if (typeof status === 'object' && 'Outdated' in status) {
 		const { target, current } = status.Outdated;
 		const targetRef = target.version;
-		const shortSha = target.sha?.slice(0, 7) ?? "";
-		const shaInfo = shortSha !== "" ? ` (${shortSha})` : "";
+		const shortSha = target.sha?.slice(0, 7) ?? '';
+		const shaInfo = shortSha !== '' ? ` (${shortSha})` : '';
 
 		const diag = new vscode.Diagnostic(
 			range,
@@ -184,41 +184,41 @@ function statusToDiagnostic(result: LocatedCheckResult, edit: UpdateEdit | undef
 			vscode.DiagnosticSeverity.Warning,
 		);
 		diag.source = DIAGNOSTIC_SOURCE;
-		diag.code = "outdated";
+		diag.code = 'outdated';
 		if (edit === undefined) {
 			return { diagnostic: diag };
 		}
 		return {
 			diagnostic: diag,
-			data: { kind: "outdated", targetRef, range: editRange(loc, edit), newText: edit.newText },
+			data: { kind: 'outdated', targetRef, range: editRange(loc, edit), newText: edit.newText },
 		};
 	}
 
-	if (typeof status === "object" && "Pinned" in status) {
+	if (typeof status === 'object' && 'Pinned' in status) {
 		const { sha, tag } = status.Pinned;
-		const tagInfo = tag === null ? "unknown version" : `= ${tag}`;
+		const tagInfo = tag === null ? 'unknown version' : `= ${tag}`;
 		const diag = new vscode.Diagnostic(
 			range,
 			`${loc.value}: pinned to ${sha.slice(0, 7)} (${tagInfo})`,
 			vscode.DiagnosticSeverity.Hint,
 		);
 		diag.source = DIAGNOSTIC_SOURCE;
-		diag.code = "pinned";
+		diag.code = 'pinned';
 		return { diagnostic: diag };
 	}
 
-	if (typeof status === "object" && "Floating" in status) {
+	if (typeof status === 'object' && 'Floating' in status) {
 		const diag = new vscode.Diagnostic(
 			range,
 			`${loc.value}: '${status.Floating.ref_name}' is a floating ${kind}, pin to a tag or SHA`,
 			vscode.DiagnosticSeverity.Warning,
 		);
 		diag.source = DIAGNOSTIC_SOURCE;
-		diag.code = "floating";
+		diag.code = 'floating';
 		return { diagnostic: diag };
 	}
 
-	if (typeof status === "object" && "PinBranch" in status) {
+	if (typeof status === 'object' && 'PinBranch' in status) {
 		const { ref_name: refName, sha } = status.PinBranch;
 		const diag = new vscode.Diagnostic(
 			range,
@@ -226,17 +226,17 @@ function statusToDiagnostic(result: LocatedCheckResult, edit: UpdateEdit | undef
 			vscode.DiagnosticSeverity.Warning,
 		);
 		diag.source = DIAGNOSTIC_SOURCE;
-		diag.code = "pin-branch";
+		diag.code = 'pin-branch';
 		if (edit === undefined) {
 			return { diagnostic: diag };
 		}
 		return {
 			diagnostic: diag,
-			data: { kind: "pin-branch", sha, refName, range: editRange(loc, edit), newText: edit.newText },
+			data: { kind: 'pin-branch', sha, refName, range: editRange(loc, edit), newText: edit.newText },
 		};
 	}
 
-	if (typeof status === "object" && "Unresolvable" in status) {
+	if (typeof status === 'object' && 'Unresolvable' in status) {
 		const { reason, is_environment_error } = status.Unresolvable;
 		const severity = is_environment_error
 			? vscode.DiagnosticSeverity.Information
@@ -247,7 +247,7 @@ function statusToDiagnostic(result: LocatedCheckResult, edit: UpdateEdit | undef
 
 		const diag = new vscode.Diagnostic(range, message, severity);
 		diag.source = DIAGNOSTIC_SOURCE;
-		diag.code = "unresolvable";
+		diag.code = 'unresolvable';
 		return { diagnostic: diag };
 	}
 

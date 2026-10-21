@@ -115,11 +115,11 @@ actup update --dry-run
 ### Output Formats
 
 ```sh
-actup check --format json   # Machine-readable JSON
-actup check --format toml   # TOML format
-actup check --format human  # Default, colored output
-actup check --format table  # One aligned row per finding
-actup check --format sarif  # SARIF 2.1.0 for code scanning
+actup check --format json  # Machine-readable JSON
+actup check --format toml  # TOML format
+actup check --format human # Default, colored output
+actup check --format table # One aligned row per finding
+actup check --format sarif # SARIF 2.1.0 for code scanning
 ```
 
 `--format table` prints the columns `LOCATION` (`file:line`), `ACTION`,
@@ -256,20 +256,20 @@ Create `actup.toml` or `.actup.toml` in your repo root, or write the user config
 default_host = "github.com"
 
 [policy]
-bump       = "minor"  # patch | minor | major | latest
+bump       = "minor"     # patch | minor | major | latest
 pin        = "preserve"  # preserve | tag | sha
-track      = "keep"  # keep | major | exact
-major_tag  = "exact"  # exact | contains
-branch     = "warn"  # ignore | warn | update
+track      = "keep"      # keep | major | exact
+major_tag  = "exact"     # exact | contains
+branch     = "warn"      # ignore | warn | update
 prerelease = false
-archived   = "hint"  # hint | ignore
+archived   = "hint"      # hint | ignore
 
 [pin]
 comment = true  # add version labels to SHA pins
 
 [scan]
 ignore      = ["my-org/*", "dtolnay/rust-toolchain@1.91.0"]
-extra_paths = [".gitea/workflows"]  # user or explicit config only
+extra_paths = [".gitea/workflows"]                           # user or explicit config only
 
 # Ordered; for each policy key the last matching entry wins.
 # Patterns are `[host/]owner/repo[/subpath][@ref]` globs.
@@ -284,7 +284,7 @@ policy  = { bump = "patch", track = "exact" }
 # API fallback, used only when a host refuses a git connection
 [fetch]
 api_mode          = "graphql"  # preferred: "graphql" or "rest"; REST-only providers use REST
-max_tags_per_repo = 10  # Tags to fetch per repo (1-255)
+max_tags_per_repo = 10         # Tags to fetch per repo (1-255)
 
 # Enterprise GitHub (api_base and token_env: user or explicit config only)
 [hosts."ghe.example.com"]
@@ -522,13 +522,13 @@ Shell is auto-detected from `$SHELL` if omitted:
 
 ```sh
 # Auto-detect shell
-actup completions > completions.sh
+actup completions >completions.sh
 
 # Or specify explicitly
-actup completions bash > ~/.local/share/bash-completion/completions/actup
-actup completions zsh > ~/.zfunc/_actup
-actup completions fish > ~/.config/fish/completions/actup.fish
-actup completions powershell >> $PROFILE
+actup completions bash >~/.local/share/bash-completion/completions/actup
+actup completions zsh >~/.zfunc/_actup
+actup completions fish >~/.config/fish/completions/actup.fish
+actup completions powershell >>$PROFILE
 ```
 
 ## MCP Server
@@ -541,9 +541,9 @@ cargo install --git https://github.com/kjanat/actup actup-mcp
 
 ```json
 {
-	"mcpServers": {
-		"actup": { "command": "actup-mcp", "args": ["--root", "/path/to/repo"] }
-	}
+  "mcpServers": {
+    "actup": { "command": "actup-mcp", "args": ["--root", "/path/to/repo"] }
+  }
 }
 ```
 
@@ -641,20 +641,20 @@ that resolves outside the root.
 
 ```sh
 # Build
-just build          # Debug
-just build-release  # Release
+just build         # Debug
+just build-release # Release
 
 # Test
-just test           # All tests
-just lint           # Format + clippy
+just test # All tests
+just lint # Format + clippy
 
 # Run
-just run check      # Run CLI
-just self-check     # Run actup on this repo
+just run check       # Run CLI
+just self-check      # Run actup on this repo
 just self-check-pins # Fail on a uses: ref not pinned to a commit SHA
 
 # CI
-just ci             # Full CI checks locally
+just ci # Full CI checks locally
 ```
 
 ## License

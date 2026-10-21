@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 
-import { writeFileSync } from "fs";
-import { readFile } from "fs/promises";
-import { join } from "path";
-import { argv } from "process";
+import { writeFileSync } from 'fs';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
+import { argv } from 'process';
 
-const schema = argv[2] ?? "core";
+const schema = argv[2] ?? 'core';
 
-readFile(join(import.meta.dirname, schema, "src", "parser.c"), "utf8").then(input => {
+readFile(join(import.meta.dirname, schema, 'src', 'parser.c'), 'utf8').then(input => {
 	const cases = extractCases(input);
-	const enums = ["RS_STR"];
-	const content = "switch (sch_stt) " + block([
-		"case SCH_STT_FRZ:\n  break;",
+	const enums = ['RS_STR'];
+	const content = 'switch (sch_stt) ' + block([
+		'case SCH_STT_FRZ:\n  break;',
 		cases
-			.map(([key, { content }]) => `${(key === "default" ? "default:" : `case ${key}:`)}\n${indent(content)}`)
-			.join("\n  END_STATE();\n")
+			.map(([key, { content }]) => `${(key === 'default' ? 'default:' : `case ${key}:`)}\n${indent(content)}`)
+			.join('\n  END_STATE();\n')
 			.replace(/\s+ADVANCE_MAP\(([^]+?)\);\n/, (_, map) => {
 				return map.replace(/'(.)', (\d+),/g, "if (lookahead == '$1') ADVANCE($2);");
 			})
@@ -28,32 +28,32 @@ readFile(join(import.meta.dirname, schema, "src", "parser.c"), "utf8").then(inpu
 				}
 				return `{*rlt_sch = RS_STR; return ${state};}`;
 			})
-			.replace("ACCEPT_TOKEN(ts_builtin_sym_end);", "abort();")
+			.replace('ACCEPT_TOKEN(ts_builtin_sym_end);', 'abort();')
 			.replace(/ACCEPT_TOKEN\((\w+)\);/g, (_, name) => {
-				const newName = "RS_" + convertName(name);
+				const newName = 'RS_' + convertName(name);
 				if (!enums.includes(newName)) {
 					enums.push(newName);
 				}
 				return `*rlt_sch = ${newName};`;
 			})
 			.replace(/END_STATE\(\);/g, `break;`)
-			.replace("return false;", "*rlt_sch = RS_STR;\n  return SCH_STT_FRZ;")
-			.replace(/lookahead/g, "cur_chr"),
+			.replace('return false;', '*rlt_sch = RS_STR;\n  return SCH_STT_FRZ;')
+			.replace(/lookahead/g, 'cur_chr'),
 	]);
 	writeFileSync(
-		join(import.meta.dirname, "..", "src", `schema.${schema}.c`),
+		join(import.meta.dirname, '..', 'src', `schema.${schema}.c`),
 		[
-			"#include <stdlib.h>",
-			"#define SCH_STT_FRZ -1",
+			'#include <stdlib.h>',
+			'#define SCH_STT_FRZ -1',
 			`typedef enum ${block(enums.map((k) => `${k},`))} ResultSchema;`,
 			`static int8_t adv_sch_stt(int8_t sch_stt, int32_t cur_chr, ResultSchema *rlt_sch) ${
 				block([
 					content,
 					`if (cur_chr != '\\r' && cur_chr != '\\n' && cur_chr != ' ' && cur_chr != 0) *rlt_sch = RS_STR;`,
-					"return SCH_STT_FRZ;",
+					'return SCH_STT_FRZ;',
 				])
 			}`,
-		].join("\n\n") + "\n",
+		].join('\n\n') + '\n',
 	);
 });
 
@@ -66,14 +66,14 @@ readFile(join(import.meta.dirname, schema, "src", "parser.c"), "utf8").then(inpu
  * @returns {Array<[string, CaseInfo]>}
  */
 function extractCases(input) {
-	const MAIN_SIGNATURE = "static bool ts_lex(TSLexer *lexer, TSStateId state) {";
-	const SWITCH_CASE = "switch (state) {\n";
+	const MAIN_SIGNATURE = 'static bool ts_lex(TSLexer *lexer, TSStateId state) {';
+	const SWITCH_CASE = 'switch (state) {\n';
 	const startIndex = input.indexOf(SWITCH_CASE, input.indexOf(MAIN_SIGNATURE)) + SWITCH_CASE.length;
-	const endIndex = input.indexOf("}\n}", startIndex);
-	const content = input.slice(startIndex, endIndex).replace(/^\s*if \(eof\).+\n/mg, "").trimEnd();
-	return dedent(dedent(content)).split("END_STATE();").map(text => {
-		const index = text.indexOf(":\n");
-		const key = text.slice(0, index).trim().replace(/^case /, "");
+	const endIndex = input.indexOf('}\n}', startIndex);
+	const content = input.slice(startIndex, endIndex).replace(/^\s*if \(eof\).+\n/mg, '').trimEnd();
+	return dedent(dedent(content)).split('END_STATE();').map(text => {
+		const index = text.indexOf(':\n');
+		const key = text.slice(0, index).trim().replace(/^case /, '');
 		const content = dedent(text.slice(index + 2)).trim();
 		const matchAcceptToken = content.match(/^ACCEPT_TOKEN\(\w+\);/);
 		const acceptToken = matchAcceptToken ? matchAcceptToken[0] : null;
@@ -87,7 +87,7 @@ function extractCases(input) {
  * @returns {string}
  */
 function convertName(name) {
-	return name.replace("sym_", "").toUpperCase();
+	return name.replace('sym_', '').toUpperCase();
 }
 
 /**
@@ -103,7 +103,7 @@ function block(contents) {
  * @returns {string[]}
  */
 function lines(contents) {
-	return (Array.isArray(contents) ? contents : [contents]).join("\n").split("\n");
+	return (Array.isArray(contents) ? contents : [contents]).join('\n').split('\n');
 }
 
 /**
@@ -111,7 +111,7 @@ function lines(contents) {
  * @returns {string}
  */
 function indent(contents) {
-	return lines(contents).map(x => " ".repeat(2) + x).join("\n");
+	return lines(contents).map(x => ' '.repeat(2) + x).join('\n');
 }
 
 /**
@@ -119,5 +119,5 @@ function indent(contents) {
  * @returns {string}
  */
 function dedent(contents) {
-	return lines(contents).map(x => x.replace(/^  /mg, "")).join("\n");
+	return lines(contents).map(x => x.replace(/^  /mg, '')).join('\n');
 }

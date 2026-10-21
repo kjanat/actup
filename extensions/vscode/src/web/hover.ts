@@ -1,9 +1,9 @@
-import { parseUses, parseUsesRefs } from "actup-wasm";
-import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from "actup-wasm";
-import * as vscode from "vscode";
-import { byteToColumn } from "./position.ts";
+import { parseUses, parseUsesRefs } from 'actup-wasm';
+import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from 'actup-wasm';
+import * as vscode from 'vscode';
+import { byteToColumn } from './position.ts';
 
-const DEFAULT_HOST = "github.com";
+const DEFAULT_HOST = 'github.com';
 
 export class ActupHoverProvider implements vscode.HoverProvider {
 	constructor(
@@ -68,29 +68,29 @@ export class ActupHoverProvider implements vscode.HoverProvider {
 			const status = matchingResult.status;
 			const sameCommit = matchingResult.same_commit;
 			if (sameCommit !== null) {
-				const kind = matchingResult.ref_kind === null ? "" : `${matchingResult.ref_kind} `;
-				const lead = matchingResult.same_commit_pins ? "**Pin available**, same commit" : "**Same commit**";
+				const kind = matchingResult.ref_kind === null ? '' : `${matchingResult.ref_kind} `;
+				const lead = matchingResult.same_commit_pins ? '**Pin available**, same commit' : '**Same commit**';
 				md.appendMarkdown(
 					`${lead}: ${kind}\`${ref.ref_str}\` = ${sameCommit.version} (\`${sameCommit.sha.slice(0, 7)}\`)\n`,
 				);
-			} else if (status === "UpToDate") {
-				md.appendMarkdown("Up to date\n");
-			} else if (typeof status === "object" && "Outdated" in status) {
+			} else if (status === 'UpToDate') {
+				md.appendMarkdown('Up to date\n');
+			} else if (typeof status === 'object' && 'Outdated' in status) {
 				const { current, target } = status.Outdated;
 				md.appendMarkdown(`**Outdated**: ${current} -> ${target.version} (\`${target.sha.slice(0, 7)}\`)\n`);
-			} else if (typeof status === "object" && "Unresolvable" in status) {
+			} else if (typeof status === 'object' && 'Unresolvable' in status) {
 				const { reason, is_environment_error } = status.Unresolvable;
 				md.appendMarkdown(is_environment_error ? `Check failed: ${reason}\n` : `**Unresolvable**: ${reason}\n`);
-			} else if (status === "Ignored") {
-				md.appendMarkdown("Ignored by config\n");
-			} else if (typeof status === "object" && "Pinned" in status) {
+			} else if (status === 'Ignored') {
+				md.appendMarkdown('Ignored by config\n');
+			} else if (typeof status === 'object' && 'Pinned' in status) {
 				const { sha, tag } = status.Pinned;
-				md.appendMarkdown(`**Pinned** to \`${sha.slice(0, 12)}\` (${tag ?? "unknown version"})\n`);
-			} else if (typeof status === "object" && "Floating" in status) {
-				const kind = matchingResult.ref_kind ?? "ref";
+				md.appendMarkdown(`**Pinned** to \`${sha.slice(0, 12)}\` (${tag ?? 'unknown version'})\n`);
+			} else if (typeof status === 'object' && 'Floating' in status) {
+				const kind = matchingResult.ref_kind ?? 'ref';
 				md.appendMarkdown(`**Floating ${kind}** \`${status.Floating.ref_name}\` — pin to a tag or SHA\n`);
-			} else if (typeof status === "object" && "PinBranch" in status) {
-				const kind = matchingResult.ref_kind ?? "ref";
+			} else if (typeof status === 'object' && 'PinBranch' in status) {
+				const kind = matchingResult.ref_kind ?? 'ref';
 				const { ref_name: refName, sha } = status.PinBranch;
 				md.appendMarkdown(`**Pin ${kind}** \`${refName}\` -> \`${sha.slice(0, 12)}\` # ${refName}\n`);
 			}

@@ -1,12 +1,12 @@
-import * as vscode from "vscode";
+import * as vscode from 'vscode';
 import {
 	type Executable,
 	LanguageClient,
 	type LanguageClientOptions,
 	type ServerOptions,
 	TransportKind,
-} from "vscode-languageclient/node.js";
-import { configPathSetting, initializationOptions, restartsServer } from "./settings.ts";
+} from 'vscode-languageclient/node.js';
+import { configPathSetting, initializationOptions, restartsServer } from './settings.ts';
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.LogOutputChannel;
@@ -14,13 +14,13 @@ let outputChannel: vscode.LogOutputChannel;
 export async function activate(
 	context: vscode.ExtensionContext,
 ): Promise<void> {
-	outputChannel = vscode.window.createOutputChannel("actup", { log: true });
+	outputChannel = vscode.window.createOutputChannel('actup', { log: true });
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand("actup.fixAllInWorkspace", fixAll),
+		vscode.commands.registerCommand('actup.fixAllInWorkspace', fixAll),
 	);
 	context.subscriptions.push(
-		vscode.commands.registerCommand("actup.restartServer", restartServer),
+		vscode.commands.registerCommand('actup.restartServer', restartServer),
 	);
 	context.subscriptions.push(
 		vscode.workspace.onDidChangeConfiguration((e) => {
@@ -39,13 +39,13 @@ export async function deactivate(): Promise<void> {
 }
 
 function serverCommand(): string {
-	const config = vscode.workspace.getConfiguration("actup");
-	return config.get<string | null>("server.path", null) ?? "actup-lsp";
+	const config = vscode.workspace.getConfiguration('actup');
+	return config.get<string | null>('server.path', null) ?? 'actup-lsp';
 }
 
 function serverArgs(): string[] {
-	const config = vscode.workspace.getConfiguration("actup");
-	return config.get<string[]>("server.extraArgs", []);
+	const config = vscode.workspace.getConfiguration('actup');
+	return config.get<string[]>('server.extraArgs', []);
 }
 
 async function startClient(): Promise<void> {
@@ -62,26 +62,26 @@ async function startClient(): Promise<void> {
 		args,
 		transport: TransportKind.stdio,
 		options: {
-			env: { ...process.env, RUST_LOG: "actup_lsp=debug" },
+			env: { ...process.env, RUST_LOG: 'actup_lsp=debug' },
 		},
 	};
 	const serverOptions: ServerOptions = { run, debug };
 
 	const clientOptions: LanguageClientOptions = {
 		documentSelector: [
-			{ scheme: "file", language: "github-actions-workflow" },
-			{ scheme: "file", language: "yaml", pattern: "**/.*/workflows/*.yml" },
-			{ scheme: "file", language: "yaml", pattern: "**/.*/workflows/*.yaml" },
-			{ scheme: "file", language: "yaml", pattern: "**/action.yml" },
-			{ scheme: "file", language: "yaml", pattern: "**/action.yaml" },
+			{ scheme: 'file', language: 'github-actions-workflow' },
+			{ scheme: 'file', language: 'yaml', pattern: '**/.*/workflows/*.yml' },
+			{ scheme: 'file', language: 'yaml', pattern: '**/.*/workflows/*.yaml' },
+			{ scheme: 'file', language: 'yaml', pattern: '**/action.yml' },
+			{ scheme: 'file', language: 'yaml', pattern: '**/action.yaml' },
 		],
 		initializationOptions: initializationOptions(configPathSetting()),
 		outputChannel,
 	};
 
 	client = new LanguageClient(
-		"actup-lsp",
-		"actup",
+		'actup-lsp',
+		'actup',
 		serverOptions,
 		clientOptions,
 	);
@@ -106,24 +106,24 @@ async function stopClient(): Promise<void> {
 }
 
 async function restartServer(): Promise<void> {
-	outputChannel.info("Restarting actup-lsp...");
+	outputChannel.info('Restarting actup-lsp...');
 	await stopClient();
 	await startClient();
 }
 
 async function fixAll(): Promise<void> {
 	if (!client?.isRunning()) {
-		vscode.window.showWarningMessage("actup language server is not running.");
+		vscode.window.showWarningMessage('actup language server is not running.');
 		return;
 	}
 	try {
-		await client.sendRequest("workspace/executeCommand", {
-			command: "actup-lsp/fixAllInWorkspace",
+		await client.sendRequest('workspace/executeCommand', {
+			command: 'actup-lsp/fixAllInWorkspace',
 			arguments: [],
 		});
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		outputChannel.error(`actup-lsp/fixAllInWorkspace failed: ${message}`);
-		void vscode.window.showErrorMessage("actup: Fix all failed. See output for details.");
+		void vscode.window.showErrorMessage('actup: Fix all failed. See output for details.');
 	}
 }

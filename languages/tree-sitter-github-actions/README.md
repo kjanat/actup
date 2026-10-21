@@ -44,10 +44,10 @@ tree-sitter-github-actions/
 From this directory:
 
 ```bash
-bun install              # node binding (node-gyp-build)
-bun run generate         # regen parser.c from grammar.js
-bun run --filter 'tree-sitter-github-actions-*' build   # regen schema/{core,json}/src + emit src/schema.{core,json}.c
-bun run test             # corpus tests (heavy on RAM — see notes)
+bun install                                           # node binding (node-gyp-build)
+bun run generate                                      # regen parser.c from grammar.js
+bun run --filter 'tree-sitter-github-actions-*' build # regen schema/{core,json}/src + emit src/schema.{core,json}.c
+bun run test                                          # corpus tests (heavy on RAM — see notes)
 ```
 
 Other bindings have their own toolchain (Cargo, Maven, Swift PM, Zig build, Go

@@ -19,7 +19,7 @@ pnpm add actup-wasm
 ## Quick Start
 
 ```ts
-import { initWasm, parseUsesRefs } from "actup-wasm";
+import { initWasm, parseUsesRefs } from 'actup-wasm';
 
 await initWasm();
 
@@ -32,7 +32,7 @@ jobs:
 `);
 
 for (const ref of refs) {
-	console.log(`${ref.value} at line ${ref.line}`);
+  console.log(`${ref.value} at line ${ref.line}`);
 }
 ```
 
@@ -41,8 +41,8 @@ for (const ref of refs) {
 Check refs against the GitHub API and compute text edits:
 
 ```ts
-import { checkRefs, initWasm, planUpdates } from "actup-wasm";
-import { createGitHubProvider } from "actup-wasm/provider";
+import { checkRefs, initWasm, planUpdates } from 'actup-wasm';
+import { createGitHubProvider } from 'actup-wasm/provider';
 
 await initWasm();
 
@@ -57,12 +57,12 @@ const provider = createGitHubProvider({ token: process.env.GITHUB_TOKEN });
 const results = await checkRefs(yaml, provider);
 
 for (const r of results) {
-	if (typeof r.status === "object" && "Outdated" in r.status) {
-		const { target } = r.status.Outdated;
-		console.log(
-			`${r.action_ref.owner}/${r.action_ref.repo}: ${r.action_ref.ref_str} → ${target.version}`,
-		);
-	}
+  if (typeof r.status === 'object' && 'Outdated' in r.status) {
+    const { target } = r.status.Outdated;
+    console.log(
+      `${r.action_ref.owner}/${r.action_ref.repo}: ${r.action_ref.ref_str} → ${target.version}`,
+    );
+  }
 }
 
 const edits = planUpdates(results);
@@ -83,7 +83,7 @@ call multiple times — subsequent calls are no-ops.
 
 ```ts
 await initWasm(); // auto-detect
-await initWasm(new URL("./my.wasm")); // explicit URL
+await initWasm(new URL('./my.wasm')); // explicit URL
 await initWasm(wasmBytes); // explicit ArrayBuffer
 ```
 
@@ -220,12 +220,12 @@ bracketed IPv6 literal.
 Create a GitHub REST API provider using native `fetch()`.
 
 ```ts
-import { createGitHubProvider } from "actup-wasm/provider";
+import { createGitHubProvider } from 'actup-wasm/provider';
 
 const provider = createGitHubProvider({
-	token: "ghp_...", // optional — unauthenticated = 60 req/hr
-	apiBase: "https://...", // optional — for GitHub Enterprise
-	perPage: 100, // optional — tags per page (1-100)
+  token: 'ghp_...', // optional — unauthenticated = 60 req/hr
+  apiBase: 'https://...', // optional — for GitHub Enterprise
+  perPage: 100, // optional — tags per page (1-100)
 });
 ```
 

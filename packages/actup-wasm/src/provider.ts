@@ -8,8 +8,8 @@
  * @module
  */
 
-import type { ActionYml, VersionSet } from "../wasm/actup_wasm.js";
-import type { ActupProvider, ProviderErrorKind } from "./types.ts";
+import type { ActionYml, VersionSet } from '../wasm/actup_wasm.js';
+import type { ActupProvider, ProviderErrorKind } from './types.ts';
 
 /** Options for {@link createGitHubProvider}. */
 export interface GitHubProviderOptions {
@@ -38,7 +38,7 @@ export interface GitHubProviderOptions {
 
 /** Structured error from the GitHub provider. */
 export class GitHubProviderError extends Error {
-	override readonly name = "GitHubProviderError";
+	override readonly name = 'GitHubProviderError';
 	readonly kind: ProviderErrorKind;
 	readonly status: number;
 	readonly rateLimitRemaining: number | undefined;
@@ -83,7 +83,7 @@ export function createGitHubProvider(options?: GitHubProviderOptions): ActupProv
 		// Explicit user config wins for all hosts (single-host mode).
 		if (configuredApiBase !== undefined) return configuredApiBase;
 		// Empty or `github.com` → public REST endpoint.
-		if (host === "" || host === "github.com") return "https://api.github.com";
+		if (host === '' || host === 'github.com') return 'https://api.github.com';
 		// Anything else: GHE convention.
 		return `https://${host}/api/v3`;
 	};
@@ -104,16 +104,16 @@ function buildHeaders(
 	/** Optional token for Authorization header. */
 	token: string | undefined,
 	/** Optional Accept header. @default "application/vnd.github+json". */
-	accept: string = "application/vnd.github+json",
+	accept: string = 'application/vnd.github+json',
 	/** Optional client version for User-Agent. @default "0.1.0". */
-	version: string = "0.1.0",
+	version: string = '0.1.0',
 	/** Optional API version for X-GitHub-Api-Version. @default "2022-11-28". */
-	apiVersion: string = "2022-11-28",
+	apiVersion: string = '2022-11-28',
 ): Record<string, string> {
 	const h: Record<string, string> = {
-		"Accept": accept,
-		"X-GitHub-Api-Version": apiVersion,
-		"User-Agent": `actup-wasm/${version}`,
+		'Accept': accept,
+		'X-GitHub-Api-Version': apiVersion,
+		'User-Agent': `actup-wasm/${version}`,
 	};
 	if (token !== undefined && token.length > 0) {
 		h.Authorization = `Bearer ${token}`;
@@ -123,7 +123,7 @@ function buildHeaders(
 
 /** Strip trailing slash from base URL. */
 function normalizeBase(base: string): string {
-	return base.endsWith("/") ? base.slice(0, -1) : base;
+	return base.endsWith('/') ? base.slice(0, -1) : base;
 }
 
 /** Clamp a number to [min, max]. */
@@ -165,19 +165,19 @@ interface GhContent {
 // -- Runtime type guards (validate untyped fetch responses) --
 
 function isObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function hasString(obj: Record<string, unknown>, key: string): boolean {
-	return typeof obj[key] === "string";
+	return typeof obj[key] === 'string';
 }
 
 function isCommitSha(obj: unknown): obj is { readonly sha: string } {
-	return isObject(obj) && hasString(obj, "sha");
+	return isObject(obj) && hasString(obj, 'sha');
 }
 
 function isGhTag(value: unknown): value is GhTag {
-	return isObject(value) && hasString(value, "name") && isCommitSha(value.commit);
+	return isObject(value) && hasString(value, 'name') && isCommitSha(value.commit);
 }
 
 function isGhTagArray(value: unknown): value is readonly GhTag[] {
@@ -185,19 +185,19 @@ function isGhTagArray(value: unknown): value is readonly GhTag[] {
 }
 
 function isGhRepo(value: unknown): value is GhRepo {
-	return isObject(value) && hasString(value, "default_branch");
+	return isObject(value) && hasString(value, 'default_branch');
 }
 
 function isGhBranch(value: unknown): value is GhBranch {
-	return isObject(value) && hasString(value, "name") && isCommitSha(value.commit);
+	return isObject(value) && hasString(value, 'name') && isCommitSha(value.commit);
 }
 
 function isGhObject(obj: unknown): obj is { readonly type: string; readonly sha: string } {
-	return isObject(obj) && hasString(obj, "type") && hasString(obj, "sha");
+	return isObject(obj) && hasString(obj, 'type') && hasString(obj, 'sha');
 }
 
 function isGhRef(value: unknown): value is GhRef {
-	return isObject(value) && hasString(value, "ref") && isGhObject(value.object);
+	return isObject(value) && hasString(value, 'ref') && isGhObject(value.object);
 }
 
 function isGhTagObject(value: unknown): value is GhTagObject {
@@ -205,9 +205,9 @@ function isGhTagObject(value: unknown): value is GhTagObject {
 }
 
 function isGhContent(value: unknown): value is GhContent {
-	if (!isObject(value) || !hasString(value, "type")) return false;
-	if (value.content !== undefined && typeof value.content !== "string") return false;
-	if (value.encoding !== undefined && typeof value.encoding !== "string") return false;
+	if (!isObject(value) || !hasString(value, 'type')) return false;
+	if (value.content !== undefined && typeof value.content !== 'string') return false;
+	if (value.encoding !== undefined && typeof value.encoding !== 'string') return false;
 	return true;
 }
 
@@ -216,7 +216,7 @@ async function readJson(response: Response): Promise<unknown> {
 }
 
 function invalidShape(endpoint: string): GitHubProviderError {
-	return new GitHubProviderError(`Unexpected response shape from GitHub ${endpoint}`, "network", 0);
+	return new GitHubProviderError(`Unexpected response shape from GitHub ${endpoint}`, 'network', 0);
 }
 
 // -- Fetch helpers --
@@ -226,7 +226,7 @@ function invalidShape(endpoint: string): GitHubProviderError {
  * Throws {@link GitHubProviderError} on non-2xx responses.
  */
 async function ghFetch(url: string, headers: Record<string, string>): Promise<Response> {
-	const response = await fetch(url, { method: "GET", headers });
+	const response = await fetch(url, { method: 'GET', headers });
 
 	if (response.ok) {
 		warnRateLimit(response);
@@ -234,14 +234,14 @@ async function ghFetch(url: string, headers: Record<string, string>): Promise<Re
 	}
 
 	// Rate limit: 429 always, 403 only with evidence of exhaustion
-	const remaining = parseIntHeader(response, "x-ratelimit-remaining");
+	const remaining = parseIntHeader(response, 'x-ratelimit-remaining');
 	const retryAfter = parseRetryAfter(response);
 	const rateLimitEvidence = remaining === 0 || retryAfter !== undefined;
 
 	if (response.status === 429 || (response.status === 403 && rateLimitEvidence)) {
 		throw new GitHubProviderError(
 			`GitHub API rate limited (${response.status})`,
-			"rateLimited",
+			'rateLimited',
 			response.status,
 			{ rateLimitRemaining: remaining ?? undefined, retryAfter },
 		);
@@ -249,24 +249,24 @@ async function ghFetch(url: string, headers: Record<string, string>): Promise<Re
 
 	// Forbidden (no rate-limit evidence)
 	if (response.status === 403) {
-		throw new GitHubProviderError(`GitHub API forbidden (403)`, "forbidden", 403);
+		throw new GitHubProviderError(`GitHub API forbidden (403)`, 'forbidden', 403);
 	}
 
 	// Auth
 	if (response.status === 401) {
-		throw new GitHubProviderError("GitHub API authentication failed (401)", "auth", 401);
+		throw new GitHubProviderError('GitHub API authentication failed (401)', 'auth', 401);
 	}
 
 	// Not found
 	if (response.status === 404) {
-		throw new GitHubProviderError("GitHub API resource not found (404)", "notFound", 404);
+		throw new GitHubProviderError('GitHub API resource not found (404)', 'notFound', 404);
 	}
 
 	// Other
-	const body = await response.text().catch(() => "");
+	const body = await response.text().catch(() => '');
 	throw new GitHubProviderError(
-		`GitHub API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ""}`,
-		"network",
+		`GitHub API error: ${response.status} ${response.statusText}${body ? ` — ${body.slice(0, 200)}` : ''}`,
+		'network',
 		response.status,
 	);
 }
@@ -274,14 +274,14 @@ async function ghFetch(url: string, headers: Record<string, string>): Promise<Re
 /** Parse a `Retry-After` or `X-RateLimit-Reset` header into seconds. */
 function parseRetryAfter(response: Response): number | undefined {
 	// Retry-After: seconds
-	const retryAfter = response.headers.get("retry-after");
+	const retryAfter = response.headers.get('retry-after');
 	if (retryAfter !== null) {
 		const secs = Number.parseInt(retryAfter, 10);
 		if (Number.isFinite(secs) && secs > 0) return secs;
 	}
 
 	// X-RateLimit-Reset: unix timestamp
-	const resetHeader = response.headers.get("x-ratelimit-reset");
+	const resetHeader = response.headers.get('x-ratelimit-reset');
 	if (resetHeader !== null) {
 		const resetAt = Number.parseInt(resetHeader, 10);
 		if (Number.isFinite(resetAt)) {
@@ -303,7 +303,7 @@ function parseIntHeader(response: Response, name: string): number | null {
 
 /** Warn (console) when rate limit remaining drops below threshold. */
 function warnRateLimit(response: Response): void {
-	const remaining = parseIntHeader(response, "x-ratelimit-remaining");
+	const remaining = parseIntHeader(response, 'x-ratelimit-remaining');
 	if (remaining !== null && remaining < 10) {
 		console.warn(`[actup-wasm] GitHub API rate limit low: ${remaining.toString()} remaining`);
 	}
@@ -314,12 +314,12 @@ function warnRateLimit(response: Response): void {
  * Returns `undefined` if there is no next page.
  */
 function parseNextLink(response: Response): string | undefined {
-	const link = response.headers.get("link");
+	const link = response.headers.get('link');
 	if (link === null) return undefined;
 
 	// Link: <url>; rel="next", <url>; rel="last"
-	for (const part of link.split(",")) {
-		if (part.includes("rel=\"next\"")) {
+	for (const part of link.split(',')) {
+		if (part.includes('rel="next"')) {
 			const match = /<([^>]+)>/.exec(part);
 			if (match?.[1] !== undefined) return match[1];
 		}
@@ -331,7 +331,7 @@ function parseNextLink(response: Response): string | undefined {
 /** Decode base64-encoded file content from GitHub Contents API. */
 function decodeContent(content: string): string {
 	// GitHub embeds newlines in base64 content
-	const cleaned = content.replace(/\n/g, "");
+	const cleaned = content.replace(/\n/g, '');
 
 	// Use atob (available everywhere: browsers, Node 16+, Bun, Deno)
 	const binary = atob(cleaned);
@@ -346,8 +346,8 @@ function decodeContent(content: string): string {
 
 /** Percent-encode one URL path segment, refusing `.` and `..`. */
 function segment(value: string): string {
-	if (value === "" || value === "." || value === "..") {
-		throw new GitHubProviderError(`Invalid URL path segment: ${JSON.stringify(value)}`, "notFound", 0);
+	if (value === '' || value === '.' || value === '..') {
+		throw new GitHubProviderError(`Invalid URL path segment: ${JSON.stringify(value)}`, 'notFound', 0);
 	}
 	return encodeURIComponent(value);
 }
@@ -368,7 +368,7 @@ async function getVersions(
 	while (url !== undefined) {
 		const response = await ghFetch(url, headers);
 		const tags = await readJson(response);
-		if (!isGhTagArray(tags)) throw invalidShape("/tags");
+		if (!isGhTagArray(tags)) throw invalidShape('/tags');
 		for (const tag of tags) {
 			allTags.push({ version: tag.name, sha: tag.commit.sha });
 		}
@@ -380,12 +380,12 @@ async function getVersions(
 	let defaultBranch: { readonly name: string; readonly sha: string } | null = null;
 	try {
 		const repoInfo = await readJson(await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}`, headers));
-		if (!isGhRepo(repoInfo)) throw invalidShape("/repos/{owner}/{repo}");
+		if (!isGhRepo(repoInfo)) throw invalidShape('/repos/{owner}/{repo}');
 		const branchName = repoInfo.default_branch;
 		const branchInfo = await readJson(
 			await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/branches/${segment(branchName)}`, headers),
 		);
-		if (!isGhBranch(branchInfo)) throw invalidShape("/repos/{owner}/{repo}/branches/{branch}");
+		if (!isGhBranch(branchInfo)) throw invalidShape('/repos/{owner}/{repo}/branches/{branch}');
 		defaultBranch = { name: branchInfo.name, sha: branchInfo.commit.sha };
 	} catch {
 		// Default branch info is supplementary; don't fail the whole call
@@ -409,19 +409,19 @@ async function resolveRefToSha(
 		const refData = await readJson(
 			await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/git/ref/tags/${segment(refName)}`, headers),
 		);
-		if (!isGhRef(refData)) throw invalidShape("/git/ref/tags/{ref}");
+		if (!isGhRef(refData)) throw invalidShape('/git/ref/tags/{ref}');
 
 		// Lightweight tag: object is the commit directly
-		if (refData.object.type === "commit") {
+		if (refData.object.type === 'commit') {
 			return refData.object.sha;
 		}
 
 		// Annotated tag: dereference to get the commit
-		if (refData.object.type === "tag") {
+		if (refData.object.type === 'tag') {
 			const tagObj = await readJson(
 				await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/git/tags/${segment(refData.object.sha)}`, headers),
 			);
-			if (!isGhTagObject(tagObj)) throw invalidShape("/git/tags/{sha}");
+			if (!isGhTagObject(tagObj)) throw invalidShape('/git/tags/{sha}');
 			return tagObj.object.sha;
 		}
 
@@ -450,7 +450,7 @@ async function resolveBranchOrCommit(
 		const branchInfo = await readJson(
 			await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/branches/${segment(refName)}`, headers),
 		);
-		if (!isGhBranch(branchInfo)) throw invalidShape("/branches/{branch}");
+		if (!isGhBranch(branchInfo)) throw invalidShape('/branches/{branch}');
 		return branchInfo.commit.sha;
 	} catch (err) {
 		if (!isNotFound(err) || !SHORT_SHA.test(refName)) throw err;
@@ -458,7 +458,7 @@ async function resolveBranchOrCommit(
 	const commit = await readJson(
 		await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/commits/${segment(refName)}`, headers),
 	);
-	if (!isCommitSha(commit)) throw invalidShape("/commits/{sha}");
+	if (!isCommitSha(commit)) throw invalidShape('/commits/{sha}');
 	return commit.sha;
 }
 
@@ -469,7 +469,7 @@ async function getDefaultBranch(
 	repo: string,
 ): Promise<string> {
 	const repoInfo = await readJson(await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}`, headers));
-	if (!isGhRepo(repoInfo)) throw invalidShape("/repos/{owner}/{repo}");
+	if (!isGhRepo(repoInfo)) throw invalidShape('/repos/{owner}/{repo}');
 	return repoInfo.default_branch;
 }
 
@@ -480,15 +480,15 @@ async function getReadme(
 	repo: string,
 	ref: string | undefined,
 ): Promise<string | null> {
-	const refParam = ref !== undefined ? `?ref=${encodeURIComponent(ref)}` : "";
+	const refParam = ref !== undefined ? `?ref=${encodeURIComponent(ref)}` : '';
 
 	try {
 		const content = await readJson(
 			await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/contents/README.md${refParam}`, headers),
 		);
-		if (!isGhContent(content)) throw invalidShape("/contents/README.md");
-		if (content.type !== "file" || content.content === undefined) return null;
-		if (content.encoding !== "base64") return null;
+		if (!isGhContent(content)) throw invalidShape('/contents/README.md');
+		if (content.type !== 'file' || content.content === undefined) return null;
+		if (content.encoding !== 'base64') return null;
 		return decodeContent(content.content);
 	} catch (err) {
 		if (err instanceof GitHubProviderError && err.status === 404) return null;
@@ -506,14 +506,14 @@ async function getActionYml(
 	const refParam = `?ref=${encodeURIComponent(ref)}`;
 
 	// Try action.yml first, then action.yaml
-	for (const filename of ["action.yml", "action.yaml"]) {
+	for (const filename of ['action.yml', 'action.yaml']) {
 		try {
 			const content = await readJson(
 				await ghFetch(`${apiBase}/repos/${segment(owner)}/${segment(repo)}/contents/${filename}${refParam}`, headers),
 			);
 			if (!isGhContent(content)) throw invalidShape(`/contents/${filename}`);
 
-			if (content.type !== "file" || content.content === undefined || content.encoding !== "base64") {
+			if (content.type !== 'file' || content.content === undefined || content.encoding !== 'base64') {
 				continue;
 			}
 
@@ -527,7 +527,7 @@ async function getActionYml(
 
 	throw new GitHubProviderError(
 		`Neither action.yml nor action.yaml found in ${owner}/${repo}@${ref}`,
-		"notFound",
+		'notFound',
 		404,
 	);
 }
@@ -542,9 +542,9 @@ async function getActionYml(
 function parseActionYmlMinimal(raw: string): ActionYml {
 	return {
 		raw,
-		name: extractYamlScalar(raw, "name"),
-		description: extractYamlScalar(raw, "description"),
-		author: extractYamlScalar(raw, "author"),
+		name: extractYamlScalar(raw, 'name'),
+		description: extractYamlScalar(raw, 'description'),
+		author: extractYamlScalar(raw, 'author'),
 		inputs: {},
 		outputs: {},
 		runs: null,
@@ -554,7 +554,7 @@ function parseActionYmlMinimal(raw: string): ActionYml {
 const MAX_YAML_INPUT = 1_000_000;
 
 function escapeRegex(s: string): string {
-	return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**
@@ -565,7 +565,7 @@ function extractYamlScalar(yaml: string, key: string): string | null {
 	if (yaml.length > MAX_YAML_INPUT) return null;
 	const pattern = new RegExp(
 		`^${escapeRegex(key)}:\\s*(?:['"]([^'"\\r\\n]*)['"]|([^\\r\\n]*))\\s*$`,
-		"m",
+		'm',
 	);
 	const match = pattern.exec(yaml);
 	if (match === null) return null;

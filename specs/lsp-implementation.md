@@ -265,7 +265,7 @@ Helix, Zed).
 ```toml
 [dependencies]
 actup-core       = { path = "../core" }
-tower-lsp-server = "0.23"  # re-exports `ls_types`
+tower-lsp-server = "0.23"                                  # re-exports `ls_types`
 tokio            = { version = "1", features = ["full"] }
 dashmap          = "6"
 tracing          = "0.1"

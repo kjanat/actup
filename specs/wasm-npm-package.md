@@ -234,7 +234,7 @@ optional `action_key`. `LocatedCheckResult.ref_kind` is a `RefKind` (`"tag"`,
 
 /** Load the WASM module. Call it once before any other function. */
 export function initWasm(
-	wasmSource?: URL | Response | BufferSource,
+  wasmSource?: URL | Response | BufferSource,
 ): Promise<void>;
 
 /** Parse uses: refs from YAML content. Pure, synchronous. */
@@ -242,15 +242,15 @@ export function parseUsesRefs(yaml: string): UsesLocation[];
 
 /** Parse YAML content and check its refs against a provider. Async (network). */
 export function checkRefs(
-	yaml: string,
-	provider: ActupProvider,
-	config?: ActupConfig | RepoConfig,
+  yaml: string,
+  provider: ActupProvider,
+  config?: ActupConfig | RepoConfig,
 ): Promise<LocatedCheckResult[]>;
 
 /** Plan minimal text edits from located check results. Pure, synchronous. */
 export function planUpdates(
-	results: readonly LocatedCheckResult[],
-	config?: ActupConfig | RepoConfig,
+  results: readonly LocatedCheckResult[],
+  config?: ActupConfig | RepoConfig,
 ): UpdateEdit[];
 ```
 
@@ -262,26 +262,26 @@ export function planUpdates(
 
 ```typescript
 export interface ActupProvider {
-	getVersions(host: string, owner: string, repo: string): Promise<VersionSet>;
-	resolveRefToSha(
-		host: string,
-		owner: string,
-		repo: string,
-		ref: string,
-	): Promise<string>;
-	getDefaultBranch(host: string, owner: string, repo: string): Promise<string>;
-	getReadme(
-		host: string,
-		owner: string,
-		repo: string,
-		ref?: string | null,
-	): Promise<string | null>;
-	getActionYml(
-		host: string,
-		owner: string,
-		repo: string,
-		ref: string,
-	): Promise<ActionYml>;
+  getVersions(host: string, owner: string, repo: string): Promise<VersionSet>;
+  resolveRefToSha(
+    host: string,
+    owner: string,
+    repo: string,
+    ref: string,
+  ): Promise<string>;
+  getDefaultBranch(host: string, owner: string, repo: string): Promise<string>;
+  getReadme(
+    host: string,
+    owner: string,
+    repo: string,
+    ref?: string | null,
+  ): Promise<string | null>;
+  getActionYml(
+    host: string,
+    owner: string,
+    repo: string,
+    ref: string,
+  ): Promise<ActionYml>;
 }
 ```
 
@@ -290,9 +290,9 @@ export interface ActupProvider {
 ```typescript
 // packages/actup-wasm/src/provider.ts
 export function createGitHubProvider(options?: {
-	token?: string;
-	apiBase?: string;
-	perPage?: number; // 1-100, default 100
+  token?: string;
+  apiBase?: string;
+  perPage?: number; // 1-100, default 100
 }): ActupProvider;
 ```
 

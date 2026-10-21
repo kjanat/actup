@@ -196,7 +196,7 @@ kind = "gitea"
 
 # Forgejo is a soft fork of Gitea with identical API
 [hosts."forgejo.example.com"]
-kind      = "gitea"  # Uses "gitea" kind
+kind      = "gitea"                               # Uses "gitea" kind
 api_base  = "https://forgejo.example.com/api/v1"
 token_env = "FORGEJO_TOKEN"
 ```

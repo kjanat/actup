@@ -7,7 +7,7 @@ description            = "WASM bindings for actup-core — parse and check GitHu
 homepage.workspace     = true
 repository.workspace   = true
 license.workspace      = true
-publish                = false  # Published via npm, not crates.io
+publish                = false                                                                       # Published via npm, not crates.io
 
 [lib]
 crate-type = ["cdylib", "rlib"]

@@ -81,9 +81,9 @@ module. Lint the wasm32 build with `just clippy-wasm`.
 - Node.js integration tests in `tests/`:
   - `node_parse.mjs` — tests `parseUsesRefs` export
   - `node_check.mjs` — tests `checkRefs` + `planUpdates` with a JS mock provider
-- `just wasm-node-test` runs
-  `wasm-pack build crates/wasm --target nodejs --out-dir ../../target/wasm-pkg`
-  and both tests. `just ci` and the CI `WASM` job run it
+- `just wasm-node-test` runs `wasm-pack build crates/wasm --target nodejs
+  --out-dir ../../target/wasm-pkg` and both tests. `just ci` and the CI `WASM`
+  job run it
 - Tests use `console.log("PASS: ...")` / `throw new Error(...)` — no test
   framework
 

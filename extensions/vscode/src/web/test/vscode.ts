@@ -21,18 +21,18 @@ export class Uri {
 
 	static joinPath(base: Uri, ...segments: string[]): Uri {
 		const parts: string[] = [];
-		for (const part of [base.path, ...segments].join("/").split("/")) {
-			if (part === "..") {
+		for (const part of [base.path, ...segments].join('/').split('/')) {
+			if (part === '..') {
 				parts.pop();
-			} else if (part !== "" && part !== ".") {
+			} else if (part !== '' && part !== '.') {
 				parts.push(part);
 			}
 		}
-		return new Uri(`file:///${parts.join("/")}`);
+		return new Uri(`file:///${parts.join('/')}`);
 	}
 
 	get path(): string {
-		return this.value.replace(/^file:\/\//, "");
+		return this.value.replace(/^file:\/\//, '');
 	}
 
 	with(change: { path: string }): Uri {
@@ -108,8 +108,8 @@ export class Diagnostic {
 }
 
 export class CodeActionKind {
-	static readonly QuickFix = new CodeActionKind("quickfix");
-	static readonly SourceFixAll = new CodeActionKind("source.fixAll");
+	static readonly QuickFix = new CodeActionKind('quickfix');
+	static readonly SourceFixAll = new CodeActionKind('source.fixAll');
 
 	constructor(readonly value: string) {}
 
@@ -184,7 +184,7 @@ export enum LogLevel {
 }
 
 export class MarkdownString {
-	value = "";
+	value = '';
 	isTrusted?: boolean;
 
 	appendMarkdown(value: string): MarkdownString {
@@ -257,7 +257,7 @@ class Workspace {
 	}
 
 	findFiles(include: string): Promise<UriLike[]> {
-		const directory = include.includes("/workflows/") ? "/.github/workflows/" : "/.github/actions/";
+		const directory = include.includes('/workflows/') ? '/.github/workflows/' : '/.github/actions/';
 		return Promise.resolve(
 			this.documents.filter(document => document.uri.toString().includes(directory)).map(document => document.uri),
 		);

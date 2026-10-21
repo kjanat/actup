@@ -20,7 +20,7 @@
 //  * @return {Grammar}
 //  */
 const base = grammar({
-	name: "github_actions",
+	name: 'github_actions',
 
 	externals: $ => [
 		$._eof,
@@ -363,17 +363,17 @@ const base = grammar({
 		_br_blk_exp_itm: $ => prec.right(choice(seq($._br_blk_key_itm, optional($._b_blk_val_itm)), $._br_blk_val_itm)),
 		_b_blk_exp_itm: $ => prec.right(choice(seq($._b_blk_key_itm, optional($._b_blk_val_itm)), $._b_blk_val_itm)),
 
-		_r_blk_key_itm: $ => seq($._r_blk_key_bgn, optional(field("key", $._blk_exp_itm_tal))),
-		_br_blk_key_itm: $ => seq($._br_blk_key_bgn, optional(field("key", $._blk_exp_itm_tal))),
-		_b_blk_key_itm: $ => seq($._b_blk_key_bgn, optional(field("key", $._blk_exp_itm_tal))),
+		_r_blk_key_itm: $ => seq($._r_blk_key_bgn, optional(field('key', $._blk_exp_itm_tal))),
+		_br_blk_key_itm: $ => seq($._br_blk_key_bgn, optional(field('key', $._blk_exp_itm_tal))),
+		_b_blk_key_itm: $ => seq($._b_blk_key_bgn, optional(field('key', $._blk_exp_itm_tal))),
 
-		_r_blk_val_itm: $ => seq($._r_blk_val_bgn, optional(field("value", $._blk_exp_itm_tal))),
-		_br_blk_val_itm: $ => seq($._br_blk_val_bgn, optional(field("value", $._blk_exp_itm_tal))),
-		_b_blk_val_itm: $ => seq($._b_blk_val_bgn, optional(field("value", $._blk_exp_itm_tal))),
+		_r_blk_val_itm: $ => seq($._r_blk_val_bgn, optional(field('value', $._blk_exp_itm_tal))),
+		_br_blk_val_itm: $ => seq($._br_blk_val_bgn, optional(field('value', $._blk_exp_itm_tal))),
+		_b_blk_val_itm: $ => seq($._b_blk_val_bgn, optional(field('value', $._blk_exp_itm_tal))),
 
-		_r_blk_imp_itm: $ => seq(field("key", $._r_sgl_flw_val_blk), $._blk_imp_itm_tal),
-		_br_blk_imp_itm: $ => seq(field("key", $._br_sgl_flw_val_blk), $._blk_imp_itm_tal),
-		_b_blk_imp_itm: $ => seq(field("key", $._b_sgl_flw_val_blk), $._blk_imp_itm_tal),
+		_r_blk_imp_itm: $ => seq(field('key', $._r_sgl_flw_val_blk), $._blk_imp_itm_tal),
+		_br_blk_imp_itm: $ => seq(field('key', $._br_sgl_flw_val_blk), $._blk_imp_itm_tal),
+		_b_blk_imp_itm: $ => seq(field('key', $._b_sgl_flw_val_blk), $._blk_imp_itm_tal),
 
 		_blk_exp_itm_tal: $ => choice($._blk_seq_itm_tal, $._r_blk_seq_spc_val, $._br_blk_seq_spc_val, $._b_blk_seq_spc_val),
 		_blk_imp_itm_tal: $ =>
@@ -381,7 +381,7 @@ const base = grammar({
 				$._r_blk_imp_bgn,
 				optional(
 					field(
-						"value",
+						'value',
 						choice(
 							$._r_blk_seq_br_val,
 							$._br_blk_seq_val,
@@ -528,31 +528,31 @@ const base = grammar({
 		// implicit flow pair
 
 		_r_flw_imp_r_par: $ =>
-			choice(seq(field("key", $._r_flw_jsl_val), $._r_flw_jsl_ann_par), seq(field("key", $._r_flw_njl_val_flw), $._r_flw_njl_ann_par)),
+			choice(seq(field('key', $._r_flw_jsl_val), $._r_flw_jsl_ann_par), seq(field('key', $._r_flw_njl_val_flw), $._r_flw_njl_ann_par)),
 		_r_flw_imp_br_par: $ =>
-			choice(seq(field("key", $._r_flw_jsl_val), $._br_flw_jsl_ann_par), seq(field("key", $._r_flw_njl_val_flw), $._br_flw_njl_ann_par)),
+			choice(seq(field('key', $._r_flw_jsl_val), $._br_flw_jsl_ann_par), seq(field('key', $._r_flw_njl_val_flw), $._br_flw_njl_ann_par)),
 		_br_flw_imp_r_par: $ =>
-			choice(seq(field("key", $._br_flw_jsl_val), $._r_flw_jsl_ann_par), seq(field("key", $._br_flw_njl_val_flw), $._r_flw_njl_ann_par)),
+			choice(seq(field('key', $._br_flw_jsl_val), $._r_flw_jsl_ann_par), seq(field('key', $._br_flw_njl_val_flw), $._r_flw_njl_ann_par)),
 		_br_flw_imp_br_par: $ =>
-			choice(seq(field("key", $._br_flw_jsl_val), $._br_flw_jsl_ann_par), seq(field("key", $._br_flw_njl_val_flw), $._br_flw_njl_ann_par)),
+			choice(seq(field('key', $._br_flw_jsl_val), $._br_flw_jsl_ann_par), seq(field('key', $._br_flw_njl_val_flw), $._br_flw_njl_ann_par)),
 
 		_r_sgl_flw_imp_par: $ =>
 			choice(
-				seq(field("key", $._r_sgl_flw_jsl_val), $._r_sgl_flw_jsl_ann_par),
-				seq(field("key", $._r_sgl_flw_njl_val_flw), $._r_sgl_flw_njl_ann_par),
+				seq(field('key', $._r_sgl_flw_jsl_val), $._r_sgl_flw_jsl_ann_par),
+				seq(field('key', $._r_sgl_flw_njl_val_flw), $._r_sgl_flw_njl_ann_par),
 			),
 
 		// anonymous flow pair
 
-		_r_flw_jsl_ann_par: $ => seq($._r_flw_jsv_bgn, optional(field("value", $._flw_ann_par_tal))),
-		_br_flw_jsl_ann_par: $ => seq($._br_flw_jsv_bgn, optional(field("value", $._flw_ann_par_tal))),
+		_r_flw_jsl_ann_par: $ => seq($._r_flw_jsv_bgn, optional(field('value', $._flw_ann_par_tal))),
+		_br_flw_jsl_ann_par: $ => seq($._br_flw_jsv_bgn, optional(field('value', $._flw_ann_par_tal))),
 
-		_r_sgl_flw_jsl_ann_par: $ => seq($._r_flw_jsv_bgn, optional(field("value", $._sgl_flw_ann_par_tal))),
+		_r_sgl_flw_jsl_ann_par: $ => seq($._r_flw_jsv_bgn, optional(field('value', $._sgl_flw_ann_par_tal))),
 
-		_r_flw_njl_ann_par: $ => seq($._r_flw_njv_bgn, optional(field("value", $._flw_ann_par_tal))),
-		_br_flw_njl_ann_par: $ => seq($._br_flw_njv_bgn, optional(field("value", $._flw_ann_par_tal))),
+		_r_flw_njl_ann_par: $ => seq($._r_flw_njv_bgn, optional(field('value', $._flw_ann_par_tal))),
+		_br_flw_njl_ann_par: $ => seq($._br_flw_njv_bgn, optional(field('value', $._flw_ann_par_tal))),
 
-		_r_sgl_flw_njl_ann_par: $ => seq($._r_flw_njv_bgn, optional(field("value", $._sgl_flw_ann_par_tal))),
+		_r_sgl_flw_njl_ann_par: $ => seq($._r_flw_njv_bgn, optional(field('value', $._sgl_flw_ann_par_tal))),
 
 		_flw_ann_par_tal: $ => choice($._r_flw_val_flw, $._br_flw_val_flw),
 		_sgl_flw_ann_par_tal: $ => $._r_sgl_flw_val_flw,
@@ -833,21 +833,21 @@ const base = grammar({
 					),
 				),
 				optional($._expr_ws),
-				"}}",
+				'}}',
 			),
 
 		_literal: $ => choice($.boolean, $.null, $.number, $.string),
 
-		boolean: () => choice("true", "false"),
+		boolean: () => choice('true', 'false'),
 
-		null: () => "null",
+		null: () => 'null',
 
-		_dot: () => ".",
+		_dot: () => '.',
 
-		number: $ => choice(seq(optional("-"), $._int, optional(seq($._dot, $._int)), optional($._exp)), $._hex),
+		number: $ => choice(seq(optional('-'), $._int, optional(seq($._dot, $._int)), optional($._exp)), $._hex),
 		_int: () => /\d+/,
-		_hex: () => seq("0x", /[0-9a-fA-F]+/),
-		_exp: $ => seq(choice("e", "E"), optional(choice("+", "-")), $._int),
+		_hex: () => seq('0x', /[0-9a-fA-F]+/),
+		_exp: $ => seq(choice('e', 'E'), optional(choice('+', '-')), $._int),
 
 		string: $ => seq("'", repeat(choice($.string_content, $.scape_sequence)), "'"),
 		string_content: _ => token(prec(-1, /([^'\\\r\n]|\\(.|\r?\n))+/)),
@@ -864,47 +864,47 @@ const base = grammar({
 				),
 				"'",
 			),
-		_format_scape: () => token.immediate(choice("''", "{{", "}}")),
+		_format_scape: () => token.immediate(choice("''", '{{', '}}')),
 		_format_content: () => token(prec(-1, /([^'{}\\\r\n]|\\(.|\r?\n))+/)),
-		format_variable: $ => seq("{", $.format_index, "}"),
+		format_variable: $ => seq('{', $.format_index, '}'),
 		format_index: $ => $._int,
 
-		asterisk: () => "*",
+		asterisk: () => '*',
 		identifier: () => /[_a-zA-Z][-_a-zA-Z0-9]*/,
 		property_deref: $ => $._dot,
 
 		context: $ => seq($.identifier, repeat($.property)),
 		property: $ => choice(seq($.property_deref, choice($.identifier, $.asterisk)), $.index),
-		index: $ => seq("[", optional($._expr_ws), $._expr_seq, optional($._expr_ws), "]"),
+		index: $ => seq('[', optional($._expr_ws), $._expr_seq, optional($._expr_ws), ']'),
 
 		function_call: $ => choice($._format_function, $._function),
 		_function: $ =>
 			seq(
-				field("function", $.identifier),
-				"(",
+				field('function', $.identifier),
+				'(',
 				optional($._expr_ws),
-				field("arguments", optional($.arguments)),
+				field('arguments', optional($.arguments)),
 				optional($._expr_ws),
-				")",
+				')',
 			),
 		arguments: $ =>
 			seq(
 				$._expr_seq,
-				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._expr_seq)),
+				repeat(seq(optional($._expr_ws), ',', optional($._expr_ws), $._expr_seq)),
 			),
 		_format_function: $ =>
 			seq(
-				field("function", alias("format", $.identifier)),
-				"(",
+				field('function', alias('format', $.identifier)),
+				'(',
 				optional($._expr_ws),
-				field("arguments", alias($._format_arguments, $.arguments)),
+				field('arguments', alias($._format_arguments, $.arguments)),
 				optional($._expr_ws),
-				")",
+				')',
 			),
 		_format_arguments: $ =>
 			seq(
 				$._fmt_arg,
-				repeat(seq(optional($._expr_ws), ",", optional($._expr_ws), $._expr_seq)),
+				repeat(seq(optional($._expr_ws), ',', optional($._expr_ws), $._expr_seq)),
 			),
 
 		_fmt_arg: $ =>
@@ -922,20 +922,20 @@ const base = grammar({
 				),
 			),
 
-		not: () => "!",
+		not: () => '!',
 		operator: $ => choice($.lt, $.le, $.gt, $.ge, $.eq, $.ne, $.and, $.or),
-		lt: () => "<",
-		le: () => "<=",
-		gt: () => ">",
-		ge: () => ">=",
-		eq: () => "==",
-		ne: () => "!=",
-		and: () => "&&",
-		or: () => "||",
+		lt: () => '<',
+		le: () => '<=',
+		gt: () => '>',
+		ge: () => '>=',
+		eq: () => '==',
+		ne: () => '!=',
+		and: () => '&&',
+		or: () => '||',
 
 		logical_group: $ =>
 			seq(
-				"(",
+				'(',
 				optional($._expr_ws),
 				repeat(seq($.not, optional($._expr_ws))),
 				$._evaluation,
@@ -949,134 +949,134 @@ const base = grammar({
 					),
 				),
 				optional($._expr_ws),
-				")",
+				')',
 			),
 	},
 });
 const aliasedSchema = global_alias(
 	global_alias(base.grammar, {
-		..._("yaml_directive", "_s_dir_yml"),
-		..._("yaml_version", "_r_dir_yml_ver"),
-		..._("tag_directive", "_s_dir_tag"),
-		..._("tag_handle", "_r_dir_tag_hdl"),
-		..._("tag_prefix", "_r_dir_tag_pfx"),
-		..._("reserved_directive", "_s_dir_rsv"),
-		..._("directive_name", "_s_dir_rsv_bgn"),
-		..._("directive_parameter", "_r_dir_rsv_prm"),
-		..._("flow_node", "_r_prp_val", "_br_prp_val", "_r_sgl_prp_val", "_br_sgl_prp_val", "_b_sgl_prp_val"),
-		..._("tag", "_r_tag", "_br_tag", "_b_tag"),
-		..._("anchor", "_r_acr", "_br_acr", "_b_acr"),
-		..._("anchor_name", "_r_acr_ctn"),
-		..._("flow_node", "_r_als_val", "_br_als_val", "_b_als_val"),
-		..._("alias", "_r_als", "_br_als", "_b_als"),
-		..._("alias_name", "_r_als_ctn"),
-		..._("document", "_bgn_imp_doc", "_imp_doc"),
-		..._(["document"], "_drs_doc", "_exp_doc", "_doc_end", "_bgn_imp_doc_end", "_drs_doc_end", "_exp_doc_end", "_imp_doc_end"),
+		..._('yaml_directive', '_s_dir_yml'),
+		..._('yaml_version', '_r_dir_yml_ver'),
+		..._('tag_directive', '_s_dir_tag'),
+		..._('tag_handle', '_r_dir_tag_hdl'),
+		..._('tag_prefix', '_r_dir_tag_pfx'),
+		..._('reserved_directive', '_s_dir_rsv'),
+		..._('directive_name', '_s_dir_rsv_bgn'),
+		..._('directive_parameter', '_r_dir_rsv_prm'),
+		..._('flow_node', '_r_prp_val', '_br_prp_val', '_r_sgl_prp_val', '_br_sgl_prp_val', '_b_sgl_prp_val'),
+		..._('tag', '_r_tag', '_br_tag', '_b_tag'),
+		..._('anchor', '_r_acr', '_br_acr', '_b_acr'),
+		..._('anchor_name', '_r_acr_ctn'),
+		..._('flow_node', '_r_als_val', '_br_als_val', '_b_als_val'),
+		..._('alias', '_r_als', '_br_als', '_b_als'),
+		..._('alias_name', '_r_als_ctn'),
+		..._('document', '_bgn_imp_doc', '_imp_doc'),
+		..._(['document'], '_drs_doc', '_exp_doc', '_doc_end', '_bgn_imp_doc_end', '_drs_doc_end', '_exp_doc_end', '_imp_doc_end'),
 		..._(
-			"block_node",
-			"_r_blk_seq_r_val",
-			"_r_blk_seq_br_val",
-			"_br_blk_seq_val",
-			"_r_blk_seq_spc_val",
-			"_br_blk_seq_spc_val",
-			"_b_blk_seq_spc_val",
+			'block_node',
+			'_r_blk_seq_r_val',
+			'_r_blk_seq_br_val',
+			'_br_blk_seq_val',
+			'_r_blk_seq_spc_val',
+			'_br_blk_seq_spc_val',
+			'_b_blk_seq_spc_val',
 		),
-		..._("block_node", "_r_blk_map_r_val", "_r_blk_map_br_val", "_br_blk_map_val"),
-		..._("block_node", "_r_blk_str_val", "_br_blk_str_val"),
-		..._("block_sequence", "_r_blk_seq", "_br_blk_seq", "_b_blk_seq_spc"),
-		..._("block_mapping", "_r_blk_map", "_br_blk_map"),
-		..._("block_scalar", "_r_blk_str", "_br_blk_str"),
-		..._("block_sequence_item", "_r_blk_seq_itm", "_br_blk_seq_itm", "_b_blk_seq_itm"),
-		..._("block_mapping_pair", "_r_blk_exp_itm", "_br_blk_exp_itm", "_b_blk_exp_itm"),
-		..._("block_mapping_pair", "_r_blk_imp_itm", "_br_blk_imp_itm", "_b_blk_imp_itm"),
-		..._("flow_node", "_r_flw_seq_val", "_br_flw_seq_val", "_r_sgl_flw_seq_val", "_br_sgl_flw_seq_val", "_b_sgl_flw_seq_val"),
-		..._("flow_node", "_r_flw_map_val", "_br_flw_map_val", "_r_sgl_flw_map_val", "_br_sgl_flw_map_val", "_b_sgl_flw_map_val"),
-		..._("flow_sequence", "_r_flw_seq", "_br_flw_seq", "_r_sgl_flw_seq", "_br_sgl_flw_seq", "_b_sgl_flw_seq"),
-		..._("flow_mapping", "_r_flw_map", "_br_flw_map", "_r_sgl_flw_map", "_br_sgl_flw_map", "_b_sgl_flw_map"),
+		..._('block_node', '_r_blk_map_r_val', '_r_blk_map_br_val', '_br_blk_map_val'),
+		..._('block_node', '_r_blk_str_val', '_br_blk_str_val'),
+		..._('block_sequence', '_r_blk_seq', '_br_blk_seq', '_b_blk_seq_spc'),
+		..._('block_mapping', '_r_blk_map', '_br_blk_map'),
+		..._('block_scalar', '_r_blk_str', '_br_blk_str'),
+		..._('block_sequence_item', '_r_blk_seq_itm', '_br_blk_seq_itm', '_b_blk_seq_itm'),
+		..._('block_mapping_pair', '_r_blk_exp_itm', '_br_blk_exp_itm', '_b_blk_exp_itm'),
+		..._('block_mapping_pair', '_r_blk_imp_itm', '_br_blk_imp_itm', '_b_blk_imp_itm'),
+		..._('flow_node', '_r_flw_seq_val', '_br_flw_seq_val', '_r_sgl_flw_seq_val', '_br_sgl_flw_seq_val', '_b_sgl_flw_seq_val'),
+		..._('flow_node', '_r_flw_map_val', '_br_flw_map_val', '_r_sgl_flw_map_val', '_br_sgl_flw_map_val', '_b_sgl_flw_map_val'),
+		..._('flow_sequence', '_r_flw_seq', '_br_flw_seq', '_r_sgl_flw_seq', '_br_sgl_flw_seq', '_b_sgl_flw_seq'),
+		..._('flow_mapping', '_r_flw_map', '_br_flw_map', '_r_sgl_flw_map', '_br_sgl_flw_map', '_b_sgl_flw_map'),
 		..._(
-			["flow_pair"],
-			"_r_flw_exp_par",
-			"_br_flw_exp_par",
-			"_r_sgl_flw_exp_par",
-			"_r_flw_imp_r_par",
-			"_r_flw_imp_br_par",
-			"_br_flw_imp_r_par",
-			"_br_flw_imp_br_par",
-			"_r_sgl_flw_imp_par",
-			"_r_flw_njl_ann_par",
-			"_br_flw_njl_ann_par",
-			"_r_sgl_flw_njl_ann_par",
+			['flow_pair'],
+			'_r_flw_exp_par',
+			'_br_flw_exp_par',
+			'_r_sgl_flw_exp_par',
+			'_r_flw_imp_r_par',
+			'_r_flw_imp_br_par',
+			'_br_flw_imp_r_par',
+			'_br_flw_imp_br_par',
+			'_r_sgl_flw_imp_par',
+			'_r_flw_njl_ann_par',
+			'_br_flw_njl_ann_par',
+			'_r_sgl_flw_njl_ann_par',
 		),
-		..._("flow_node", "_r_dqt_str_val", "_br_dqt_str_val", "_r_sgl_dqt_str_val", "_br_sgl_dqt_str_val", "_b_sgl_dqt_str_val"),
-		..._("flow_node", "_r_sqt_str_val", "_br_sqt_str_val", "_r_sgl_sqt_str_val", "_br_sgl_sqt_str_val", "_b_sgl_sqt_str_val"),
+		..._('flow_node', '_r_dqt_str_val', '_br_dqt_str_val', '_r_sgl_dqt_str_val', '_br_sgl_dqt_str_val', '_b_sgl_dqt_str_val'),
+		..._('flow_node', '_r_sqt_str_val', '_br_sqt_str_val', '_r_sgl_sqt_str_val', '_br_sgl_sqt_str_val', '_b_sgl_sqt_str_val'),
 		..._(
-			"flow_node",
-			"_r_pln_blk_val",
-			"_br_pln_blk_val",
-			"_r_sgl_pln_blk_val",
-			"_br_sgl_pln_blk_val",
-			"_b_sgl_pln_blk_val",
-			"_r_pln_flw_val",
-			"_br_pln_flw_val",
-			"_r_sgl_pln_flw_val",
-			"_r_if_expr_val",
+			'flow_node',
+			'_r_pln_blk_val',
+			'_br_pln_blk_val',
+			'_r_sgl_pln_blk_val',
+			'_br_sgl_pln_blk_val',
+			'_b_sgl_pln_blk_val',
+			'_r_pln_flw_val',
+			'_br_pln_flw_val',
+			'_r_sgl_pln_flw_val',
+			'_r_if_expr_val',
 		),
-		..._("delimited_expression", "_r_dlm_expr", "_br_dlm_expr", "_b_dlm_expr"),
-		..._("double_quote_scalar", "_r_dqt_str", "_br_dqt_str", "_r_sgl_dqt_str", "_br_sgl_dqt_str", "_b_sgl_dqt_str"),
-		..._("single_quote_scalar", "_r_sqt_str", "_br_sqt_str", "_r_sgl_sqt_str", "_br_sgl_sqt_str", "_b_sgl_sqt_str"),
+		..._('delimited_expression', '_r_dlm_expr', '_br_dlm_expr', '_b_dlm_expr'),
+		..._('double_quote_scalar', '_r_dqt_str', '_br_dqt_str', '_r_sgl_dqt_str', '_br_sgl_dqt_str', '_b_sgl_dqt_str'),
+		..._('single_quote_scalar', '_r_sqt_str', '_br_sqt_str', '_r_sgl_sqt_str', '_br_sgl_sqt_str', '_b_sgl_sqt_str'),
 		..._(
-			"plain_scalar",
-			"_r_mtl_pln_blk",
-			"_br_mtl_pln_blk",
-			"_r_sgl_pln_blk",
-			"_br_sgl_pln_blk",
-			"_b_sgl_pln_blk",
-			"_r_mtl_pln_flw",
-			"_br_mtl_pln_flw",
-			"_r_sgl_pln_flw",
-			"_br_sgl_pln_flw",
+			'plain_scalar',
+			'_r_mtl_pln_blk',
+			'_br_mtl_pln_blk',
+			'_r_sgl_pln_blk',
+			'_br_sgl_pln_blk',
+			'_b_sgl_pln_blk',
+			'_r_mtl_pln_flw',
+			'_br_mtl_pln_flw',
+			'_r_sgl_pln_flw',
+			'_br_sgl_pln_flw',
 		),
-		..._("escape_sequence", "_r_dqt_esc_nwl", "_br_dqt_esc_nwl", "_r_dqt_esc_seq", "_br_dqt_esc_seq", "_r_sqt_esc_sqt", "_br_sqt_esc_sqt"),
-		..._("null_scalar", "_r_sgl_pln_nul_blk", "_br_sgl_pln_nul_blk", "_b_sgl_pln_nul_blk", "_r_sgl_pln_nul_flw", "_br_sgl_pln_nul_flw"),
-		..._("boolean_scalar", "_r_sgl_pln_bol_blk", "_br_sgl_pln_bol_blk", "_b_sgl_pln_bol_blk", "_r_sgl_pln_bol_flw", "_br_sgl_pln_bol_flw"),
-		..._("integer_scalar", "_r_sgl_pln_int_blk", "_br_sgl_pln_int_blk", "_b_sgl_pln_int_blk", "_r_sgl_pln_int_flw", "_br_sgl_pln_int_flw"),
-		..._("float_scalar", "_r_sgl_pln_flt_blk", "_br_sgl_pln_flt_blk", "_b_sgl_pln_flt_blk", "_r_sgl_pln_flt_flw", "_br_sgl_pln_flt_flw"),
+		..._('escape_sequence', '_r_dqt_esc_nwl', '_br_dqt_esc_nwl', '_r_dqt_esc_seq', '_br_dqt_esc_seq', '_r_sqt_esc_sqt', '_br_sqt_esc_sqt'),
+		..._('null_scalar', '_r_sgl_pln_nul_blk', '_br_sgl_pln_nul_blk', '_b_sgl_pln_nul_blk', '_r_sgl_pln_nul_flw', '_br_sgl_pln_nul_flw'),
+		..._('boolean_scalar', '_r_sgl_pln_bol_blk', '_br_sgl_pln_bol_blk', '_b_sgl_pln_bol_blk', '_r_sgl_pln_bol_flw', '_br_sgl_pln_bol_flw'),
+		..._('integer_scalar', '_r_sgl_pln_int_blk', '_br_sgl_pln_int_blk', '_b_sgl_pln_int_blk', '_r_sgl_pln_int_flw', '_br_sgl_pln_int_flw'),
+		..._('float_scalar', '_r_sgl_pln_flt_blk', '_br_sgl_pln_flt_blk', '_b_sgl_pln_flt_blk', '_r_sgl_pln_flt_flw', '_br_sgl_pln_flt_flw'),
 		..._(
-			"string_scalar",
-			"_r_sgl_pln_str_blk",
-			"_br_sgl_pln_str_blk",
-			"_b_sgl_pln_str_blk",
-			"_r_sgl_pln_str_flw",
-			"_br_sgl_pln_str_flw",
-			"_r_mtl_pln_str_blk",
-			"_br_mtl_pln_str_blk",
-			"_r_mtl_pln_str_flw",
-			"_br_mtl_pln_str_flw",
+			'string_scalar',
+			'_r_sgl_pln_str_blk',
+			'_br_sgl_pln_str_blk',
+			'_b_sgl_pln_str_blk',
+			'_r_sgl_pln_str_flw',
+			'_br_sgl_pln_str_flw',
+			'_r_mtl_pln_str_blk',
+			'_br_mtl_pln_str_blk',
+			'_r_mtl_pln_str_flw',
+			'_br_mtl_pln_str_flw',
 		),
 	}),
 	{
-		..._("---", "_s_drs_end"),
-		..._("...", "_s_doc_end"),
-		..._("-", "_r_blk_seq_bgn", "_br_blk_seq_bgn", "_b_blk_seq_bgn"),
-		..._("?", "_r_blk_key_bgn", "_br_blk_key_bgn", "_b_blk_key_bgn"),
-		..._(":", "_r_blk_val_bgn", "_br_blk_val_bgn", "_b_blk_val_bgn"),
-		..._(":", "_r_blk_imp_bgn"),
-		..._("|", "_r_blk_lit_bgn", "_br_blk_lit_bgn"),
-		..._(">", "_r_blk_fld_bgn", "_br_blk_fld_bgn"),
-		..._("[", "_r_flw_seq_bgn", "_br_flw_seq_bgn", "_b_flw_seq_bgn"),
-		..._("]", "_r_flw_seq_end", "_br_flw_seq_end", "_b_flw_seq_end"),
-		..._("{", "_r_flw_map_bgn", "_br_flw_map_bgn", "_b_flw_map_bgn"),
-		..._("}", "_r_flw_map_end", "_br_flw_map_end", "_b_flw_map_end"),
-		..._(",", "_r_flw_sep_bgn", "_br_flw_sep_bgn"),
-		..._("?", "_r_flw_key_bgn", "_br_flw_key_bgn"),
-		..._(":", "_r_flw_jsv_bgn", "_br_flw_jsv_bgn"),
-		..._(":", "_r_flw_njv_bgn", "_br_flw_njv_bgn"),
-		..._("\"", "_r_dqt_str_bgn", "_br_dqt_str_bgn", "_b_dqt_str_bgn"),
-		..._("\"", "_r_dqt_str_end", "_br_dqt_str_end"),
-		..._("'", "_r_sqt_str_bgn", "_br_sqt_str_bgn", "_b_sqt_str_bgn"),
-		..._("'", "_r_sqt_str_end", "_br_sqt_str_end"),
-		..._("*", "_r_als_bgn", "_br_als_bgn", "_b_als_bgn"),
-		..._("&", "_r_acr_bgn", "_br_acr_bgn", "_b_acr_bgn"),
+		..._('---', '_s_drs_end'),
+		..._('...', '_s_doc_end'),
+		..._('-', '_r_blk_seq_bgn', '_br_blk_seq_bgn', '_b_blk_seq_bgn'),
+		..._('?', '_r_blk_key_bgn', '_br_blk_key_bgn', '_b_blk_key_bgn'),
+		..._(':', '_r_blk_val_bgn', '_br_blk_val_bgn', '_b_blk_val_bgn'),
+		..._(':', '_r_blk_imp_bgn'),
+		..._('|', '_r_blk_lit_bgn', '_br_blk_lit_bgn'),
+		..._('>', '_r_blk_fld_bgn', '_br_blk_fld_bgn'),
+		..._('[', '_r_flw_seq_bgn', '_br_flw_seq_bgn', '_b_flw_seq_bgn'),
+		..._(']', '_r_flw_seq_end', '_br_flw_seq_end', '_b_flw_seq_end'),
+		..._('{', '_r_flw_map_bgn', '_br_flw_map_bgn', '_b_flw_map_bgn'),
+		..._('}', '_r_flw_map_end', '_br_flw_map_end', '_b_flw_map_end'),
+		..._(',', '_r_flw_sep_bgn', '_br_flw_sep_bgn'),
+		..._('?', '_r_flw_key_bgn', '_br_flw_key_bgn'),
+		..._(':', '_r_flw_jsv_bgn', '_br_flw_jsv_bgn'),
+		..._(':', '_r_flw_njv_bgn', '_br_flw_njv_bgn'),
+		..._('"', '_r_dqt_str_bgn', '_br_dqt_str_bgn', '_b_dqt_str_bgn'),
+		..._('"', '_r_dqt_str_end', '_br_dqt_str_end'),
+		..._("'", '_r_sqt_str_bgn', '_br_sqt_str_bgn', '_b_sqt_str_bgn'),
+		..._("'", '_r_sqt_str_end', '_br_sqt_str_end'),
+		..._('*', '_r_als_bgn', '_br_als_bgn', '_b_als_bgn'),
+		..._('&', '_r_acr_bgn', '_br_acr_bgn', '_b_acr_bgn'),
 	},
 );
 
@@ -1088,7 +1088,7 @@ const aliasedSchema = global_alias(
 function _(alias_value, ...rule_names) {
 	/** @type {AliasContent} */
 	let alias_content;
-	if (typeof alias_value === "string") {
+	if (typeof alias_value === 'string') {
 		alias_content = { name: alias_value };
 	} else if (Array.isArray(alias_value)) {
 		alias_content = { name: alias_value[0], shallow: true };
@@ -1135,34 +1135,34 @@ function global_alias(grammar_json, alias_map) {
  */
 function recursive_alias(rule, alias_map, checklist) {
 	switch (rule.type) {
-		case "CHOICE":
-		case "SEQ":
+		case 'CHOICE':
+		case 'SEQ':
 			return { ...rule, members: (rule.members ?? []).map(member => recursive_alias(member, alias_map, checklist)) };
-		case "REPEAT":
-		case "REPEAT1":
-		case "FIELD":
-		case "PREC":
-		case "PREC_LEFT":
-		case "PREC_RIGHT":
-		case "PREC_DYNAMIC":
+		case 'REPEAT':
+		case 'REPEAT1':
+		case 'FIELD':
+		case 'PREC':
+		case 'PREC_LEFT':
+		case 'PREC_RIGHT':
+		case 'PREC_DYNAMIC':
 			return { ...rule, content: rule.content && recursive_alias(rule.content, alias_map, checklist) };
-		case "SYMBOL": {
+		case 'SYMBOL': {
 			const name = rule.name;
 			if (name && name in alias_map) {
 				const entry = alias_map[name];
 				if (entry) {
 					checklist[name] = (checklist[name] ?? 0) + 1;
-					return { type: "ALIAS", content: rule, named: /[a-z]/i.test(entry.name), value: entry.name };
+					return { type: 'ALIAS', content: rule, named: /[a-z]/i.test(entry.name), value: entry.name };
 				}
 			}
 			return rule;
 		}
-		case "BLANK":
-		case "ALIAS":
-		case "STRING":
-		case "PATTERN":
-		case "TOKEN":
-		case "IMMEDIATE_TOKEN":
+		case 'BLANK':
+		case 'ALIAS':
+		case 'STRING':
+		case 'PATTERN':
+		case 'TOKEN':
+		case 'IMMEDIATE_TOKEN':
 			return rule;
 		default:
 			throw new Error(`Unexpected rule type ${JSON.stringify(rule.type)}`);

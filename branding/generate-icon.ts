@@ -10,126 +10,126 @@
  */
 /** biome-ignore-all assist/source/organizeImports: sorting with dprint */
 
-import { arg, cli, CLIError, command, flag, FlagBuilder } from "@kjanat/dreamcli";
+import { arg, cli, CLIError, command, flag, FlagBuilder } from '@kjanat/dreamcli';
 
-import { $ } from "bun";
-import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
-import { argv } from "node:process";
+import { $ } from 'bun';
+import { existsSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
+import { argv } from 'node:process';
 
 /** Custom flag type for non-negative integers (e.g. size, padding, radius) */
 const intFlag = flag.custom((raw: unknown): number => {
-	const n = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+	const n = typeof raw === 'number' ? raw : typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : NaN;
 	if (!Number.isInteger(n) || n < 0) {
-		throw new CLIError(`Expected a non-negative integer (got ${JSON.stringify(raw)})}`, { code: "INVALID_FLAG", exitCode: 1 });
+		throw new CLIError(`Expected a non-negative integer (got ${JSON.stringify(raw)})}`, { code: 'INVALID_FLAG', exitCode: 1 });
 	}
 	return n;
 });
 
 const existingPathArg = arg.custom((raw: unknown): string => {
-	if (typeof raw !== "string" || raw.trim() === "") {
-		throw new CLIError(`Expected a non-empty string for file path (got ${JSON.stringify(raw)})`, { code: "INVALID_ARG", exitCode: 1 });
+	if (typeof raw !== 'string' || raw.trim() === '') {
+		throw new CLIError(`Expected a non-empty string for file path (got ${JSON.stringify(raw)})`, { code: 'INVALID_ARG', exitCode: 1 });
 	}
 	const path = raw.trim();
 	if (!(existsSync(path))) {
-		throw new CLIError(`File not found: ${path}`, { code: "NOT_FOUND", exitCode: 1 });
+		throw new CLIError(`File not found: ${path}`, { code: 'NOT_FOUND', exitCode: 1 });
 	}
 	return path;
 });
-const maskFlag = flag.enum(["polygon", "roundrect"]).alias("m").default("polygon");
+const maskFlag = flag.enum(['polygon', 'roundrect']).alias('m').default('polygon');
 
 type EnumValueOfFlag<F> = F extends FlagBuilder<infer Spec>
-	? Spec extends { readonly flagKind: "enum"; readonly valueType: infer V } ? V : never
+	? Spec extends { readonly flagKind: 'enum'; readonly valueType: infer V } ? V : never
 	: never;
 function enumValuesOf<const F extends FlagBuilder<any>>(builder: F): readonly EnumValueOfFlag<F>[] {
 	const values = builder.schema.enumValues;
 	if (values === undefined) {
-		throw new Error("Expected enum flag, got non-enum flag");
+		throw new Error('Expected enum flag, got non-enum flag');
 	}
 	return values as readonly EnumValueOfFlag<F>[];
 }
 
 const maskStyles = enumValuesOf(maskFlag);
 const [Polygon, RoundRect] = maskStyles;
-export const generateIcon = command("generate-icon")
+export const generateIcon = command('generate-icon')
 	.arg(
-		"bg-color",
-		arg.string().env("BG_COLOR").default("none").describe("Background color hex (e.g. \"#0d1117\") or \"none\" for transparent"),
+		'bg-color',
+		arg.string().env('BG_COLOR').default('none').describe('Background color hex (e.g. "#0d1117") or "none" for transparent'),
 	)
-	.arg("logo-path", existingPathArg.env("IN_PATH").default(join(import.meta.dir, "icon.svg")).describe("Path to SVG logo"))
-	.arg("output-path", arg.string().env("OUT_PATH").required().stdin().describe("Output PNG path"))
-	.flag("size", intFlag.alias("s").env("SIZE").default(128).describe("Canvas size in px"))
-	.flag("padding", intFlag.alias("p").env("PADDING").default(20).describe("Padding percentage"))
-	.flag("radius", intFlag.alias("r").env("RADIUS").default(0).describe("Corner radius in px, 0 = square"))
+	.arg('logo-path', existingPathArg.env('IN_PATH').default(join(import.meta.dir, 'icon.svg')).describe('Path to SVG logo'))
+	.arg('output-path', arg.string().env('OUT_PATH').required().stdin().describe('Output PNG path'))
+	.flag('size', intFlag.alias('s').env('SIZE').default(128).describe('Canvas size in px'))
+	.flag('padding', intFlag.alias('p').env('PADDING').default(20).describe('Padding percentage'))
+	.flag('radius', intFlag.alias('r').env('RADIUS').default(0).describe('Corner radius in px, 0 = square'))
 	.flag(
-		"mask",
+		'mask',
 		maskFlag.describe(`Rounded-corner mask style: ${Polygon} (portable, IM 6+) or ${RoundRect} (cleaner, IM 7+)`),
 	)
 	.action(async ({ args, flags, out }) => {
 		const { size, padding, radius, mask } = flags;
 		if (size === 0) {
-			throw new CLIError(`--size must be greater than 0 (got ${size})`, { code: "INVALID_FLAG", exitCode: 1 });
+			throw new CLIError(`--size must be greater than 0 (got ${size})`, { code: 'INVALID_FLAG', exitCode: 1 });
 		}
 		if (padding >= 100) {
-			throw new CLIError(`--padding must be less than 100 (got ${padding})`, { code: "INVALID_FLAG", exitCode: 1 });
+			throw new CLIError(`--padding must be less than 100 (got ${padding})`, { code: 'INVALID_FLAG', exitCode: 1 });
 		}
 
-		const { "bg-color": bgColor, "logo-path": logoPath, "output-path": outputPath } = args;
+		const { 'bg-color': bgColor, 'logo-path': logoPath, 'output-path': outputPath } = args;
 		const maxLogoSize = Math.floor((size * (100 - padding)) / 100);
 
 		if (maxLogoSize <= 0) {
-			throw new CLIError(`computed logo size must be greater than 0 (got ${maxLogoSize})`, { code: "INVALID_FLAG", exitCode: 1 });
+			throw new CLIError(`computed logo size must be greater than 0 (got ${maxLogoSize})`, { code: 'INVALID_FLAG', exitCode: 1 });
 		}
 
 		const [magickBin, convertBin, rsvgBin] = await Promise.all([
-			Bun.which("magick"),
-			Bun.which("convert"),
-			Bun.which("rsvg-convert"),
+			Bun.which('magick'),
+			Bun.which('convert'),
+			Bun.which('rsvg-convert'),
 		]);
 
 		if (!rsvgBin) {
-			throw new CLIError("rsvg-convert not found", {
-				code: "MISSING_DEP",
+			throw new CLIError('rsvg-convert not found', {
+				code: 'MISSING_DEP',
 				exitCode: 1,
-				suggest: "Install: brew install librsvg / apt install librsvg2-bin / scoop install librsvg",
+				suggest: 'Install: brew install librsvg / apt install librsvg2-bin / scoop install librsvg',
 			});
 		}
 
 		const imCmd = magickBin || convertBin || null;
 		if (!imCmd) {
-			throw new CLIError("ImageMagick not found (need `magick` or `convert`)", {
-				code: "MISSING_DEP",
+			throw new CLIError('ImageMagick not found (need `magick` or `convert`)', {
+				code: 'MISSING_DEP',
 				exitCode: 1,
-				suggest: "Install: brew install imagemagick / apt install imagemagick / scoop install imagemagick",
+				suggest: 'Install: brew install imagemagick / apt install imagemagick / scoop install imagemagick',
 			});
 		}
 
 		if (!(await Bun.file(logoPath).exists())) {
-			throw new CLIError(`file not found: ${logoPath}`, { code: "NOT_FOUND", exitCode: 1 });
+			throw new CLIError(`file not found: ${logoPath}`, { code: 'NOT_FOUND', exitCode: 1 });
 		}
 		const outputDir = dirname(outputPath);
 		try {
 			await $`mkdir -p ${outputDir}`.quiet();
 		} catch (err) {
 			throw new CLIError(`failed to create output directory ${outputDir}: ${err instanceof Error ? err.message : String(err)}`, {
-				code: "MKDIR_FAILED",
+				code: 'MKDIR_FAILED',
 				exitCode: 1,
 			});
 		}
 
 		let tmpDir: string;
 		try {
-			tmpDir = await mkdtemp(join(tmpdir(), "icon_logo_"));
+			tmpDir = await mkdtemp(join(tmpdir(), 'icon_logo_'));
 		} catch (err) {
 			throw new CLIError(`failed to create temporary directory: ${err instanceof Error ? err.message : String(err)}`, {
-				code: "MKDIRTMP_FAILED",
+				code: 'MKDIRTMP_FAILED',
 				exitCode: 1,
 			});
 		}
 
-		const tmpPng = join(tmpDir, "logo.png");
+		const tmpPng = join(tmpDir, 'logo.png');
 
 		try {
 			out.log(`Generating ${outputPath} (${size}x${size}, padding ${padding}%)...`);
@@ -175,7 +175,7 @@ function buildComposeArgs(opts: ComposeOpts): string[] {
 	];
 
 	if (cornerRadius > 0) {
-		const maskArgs = maskStyle === "roundrect"
+		const maskArgs = maskStyle === 'roundrect'
 			? roundrectMaskArgs(canvasSize, cornerRadius)
 			: polygonMaskArgs(cornerRadius);
 		args.push(...maskArgs);
@@ -224,21 +224,21 @@ function roundrectMaskArgs(canvasSize: number, radius: number): string[] {
 	];
 }
 
-export const emitSchema = command("emit-schema")
-	.description("Write JSON schemas for this CLI next to generate-icon.ts and exit")
+export const emitSchema = command('emit-schema')
+	.description('Write JSON schemas for this CLI next to generate-icon.ts and exit')
 	.action(async ({ out }) => {
-		const { generateInputSchema, generateSchema } = await import("@kjanat/dreamcli");
+		const { generateInputSchema, generateSchema } = await import('@kjanat/dreamcli');
 		const { schema } = app;
 		await Promise.all([
 			Bun.write(`${import.meta.dir}/generate_icon.schema.json`, JSON.stringify(generateSchema(schema))),
 			Bun.write(`${import.meta.dir}/generate_icon.input.schema.json`, JSON.stringify(generateInputSchema(schema))),
 		]);
-		out.log("Wrote generate_icon.schema.json and generate_icon.input.schema.json");
+		out.log('Wrote generate_icon.schema.json and generate_icon.input.schema.json');
 	});
 
-export const app = cli(basename(argv[1]!) ?? "generate-icon")
+export const app = cli(basename(argv[1]!) ?? 'generate-icon')
 	.packageJson()
-	.description("Rasterize an SVG logo onto a colored canvas (PNG output)")
+	.description('Rasterize an SVG logo onto a colored canvas (PNG output)')
 	.default(generateIcon)
 	.command(emitSchema);
 

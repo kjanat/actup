@@ -17,8 +17,8 @@ the Cargo workspace.
 ## Package Exports
 
 ```typescript
-import { checkRefs, initWasm, parseUsesRefs, planUpdates } from "actup-wasm";
-import { createGitHubProvider } from "actup-wasm/provider";
+import { checkRefs, initWasm, parseUsesRefs, planUpdates } from 'actup-wasm';
+import { createGitHubProvider } from 'actup-wasm/provider';
 ```
 
 Two entry points: main (`actup-wasm`) for core functions, `actup-wasm/provider`
@@ -38,10 +38,10 @@ for the default GitHub provider.
 ## Build
 
 ```bash
-bun run build          # build:wasm (wasm-pack) + build:ts (tsc)
-bun run build:wasm     # wasm-pack build → wasm/ directory
-bun run build:ts       # tsc → dist/ directory
-bun run typecheck      # tsc --noEmit
+bun run build      # build:wasm (wasm-pack) + build:ts (tsc)
+bun run build:wasm # wasm-pack build → wasm/ directory
+bun run build:ts   # tsc → dist/ directory
+bun run typecheck  # tsc --noEmit
 ```
 
 The `wasm/` directory contains wasm-pack output (`actup_wasm.js`,

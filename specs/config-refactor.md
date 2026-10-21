@@ -50,15 +50,15 @@ extra_paths = []
 # Fetch settings
 [fetch]
 api_mode          = "graphql"  # "graphql" | "rest"
-max_tags_per_repo = 10  # 1-255
+max_tags_per_repo = 10         # 1-255
 
 # Host overrides/additions
 [hosts."ghe.corp.com"]
 kind              = "github"
 api_base          = "https://ghe.corp.com/api/v3"
 token_env         = "GHE_TOKEN"
-api_mode          = "rest"  # override global
-max_tags_per_repo = 50  # override global
+api_mode          = "rest"                         # override global
+max_tags_per_repo = 50                             # override global
 ```
 
 ### TOML Example (minimal — zero config)

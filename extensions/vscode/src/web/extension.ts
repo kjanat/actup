@@ -1,31 +1,31 @@
-import type { ActupProvider } from "actup-wasm";
-import * as vscode from "vscode";
-import { ACTION_SELECTOR, ActupCodeActionProvider } from "./codeActions.ts";
-import { ActupCompletionProvider } from "./completion.ts";
-import { type ConfigLookup, ConfigStore, watchConfig } from "./config.ts";
-import { checkResultsByUri, clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from "./diagnostics.ts";
-import { DocumentTracker } from "./documentTracker.ts";
-import { ActupHoverProvider } from "./hover.ts";
-import { byteToColumn } from "./position.ts";
-import { createVSCodeGitHubProvider } from "./provider.ts";
-import { ensureWasmInitialized } from "./wasmLoader.ts";
+import type { ActupProvider } from 'actup-wasm';
+import * as vscode from 'vscode';
+import { ACTION_SELECTOR, ActupCodeActionProvider } from './codeActions.ts';
+import { ActupCompletionProvider } from './completion.ts';
+import { type ConfigLookup, ConfigStore, watchConfig } from './config.ts';
+import { checkResultsByUri, clearDiagnosticData, computeDiagnostics, createDiagnosticCollection } from './diagnostics.ts';
+import { DocumentTracker } from './documentTracker.ts';
+import { ActupHoverProvider } from './hover.ts';
+import { byteToColumn } from './position.ts';
+import { createVSCodeGitHubProvider } from './provider.ts';
+import { ensureWasmInitialized } from './wasmLoader.ts';
 
 let outputChannel: vscode.LogOutputChannel;
 
 export async function activate(
 	context: vscode.ExtensionContext,
 ): Promise<void> {
-	outputChannel = vscode.window.createOutputChannel("actup", { log: true });
+	outputChannel = vscode.window.createOutputChannel('actup', { log: true });
 
 	// Initialize WASM
 	try {
 		await ensureWasmInitialized(context);
-		outputChannel.info("actup WASM engine initialized");
+		outputChannel.info('actup WASM engine initialized');
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		outputChannel.error(`Failed to initialize actup WASM: ${message}`);
 		vscode.window.showErrorMessage(
-			"actup: Failed to initialize WASM engine. See output for details.",
+			'actup: Failed to initialize WASM engine. See output for details.',
 		);
 		return;
 	}
@@ -37,7 +37,7 @@ export async function activate(
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
 		outputChannel.error(`Failed to create GitHub provider: ${message}`);
-		ghProvider = (await import("actup-wasm/provider")).createGitHubProvider();
+		ghProvider = (await import('actup-wasm/provider')).createGitHubProvider();
 	}
 
 	// Diagnostics
@@ -61,7 +61,7 @@ export async function activate(
 		vscode.languages.registerCompletionItemProvider(
 			ACTION_SELECTOR,
 			new ActupCompletionProvider(ghProvider, outputChannel),
-			"@",
+			'@',
 		),
 		diagnosticCollection,
 		outputChannel,
@@ -104,12 +104,12 @@ export async function activate(
 	// Commands
 	context.subscriptions.push(
 		vscode.commands.registerCommand(
-			"actup.fixAllInWorkspace",
+			'actup.fixAllInWorkspace',
 			() => fixAllInWorkspace(ghProvider, outputChannel, configs.configFor),
 		),
 	);
 
-	outputChannel.info("actup web extension activated");
+	outputChannel.info('actup web extension activated');
 }
 
 export function deactivate(): void {}
@@ -125,12 +125,12 @@ export async function fixAllInWorkspace(
 	configs: ConfigLookup,
 ): Promise<void> {
 	const [workflowFiles, compositeFiles] = await Promise.all([
-		vscode.workspace.findFiles("**/.github/workflows/*.{yml,yaml}", "**/node_modules/**"),
-		vscode.workspace.findFiles("**/.github/actions/**/action.{yml,yaml}", "**/node_modules/**"),
+		vscode.workspace.findFiles('**/.github/workflows/*.{yml,yaml}', '**/node_modules/**'),
+		vscode.workspace.findFiles('**/.github/actions/**/action.{yml,yaml}', '**/node_modules/**'),
 	]);
 	const files = [...workflowFiles, ...compositeFiles];
 	if (files.length === 0) {
-		vscode.window.showInformationMessage("actup: No workflow files found.");
+		vscode.window.showInformationMessage('actup: No workflow files found.');
 		return;
 	}
 
@@ -140,14 +140,14 @@ export async function fixAllInWorkspace(
 		try {
 			const doc = await vscode.workspace.openTextDocument(fileUri);
 			const text = doc.getText();
-			if (!text.includes("uses:")) continue;
+			if (!text.includes('uses:')) continue;
 
 			const folderConfig = await configs(fileUri);
-			if (folderConfig.kind === "invalid") {
+			if (folderConfig.kind === 'invalid') {
 				throw new Error(`invalid config ${folderConfig.path}: ${folderConfig.message}`);
 			}
-			const config = folderConfig.kind === "loaded" ? folderConfig.config : undefined;
-			const { checkRefs, planUpdates } = await import("actup-wasm");
+			const config = folderConfig.kind === 'loaded' ? folderConfig.config : undefined;
+			const { checkRefs, planUpdates } = await import('actup-wasm');
 			const results = await checkRefs(text, provider, config);
 			const edits = planUpdates(results, config);
 			if (edits.length === 0) continue;
@@ -175,7 +175,7 @@ export async function fixAllInWorkspace(
 
 	const failureSummary = failedFiles.length > 0
 		? ` (${failedFiles.length} file(s) failed; see actup output)`
-		: "";
+		: '';
 	if (totalEdits > 0) {
 		vscode.window.showInformationMessage(
 			`actup: Updated ${totalEdits} action ref(s) across ${files.length} file(s)${failureSummary}.`,
@@ -185,6 +185,6 @@ export async function fixAllInWorkspace(
 			`actup: No updates applied${failureSummary}.`,
 		);
 	} else {
-		vscode.window.showInformationMessage("actup: All actions are up to date.");
+		vscode.window.showInformationMessage('actup: All actions are up to date.');
 	}
 }

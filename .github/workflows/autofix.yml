@@ -12,9 +12,9 @@ jobs:
       - parallel:
           - run: rustup toolchain install
           - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-          - uses: tombi-toml/setup-tombi@be97456589cb1f9c6c8a419bd7fe825b40a9df50 # v1.8.5
+          - uses: tombi-toml/setup-tombi@dbb85e6c7616772f590af0db4a7c455dfe61fec7 # v1.8.9
           - uses: kjanat/install-dprint@c2cdca92154b44b2a2c15222d25d91d1cddfca1b # v2.2.0
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - parallel:
           - name: Clippy fix
             run: cargo clippy --fix --allow-dirty --allow-staged --workspace --all-features

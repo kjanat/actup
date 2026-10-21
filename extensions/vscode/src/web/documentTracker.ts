@@ -1,4 +1,4 @@
-import type * as vscode from "vscode";
+import type * as vscode from 'vscode';
 
 const DEBOUNCE_MS = 300;
 
@@ -45,7 +45,7 @@ export class DocumentTracker {
 
 	/** Check if a document is a GitHub Actions file worth analyzing. */
 	static isActionDocument(doc: vscode.TextDocument): boolean {
-		if (doc.languageId === "github-actions-workflow") return true;
+		if (doc.languageId === 'github-actions-workflow') return true;
 
 		const p = doc.uri.path;
 		if (/\.github[/\\]workflows[/\\].*\.ya?ml$/.test(p)) return true;

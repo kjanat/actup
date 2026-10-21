@@ -52,7 +52,8 @@ jobs:
               missing=1
               continue
             fi
-            dir="$(dirname "$(jq -r --arg name "${crate}" '.packages[] | select(.name == $name) | .manifest_path' <<<"${metadata}")")"
+            manifest="$(jq -r --arg name "${crate}" '.packages[] | select(.name == $name) | .manifest_path' <<<"${metadata}")"
+            dir="$(dirname "${manifest}")"
             listing="$(cargo package --list --locked -p "${crate}")"
             for id in ${license//[()]/ }; do
               case "${id}" in

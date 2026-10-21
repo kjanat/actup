@@ -29,10 +29,10 @@ tracing-subscriber    = { workspace = true }  # Log formatting
 
 [dev-dependencies]
 actup-test-support = { path = "../test-support" }
-glob               = { workspace = true }  # Watcher glob matching in tests
-tempfile           = { workspace = true }  # Temp dirs for cache tests
-tower              = { workspace = true }  # Service trait for integration tests
-wiremock           = { workspace = true }  # HTTP mocking for provider wiring tests
+glob               = { workspace = true }          # Watcher glob matching in tests
+tempfile           = { workspace = true }          # Temp dirs for cache tests
+tower              = { workspace = true }          # Service trait for integration tests
+wiremock           = { workspace = true }          # HTTP mocking for provider wiring tests
 
 [lints]
 workspace = true

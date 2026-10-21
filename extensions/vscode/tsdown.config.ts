@@ -1,26 +1,26 @@
-import { defineConfig } from "tsdown";
+import { defineConfig } from 'tsdown';
 
 export default defineConfig([
 	{
-		entry: ["src/extension.ts"],
-		outDir: "out",
-		format: "es",
-		platform: "node",
-		target: "node22",
+		entry: ['src/extension.ts'],
+		outDir: 'out',
+		format: 'es',
+		platform: 'node',
+		target: 'node22',
 		sourcemap: false,
 		clean: true,
-		minify: "dce-only",
-		external: ["vscode", "node:url", "node:fs"],
+		minify: 'dce-only',
+		external: ['vscode', 'node:url', 'node:fs'],
 	},
 	{
-		entry: ["src/web/extension.ts"],
-		outDir: "dist/web",
-		format: "es",
-		platform: "browser",
-		target: "es2022",
+		entry: ['src/web/extension.ts'],
+		outDir: 'dist/web',
+		format: 'es',
+		platform: 'browser',
+		target: 'es2022',
 		sourcemap: false,
 		clean: true,
-		minify: "dce-only",
-		external: ["vscode", "node:url", "node:fs"],
+		minify: 'dce-only',
+		external: ['vscode', 'node:url', 'node:fs'],
 	},
 ]);

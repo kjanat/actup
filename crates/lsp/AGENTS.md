@@ -89,9 +89,9 @@ edits that pass on their own.
 - Mock provider in `src/test_utils.rs` — `MockProvider` with builder pattern
 - `actup_test_support::logged` captures `tracing` output in unit tests
 - Custom `TestHarness` wrapping `LspService` with background socket drain
-- Test backends use
-  `LspBackend::with_providers(.., test_utils::MOCK_PROVIDERS)`: mock providers
-  and a disabled file cache, with no network and no user cache
+- Test backends use `LspBackend::with_providers(..,
+  test_utils::MOCK_PROVIDERS)`: mock providers and a disabled file cache, with
+  no network and no user cache
 - Tests full LSP protocol flow: initialize, didOpen, diagnostics, codeAction,
   hover, completion, executeCommand
 - No `tests/` directory (tests are in-source `#[cfg(test)]` modules)

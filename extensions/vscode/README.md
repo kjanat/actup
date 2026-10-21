@@ -130,8 +130,8 @@ extensions/vscode/
 ### Build
 
 ```sh
-bun run compile   # one-shot
-bun run watch     # recompile on save
+bun run compile # one-shot
+bun run watch   # recompile on save
 ```
 
 ### Debug
@@ -144,7 +144,7 @@ in the "actup" output channel).
 ### Package
 
 ```sh
-bun run package   # produces actup-vscode-0.1.0.vsix
+bun run package # produces actup-vscode-0.1.0.vsix
 ```
 
 ### How it works

@@ -213,8 +213,9 @@ Never let GitHub + GitHub Enterprise collide in cache.
 
    - Any OS with an absolute `XDG_CONFIG_HOME`:
      `$XDG_CONFIG_HOME/actup/config.toml`
-   - Otherwise: `~/.config/actup/config.toml` (Linux),
-     `~/Library/Application Support/actup/config.toml` (macOS),
+   - Otherwise:\
+     `~/.config/actup/config.toml` (Linux),\
+     `~/Library/Application Support/actup/config.toml` (macOS),\
      `%APPDATA%/actup/config.toml` (Windows)
 
 ### Precedence
@@ -233,7 +234,7 @@ default_host = "github.com"
 
 [fetch]
 api_mode          = "graphql"  # "graphql" | "rest"
-max_tags_per_repo = 10  # 1-255
+max_tags_per_repo = 10         # 1-255
 
 [hosts."ghe.mycorp.internal"]
 kind      = "github"
@@ -456,19 +457,16 @@ Never rely on live network in tests.
 - `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings`
 - Use `tracing` for logs.
 - Structured errors: distinguish user vs environment:
-
   - `InvalidRef` / `NotFound` (user)
   - `Network` / `RateLimit` / `Auth` (environment)
-
-- No decorative comment separators (e.g., `// ========` or `// ------`). Use doc
-  comments or blank lines instead.
+- No decorative comment separators (e.g., `// ========` or `// ------`).\
+  Use doc comments or blank lines instead.
 
 ---
 
 ## Commit message format
 
-Use [Conventional Commits](https://www.conventionalcommits.org/) with these
-guidelines:
+Use [Conventional Commits](https://www.conventionalcommits.org/) with these guidelines:
 
 ### Structure
 
@@ -495,25 +493,33 @@ Add `!` after type/scope for breaking changes: `feat(policy)!: change default`
 ### Rules
 
 1. **Use backticks for code** in commit messages:
-   - Good: `fix(check): handle None from \`GitHubProvider::new\``
-   - Bad: `fix(check): handle None from GitHubProvider::new`
+   - Good:
+
+   ```text
+   fix(check): handle None from `GitHubProvider::new`
+   ```
+
+   - Bad:
+
+   ```text
+   fix(check): handle None from GitHubProvider::new
+   ```
 
 2. **Describe WHY, not just WHAT** — the diff shows what changed; the message
    explains the reasoning:
-   - Good:
-     `fix(discovery): use consistent deduplication to prevent future pattern overlap bugs`
+   - Good: `fix(discovery): deduplicate shit, reduce overlap bugs`
    - Bad: `fix(discovery): check insert() return value`
 
 3. **Never title commits "addresses PR feedback"** — describe the actual changes
    and their purpose:
-   - Good: `fix(check): log provider errors to aid debugging auth failures`
+   - Good: `fix(check): add provider error logs, debug auth`
    - Bad: `fix: address PR review comments`
 
 4. **Keep subject line under 72 chars**, use body for details if needed
 
 ### Examples
 
-```gitcommit
+```Git Commit
 feat(cache): add file-based persistence with TTL
 
 Store version data in ~/.cache/actup/ to avoid repeated API calls.
@@ -522,14 +528,14 @@ Uses JSON format with fetch timestamp for TTL validation.
 Closes #42
 ```
 
-```gitcommit
+```Git Commit
 fix(provider): capture error from `GitHubProvider::new`
 
 Previously discarded the error silently, making auth issues hard to
 debug. Now logs with `tracing::error!` including the error message.
 ```
 
-```gitcommit
+```Git Commit
 refactor(check): use `itertools::unique()` for repo deduplication
 
 Replaces verbose `collect::<HashSet<_>>().into_iter().collect()`
@@ -585,37 +591,37 @@ Run `just` or `just --dump` to see available recipes.
 
 ```bash
 # Build
-just build          # Debug build
-just build-release  # Release build
-just cli            # Build CLI only (release)
+just build         # Debug build
+just build-release # Release build
+just cli           # Build CLI only (release)
 
 # Test
-just test           # Run all tests
-just test-verbose   # Tests with output
-just test-pkg actup-core  # Test specific package
+just test                # Run all tests
+just test-verbose        # Tests with output
+just test-pkg actup-core # Test specific package
 
 # Lint
-just lint           # Full lint (fmt + clippy strict)
-just clippy         # Clippy only
-just fmt            # Format code
+just lint   # Full lint (fmt + clippy strict)
+just clippy # Clippy only
+just fmt    # Format code
 
 # Run
-just run check      # Run CLI with args
+just run check # Run CLI with args
 just run-release check --verbose
 
 # Cache
-just cache-info     # Show cache stats
-just cache-clear    # Clear cache
+just cache-info  # Show cache stats
+just cache-clear # Clear cache
 
 # CI
-just ci             # Run full CI checks locally
+just ci # Run full CI checks locally
 
 # Docs
-just doc            # Generate docs
-just schema         # Generate JSON schema
+just doc    # Generate docs
+just schema # Generate JSON schema
 
 # Self-check
-just self-check     # Run actup on this repo
+just self-check # Run actup on this repo
 ```
 
 ### Crate structure

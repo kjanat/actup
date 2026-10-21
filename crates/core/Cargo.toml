@@ -21,16 +21,16 @@ test = true
 
 [dependencies]
 clap          = { workspace = true, optional = true }  # gated by `clap` feature
-dirs          = { workspace = true }  # Config discovery
-figment       = { workspace = true }  # Configuration parsing
-glob          = { workspace = true }  # File discovery (glob patterns)
-json_comments = { workspace = true }  # JSONC parsing
-saphyr-parser = { workspace = true }  # YAML parsing
-schemars      = { workspace = true }  # Schema generation
-serde         = { workspace = true }  # Serialization
-strsim        = { workspace = true }  # Did-you-mean hints, closest-tag suggestions
-thiserror     = { workspace = true }  # Error derive
-tracing       = { workspace = true }  # Logging
+dirs          = { workspace = true }                   # Config discovery
+figment       = { workspace = true }                   # Configuration parsing
+glob          = { workspace = true }                   # File discovery (glob patterns)
+json_comments = { workspace = true }                   # JSONC parsing
+saphyr-parser = { workspace = true }                   # YAML parsing
+schemars      = { workspace = true }                   # Schema generation
+serde         = { workspace = true }                   # Serialization
+strsim        = { workspace = true }                   # Did-you-mean hints, closest-tag suggestions
+thiserror     = { workspace = true }                   # Error derive
+tracing       = { workspace = true }                   # Logging
 tsify         = { workspace = true, optional = true }  # gated by `tsify` feature
 wasm-bindgen  = { workspace = true, optional = true }  # required by tsify for `typescript_custom_section`
 

@@ -15,31 +15,31 @@ path = "src/main.rs"
 
 [dependencies]
 actup-core            = { workspace = true, features = ["clap"] }  # Core engine
-actup-provider-gitea  = { workspace = true, optional = true }  # Gitea/Forgejo provider
-actup-provider-github = { workspace = true }  # GitHub provider
-actup-provider-gitlab = { workspace = true, optional = true }  # GitLab provider
-anstream              = { workspace = true }  # Colour-aware streams
-clap                  = { workspace = true }  # CLI parsing
-clap_complete         = { workspace = true }  # Shell completions
-indicatif             = { workspace = true }  # Progress spinner
-itertools             = { workspace = true }  # Iterator utilities
-owo-colors            = { workspace = true }  # Terminal colors
-schemars              = { workspace = true }  # JSON schema
-serde                 = { workspace = true }  # Serialization
-serde_json            = { workspace = true }  # JSON
-tokio                 = { workspace = true }  # Async runtime
-toml                  = { workspace = true }  # TOML serialization
-tracing               = { workspace = true }  # Logging
-tracing-subscriber    = { workspace = true }  # Log formatting
+actup-provider-gitea  = { workspace = true, optional = true }      # Gitea/Forgejo provider
+actup-provider-github = { workspace = true }                       # GitHub provider
+actup-provider-gitlab = { workspace = true, optional = true }      # GitLab provider
+anstream              = { workspace = true }                       # Colour-aware streams
+clap                  = { workspace = true }                       # CLI parsing
+clap_complete         = { workspace = true }                       # Shell completions
+indicatif             = { workspace = true }                       # Progress spinner
+itertools             = { workspace = true }                       # Iterator utilities
+owo-colors            = { workspace = true }                       # Terminal colors
+schemars              = { workspace = true }                       # JSON schema
+serde                 = { workspace = true }                       # Serialization
+serde_json            = { workspace = true }                       # JSON
+tokio                 = { workspace = true }                       # Async runtime
+toml                  = { workspace = true }                       # TOML serialization
+tracing               = { workspace = true }                       # Logging
+tracing-subscriber    = { workspace = true }                       # Log formatting
 
 [dev-dependencies]
 indicatif = { workspace = true, features = ["in_memory"] }  # Spinner rendering in tests
-tempfile  = { workspace = true }  # Temp files for tests
-wiremock  = { workspace = true }  # HTTP mocking
+tempfile  = { workspace = true }                            # Temp files for tests
+wiremock  = { workspace = true }                            # HTTP mocking
 
 [features]
 default = ["gitea", "gitlab"]
-gitea   = ["dep:actup-provider-gitea"]  # Gitea/Forgejo hosts
+gitea   = ["dep:actup-provider-gitea"]   # Gitea/Forgejo hosts
 gitlab  = ["dep:actup-provider-gitlab"]  # GitLab hosts
 
 [lints]

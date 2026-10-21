@@ -7,7 +7,7 @@
  * re-exports.
  */
 
-import type { ActionYml, VersionSet } from "../wasm/actup_wasm.js";
+import type { ActionYml, VersionSet } from '../wasm/actup_wasm.js';
 
 /**
  * Why an {@link ActupProvider} call failed.
@@ -17,7 +17,7 @@ import type { ActionYml, VersionSet } from "../wasm/actup_wasm.js";
  * check blocked, and `network` or a missing `kind` marks it failed. A
  * `rateLimited` rejection may carry `retryAfter` in seconds.
  */
-export type ProviderErrorKind = "notFound" | "rateLimited" | "auth" | "forbidden" | "network";
+export type ProviderErrorKind = 'notFound' | 'rateLimited' | 'auth' | 'forbidden' | 'network';
 
 /**
  * Provider interface. Implement it to supply version data from any host.

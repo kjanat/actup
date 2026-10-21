@@ -61,16 +61,16 @@ Zed extension is a workspace member.
 Each extension has its own `justfile`, imported into root via `mod`:
 
 ```bash
-just zed::check       # cargo check --target wasm32-wasip2
-just zed::clippy      # cargo clippy (strict)
-just zed::build       # cargo build (release WASM)
-just vscode::lint     # bun run lint (ESLint)
+just zed::check        # cargo check --target wasm32-wasip2
+just zed::clippy       # cargo clippy (strict)
+just zed::build        # cargo build (release WASM)
+just vscode::lint      # bun run lint (ESLint)
 just vscode::typecheck # bun run typecheck
-just vscode::test     # bun run test
-just vscode::build    # lint + typecheck + compile
-just vscode::package  # build + vsce package
-just ext-check        # umbrella: zed::clippy + vscode::lint + vscode::typecheck + vscode::test
-just ci-full          # ci + wasm::build + wasm::test + ext-check
+just vscode::test      # bun run test
+just vscode::build     # lint + typecheck + compile
+just vscode::package   # build + vsce package
+just ext-check         # umbrella: zed::clippy + vscode::lint + vscode::typecheck + vscode::test
+just ci-full           # ci + wasm::build + wasm::test + ext-check
 ```
 
 Zed recipes auto-install `wasm32-wasip2` target if missing.

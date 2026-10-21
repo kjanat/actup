@@ -3,16 +3,16 @@
 /// <reference types="tree-sitter-cli/dsl" />
 
 export default grammar({
-	name: "core_schema",
+	name: 'core_schema',
 
 	extras: _ => [],
 
 	rules: {
 		scalar: $ => choice($.null, $.bool, $.int, $.float),
 
-		null: _ => token(choice("~", "null", "Null", "NULL")),
+		null: _ => token(choice('~', 'null', 'Null', 'NULL')),
 
-		bool: _ => token(choice("true", "True", "TRUE", "false", "False", "FALSE")),
+		bool: _ => token(choice('true', 'True', 'TRUE', 'false', 'False', 'FALSE')),
 
 		int: _ =>
 			token(choice(
@@ -25,10 +25,10 @@ export default grammar({
 			token(choice(
 				/[-+]?(\.\d+|\d+(\.\d*)?)([eE][-+]?\d+)?/, // number
 				seq(
-					optional(choice("-", "+")),
-					choice(".inf", ".Inf", ".INF"),
+					optional(choice('-', '+')),
+					choice('.inf', '.Inf', '.INF'),
 				), // infinity
-				choice(".nan", ".NaN", ".NAN"), // not a number
+				choice('.nan', '.NaN', '.NAN'), // not a number
 			)),
 	},
 });

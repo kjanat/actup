@@ -1,12 +1,13 @@
 {
-	"$schema": "https://dprint.dev/schemas/v0.json",
+	"$schema": "https://dprint.kjanat.dev/schemas/v0.json",
+	"extends": "https://raw.githubusercontent.com/kjanat/kjanat/HEAD/configs/dprint.remote.json",
 	// General
 	"useTabs": true,
 	"lineWidth": 140,
 	// Language specific
 	"typescript": {},
 	"json": { "object.preferSingleLine": true, "array.preferSingleLine": true },
-	"markdown": { "textWrap": "always", "emphasisKind": "asterisks", "lineWidth": 80 },
+	"markdown": { "textWrap": "always", "emphasisKind": "asterisks", "wrapCodeSpans": false, "lineWidth": 80 },
 	"malva": {},
 	"markup": { "html.void.selfClosing": false, "formatComments": true, "associations": ["!**/*.svg"] },
 	"yaml": { "indentBlockSequenceInMap": true, "flowMap.preferSingleLine": true },
@@ -17,12 +18,7 @@
 		"cwd": "${configDir}",
 		"commands": [
 			{ "exts": ["rs"], "command": "rustfmt", "cacheKeyFiles": ["rustfmt.toml", "rust-toolchain.toml"] },
-			{
-				"exts": ["toml"],
-				"command": "tombi format --stdin-filename {{file_path}} -",
-				"cacheKeyFiles": ["tombi.toml"],
-				"setupCommand": "npm i -g tombi"
-			}
+			{ "exts": ["toml"], "command": "tombi format --stdin-filename {{file_path}} -", "cacheKeyFiles": ["tombi.toml"] }
 		],
 	},
 	// File inclusions/exclusions
@@ -43,13 +39,13 @@
 	],
 	// Plugins
 	"plugins": [
-		"https://plugins.dprint.dev/typescript-0.96.1.wasm",
-		"https://plugins.dprint.dev/json-0.23.0.wasm",
-		"https://plugins.dprint.dev/markdown-0.22.1.wasm",
-		"https://plugins.dprint.dev/dockerfile-0.4.1.wasm",
-		"https://plugins.dprint.dev/g-plane/malva-v0.16.0.wasm",
-		"https://plugins.dprint.dev/g-plane/markup_fmt-v0.27.3.wasm",
-		"https://plugins.dprint.dev/g-plane/pretty_yaml-v0.6.0.wasm",
+		"npm:@dprint/typescript@0.96.1",
+		"npm:@dprint/json@0.25.2",
+		"npm:@dprint/markdown@0.27.1",
+		"npm:@dprint/dockerfile@0.7.0",
+		"npm:dprint-plugin-malva@0.16.0",
+		"npm:dprint-plugin-markup@0.27.6",
+		"npm:dprint-plugin-yaml@0.6.0",
 		"https://plugins.dprint.dev/exec-0.7.3.json@a7898d5f1897e77bff474cec3d948c3ec3a7f455e32de2cc60c8adb9a5dd24aa",
 		"https://plugins.dprint.dev/kjanat/svg-v0.4.1.wasm",
 		"https://plugins.dprint.dev/kjanat/sortpackagejson-0.2.1.wasm",

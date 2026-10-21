@@ -1,12 +1,12 @@
-import type { ActupProvider, VersionTag } from "actup-wasm";
-import * as vscode from "vscode";
+import type { ActupProvider, VersionTag } from 'actup-wasm';
+import * as vscode from 'vscode';
 
 export class FakeDocument implements vscode.TextDocument {
 	readonly uri: vscode.Uri;
 	readonly fileName: string;
 	readonly isUntitled = false;
-	readonly languageId = "github-actions-workflow";
-	readonly encoding = "utf8";
+	readonly languageId = 'github-actions-workflow';
+	readonly encoding = 'utf8';
 	readonly version = 1;
 	readonly isDirty = false;
 	readonly isClosed = false;
@@ -16,7 +16,7 @@ export class FakeDocument implements vscode.TextDocument {
 	constructor(name: string, private readonly text: string) {
 		this.uri = vscode.Uri.parse(`file:///${name}`);
 		this.fileName = name;
-		this.lines = text.split("\n");
+		this.lines = text.split('\n');
 	}
 
 	get lineCount(): number {
@@ -24,11 +24,11 @@ export class FakeDocument implements vscode.TextDocument {
 	}
 
 	save(): Thenable<boolean> {
-		throw new Error("FakeDocument cannot save");
+		throw new Error('FakeDocument cannot save');
 	}
 
 	lineAt(lineOrPosition: number | vscode.Position): vscode.TextLine {
-		const lineNumber = typeof lineOrPosition === "number" ? lineOrPosition : lineOrPosition.line;
+		const lineNumber = typeof lineOrPosition === 'number' ? lineOrPosition : lineOrPosition.line;
 		const text = this.lines[lineNumber];
 		if (text === undefined) {
 			throw new RangeError(`line ${lineNumber} is outside the document`);
@@ -69,7 +69,7 @@ export class FakeDocument implements vscode.TextDocument {
 	}
 
 	getWordRangeAtPosition(): vscode.Range | undefined {
-		throw new Error("FakeDocument has no word ranges");
+		throw new Error('FakeDocument has no word ranges');
 	}
 
 	validateRange(range: vscode.Range): vscode.Range {
@@ -82,7 +82,7 @@ export class FakeDocument implements vscode.TextDocument {
 }
 
 export class FakeLogOutputChannel implements vscode.LogOutputChannel {
-	readonly name = "actup";
+	readonly name = 'actup';
 	readonly logLevel = vscode.LogLevel.Trace;
 	readonly lines: string[] = [];
 
@@ -151,12 +151,12 @@ export function fakeProvider(tagsByRepo: Readonly<Record<string, VersionTag[]>>)
 				? Promise.reject(new Error(`no repository ${owner}/${repo}`))
 				: Promise.resolve({ semverTags });
 		},
-		resolveRefToSha: () => Promise.resolve("a".repeat(40)),
-		getDefaultBranch: () => Promise.resolve("main"),
+		resolveRefToSha: () => Promise.resolve('a'.repeat(40)),
+		getDefaultBranch: () => Promise.resolve('main'),
 		getReadme: () => Promise.resolve(null),
 		getActionYml: () =>
 			Promise.resolve({
-				raw: "",
+				raw: '',
 				name: null,
 				description: null,
 				author: null,
@@ -207,6 +207,6 @@ export function editsOf(action: vscode.CodeAction | undefined): { range: vscode.
 }
 
 export function hoverStatusRows(hover: vscode.Hover | undefined): string[] {
-	const rows = (hover?.contents ?? []).flatMap(content => (typeof content === "string" ? content : content.value).split("\n"));
-	return rows.slice(1).filter(row => row !== "" && !row.startsWith("[View on "));
+	const rows = (hover?.contents ?? []).flatMap(content => (typeof content === 'string' ? content : content.value).split('\n'));
+	return rows.slice(1).filter(row => row !== '' && !row.startsWith('[View on '));
 }

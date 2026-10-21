@@ -1,18 +1,18 @@
-import { type ConfigFile, parseConfig, parseRepoAndExplicitConfig, type RepoConfig, repoConfigCandidates } from "actup-wasm";
-import * as vscode from "vscode";
-import { CONFIG_PATH_SETTING, configPathSetting } from "../settings.ts";
+import { type ConfigFile, parseConfig, parseRepoAndExplicitConfig, type RepoConfig, repoConfigCandidates } from 'actup-wasm';
+import * as vscode from 'vscode';
+import { CONFIG_PATH_SETTING, configPathSetting } from '../settings.ts';
 
 /** The repo config of a workspace folder. */
 export type FolderConfig =
-	| { readonly kind: "none" }
-	| { readonly kind: "loaded"; readonly path: string; readonly config: RepoConfig }
-	| { readonly kind: "invalid"; readonly path: string; readonly message: string };
+	| { readonly kind: 'none' }
+	| { readonly kind: 'loaded'; readonly path: string; readonly config: RepoConfig }
+	| { readonly kind: 'invalid'; readonly path: string; readonly message: string };
 
 /** Find the repo config of the folder holding a document. */
 export type ConfigLookup = (uri: vscode.Uri) => Promise<FolderConfig>;
 
 /** A lookup for documents outside any configured folder. */
-export const noConfig: ConfigLookup = () => Promise.resolve({ kind: "none" });
+export const noConfig: ConfigLookup = () => Promise.resolve({ kind: 'none' });
 
 async function readText(uri: vscode.Uri): Promise<string> {
 	return new TextDecoder().decode(await vscode.workspace.fs.readFile(uri));
@@ -20,15 +20,15 @@ async function readText(uri: vscode.Uri): Promise<string> {
 
 function parsed(path: string, parse: () => RepoConfig): FolderConfig {
 	try {
-		return { kind: "loaded", path, config: parse() };
+		return { kind: 'loaded', path, config: parse() };
 	} catch (err) {
-		return { kind: "invalid", path, message: err instanceof Error ? err.message : String(err) };
+		return { kind: 'invalid', path, message: err instanceof Error ? err.message : String(err) };
 	}
 }
 
 /** The file that `configPath` names for `folder`: absolute, or relative to `folder`. */
 export function resolveConfigPath(folder: vscode.Uri, configPath: string): vscode.Uri {
-	return vscode.Uri.joinPath(configPath.startsWith("/") ? folder.with({ path: "/" }) : folder, configPath);
+	return vscode.Uri.joinPath(configPath.startsWith('/') ? folder.with({ path: '/' }) : folder, configPath);
 }
 
 interface Candidate extends ConfigFile {
@@ -58,7 +58,7 @@ export async function loadFolderConfig(folder: vscode.Uri, configPath: string | 
 	const candidate = await firstCandidate(folder);
 	if (configPath === undefined) {
 		return candidate === undefined
-			? { kind: "none" }
+			? { kind: 'none' }
 			: parsed(candidate.path, () => parseConfig(candidate.path, candidate.contents));
 	}
 	const target = resolveConfigPath(folder, configPath);
@@ -71,7 +71,7 @@ export async function loadFolderConfig(folder: vscode.Uri, configPath: string | 
 			contents = await readText(target);
 		} catch (err) {
 			const reason = err instanceof Error ? err.message : String(err);
-			return { kind: "invalid", path: configPath, message: `cannot read ${configPath}: ${reason}` };
+			return { kind: 'invalid', path: configPath, message: `cannot read ${configPath}: ${reason}` };
 		}
 	}
 	const repoFile = repo === undefined ? undefined : { path: repo.path, contents: repo.contents };
@@ -88,7 +88,7 @@ export class ConfigStore {
 	readonly configFor: ConfigLookup = (uri) => {
 		const folder = vscode.workspace.getWorkspaceFolder(uri);
 		if (folder === undefined) {
-			return Promise.resolve({ kind: "none" });
+			return Promise.resolve({ kind: 'none' });
 		}
 		const key = folder.uri.toString();
 		const cached = this.byFolder.get(key);
@@ -96,7 +96,7 @@ export class ConfigStore {
 			return cached;
 		}
 		const loading = loadFolderConfig(folder.uri, configPathSetting()).then((config) => {
-			if (config.kind === "invalid") {
+			if (config.kind === 'invalid') {
 				this.onInvalid(config.path, config.message);
 			}
 			return config;
@@ -145,8 +145,8 @@ export function watchConfig(store: ConfigStore, reload: () => void): vscode.Disp
 			}
 		}
 		explicit = [...files.values()].flatMap((file) => {
-			const name = file.path.slice(file.path.lastIndexOf("/") + 1);
-			const pattern = new vscode.RelativePattern(vscode.Uri.joinPath(file, ".."), name);
+			const name = file.path.slice(file.path.lastIndexOf('/') + 1);
+			const pattern = new vscode.RelativePattern(vscode.Uri.joinPath(file, '..'), name);
 			return watch(vscode.workspace.createFileSystemWatcher(pattern));
 		});
 	};
@@ -162,7 +162,7 @@ export function watchConfig(store: ConfigStore, reload: () => void): vscode.Disp
 			watchExplicit();
 			changed();
 		}),
-		...watch(vscode.workspace.createFileSystemWatcher(`**/{${repoConfigCandidates().join(",")}}`)),
+		...watch(vscode.workspace.createFileSystemWatcher(`**/{${repoConfigCandidates().join(',')}}`)),
 		{
 			dispose: () => {
 				for (const disposable of explicit) {
