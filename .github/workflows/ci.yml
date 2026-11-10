@@ -220,7 +220,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: kjanat/actionlint@1a9278318c43b72cdf644214128fb0786d210147 # v1
+      - uses: kjanat/actionlint@220b76cfa568e00ed8b3c476898f849a722b88e2 # v1.17.1
       - run: shellcheck action/*.sh examples/*.sh .github/actions/crates-publish/*.sh .github/actions/release-version/*.sh
       - run: ./action/test.sh
       - run: ./examples/pin.test.sh
