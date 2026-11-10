@@ -1,1 +1,43 @@
-{ "$schema": "https://docs.renovatebot.com/renovate-schema.json", "extends": ["config:recommended"] }
+{
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": ["config:recommended"],
+	"vulnerabilityAlerts": { "groupName": null },
+	"packageRules": [
+		{
+			"description": "gix crates release in lockstep",
+			"matchManagers": ["cargo"],
+			"matchPackageNames": ["/^gix(-.+)?$/"],
+			"groupName": "gix crates"
+		},
+		{
+			"description": "tree-sitter crates and bindings",
+			"matchPackageNames": ["/^tree-sitter/", "/jtreesitter/"],
+			"groupName": "tree-sitter"
+		},
+		{
+			"description": "remaining non-major Rust updates",
+			"matchManagers": ["cargo"],
+			"matchUpdateTypes": ["minor", "patch", "digest", "lockFileMaintenance"],
+			"groupName": "rust dependencies"
+		},
+		{
+			"description": "non-major GitHub Actions updates",
+			"matchManagers": ["github-actions"],
+			"matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+			"groupName": "github actions"
+		},
+		{
+			"description": "non-major Maven updates",
+			"matchManagers": ["maven"],
+			"matchUpdateTypes": ["minor", "patch"],
+			"groupName": "maven dependencies"
+		},
+		{
+			"description": "non-major npm and Bun updates",
+			"matchManagers": ["npm", "bun"],
+			"matchUpdateTypes": ["minor", "patch"],
+			"groupName": "js dependencies"
+		},
+		{ "description": "Docker image updates", "matchManagers": ["dockerfile", "docker-compose"], "groupName": "docker images" }
+	]
+}
