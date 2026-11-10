@@ -12,8 +12,8 @@ jobs:
       - parallel:
           - run: rustup toolchain install
           - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-          - uses: tombi-toml/setup-tombi@dbb85e6c7616772f590af0db4a7c455dfe61fec7 # v1.8.9
-          - uses: kjanat/install-dprint@c2cdca92154b44b2a2c15222d25d91d1cddfca1b # v2.2.0
+          - uses: tombi-toml/setup-tombi@8ddc6b91b6fa3ad0ce192a68b409930851e4886c # v1.11.2
+          - uses: kjanat/install-dprint@ad298f8bd07a6bf8dcb3bd13cd567a3e6a85af71 # v2.3.0
             with: { repository: kjanat/kprint, version: 0.60.6-kjanat }
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - parallel:
