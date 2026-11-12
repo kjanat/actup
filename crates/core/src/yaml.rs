@@ -48,6 +48,7 @@ struct Mark {
 
 impl Mark {
     fn of(span: Span) -> Self {
+        // Node spans include tag and anchor properties before the node's content.
         Self {
             line: span.start.line(),
             column: span.start.col() + 1,
@@ -950,7 +951,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "anchors are not supported at line 1, column 7"
+            "anchors are not supported at line 1, column 4"
         );
         Ok(())
     }
@@ -1061,7 +1062,7 @@ mod tests {
         for (text, needle) in [
             (
                 "x: !!float abc\n",
-                "`abc` does not fit tag `!!float` at line 1, column 12",
+                "`abc` does not fit tag `!!float` at line 1, column 4",
             ),
             ("x: !!int 1.5\n", "`1.5` does not fit tag `!!int`"),
             ("x: !!bool yes\n", "`yes` does not fit tag `!!bool`"),
@@ -1069,14 +1070,14 @@ mod tests {
             ("x: !!map abc\n", "`abc` does not fit tag `!!map`"),
             (
                 "x: !!int \"12\"\n",
-                "tag `!!int` needs a plain scalar at line 1, column 10",
+                "tag `!!int` needs a plain scalar at line 1, column 4",
             ),
             ("x: !!bool 'true'\n", "tag `!!bool` needs a plain scalar"),
             ("x: !!null \"\"\n", "tag `!!null` needs a plain scalar"),
             ("x: !!int |\n  1\n", "tag `!!int` needs a plain scalar"),
             (
                 "x: !!str\n  y: 1\n",
-                "tag `!!str` does not fit this node at line 2, column 3",
+                "tag `!!str` does not fit this node at line 1, column 4",
             ),
             ("x: !!seq {}\n", "tag `!!seq` does not fit this node"),
             (
@@ -1165,7 +1166,7 @@ mod tests {
             };
             assert_eq!(
                 err.to_string(),
-                "tag `!!str` is not supported on a scalar at line 1, column 10"
+                "tag `!!str` is not supported on a scalar at line 1, column 4"
             );
         }
         Ok(())

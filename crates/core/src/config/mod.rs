@@ -2251,7 +2251,7 @@ mod tests {
             ),
             (
                 "policy:\n  bump: !custom minor\n",
-                "tag `!custom` is not a core schema tag at line 2, column 17",
+                "tag `!custom` is not a core schema tag at line 2, column 9",
             ),
             ("policy:\n  bump: !!int minor\n", "does not fit tag"),
             (
@@ -2268,7 +2268,7 @@ mod tests {
             ),
             (
                 "fetch:\n  max_tags_per_repo: !!int \"12\"\n",
-                "tag `!!int` needs a plain scalar at line 2, column 28",
+                "tag `!!int` needs a plain scalar at line 2, column 22",
             ),
             (
                 "hosts:\n  Ghe.Corp: {}\n  ghe.corp: {}\n  ghe.corp: {}\n",
