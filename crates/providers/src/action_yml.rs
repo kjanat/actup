@@ -590,15 +590,15 @@ runs:
             ("name: x\nruns: {using: [x}\n", "at line 2, column 17"),
             (
                 "inputs:\n  a: &x\n    description: d\n  b: *x\n",
-                "anchors are not supported at line 3, column 5",
+                "anchors are not supported at line 2, column 6",
             ),
             (
                 "name: &n x\n",
-                "anchors are not supported at line 1, column 10",
+                "anchors are not supported at line 1, column 7",
             ),
             (
                 "x: &b {name: n}\n<<: *b\n",
-                "anchors are not supported at line 1, column 7",
+                "anchors are not supported at line 1, column 4",
             ),
             (
                 "<<: {name: n}\n",
@@ -610,11 +610,11 @@ runs:
             ),
             (
                 "name: !custom x\n",
-                "tag `!custom` is not a core schema tag at line 1, column 15",
+                "tag `!custom` is not a core schema tag at line 1, column 7",
             ),
             (
                 "name: !!int x\n",
-                "`x` does not fit tag `!!int` at line 1, column 13",
+                "`x` does not fit tag `!!int` at line 1, column 7",
             ),
             (
                 "name: a\n---\nname: b\n",
@@ -630,7 +630,7 @@ runs:
             ),
             (
                 "name: !!str x\n",
-                "tag `!!str` is not supported on a scalar at line 1, column 13",
+                "tag `!!str` is not supported on a scalar at line 1, column 7",
             ),
             (
                 "inputs:\n  \u{1F88}: {}\n  \u{1F80}: {}\n",
@@ -638,7 +638,7 @@ runs:
             ),
             (
                 "inputs:\n  t:\n    default: !!int \"1\"\n",
-                "tag `!!int` needs a plain scalar at line 3, column 20",
+                "tag `!!int` needs a plain scalar at line 3, column 14",
             ),
             (
                 "inputs:\n  t:\n    default: 0x100000000\n",
