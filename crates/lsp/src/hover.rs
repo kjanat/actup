@@ -325,8 +325,7 @@ fn format_check_result(result: &CheckResult) -> String {
     };
     let kind = result
         .ref_kind()
-        .map(|k| format!("{k} "))
-        .unwrap_or_default();
+        .map_or_default(|k| format!("{k} "));
     let lead = if result.same_commit_pins() {
         "**Pin available**, same commit"
     } else {
