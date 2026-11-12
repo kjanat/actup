@@ -9,6 +9,11 @@ repository.workspace   = true
 license.workspace      = true
 publish.workspace      = true
 
+[features]
+default = ["gitea", "gitlab"]
+gitea   = ["dep:actup-provider-gitea"]   # Gitea/Forgejo hosts
+gitlab  = ["dep:actup-provider-gitlab"]  # GitLab hosts
+
 [[bin]]
 name = "actup"
 path = "src/main.rs"
@@ -36,11 +41,6 @@ tracing-subscriber    = { workspace = true }                       # Log formatt
 indicatif = { workspace = true, features = ["in_memory"] }  # Spinner rendering in tests
 tempfile  = { workspace = true }                            # Temp files for tests
 wiremock  = { workspace = true }                            # HTTP mocking
-
-[features]
-default = ["gitea", "gitlab"]
-gitea   = ["dep:actup-provider-gitea"]   # Gitea/Forgejo hosts
-gitlab  = ["dep:actup-provider-gitlab"]  # GitLab hosts
 
 [lints]
 workspace = true

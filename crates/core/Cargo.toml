@@ -15,6 +15,13 @@ ignored = ["wasm-bindgen"]
 [package.metadata.cargo-shear]
 ignored = ["wasm-bindgen"]
 
+[features]
+# Clap helpers shared by the `actup` and `actup-mcp` binaries.
+clap  = ["dep:clap"]
+# Opt-in TypeScript binding generation via tsify. Enabled by `actup-wasm`
+# for the npm package build (wasm32-unknown-unknown).
+tsify = ["dep:tsify", "dep:wasm-bindgen"]
+
 [[example]]
 name = "gen_simple_upper"
 test = true
@@ -48,13 +55,6 @@ tokio      = { workspace = true }  # Full async runtime on native
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 tokio = { version = "1", default-features = false, features = ["sync"] }  # sync primitives only
-
-[features]
-# Clap helpers shared by the `actup` and `actup-mcp` binaries.
-clap  = ["dep:clap"]
-# Opt-in TypeScript binding generation via tsify. Enabled by `actup-wasm`
-# for the npm package build (wasm32-unknown-unknown).
-tsify = ["dep:tsify", "dep:wasm-bindgen"]
 
 [lints]
 workspace = true
