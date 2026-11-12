@@ -51,7 +51,7 @@ itertools            = "0.15"  # iterator utilities
 js-sys               = "0.3"   # wasm js interop
 json_comments        = "0.2"   # jsonc
 owo-colors           = "4"     # colors
-saphyr-parser        = "0.2"   # yaml
+saphyr-parser        = "0.3"   # yaml
 schemars             = "1"     # schema
 serde_json           = "1"     # json
 serde-wasm-bindgen   = "0.6"   # wasm serde bridge
@@ -87,12 +87,12 @@ version  = "0.28"
 features = ["sha1"]
 
 [workspace.dependencies.gix-protocol]  # git wire protocol (ls-refs)
-version          = "0.67"
+version          = "0.68"
 default-features = false
 features         = ["blocking-client", "sha1"]
 
 [workspace.dependencies.gix-transport]  # git transport (https)
-version          = "0.61"
+version          = "0.62"
 default-features = false
 features         = ["blocking-client", "http-client-reqwest-rust-tls"]
 
