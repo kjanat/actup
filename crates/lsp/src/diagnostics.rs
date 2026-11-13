@@ -853,10 +853,7 @@ fn same_commit_diagnostic(diag: Diagnostic, result: &CheckResult, uses_value: &s
     let Some(target) = result.same_commit() else {
         return diag;
     };
-    let kind = result
-        .ref_kind()
-        .map(|k| format!("{k} "))
-        .unwrap_or_default();
+    let kind = result.ref_kind().map_or_default(|k| format!("{k} "));
     let lead = if result.same_commit_pins() {
         "pin available, "
     } else {
