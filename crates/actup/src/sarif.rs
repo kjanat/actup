@@ -110,12 +110,11 @@ fn describe(finding: &Finding) -> String {
             let exact = exact_version
                 .as_ref()
                 .filter(|exact| **exact != version)
-                .map(|exact| format!(" ({exact})"))
-                .unwrap_or_default();
+                .map_or_default(|exact| format!(" ({exact})"));
             format!("{action}: {current} -> {version}{exact}")
         }
         FindingStatus::Pinned { sha, tag } => {
-            let tag = tag.as_ref().map(|t| format!(" ({t})")).unwrap_or_default();
+            let tag = tag.as_ref().map_or_default(|t| format!(" ({t})"));
             format!("{action}: pinned to {}{tag}", short(sha))
         }
         FindingStatus::Floating { ref_name } => {
@@ -332,8 +331,7 @@ pub fn annotations(findings: &[Finding]) -> Vec<String> {
             };
             let columns = finding
                 .span()
-                .map(|span| format!(",col={},endColumn={}", span.start, span.end))
-                .unwrap_or_default();
+                .map_or_default(|span| format!(",col={},endColumn={}", span.start, span.end));
             Some(format!(
                 "::{level} file={},line={}{columns}::{}",
                 escape_property(&path(finding)),

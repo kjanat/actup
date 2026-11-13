@@ -462,8 +462,7 @@ fn print_finding_line(finding: &Finding) {
             let suffix = exact_version
                 .as_ref()
                 .filter(|ev| ev.as_str() != version_str)
-                .map(|ev| format!(" ({ev})"))
-                .unwrap_or_default();
+                .map_or_default(|ev| format!(" ({ev})"));
             println!(
                 "{}{}  {}{} -> {}{}",
                 line_prefix.dimmed(),
@@ -475,7 +474,7 @@ fn print_finding_line(finding: &Finding) {
             );
         }
         FindingStatus::Pinned { sha, tag } => {
-            let tag_info = tag.as_ref().map(|t| format!(" ({t})")).unwrap_or_default();
+            let tag_info = tag.as_ref().map_or_default(|t| format!(" ({t})"));
             println!(
                 "{}{}  {}{}",
                 line_prefix.dimmed(),
@@ -566,10 +565,7 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
 /// The same-commit text of `finding`, led by `pin available` only for a target more specific than the ref.
 pub fn same_commit_text(finding: &Finding) -> Option<String> {
     let target = finding.same_commit()?;
-    let kind = finding
-        .ref_kind()
-        .map(|k| format!("{k} "))
-        .unwrap_or_default();
+    let kind = finding.ref_kind().map_or_default(|k| format!("{k} "));
     let current = version::Version::parse(finding.action_ref().ref_str());
     let lead = if target.version().is_more_specific_than(&current) {
         "pin available, "
