@@ -323,9 +323,7 @@ fn format_check_result(result: &CheckResult) -> String {
     let Some(target) = result.same_commit() else {
         return format_version_status(result.status(), result.ref_kind());
     };
-    let kind = result
-        .ref_kind()
-        .map_or_default(|k| format!("{k} "));
+    let kind = result.ref_kind().map_or_default(|k| format!("{k} "));
     let lead = if result.same_commit_pins() {
         "**Pin available**, same commit"
     } else {

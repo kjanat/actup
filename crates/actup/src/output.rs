@@ -565,9 +565,7 @@ fn same_commit_label(finding: &Finding) -> Option<String> {
 /// The same-commit text of `finding`, led by `pin available` only for a target more specific than the ref.
 pub fn same_commit_text(finding: &Finding) -> Option<String> {
     let target = finding.same_commit()?;
-    let kind = finding
-        .ref_kind()
-        .map_or_default(|k| format!("{k} "));
+    let kind = finding.ref_kind().map_or_default(|k| format!("{k} "));
     let current = version::Version::parse(finding.action_ref().ref_str());
     let lead = if target.version().is_more_specific_than(&current) {
         "pin available, "
