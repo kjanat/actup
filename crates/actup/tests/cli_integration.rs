@@ -543,7 +543,7 @@ mod config_tests {
             assert_eq!(
                 file_sources(&config),
                 [ConfigSource::Explicit {
-                    path: explicit.clone()
+                    path: explicit
                 }]
             );
             assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
