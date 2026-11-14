@@ -542,9 +542,7 @@ mod config_tests {
             let config = Config::load(Some(&explicit), None, &repo, None)?;
             assert_eq!(
                 file_sources(&config),
-                [ConfigSource::Explicit {
-                    path: explicit
-                }]
+                [ConfigSource::Explicit { path: explicit }]
             );
             assert_eq!(config.default_host.as_deref(), Some("ghe.corp.com"));
             assert!(config.repo_only_hosts.is_empty());
