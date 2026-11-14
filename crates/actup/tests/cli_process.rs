@@ -21,11 +21,19 @@ type TestResult = Result<(), Box<dyn std::error::Error>>;
 
 async fn remote() -> MockServer {
     let server = MockServer::start().await;
-    for (repo, latest) in [("old", "v1.1.0"), ("new", "v1.1.0"), ("major", "v2.0.0")] {
-        let tags = serde_json::json!([
-            { "name": latest, "commit": { "sha": NEW } },
-            { "name": "v1.0.0", "commit": { "sha": OLD } },
-        ]);
+    for (repo, latest) in [
+        ("old", "v1.1.0"),
+        ("new", "v1.1.0"),
+        ("major", "v2.0.0"),
+        ("tagged", "v2.3.0"),
+    ] {
+        let mut tags = vec![
+            serde_json::json!({ "name": latest, "commit": { "sha": NEW } }),
+            serde_json::json!({ "name": "v1.0.0", "commit": { "sha": OLD } }),
+        ];
+        if repo == "tagged" {
+            tags.push(serde_json::json!({ "name": "v2", "commit": { "sha": NEW } }));
+        }
         Mock::given(method("GET"))
             .and(path(format!("/repos/o/{repo}/tags")))
             .respond_with(ResponseTemplate::new(200).set_body_json(tags))
@@ -132,6 +140,45 @@ fn actup(home: &Path) -> Command {
 
 fn stdout(output: &Output) -> Result<String, std::string::FromUtf8Error> {
     String::from_utf8(output.stdout.clone())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn latest_prints_exact_versions_and_unmatched_constraints() -> TestResult {
+    let server = remote().await;
+    let repo = Repo::new(&server, &[])?;
+
+    for query in ["o/tagged", "o/tagged@v2"] {
+        let output = repo.run(&[query]).await?;
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+        assert_eq!(stdout(&output)?.trim(), "o/tagged  v2 (v2.3.0)");
+    }
+
+    let output = repo.run(&["o/tagged@v99"]).await?;
+    assert_eq!(output.status.code(), Some(2), "{output:?}");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(
+        stderr.contains("No versions found for o/tagged matching v99"),
+        "{stderr}"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn check_prints_exact_versions_and_pinned_tags() -> TestResult {
+    let server = remote().await;
+    let pinned = format!("o/new@{NEW}");
+    let repo = Repo::with_config(
+        &server,
+        &["o/tagged@v1.0.0", &pinned],
+        "\n[cache]\nenabled = false\n\n[policy]\ntrack = \"major\"\n",
+    )?;
+
+    let output = repo.run(&["check", "."]).await?;
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let text = stdout(&output)?;
+    assert!(text.contains("-> v2 (v2.3.0)"), "{text}");
+    assert!(text.contains("pinned to 2222222 (v1.1.0)"), "{text}");
+    Ok(())
 }
 
 #[test]

@@ -164,8 +164,7 @@ pub async fn run(
         let context = query
             .constraint
             .as_ref()
-            .map(|c| format!(" matching {c}"))
-            .unwrap_or_default();
+            .map_or_default(|c| format!(" matching {c}"));
         let message = format!(
             "No versions found for {}/{}{context}",
             query.owner, query.repo
@@ -190,8 +189,7 @@ pub async fn run(
             let suffix = exact_version
                 .as_ref()
                 .filter(|ev| ev.as_str() != result.latest.as_str())
-                .map(|ev| format!(" ({ev})"))
-                .unwrap_or_default();
+                .map_or_default(|ev| format!(" ({ev})"));
             println!(
                 "{}  {}{}",
                 sanitize_line(&format!("{}/{}", query.owner, query.repo)),
