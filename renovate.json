@@ -2,7 +2,25 @@
 	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
 	"extends": ["config:recommended"],
 	"vulnerabilityAlerts": { "groupName": null },
+	"customManagers": [
+		{
+			"customType": "regex",
+			"managerFilePatterns": ["/(^|/)\\.github/workflows/.+\\.ya?ml$/"],
+			"matchStrings": [
+				"uses:\\s+&(?<anchor>[A-Za-z0-9_-]+)\\s+(?<depName>[^\\s@]+/[^\\s@]+)@(?<currentDigest>[a-f0-9]{40}|[a-f0-9]{64})\\s*#\\s*(?<currentValue>[^\\s#]+)"
+			],
+			"datasourceTemplate": "github-tags",
+			"versioningTemplate": "github-actions",
+			"depTypeTemplate": "action"
+		}
+	],
 	"packageRules": [
+		{
+			"description": "ignore malformed GitHub Action names produced from YAML anchors",
+			"matchManagers": ["github-actions"],
+			"matchDepNames": ["/^&[A-Za-z0-9_-]+\\s+[^\\s]+\\/[^\\s]+$/"],
+			"enabled": false
+		},
 		{
 			"description": "gix crates release in lockstep",
 			"matchManagers": ["cargo"],
@@ -23,6 +41,13 @@
 		{
 			"description": "non-major GitHub Actions updates",
 			"matchManagers": ["github-actions"],
+			"matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+			"groupName": "github actions"
+		},
+		{
+			"description": "non-major anchored GitHub Actions updates",
+			"matchManagers": ["custom.regex"],
+			"matchDepTypes": ["action"],
 			"matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
 			"groupName": "github actions"
 		},
