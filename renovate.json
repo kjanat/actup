@@ -11,8 +11,7 @@
 			],
 			"datasourceTemplate": "github-tags",
 			"versioningTemplate": "github-actions",
-			"depTypeTemplate": "action",
-			"autoReplaceStringTemplate": "uses: &{{{anchor}}} {{{depName}}}@{{#if newDigest}}{{{newDigest}}}{{#if newValue}} # {{{newValue}}}{{/if}}{{/if}}{{#unless newDigest}}{{{newValue}}}{{/unless}}"
+			"depTypeTemplate": "action"
 		}
 	],
 	"packageRules": [
