@@ -1,5 +1,5 @@
-import { parseUses, parseUsesRefs } from 'actup-wasm';
 import type { ActionRef, ActupProvider, LocatedCheckResult, UsesLocation } from 'actup-wasm';
+import { parseUses, parseUsesRefs } from 'actup-wasm';
 import * as vscode from 'vscode';
 import { byteToColumn } from './position.ts';
 

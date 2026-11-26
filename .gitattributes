@@ -2,3 +2,4 @@ Cargo.lock linguist-generated=true -diff
 
 .vscode/* linguist-language=JSONC
 .zed/*.json linguist-language=JSONC
+kprint.schema.json -diff linguist-generated

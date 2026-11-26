@@ -1,0 +1,58 @@
+#:schema kprint.schema.json
+
+extends   = "https://raw.githubusercontent.com/kjanat/kjanat/master/configs/dprint.remote.json"
+useTabs   = true
+lineWidth = 140
+excludes  = [
+  "!crates/**/examples/**/*.rs",
+  "**/*-lock.json",
+  "**/*invalid*",
+  "**/.idea",
+  "**/examples/**",
+  "**/fixtures",
+  "**/grammar.json",
+  "**/grammars",
+  "**/node-types.json",
+  "**/node_modules",
+  "**/schemas/*.json",
+  "**/target",
+  "**/test/highlight/**",
+]
+
+[json]
+"object.preferSingleLine" = true
+"array.preferSingleLine"  = true
+
+[markdown]
+textWrap      = "always"
+emphasisKind  = "asterisks"
+wrapCodeSpans = false
+lineWidth     = 80
+
+[markup]
+"html.void.selfClosing" = false
+formatComments          = true
+associations            = ["!**/*.svg"]
+
+[yaml]
+indentBlockSequenceInMap   = true
+"flowMap.preferSingleLine" = true
+
+[svg]
+associations = ["**/*.svg"]
+textContent  = "collapse"
+lineWidth    = 100
+
+[shfmt]
+useTabs          = true
+binaryNextLine   = true
+switchCaseIndent = true
+
+[exec]
+cwd          = "${configDir}"
+playWithFire = false
+
+[[exec.commands]]
+exts          = ["rs"]
+command       = "rustfmt"
+cacheKeyFiles = ["rustfmt.toml", "rust-toolchain.toml"]
