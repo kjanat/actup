@@ -12,7 +12,7 @@ publish                = false                                                  
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[dependencies]
+[target.'cfg(target_arch = "wasm32")'.dependencies]
 actup-core           = { workspace = true, features = ["tsify"] }
 js-sys               = { workspace = true }
 serde                = { workspace = true }

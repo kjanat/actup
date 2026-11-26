@@ -307,11 +307,7 @@ pub fn validate_edit(before: &str, after: &str) -> std::result::Result<(), EditV
 
 fn walk_uses(content: &str) -> (Vec<UsesLocation>, Option<String>) {
     let body = content.strip_prefix('\u{feff}').unwrap_or(content);
-    let source = Source {
-        text: content,
-        lines: line_spans(content),
-        bom: body.len() < content.len(),
-    };
+    let source = Source::new(content);
     let mut results = Vec::new();
     let mut stack: Vec<Ctx> = Vec::new();
 
@@ -322,14 +318,15 @@ fn walk_uses(content: &str) -> (Vec<UsesLocation>, Option<String>) {
         };
 
         match event {
-            Event::Scalar(value, style, _, _) => match classify_node(&mut stack) {
+            Event::Scalar(value, style, anchor, tag) => match classify_node(&mut stack) {
                 NodeRole::MapKey => {
                     if let Some(Ctx::Map { key, .. }) = stack.last_mut() {
                         *key = Some(value.to_string());
                     }
                 }
                 NodeRole::MapValue(Some(key)) if key == "uses" => {
-                    if let Some(loc) = build_location(&source, value.as_ref(), style, span) {
+                    let properties = usize::from(anchor != 0) + usize::from(tag.is_some());
+                    if let Some(loc) = build_location(&source, &value, style, span, properties) {
                         results.push(if names_action(&stack) {
                             loc
                         } else {
@@ -474,9 +471,26 @@ fn names_action(stack: &[Ctx]) -> bool {
 pub fn lines_ending_in_scalars(content: &str) -> BTreeSet<usize> {
     let body = content.strip_prefix('\u{feff}').unwrap_or(content);
     let mut lines = BTreeSet::new();
+    let mut source = None;
     for event in Parser::new_from_str(body) {
         match event {
-            Ok((Event::Scalar(..), span)) => lines.extend(span.start.line()..span.end.line()),
+            Ok((Event::Scalar(_, style, anchor, tag), span))
+                if span.start.line() < span.end.line() =>
+            {
+                let properties = usize::from(anchor != 0) + usize::from(tag.is_some());
+                let start = if properties == 0 {
+                    span.start.line()
+                } else {
+                    let source = source.get_or_insert_with(|| Source::new(content));
+                    let Some((line, _)) = source.scalar_start(span, properties) else {
+                        continue;
+                    };
+                    line
+                };
+                // YAML permits a comment after a block scalar's header.
+                let block = matches!(style, ScalarStyle::Literal | ScalarStyle::Folded);
+                lines.extend(start + usize::from(block)..span.end.line());
+            }
             Ok(_) => {}
             Err(_) => break,
         }
@@ -516,40 +530,85 @@ struct Source<'a> {
     bom: bool,
 }
 
+impl<'a> Source<'a> {
+    fn new(text: &'a str) -> Self {
+        Self {
+            text,
+            lines: line_spans(text),
+            bom: text.starts_with('\u{feff}'),
+        }
+    }
+
+    fn line(&self, line: usize) -> Option<&'a str> {
+        self.text.get(self.lines.get(line.checked_sub(1)?)?.clone())
+    }
+
+    fn byte_at(&self, line: usize, col: usize) -> Option<usize> {
+        let raw = self.line(line)?;
+        let col = col + usize::from(self.bom && line == 1);
+        Some(
+            raw.char_indices()
+                .nth(col)
+                .map_or(raw.len(), |(byte, _)| byte),
+        )
+    }
+
+    // Event spans include any leading tag and anchor. Locate the token after
+    // those properties, which YAML can separate with comments and line breaks.
+    fn scalar_start(&self, span: Span, mut properties: usize) -> Option<(usize, usize)> {
+        let mut line = span.start.line();
+        let mut byte = self.byte_at(line, span.start.col())?;
+        if properties == 0 {
+            return Some((line, byte));
+        }
+        while line <= span.end.line() {
+            let raw = self.line(line)?;
+            let rest = raw.get(byte..)?.trim_start_matches([' ', '\t']);
+            if rest.is_empty() || rest.starts_with('#') {
+                line += 1;
+                byte = 0;
+            } else if properties == 0 {
+                return Some((line, raw.len() - rest.len()));
+            } else {
+                byte = raw.len() - rest.len() + rest.find([' ', '\t']).unwrap_or(rest.len());
+                properties -= 1;
+            }
+        }
+        None
+    }
+}
+
 /// Build a [`UsesLocation`] for a `uses:` value scalar.
-///
-/// `span.start.col()` is a 0-indexed character column of the text after any
-/// byte order mark. For quoted scalars it points at the opening quote while
-/// `value` holds the unquoted content.
 fn build_location(
     source: &Source<'_>,
     value: &str,
     style: ScalarStyle,
     span: Span,
+    properties: usize,
 ) -> Option<UsesLocation> {
     if value.is_empty() {
         return None;
     }
-    let line = span.start.line(); // 1-indexed
-    let raw_line = source
-        .text
-        .get(source.lines.get(line.checked_sub(1)?)?.clone())?
-        .to_string();
+    let (mut line, mut scalar_start) = source.scalar_start(span, properties)?;
+    // Block spans start at the header. Locate diagnostics and edits on the content.
+    if matches!(style, ScalarStyle::Literal | ScalarStyle::Folded)
+        && let Some(raw) = source.line(line + 1)
+        && line < span.end.line()
+    {
+        line += 1;
+        scalar_start = raw
+            .strip_suffix(value)
+            .filter(|indent| indent.bytes().all(|b| b == b' '))
+            .map_or_else(|| raw.len() - raw.trim_start_matches(' ').len(), str::len);
+    }
+    let raw_line = source.line(line)?.to_string();
     let quote_skip = usize::from(matches!(
         style,
         ScalarStyle::SingleQuoted | ScalarStyle::DoubleQuoted
     ));
-    let bom_skip = usize::from(source.bom && line == 1);
-    let byte_at = |col: usize| {
-        raw_line
-            .char_indices()
-            .nth(col + bom_skip)
-            .map_or(raw_line.len(), |(byte, _)| byte)
-    };
-    let byte_col = byte_at(span.start.col() + quote_skip);
-    let scalar_start = byte_at(span.start.col());
+    let byte_col = scalar_start + quote_skip;
     let span_end = if span.end.line() == line {
-        byte_at(span.end.col())
+        source.byte_at(line, span.end.col())?
     } else {
         raw_line.len()
     };
@@ -1386,8 +1445,20 @@ jobs:
     }
 
     #[test]
+    fn exact_ranges_skip_yaml_properties_and_block_headers() {
+        assert_exact_ranges("uses: &pin !!str 'a/b@v1'\n", &[(1, "a/b@v1", "v1")]);
+        assert_exact_ranges(
+            "uses: !!str # note\n  &pin\n  a/b@v1\n",
+            &[(3, "a/b@v1", "v1")],
+        );
+        assert_exact_ranges("uses: &pin >-\n  a/b@v1\n", &[(2, "a/b@v1", "v1")]);
+    }
+
+    #[test]
     fn lines_ending_in_scalars_lists_lines_a_scalar_continues_past() {
-        let cases: [(&str, &[usize]); 6] = [
+        let cases: [(&str, &[usize]); 8] = [
+            ("s: &a\n  |- # comment\n    text\n", &[3]),
+            ("s: !!str # note\n  'two\n   lines'\n", &[2]),
             ("s:\n  - uses: a/b@v1\n", &[]),
             (
                 "s:\n  - { uses: a/b@v1, name: \"multi\n    line\" }\n",

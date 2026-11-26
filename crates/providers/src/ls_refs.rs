@@ -8,7 +8,7 @@ use gix_features::progress::Discard;
 use gix_protocol::{LsRefsCommand, handshake::Ref, ls_refs::RefPrefixes};
 use gix_transport::{
     Protocol, Service,
-    client::{Account, blocking_io::connect},
+    client::{Credentials, blocking_io::connect},
 };
 use tracing::debug;
 
@@ -143,7 +143,7 @@ fn list_refs_blocking(url: &str, token: Option<&str>, repo: &RepoLabel) -> Resul
 
     if let Some(token) = token {
         transport
-            .set_identity(Account {
+            .set_credentials(Credentials::UsernamePassword {
                 username: "x-access-token".into(),
                 password: token.into(),
                 oauth_refresh_token: None,
