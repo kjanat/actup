@@ -472,7 +472,8 @@ The disk cache lives in `cache.path`, else in the OS cache dir
 neither, the CLI, the LSP and `actup-mcp` warn once and run without a disk
 cache, and `actup cache info` and `actup cache path` report that there is no
 cache dir. `actup cache clear` deletes only the entry files actup writes and
-keeps every other file in the directory.
+keeps every other file in the directory. A version record larger than 16 MiB is
+treated as a cache miss and fetched from the provider when online.
 
 An unknown key in a config file or in an `ACTUP_*` variable is an error (exit
 code 2). The message names the file or the variable and suggests the closest

@@ -124,19 +124,23 @@ pub fn repo_search_dirs(start_dir: &Path, ceiling: Option<&Path>) -> Vec<PathBuf
 /// cannot be resolved, the result is the absolute path, else `path` itself.
 #[must_use]
 pub fn canonical_path(path: &Path) -> PathBuf {
-    path.canonicalize()
-        .map(|canonical| {
-            if cfg!(windows) {
-                canonical
-                    .to_str()
-                    .and_then(without_verbatim_prefix)
-                    .map_or_else(|| canonical.clone(), PathBuf::from)
-            } else {
-                canonical
-            }
-        })
+    canonicalize_existing(path)
         .or_else(|_| std::path::absolute(path))
         .unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Resolve an existing path using the same Windows spelling as [`canonical_path`].
+///
+/// # Errors
+/// Returns the filesystem error if the path cannot be resolved.
+pub fn canonicalize_existing(path: &Path) -> std::io::Result<PathBuf> {
+    let canonical = path.canonicalize()?;
+    if cfg!(windows)
+        && let Some(plain) = canonical.to_str().and_then(without_verbatim_prefix)
+    {
+        return Ok(plain.into());
+    }
+    Ok(canonical)
 }
 
 const MAX_PATH: usize = 260;

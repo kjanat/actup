@@ -292,23 +292,9 @@ pub fn relative_path(root: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        fs,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::fs;
 
     use super::*;
-
-    fn make_temp_dir() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let unique = format!(
-            "actup-discovery-test-{}-{}",
-            std::process::id(),
-            SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
-        );
-        let dir = std::env::temp_dir().join(unique);
-        fs::create_dir_all(&dir)?;
-        Ok(dir)
-    }
 
     #[test]
     fn test_is_actions_file() {
@@ -341,8 +327,8 @@ mod tests {
     #[test]
     fn test_discover_files_accepts_explicit_workflow_file() -> Result<(), Box<dyn std::error::Error>>
     {
-        let temp = make_temp_dir()?;
-        let workflows_dir = temp.join(".github/workflows");
+        let temp = tempfile::tempdir()?;
+        let workflows_dir = temp.path().join(".github/workflows");
         fs::create_dir_all(&workflows_dir)?;
         let workflow = workflows_dir.join("release.yml");
         fs::write(&workflow, "name: Release")?;
@@ -352,15 +338,14 @@ mod tests {
         assert_eq!(files[0].path(), workflow.as_path());
         assert_eq!(files[0].kind(), FileKind::Workflow);
 
-        fs::remove_dir_all(temp)?;
         Ok(())
     }
 
     #[test]
     fn test_discover_files_accepts_explicit_custom_yaml_file()
     -> Result<(), Box<dyn std::error::Error>> {
-        let temp = make_temp_dir()?;
-        let custom = temp.join("custom.yml");
+        let temp = tempfile::tempdir()?;
+        let custom = temp.path().join("custom.yml");
         fs::write(&custom, "name: Custom")?;
 
         let files = discover_files(&custom, &[]);
@@ -368,7 +353,6 @@ mod tests {
         assert_eq!(files[0].path(), custom.as_path());
         assert_eq!(files[0].kind(), FileKind::Custom);
 
-        fs::remove_dir_all(temp)?;
         Ok(())
     }
 
@@ -426,9 +410,8 @@ mod tests {
 
     #[test]
     fn test_discover_files_missing_root_finds_nothing() -> Result<(), Box<dyn std::error::Error>> {
-        let temp = make_temp_dir()?;
-        assert_eq!(discover_files(&temp.join("absent"), &[]), []);
-        fs::remove_dir_all(temp)?;
+        let temp = tempfile::tempdir()?;
+        assert_eq!(discover_files(&temp.path().join("absent"), &[]), []);
         Ok(())
     }
 
@@ -475,8 +458,8 @@ mod tests {
     #[test]
     fn test_discover_files_expands_directory_extra_paths() -> Result<(), Box<dyn std::error::Error>>
     {
-        let temp = make_temp_dir()?;
-        let root = temp.join("repo[1]");
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("repo[1]");
         for dir in [
             ".github/workflows/dir.yml",
             ".gitea/workflows/tool",
@@ -534,7 +517,6 @@ mod tests {
             ]
         );
 
-        fs::remove_dir_all(temp)?;
         Ok(())
     }
 
@@ -544,9 +526,9 @@ mod tests {
     {
         use std::os::unix::fs::symlink;
 
-        let temp = make_temp_dir()?;
-        let root = temp.join("repo");
-        let outside = temp.join("outside");
+        let temp = tempfile::tempdir()?;
+        let root = temp.path().join("repo");
+        let outside = temp.path().join("outside");
         let workflows = root.join(".github/workflows");
         fs::create_dir_all(&workflows)?;
         fs::create_dir_all(&outside)?;
@@ -566,7 +548,6 @@ mod tests {
             [workflows.join("alias.yml"), workflows.join("ci.yml")]
         );
 
-        fs::remove_dir_all(temp)?;
         Ok(())
     }
 }

@@ -53,7 +53,7 @@ Model Context Protocol server for AI agents, served over stdio with
 
 ## Tests
 
-`tests/stdio_contract.rs` re-executes itself with `MCP_CONTRACT_ROOT` set to
+`tests/stdio_contract.rs` re-executes itself in the fixture workspace to
 serve a mock-provider `Server` on stdio, then drives it over JSON-RPC. Its
 binary cases spawn the real `actup-mcp` and use no network. Run one case with
 `cargo test -p actup-mcp --test stdio_contract -- <name-substring>`.

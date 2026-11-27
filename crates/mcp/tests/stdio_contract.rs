@@ -1,7 +1,7 @@
 //! Contract tests that drive `actup-mcp` over stdio with a mock provider.
 //!
-//! The test binary re-executes itself with `MCP_CONTRACT_ROOT` set to serve
-//! one server on its own stdio, and the parent talks JSON-RPC to it.
+//! The test binary re-executes itself in the fixture directory to serve one
+//! server on its own stdio, and the parent talks JSON-RPC to it.
 
 use std::{
     collections::HashMap,
@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 
 type TestResult = Result<(), Box<dyn Error>>;
 
-const CHILD_ENV: &str = "MCP_CONTRACT_ROOT";
+const CHILD_ARG: &str = "--serve-contract-fixture";
 
 const TRACK_ENV: &str = "MCP_CONTRACT_TRACK_EXACT";
 const NO_PIN_COMMENT_ENV: &str = "MCP_CONTRACT_NO_PIN_COMMENT";
@@ -251,16 +251,40 @@ struct Client {
     next_id: u64,
 }
 
-impl Client {
-    fn start(root: &Path) -> Result<Self, Box<dyn Error>> {
-        let mut command = Command::new(std::env::current_exe()?);
-        command.env(CHILD_ENV, root);
-        Self::spawn(command)
-    }
+#[cfg(not(target_os = "linux"))]
+fn fixture_image() -> std::io::Result<PathBuf> {
+    use std::io::{Error, ErrorKind};
 
-    fn start_exact(root: &Path) -> Result<Self, Box<dyn Error>> {
-        let mut command = Command::new(std::env::current_exe()?);
-        command.env(CHILD_ENV, root).env(TRACK_ENV, "1");
+    let profile = Path::new(env!("CARGO_BIN_EXE_actup-mcp"))
+        .parent()
+        .ok_or_else(|| Error::other("missing Cargo profile directory"))?
+        .canonicalize()?;
+    let image = std::env::current_exe()?.canonicalize()?;
+    let is_harness = image
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .and_then(|stem| stem.strip_prefix("stdio_contract-"))
+        .is_some_and(|hash| hash.len() == 16 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
+    if !image.starts_with(&profile) || !is_harness {
+        return Err(Error::new(
+            ErrorKind::InvalidInput,
+            "expected the Cargo-built stdio_contract executable",
+        ));
+    }
+    Ok(image)
+}
+
+impl Client {
+    fn start(root: &Path, env: Option<&str>) -> Result<Self, Box<dyn Error>> {
+        // The kernel handle keeps naming this image even if its filename is replaced.
+        #[cfg(target_os = "linux")]
+        let mut command = Command::new("/proc/self/exe");
+        #[cfg(not(target_os = "linux"))]
+        let mut command = Command::new(fixture_image()?);
+        command.arg(CHILD_ARG).current_dir(root);
+        if let Some(env) = env {
+            command.env(env, "1");
+        }
         Self::spawn(command)
     }
 
@@ -548,7 +572,7 @@ fn read_tools_report_provider_host_and_status(client: &mut Client, _ws: &Workspa
 }
 
 fn latest_names_ref_kind_and_same_commit_target(ws: &Workspace) -> TestResult {
-    let mut client = Client::start_exact(&ws.root())?;
+    let mut client = Client::start(&ws.root(), Some(TRACK_ENV))?;
     let latest = client.call(
         "getLatest",
         json!({ "owner": "twins", "repo": "r", "currentRef": "v1" }),
@@ -1691,11 +1715,7 @@ type Case = fn(&mut Client, &Workspace) -> TestResult;
 type BinaryCase = fn(&Workspace) -> TestResult;
 
 fn update_all_without_pin_comments_preserves_notes(ws: &Workspace) -> TestResult {
-    let mut command = Command::new(std::env::current_exe()?);
-    command
-        .env(CHILD_ENV, ws.root())
-        .env(NO_PIN_COMMENT_ENV, "1");
-    let mut client = Client::spawn(command)?;
+    let mut client = Client::start(&ws.root(), Some(NO_PIN_COMMENT_ENV))?;
     let before = format!(
         "steps:\n  - uses: \"actions/checkout@{}\" # v4.0.0 keep\n",
         sha('a')
@@ -1812,7 +1832,7 @@ const CASES: [(&str, Case); 16] = [
 
 fn run(case: Case) -> TestResult {
     let ws = Workspace::new()?;
-    let mut client = Client::start(&ws.root())?;
+    let mut client = Client::start(&ws.root(), None)?;
     case(&mut client, &ws)
 }
 
@@ -1821,8 +1841,8 @@ fn run_binary(case: BinaryCase) -> TestResult {
 }
 
 fn main() -> ExitCode {
-    if let Some(root) = std::env::var_os(CHILD_ENV) {
-        return serve_child(Path::new(&root));
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new(CHILD_ARG)) {
+        return serve_child(Path::new("."));
     }
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let selected = |name: &str| filter.as_deref().is_none_or(|f| name.contains(f));
