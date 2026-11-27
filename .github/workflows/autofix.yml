@@ -13,13 +13,13 @@ jobs:
           - run: rustup toolchain install
           - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
           - uses: tombi-toml/setup-tombi@7417bd6e820cf0d4f89d77b48d13ba5d060435bf # v1.11.3
-          - uses: kjanat/install-dprint@ad298f8bd07a6bf8dcb3bd13cd567a3e6a85af71 # v2.3.0
-            with: { repository: kjanat/kprint, version: 0.60.6-kjanat }
+          - name: Install kprint
+            run: npm install --global @kprint/kprint@0.65.0
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - parallel:
           - name: Clippy fix
             run: cargo clippy --fix --allow-dirty --allow-staged --workspace --all-features
-          - name: Format with dprint
-            run: dprint fmt --allow-no-files --diff --excludes .github --fail-on-change
+          - name: Format with kprint
+            run: kprint fmt --allow-no-files --diff --excludes .github --fail-on-change
             continue-on-error: ${{ github.event.pull_request.stack == null }}
       - uses: autofix-ci/action@c5b2d67aa2274e7b5a18224e8171550871fc7e4a # v1.3.4

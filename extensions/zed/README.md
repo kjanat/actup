@@ -45,7 +45,7 @@ extension source to pick up changes.
 If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings
 (`~/.config/zed/settings.json`):
 
-<!--dprint-ignore-start-->
+<!--kprint-ignore-start-->
 
 ```jsonc
 {
@@ -59,7 +59,7 @@ If `actup-lsp` is not on `PATH`, point Zed to the binary in your settings
 }
 ```
 
-<!--dprint-ignore-end-->
+<!--kprint-ignore-end-->
 
 ### `actup-mcp` context server
 
@@ -71,7 +71,7 @@ lookup prints. Install it from the repo root with
 another binary or pass arguments, set the server's command in your settings. Zed
 then starts that command itself:
 
-<!--dprint-ignore-start-->
+<!--kprint-ignore-start-->
 
 ```jsonc
 {
@@ -84,7 +84,7 @@ then starts that command itself:
 }
 ```
 
-<!--dprint-ignore-end-->
+<!--kprint-ignore-end-->
 
 ### File type detection
 
@@ -92,7 +92,7 @@ Zed does not auto-detect GitHub Actions files by path. Add this to your settings
 so workflow files use the "GitHub Actions" language (which this extension
 defines):
 
-<!--dprint-ignore-start-->
+<!--kprint-ignore-start-->
 
 ```jsonc
 {
@@ -105,7 +105,7 @@ defines):
 }
 ```
 
-<!--dprint-ignore-end-->
+<!--kprint-ignore-end-->
 
 Files detected as plain YAML also work -- the extension attaches the LSP to both
 "GitHub Actions" and "YAML" languages.

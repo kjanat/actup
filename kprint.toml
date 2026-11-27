@@ -19,15 +19,20 @@ excludes  = [
   "**/test/highlight/**",
 ]
 
+[typescript]
+ignoreNodeCommentText = "kprint-ignore"
+
 [json]
 "object.preferSingleLine" = true
 "array.preferSingleLine"  = true
 
 [markdown]
-textWrap      = "always"
-emphasisKind  = "asterisks"
-wrapCodeSpans = false
-lineWidth     = 80
+textWrap             = "always"
+emphasisKind         = "asterisks"
+wrapCodeSpans        = false
+lineWidth            = 80
+ignoreStartDirective = "kprint-ignore-start"
+ignoreEndDirective   = "kprint-ignore-end"
 
 [markup]
 "html.void.selfClosing" = false

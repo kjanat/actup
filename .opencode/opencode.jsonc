@@ -5,8 +5,8 @@
 	"experimental": { "batch_tool": true },
 	"username": "{env:USER}",
 	"formatter": {
-		"dprint": {
-			"command": ["dprint", "fmt", "$FILE"],
+		"kprint": {
+			"command": ["kprint", "fmt", "$FILE"],
 			"extensions": [".sh", ".bash", ".toml", ".svg", ".json", ".rs", ".md", ".ts", ".mts", ".cts", ".js", ".mjs", ".cjs", ".yml", ".yaml"],
 		},
 	},

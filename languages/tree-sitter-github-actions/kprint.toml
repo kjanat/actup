@@ -1,0 +1,3 @@
+#:schema ../../kprint.schema.json
+
+extends = "../../kprint.toml"

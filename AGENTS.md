@@ -7,7 +7,7 @@ are an AI agent working in this codebase. Your job is to make correct,
 reviewable changes that preserve user intent and don’t brick CI. Be paranoid and
 precise.
 
-Before every commit, run `just fmt`, or `dprint fmt`.
+Before every commit, run `just fmt`, or `kprint fmt`.
 
 <!--If you use the Serena mcp server, activate project: `project_name: "actup-v2"`.-->
 

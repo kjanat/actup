@@ -178,12 +178,12 @@ clippy-wasm:
 # Format code
 [group('lint')]
 fmt:
-    dprint fmt
+    kprint fmt
 
 # Check formatting without changes
 [group('lint')]
 fmt-check:
-    dprint check
+    kprint check
 
 # Run all lints (fmt + clippy strict)
 [group('lint')]

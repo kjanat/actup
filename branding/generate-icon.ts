@@ -8,7 +8,7 @@
  *   bun branding/generate-icon.ts -s 256 -p 15 "#0d1117" icon.svg icon-256.png
  *   bun branding/generate-icon.ts -r 20 none icon.svg icon-rounded.png
  */
-/** biome-ignore-all assist/source/organizeImports: sorting with dprint */
+/** biome-ignore-all assist/source/organizeImports: sorting with kprint */
 
 import { arg, cli, CLIError, command, flag, FlagBuilder } from '@kjanat/dreamcli';
 
@@ -166,7 +166,7 @@ interface ComposeOpts {
  */
 function buildComposeArgs(opts: ComposeOpts): string[] {
 	const { canvasSize, bgColor, tmpPng, cornerRadius, maskStyle } = opts;
-	const args: string[] = /* dprint-ignore */ [
+	const args: string[] = /* kprint-ignore */ [
 		"-size", `${canvasSize}x${canvasSize}`,
 		`canvas:${bgColor}`,
 		tmpPng,
@@ -190,7 +190,7 @@ function buildComposeArgs(opts: ComposeOpts): string[] {
  * to cover all four corners before copying back as alpha.
  */
 function polygonMaskArgs(radius: number): string[] {
-	return /* dprint-ignore */ [
+	return /* kprint-ignore */ [
 		"(",
 			"+clone",
 			"-alpha", "extract",
@@ -213,7 +213,7 @@ function polygonMaskArgs(radius: number): string[] {
  */
 function roundrectMaskArgs(canvasSize: number, radius: number): string[] {
 	const last = canvasSize - 1;
-	return /* dprint-ignore */ [
+	return /* kprint-ignore */ [
 		"(",
 			"-size", `${canvasSize}x${canvasSize}`, "xc:black",
 			"-fill", "white",

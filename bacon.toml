@@ -59,9 +59,9 @@ command        = ["cargo", "run", "--release", "--package", "actup", "--", "chec
 need_stdout    = true
 allow_warnings = true
 
-# Check formatting with dprint
+# Check formatting with kprint
 [jobs.fmt-check]
-command     = ["dprint", "check"]
+command     = ["kprint", "check"]
 need_stdout = true
 
 [keybindings]

@@ -60,7 +60,7 @@ leaves the folder unchecked.
 Absolute path to the `actup-lsp` binary. If unset, the extension searches
 `PATH`.
 
-<!--dprint-ignore-start-->
+<!--kprint-ignore-start-->
 
 ```jsonc
 {
@@ -68,7 +68,7 @@ Absolute path to the `actup-lsp` binary. If unset, the extension searches
 }
 ```
 
-<!--dprint-ignore-end-->
+<!--kprint-ignore-end-->
 
 ### `actup.server.extraArgs`
 

@@ -24,8 +24,9 @@
 	],
 	"scripts": {
 		"check": "biome check",
-		"fmt": "dprint fmt",
-		"generate": "tree-sitter generate && dprint fmt",
+		"fmt": "kprint fmt",
+		"generate": "tree-sitter generate",
+		"postgenerate": "kprint fmt",
 		"highlight": "tree-sitter highlight ../../.github/*/*.y*ml",
 		"preinstall": "node scripts/ensure-generated.mjs",
 		"install": "node-gyp-build",
