@@ -248,8 +248,9 @@ refused file.
 
 ## Configuration
 
-Create `actup.toml` or `.actup.toml` in your repo root, or write the user config
-(see [Config Discovery](#config-discovery)):
+Actup supports TOML 1.1, including multiline inline tables. Create `actup.toml`
+or `.actup.toml` in your repo root, or write the user config (see
+[Config Discovery](#config-discovery)):
 
 ```toml
 # Default host for bare owner/repo refs (user or explicit config only)

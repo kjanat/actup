@@ -370,7 +370,7 @@ mod config_tests {
         fs::create_dir_all(repo.join(".git"))?;
         let user = temp.path().join("user.toml");
         let repo_config = repo.join("actup.toml");
-        fs::write(&user, "[policy]\nbump = \"patch\"\n")?;
+        fs::write(&user, "policy = {\n  bump = \"patch\",\n}\n")?;
 
         let config = Config::load(None, Some(&user), &repo, None)?;
         assert_eq!(
@@ -380,7 +380,7 @@ mod config_tests {
         assert_eq!(config.loaded_from(), Some(user.as_path()));
         assert_eq!(config.policy.bump.to_string(), "patch");
 
-        fs::write(&repo_config, "[policy]\npin = \"sha\"\n")?;
+        fs::write(&repo_config, "policy = {\n  pin = \"sha\",\n}\n")?;
         let config = Config::load(None, Some(&user), &repo, None)?;
         assert_eq!(
             file_sources(&config),

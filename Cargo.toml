@@ -74,7 +74,7 @@ features = ["derive", "env", "wrap_help"]
 
 [workspace.dependencies.figment]  # Configuration
 version  = "0.10"
-features = ["env", "json", "toml"]
+features = ["env", "json"]
 
 [workspace.dependencies.gix-features]  # git progress traits
 version  = "0.50"
