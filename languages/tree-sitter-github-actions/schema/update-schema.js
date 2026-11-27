@@ -6,6 +6,9 @@ import { join } from 'path';
 import { argv } from 'process';
 
 const schema = argv[2] ?? 'core';
+if (schema !== 'core' && schema !== 'json') {
+	throw new Error('Expected schema name "core" or "json".');
+}
 
 readFile(join(import.meta.dirname, schema, 'src', 'parser.c'), 'utf8').then(input => {
 	const cases = extractCases(input);

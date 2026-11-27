@@ -3236,7 +3236,8 @@ mod tests {
         std::fs::create_dir(&stale)?;
         std::fs::create_dir(&latest)?;
         std::fs::write(stale.join("actup.toml"), "[policy]\nbump = \"sideways\"\n")?;
-        let latest_config = actup_core::canonical_path(&latest).join("actup.toml");
+        let latest_config =
+            actup_core::config::discovery::canonicalize_existing(&latest)?.join("actup.toml");
         std::fs::write(&latest_config, "[cache]\nenabled = false\n")?;
         let (service, mut socket) = initialized_service(temp.path()).await?;
         let backend = service.inner();

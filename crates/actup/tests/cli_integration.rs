@@ -173,6 +173,7 @@ mod discovery_tests {
 }
 
 mod config_tests {
+    use actup_core::config::discovery::canonicalize_existing;
     use std::{fs, path::PathBuf};
 
     use actup_core::{
@@ -252,7 +253,7 @@ mod config_tests {
         git: impl Fn(&std::path::Path) -> std::io::Result<()>,
     ) -> std::io::Result<(TempDir, PathBuf, PathBuf)> {
         let temp = TempDir::new()?;
-        let repo = actup_core::canonical_path(temp.path()).join("repo");
+        let repo = canonicalize_existing(temp.path())?.join("repo");
         let sub = repo.join("sub");
         fs::create_dir_all(&sub)?;
         git(&repo.join(".git"))?;
@@ -290,7 +291,7 @@ mod config_tests {
     fn test_repo_search_without_git_walks_past_the_start() -> Result<(), Box<dyn std::error::Error>>
     {
         let (temp, repo, sub) = nested_repo(|_| Ok(()))?;
-        let root = actup_core::canonical_path(temp.path());
+        let root = canonicalize_existing(temp.path())?;
         let dirs = repo_search_dirs(&sub, None);
         assert_eq!(dirs.get(..3), Some(&[sub.clone(), repo, root.clone()][..]));
         assert_eq!(find_repo_config(&sub, None), Some(root.join("actup.toml")));
@@ -300,7 +301,7 @@ mod config_tests {
     #[test]
     fn test_repo_search_resolves_parent_components() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let root = actup_core::canonical_path(temp.path());
+        let root = canonicalize_existing(temp.path())?;
         let sub = root.join("sub");
         let other = root.join("other");
         fs::create_dir_all(sub.join(".git"))?;
@@ -416,7 +417,7 @@ mod config_tests {
     #[test]
     fn test_repo_config_cannot_set_restricted_keys() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = actup_core::canonical_path(temp.path()).join("repo");
+        let repo = canonicalize_existing(temp.path())?.join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let repo_config = repo.join("actup.toml");
         fs::write(&repo_config, RESTRICTED)?;
@@ -491,7 +492,7 @@ mod config_tests {
     #[test]
     fn test_repo_config_cannot_set_the_cache_path() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = actup_core::canonical_path(temp.path()).join("repo");
+        let repo = canonicalize_existing(temp.path())?.join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let repo_config = repo.join("actup.toml");
         fs::write(
@@ -533,7 +534,7 @@ mod config_tests {
     fn test_explicit_config_found_by_discovery_loads_once() -> Result<(), Box<dyn std::error::Error>>
     {
         let temp = TempDir::new()?;
-        let repo = actup_core::canonical_path(temp.path()).join("repo");
+        let repo = canonicalize_existing(temp.path())?.join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         fs::create_dir(repo.join("sub"))?;
         let repo_config = repo.join("actup.toml");
@@ -721,7 +722,7 @@ policy  = { bump = "patch" }
     #[test]
     fn test_config_load_skips_missing_user_config() -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo_config = actup_core::canonical_path(temp.path()).join("actup.toml");
+        let repo_config = canonicalize_existing(temp.path())?.join("actup.toml");
         fs::write(&repo_config, "[cache]\nenabled = false\n")?;
 
         let config = Config::load(
@@ -764,35 +765,6 @@ policy  = { bump = "patch" }
                 );
             }
             other => panic!("expected InvalidConfig, got {other:?}"),
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn test_config_load_relative_explicit_path_skips_ancestors()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let cwd = std::env::current_dir()?;
-        let Some(name) = cwd.ancestors().skip(1).find_map(|dir| {
-            fs::read_dir(dir).ok()?.flatten().find_map(|entry| {
-                let name = PathBuf::from(entry.file_name());
-                (dir.join(&name).is_file() && !cwd.join(&name).exists()).then_some(name)
-            })
-        }) else {
-            panic!(
-                "no ancestor of {} holds a file absent from it",
-                cwd.display()
-            );
-        };
-        let temp = TempDir::new()?;
-
-        match Config::load(Some(&name), None, temp.path(), None) {
-            Err(actup_core::Error::InvalidConfig { path, .. }) => {
-                assert_eq!(path, name.display().to_string());
-            }
-            other => panic!(
-                "expected InvalidConfig for {}, got {other:?}",
-                name.display()
-            ),
         }
         Ok(())
     }
@@ -1496,6 +1468,7 @@ mod schema_tests {
 }
 
 mod cli_runs {
+    use actup_core::config::discovery::canonicalize_existing;
     use std::{fs, path::Path, process::Command};
 
     use tempfile::TempDir;
@@ -1673,7 +1646,7 @@ mod cli_runs {
         let user = home.path().join("actup").join("config.toml");
         fs::create_dir_all(home.path().join("actup"))?;
         fs::write(&user, "[policy]\nbump = \"patch\"\n")?;
-        let repo_config = actup_core::canonical_path(repo.path()).join("actup.toml");
+        let repo_config = canonicalize_existing(repo.path())?.join("actup.toml");
         fs::write(&repo_config, "[policy]\npin = \"sha\"\n")?;
         let explicit = home.path().join("explicit.toml");
         fs::write(&explicit, "[policy]\ntrack = \"exact\"\n")?;
@@ -1820,6 +1793,25 @@ mod cli_runs {
     }
 
     #[test]
+    fn relative_explicit_config_does_not_search_ancestors() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp = TempDir::new()?;
+        fs::write(
+            temp.path().join("parent.toml"),
+            "[policy]\nbump = \"patch\"\n",
+        )?;
+        let child = temp.path().join("child");
+        fs::create_dir(&child)?;
+        let output = actup(temp.path())
+            .current_dir(child)
+            .args(["--config", "parent.toml", "config"])
+            .output()?;
+        assert_eq!(output.status.code(), Some(2));
+        assert!(String::from_utf8(output.stderr)?.contains("invalid config at 'parent.toml'"));
+        Ok(())
+    }
+
+    #[test]
     fn check_loads_relative_config_flag() -> Result<(), Box<dyn std::error::Error>> {
         let repo = TempDir::new()?;
         fs::write(
@@ -1952,7 +1944,7 @@ mod cli_runs {
     {
         let repo = TempDir::new()?;
         fs::create_dir(repo.path().join(".git"))?;
-        let config = actup_core::canonical_path(repo.path()).join("actup.toml");
+        let config = canonicalize_existing(repo.path())?.join("actup.toml");
         fs::write(
             &config,
             "default_host = \"x.example\"\n[hosts.\"x.example\"]\nkind = \"github\"\ntoken_env = \"SECRET\"\n",
@@ -1997,7 +1989,7 @@ mod cli_runs {
     fn unknown_keys_exit_2_with_a_hint() -> Result<(), Box<dyn std::error::Error>> {
         let repo = TempDir::new()?;
         fs::create_dir(repo.path().join(".git"))?;
-        let config = actup_core::canonical_path(repo.path()).join("actup.toml");
+        let config = canonicalize_existing(repo.path())?.join("actup.toml");
         fs::write(&config, "update-policy = \"patch\"\n")?;
         let output = actup(repo.path()).arg("config").arg(repo.path()).output()?;
         assert_eq!(output.status.code(), Some(2));

@@ -7,6 +7,7 @@
 
 use std::{future::Future, path::PathBuf, pin::Pin, time::Duration};
 
+use tokio::io::AsyncReadExt;
 use tracing::debug;
 
 use crate::{
@@ -15,6 +16,9 @@ use crate::{
     cache::{self, Cache},
     version,
 };
+
+// Bound the memory a single repository can consume while loading its disk record.
+const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
 
 /// What a [`FileCache`] does with its entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,15 +167,24 @@ impl Cache for FileCache {
 
             let path = self.key_to_path(&key);
 
-            let content = match tokio::fs::read_to_string(&path).await {
-                Ok(c) => c,
+            let file = match tokio::fs::File::open(&path).await {
+                Ok(file) => file,
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                     return Err(cache::Error::NotFound);
                 }
                 Err(e) => return Err(cache::Error::Io(e.to_string())),
             };
 
-            let record: cache::Record = match serde_json::from_str(&content) {
+            let mut content = Vec::new();
+            file.take(MAX_RECORD_BYTES as u64 + 1)
+                .read_to_end(&mut content)
+                .await
+                .map_err(|e| cache::Error::Io(e.to_string()))?;
+            if content.len() > MAX_RECORD_BYTES {
+                debug!(key = %key, "oversized cache entry");
+                return Err(cache::Error::NotFound);
+            }
+            let record: cache::Record = match serde_json::from_slice(&content) {
                 Ok(record) => record,
                 Err(e) => {
                     debug!(key = %key, error = %e, "unreadable cache entry");
@@ -210,6 +223,9 @@ impl Cache for FileCache {
             let path = self.key_to_path(&key);
             let content = serde_json::to_string(&cache::Record::new(&key, entry))
                 .map_err(|e| cache::Error::Serde(e.to_string()))?;
+            if content.len() > MAX_RECORD_BYTES {
+                return self.remove(&key).await;
+            }
 
             let target = path.clone();
             tokio::task::spawn_blocking(move || write_atomic(&target, content.as_bytes()))
@@ -258,12 +274,8 @@ impl Cache for FileCache {
                 .await
                 .map_err(|e| cache::Error::Io(e.to_string()))?
             {
-                let path = entry.path();
-                if entry
-                    .file_name()
-                    .to_str()
-                    .is_some_and(cache::is_entry_file_name)
-                {
+                if let Some(hash) = entry.file_name().to_str().and_then(cache::entry_file_hash) {
+                    let path = self.cache_dir.join(cache::file_name_for_hash(hash));
                     tokio::fs::remove_file(&path).await.map_err(|e| {
                         cache::Error::Io(format!("failed to remove {}: {e}", path.display()))
                     })?;
@@ -667,6 +679,29 @@ mod tests {
                 .collect();
             assert_eq!(tags, [tag], "{key}");
         }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn oversized_records_miss_on_read_and_invalidate_older_entries_on_write() -> TestResult {
+        let (cache, _temp) = make_test_cache(3600)?;
+        let entry = cache::Entry::new(version::Set::default());
+        cache.set("key", entry.clone()).await?;
+        let path = cache.key_to_path("key");
+        // Whitespace keeps the original JSON valid, so only the size limit rejects it.
+        let mut content = std::fs::read(&path)?;
+        content.resize(MAX_RECORD_BYTES + 1, b' ');
+        std::fs::write(&path, content)?;
+        assert!(matches!(
+            cache.get("key").await,
+            Err(cache::Error::NotFound)
+        ));
+
+        cache.set("key", entry.clone()).await?;
+        let oversized =
+            entry.with_validators([("etag".into(), "x".repeat(MAX_RECORD_BYTES))].into());
+        cache.set("key", oversized).await?;
+        assert!(!path.exists());
         Ok(())
     }
 

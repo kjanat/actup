@@ -345,15 +345,25 @@ pub fn entry_file_name(key: &str) -> String {
     let hash = key.bytes().fold(FNV_OFFSET, |hash, byte| {
         (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
     });
+    file_name_for_hash(hash)
+}
+
+pub(crate) fn file_name_for_hash(hash: u64) -> String {
     format!("{hash:016x}.json")
 }
 
 /// Return whether `name` has the form [`entry_file_name`] writes.
 #[must_use]
 pub fn is_entry_file_name(name: &str) -> bool {
-    name.strip_suffix(".json").is_some_and(|stem| {
-        stem.len() == 16 && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-    })
+    entry_file_hash(name).is_some()
+}
+
+pub(crate) fn entry_file_hash(name: &str) -> Option<u64> {
+    let stem = name.strip_suffix(".json")?;
+    if stem.len() != 16 || !stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+        return None;
+    }
+    u64::from_str_radix(stem, 16).ok()
 }
 
 /// Helper to build cache keys

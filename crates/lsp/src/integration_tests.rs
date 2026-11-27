@@ -1350,7 +1350,7 @@ async fn invalid_config_path_beside_valid_repo_config_is_invalid() -> TestResult
 #[tokio::test]
 async fn relative_config_path_resolves_against_workspace_root() -> TestResult {
     let temp = tempfile::tempdir()?;
-    let temp_path = actup_core::config::canonical_path(temp.path());
+    let temp_path = actup_core::config::discovery::canonicalize_existing(temp.path())?;
     let repo = temp_path.join("repo");
     std::fs::create_dir(&repo)?;
     let explicit = repo.join("custom.toml");
@@ -1536,7 +1536,7 @@ fn registered_relative_patterns(requests: &[(String, serde_json::Value)]) -> Vec
 #[tokio::test]
 async fn config_watchers_follow_workspace_root() -> TestResult {
     let temp = tempfile::tempdir()?;
-    let temp_path = actup_core::config::canonical_path(temp.path());
+    let temp_path = actup_core::config::discovery::canonicalize_existing(temp.path())?;
     let first = temp_path.join("first");
     let second = temp_path.join("second");
     std::fs::create_dir(&first)?;
