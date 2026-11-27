@@ -36,7 +36,7 @@ pub use env::{
 };
 use figment::{
     Figment,
-    providers::{Format as _, Json, Serialized, Toml},
+    providers::{Format as _, Json, Serialized},
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, de};
@@ -839,6 +839,19 @@ fn read_config_file(path: &Path) -> Result<FileContents, Error> {
 }
 
 type ProfileData = figment::value::Map<figment::Profile, figment::value::Dict>;
+
+/// Use the workspace TOML parser for both file-backed and in-memory Figment layers.
+struct Toml;
+
+impl figment::providers::Format for Toml {
+    type Error = toml::de::Error;
+
+    const NAME: &'static str = "TOML";
+
+    fn from_str<T: de::DeserializeOwned>(source: &str) -> Result<T, Self::Error> {
+        toml::from_str(source)
+    }
+}
 
 fn declared_hosts(provider: &impl figment::Provider) -> BTreeSet<String> {
     provider

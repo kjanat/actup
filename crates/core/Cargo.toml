@@ -37,6 +37,7 @@ schemars      = { workspace = true }                   # Schema generation
 serde         = { workspace = true }                   # Serialization
 strsim        = { workspace = true }                   # Did-you-mean hints, closest-tag suggestions
 thiserror     = { workspace = true }                   # Error derive
+toml          = { workspace = true }                   # TOML config parsing
 tracing       = { workspace = true }                   # Logging
 tsify         = { workspace = true, optional = true }  # gated by `tsify` feature
 wasm-bindgen  = { workspace = true, optional = true }  # required by tsify for `typescript_custom_section`
@@ -47,7 +48,6 @@ pulldown-cmark     = { workspace = true }
 serde_json         = { workspace = true }
 tempfile           = { workspace = true }
 tokio              = { workspace = true }
-toml               = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 serde_json = { workspace = true }  # Disk cache entries

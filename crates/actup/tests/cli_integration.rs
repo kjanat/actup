@@ -366,11 +366,11 @@ mod config_tests {
     fn test_config_load_records_file_sources_in_precedence_order()
     -> Result<(), Box<dyn std::error::Error>> {
         let temp = TempDir::new()?;
-        let repo = actup_core::canonical_path(temp.path()).join("repo");
+        let repo = temp.path().join("repo");
         fs::create_dir_all(repo.join(".git"))?;
         let user = temp.path().join("user.toml");
         let repo_config = repo.join("actup.toml");
-        fs::write(&user, "[policy]\nbump = \"patch\"\n")?;
+        fs::write(&user, "policy = {\n  bump = \"patch\",\n}\n")?;
 
         let config = Config::load(None, Some(&user), &repo, None)?;
         assert_eq!(
@@ -380,7 +380,8 @@ mod config_tests {
         assert_eq!(config.loaded_from(), Some(user.as_path()));
         assert_eq!(config.policy.bump.to_string(), "patch");
 
-        fs::write(&repo_config, "[policy]\npin = \"sha\"\n")?;
+        fs::write(&repo_config, "policy = {\n  pin = \"sha\",\n}\n")?;
+        let repo_config = actup_core::canonical_path(&repo_config);
         let config = Config::load(None, Some(&user), &repo, None)?;
         assert_eq!(
             file_sources(&config),
